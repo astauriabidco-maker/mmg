@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+watchdog
+pypdf
+qrcode[pil]
+requests
+pytesseract
+pdf2image
+reportlab
+python-jose[cryptography]
+passlib[bcrypt]

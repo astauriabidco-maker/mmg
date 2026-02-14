@@ -1,0 +1,42 @@
+# Plan Implémentation V1 Professionnelle
+
+## Objectif
+Améliorer la qualité du code et l'UI sans changer le périmètre fonctionnel.
+
+## Architecture Cible
+```text
+backend/
+├── main.py             # Entry Point (Mounts, Exception Handlers)
+├── database.py         # DB Setup
+├── models.py           # SQL Alchemy Models
+├── schemas.py          # Pydantic Schemas
+├── core/
+│   ├── config.py       # Constants (STANDARDS)
+│   └── logger.py       # Logging Config
+├── routers/
+│   ├── web.py          # Routes Jinja2 (Dashboard, Alertes, Start/Stop, CSV)
+│   └── api.py          # Routes API REST (Mobile)
+├── services/
+│   ├── production.py   # Business Logic (Start, Stop, Checks)
+│   └── kpi.py          # Stats Logic (Dashboard, Alerts)
+├── templates/
+│   ├── layout.html
+│   ├── index.html
+│   └── alertes.html
+└── static/
+    └── css/
+        └── style.css   # Clean CSS
+```
+
+## Étapes
+1.  **Core & Services** : Extraire `STANDARDS` et la logique métier de `main.py`.
+2.  **Routers** : Déplacer les endpoints dans `routers/web.py` et `routers/api.py`.
+3.  **UI Polish** : Créer `style.css`, nettoyer `layout.html`, ajouter Footer.
+4.  **Logging** : Configurer un logger standard affichant timestamps et niveaux.
+5.  **Export CSV** : Ajouter endpoint utilisant `csv` module standard.
+
+## Validation
+-   Tests existants doivent passer.
+-   Vérification manuelle Dashboard/Alertes.
+-   Vérification CSV.
+-   Vérification Logs console.

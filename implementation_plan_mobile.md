@@ -1,0 +1,37 @@
+# Plan Application Android V1 (Menuiserie)
+
+## Objectif
+Fournir le code source pour l'application opérateur sur terminal Android.
+
+## Choix Technique
+**Flutter** : Robustesse, performance, gestion native Camera/SQLite simple.
+*Note: Je fournirai le code "Prêt à copier" pour un projet `flutter create`.*
+
+## Architecture
+Fichier principal `lib/main.dart` contenant :
+1.  **Modèle Local** : `TimeLog` (id, order_ref, station, start, end, synced).
+2.  **Database Helper** : Gestion SQLite (`sqflite`).
+3.  **Service Sync** : Envoi des logs non-synchro vers l'API Backend.
+4.  **UI** :
+    -   **Scan Screen** : Lecture QR Code (CMD-XXXX|LxH|Matière).
+    -   **Work Screen** : Affichage infos ordre.
+        -   Gros bouton **START**.
+        -   Bouton **PAUSE** (Optionnel V1? "START / PAUSE / STOP" demandé).
+        -   Bouton **STOP**.
+    -   **Settings** : URL API, ID Poste (Stocké dans `shared_preferences`).
+
+## Conformité V1
+-   **Scan QR** : Oui (`mobile_scanner`).
+-   **SQLite Local** : Oui.
+-   **Sync REST** : Oui.
+-   **Offline** : Oui (logique "Store & Forward").
+
+## Étapes
+1.  Créer le dossier `mobile/`.
+2.  Rédiger `mobile/pubspec.yaml` (Dépendances versions fixes).
+3.  Rédiger `mobile/lib/main.dart` (Application complète).
+4.  Documentation pour compilation (Readme).
+
+## Validation
+-   Revue du code généré.
+-   Vérification logique offline.

@@ -1,0 +1,5 @@
+{
+  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
+  "summary": "Plan Module Extractor.\n- `backend/extractor.py` : Logique pure (PDF -> JSON).\n  - Native Text (pypdf).\n  - OCR Fallback (pytesseract).\n  - Parsing Regex.\n- `backend/watcher.py` : Boucle de surveillance `watchdog`.\n- `tests/test_extractor.py` : Tests unitaires robustes.\n- Requirements : Ajout `pytesseract`, `pdf2image`.",
+  "updatedAt": "2026-02-12T19:36:43.790962Z"
+}

@@ -1,0 +1,5 @@
+{
+  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
+  "summary": "Plan Mise à jour Interface Web V1 (Strict).\n- **Backend (`main.py`)** :\n  - Dictionnaire `STANDARDS` hardcodé.\n  - Endpoint `/` calculant KPIs et enrichissant les logs avec :\n    - `std_min`\n    - `real_min`\n    - `percent`\n    - `css_class`\n- **Frontend (`templates/`)** :\n  - `layout.html` : Ajout classes CSS `.bg-red`, `.bg-orange`, `.bg-green`.\n  - `index.html` :\n    - Section KPI (4 stats).\n    - Tableau (Colonnes conformes).\n    - Formulaires Start/Stop (Champs conformes).\n- **Validation** :\n  - Vérification visuelle via description.\n  - Tests existants.",
+  "updatedAt": "2026-02-12T22:06:07.659665Z"
+}

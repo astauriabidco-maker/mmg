@@ -1,0 +1,5 @@
+{
+  "artifactType": "ARTIFACT_TYPE_OTHER",
+  "summary": "Instructions de Build pour le Dashboard React.\n1. `cd frontend`\n2. `npm install`\n3. `npm run build`\n4. Les fichiers vont dans `backend/static`.\n5. Accès via `http://localhost:8000/dashboard_ui/index.html`.",
+  "updatedAt": "2026-02-12T19:53:10.837723Z"
+}

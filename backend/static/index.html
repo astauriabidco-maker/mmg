@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Atelier Menuiserie - Suivi V1</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <header>
+        <h1>TABLEAU DE BORD ATELIER</h1>
+        <div id="date-display">...</div>
+        <button onclick="loadStats()">Actualiser</button>
+    </header>
+
+    <main>
+        <!-- KPI GLOBAL -->
+        <section class="kpi-grid">
+            <div class="card">
+                <h3>Ordres Traités</h3>
+                <div class="big-number" id="total-orders">0</div>
+            </div>
+            <div class="card">
+                <h3>Temps Total (h)</h3>
+                <div class="big-number" id="total-time">0</div>
+            </div>
+        </section>
+
+        <!-- PERFORMANCE PAR POSTE -->
+        <section class="wide-card">
+            <h2>Performance par Poste (Moyenne vs Standard)</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Poste</th>
+                        <th>Nbre Op.</th>
+                        <th>Temps Moyen</th>
+                        <th>Standard</th>
+                        <th>Ecart %</th>
+                        <th>Statut</th>
+                    </tr>
+                </thead>
+                <tbody id="stations-table-body">
+                    <!-- JS Injected -->
+                </tbody>
+            </table>
+        </section>
+
+        <!-- GRAPH -->
+        <section class="wide-card">
+            <h2>Répartition Temps par Poste</h2>
+            <div class="chart-container">
+                <canvas id="timeChart"></canvas>
+            </div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

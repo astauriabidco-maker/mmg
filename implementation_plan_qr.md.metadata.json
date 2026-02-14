@@ -1,0 +1,5 @@
+{
+  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
+  "summary": "Plan Module QR Generator.\n- Objectif : PDF 50x30mm pour Zebra ZD420.\n- `backend/qr_generator.py` :\n  - `generate_label(data)` : Crée PDF avec ReportLab.\n  - `send_error_alert(msg)` : Email SMTP.\n- `backend/printer.py` :\n  - `print_label(pdf_path)` : Commande d'impression OS (lp pour Unix, print pour Win).\n- Tests :\n  - Générer un PDF et valider sa taille et présence QR (via Logique ou Mock).\n- Requirements : Ajout `reportlab`.",
+  "updatedAt": "2026-02-12T19:43:18.797352Z"
+}

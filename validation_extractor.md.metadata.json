@@ -1,0 +1,5 @@
+{
+  "artifactType": "ARTIFACT_TYPE_OTHER",
+  "summary": "Rapport de validation du module Extractor.\n- Conformité : Natif + OCR Fallback, Logging, Tests.\n- Tests : 30 simulations réussies.\n- Architecture : Indépendante (Watcher + Extractor).",
+  "updatedAt": "2026-02-12T19:37:51.832019Z"
+}

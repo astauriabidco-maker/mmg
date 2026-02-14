@@ -1,0 +1,5 @@
+{
+  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
+  "summary": "Plan V1 Professionnelle.\nRefactoring pour séparer les responsabilités et améliorer la maintenabilité.\n- **Architecture** :\n  - `backend/routers/` : `web.py` (Jinja), `api.py` (Legacy).\n  - `backend/services/` : `production_service.py` (Logique métier), `kpi_service.py` (Stats).\n  - `backend/core/` : `logging.py` (Config log), `config.py` (Standards).\n- **Fonctionnalités Ajoutées** :\n  - `GET /export/csv` : Génération CSV jour.\n  - Footer & CSS Externe.\n- **UI** :\n  - Extraction styles dans `static/css/style.css`.\n  - Design \"Cards\" amélioré.",
+  "updatedAt": "2026-02-12T22:17:35.557232Z"
+}

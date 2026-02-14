@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+*.log
+extractor.log
+watcher.log
+nohup.out
+
+# Database
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Brain / Artifacts (Optional, usually we don't push these to main repo unless requested)
+.gemini/
+.agent/
+brain/
+
+# Orders folders
+processed_orders/
+error_orders/
+input_orders/DYNAMIC_TEST.txt

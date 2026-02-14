@@ -1,0 +1,5 @@
+{
+  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
+  "summary": "Plan de refactoring pour alignement Sprint 1.\n- Models: `TimeLog` -> `ProductionLog` (`production_logs`).\n- API:\n  - `POST /production/start`: Nouveau pointages.\n  - `POST /production/stop`: Clôture pointage.\n  - `GET /dashboard/summary`: Stats.\n- Nettoyage code superflu pour ce sprint.",
+  "updatedAt": "2026-02-12T19:32:27.423388Z"
+}

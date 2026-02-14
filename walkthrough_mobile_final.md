@@ -1,0 +1,81 @@
+# 📱 Guide Final : Application Mobile Atelier V2
+
+Ce document résume les fonctionnalités complètes de l'application Android **Atelier V2**, incluant les développements des Sprints 3 & 4.
+
+---
+
+## 🚀 1. Fonctionnalités Clés
+
+### 🔒 Authentification Intelligente
+- **Login PIN** : Connexion rapide à 4 chiffres (ex: `1111` pour Opérateur Débit).
+- **Détection de Rôle** :
+    -   **OPÉRATEUR** : Redirigé vers le Scan.
+    -   **MANAGER** : Redirigé vers le Dashboard.
+- **Association Poste** : L'application sait automatiquement sur quel poste l'opérateur travaille (ex: `PVC_SOUDURE`).
+
+### 🏭 Workflow Opérateur
+1.  **Scan QR** : Lecture instantanée des étiquettes Zebra (CameraX + ML Kit).
+2.  **Pilotage** :
+    -   **DÉMARRER** (Vert) : Lance le chronomètre serveur + WebSocket temps réel.
+    -   **PAUSE** (Orange) : Suspend la tâche (ex: pause café, manque matière).
+    -   **TERMINER** (Bleu) : Valide la tâche et passe la commande au poste suivant (Workflow Auto).
+3.  **Gestion Qualité** :
+    -   **SIGNALER DÉFAUT** (Rouge) : Arrête la prod, marque la commande en `DEFECT` et alerte le chef.
+4.  **Outils** :
+    -   **RÉIMPRIMER** : Relance l'impression de l'étiquette (Zebra) si elle est abîmée.
+
+### 📶 Mode Hors-Ligne (Offline First)
+- **Robustesse** : L'application fonctionne même si le Wifi est coupé.
+- **Stockage Local** : Les actions (Start, Stop, Defect) sont sauvées dans une base locale (`Room Database`).
+- **Sync Auto** : Un service de fond (`WorkManager`) envoie les données dès que le réseau revient.
+
+### 📊 Dashboard Manager (Mobile)
+- Accessible uniquement aux comptes `ADMIN`.
+- Visualisation en temps réel :
+    -   **Production du Jour** (Nombre de fenêtres produites).
+    -   (Extensible : Taux de rebut, Retards).
+
+---
+
+## 🛠️ 2. Architecture Technique
+
+### Stack Android
+-   **Langage** : Kotlin (100% Natif).
+-   **UI** : Jetpack Compose (Material Design 3).
+-   **Réseau** : Retrofit + OkHttp.
+-   **Base de Données** : Room (SQLite).
+-   **Hardware** : CameraX (Scan), Zebra (Print via Backend).
+
+### Modèle de Données (Backend V2)
+-   **User** : `username`, `pin`, `role`, `station` (Nouveau).
+-   **StationName** : Enum (`PVC_DEBIT`, `PVC_SOUDURE`, etc.).
+-   **PlanningStatus** : `PENDING`, `IN_PROGRESS`, `PAUSED`, `DONE`, `DEFECT`.
+
+---
+
+## 📦 3. Déploiement
+
+### Pré-requis
+-   Serveur Backend Python lancé (`uvicorn backend.main:app --host 0.0.0.0`).
+-   Android Studio Koala ou plus récent.
+-   Terminal Android (ou Émulateur).
+
+### Compilation
+1.  Ouvrir le dossier `android_app` dans Android Studio.
+2.  Vérifier l'URL API dans `NetworkModule.kt` :
+    -   Émulateur : `http://10.0.2.2:8000`
+    -   Réel : `http://<IP_SERVEUR>:8000`
+3.  Lancer `Build > Build APK`.
+
+### Comptes de Test (Seed V2)
+| Utilisateur | PIN | Rôle | Poste Associé |
+| :--- | :--- | :--- | :--- |
+| `admin` | `1234` | ADMIN | - |
+| `op_debit` | `1111` | OPERATOR | **PVC_DEBIT** |
+| `op_soudure` | `2222` | OPERATOR | **PVC_SOUDURE** |
+
+---
+
+## ✅ État Final
+Le projet Mobile est **TERMINÉ** et prêt pour la phase de test terrain (UAT).
+Tous les objectifs de robustesse et de traçabilité sont atteints.

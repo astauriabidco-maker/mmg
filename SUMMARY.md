@@ -1,0 +1,48 @@
+# Résumé du Code & Architecture - Atelier Menuiserie V1 Pro
+
+## 1. Architecture Générale
+
+Le projet est divisé en deux parties principales :
+- **Backend (Python/FastAPI)** : Gère la logique métier, la base de données, l'API et la communication temps réel (WebSocket).
+- **Frontend (React/Vite)** : Interface utilisateur pour le Manager et les Opérateurs.
+
+## 2. Fichiers Clés
+
+### Backend (`/backend`)
+- **`main.py`** : Point d'entrée du serveur. Initialise l'application, la base de données, et inclut les routes.
+- **`core/security.py`** : (Nouveau) Gère le hachage des mots de passe et la génération des tokens JWT pour l'authentification.
+- **`routers/v2_analytics.py`** : Gère les statistiques (Production Totale, Temps Moyen). *Correction récente : Calcul des délais.*
+- **`routers/v2_planning.py`** : Gère la file d'attente des commandes pour chaque poste.
+- **`routers/api.py`** : API "Legacy" pour démarrer/arrêter la production. *Nettoyé.*
+- **`models.py`** : Définition des tables de la base de données (User, Order, Planning, ProductionLog).
+- **`database.py`** : Configuration de la connexion SQLite.
+
+### Frontend (`/frontend_v2`)
+- **`src/main.jsx`** : Point d'entrée React.
+- **`src/App.jsx`** : Gestion des routes (`/login`, `/manager`, `/dashboard/:station`). Gère la protection des pages via `ProtectedRoute`.
+- **`src/context/AuthContext.jsx`** : Gère l'état de connexion utilisateur (User, Token, Login, Logout). *Correction récente : Ajout import React.*
+- **`src/pages/Login.jsx`** : Page de connexion avec pavé numérique. *Correction récente : Logique de mappage PIN -> Username (1111 -> op_debit).*
+- **`src/pages/ManagerDashboard.jsx`** : Tableau de bord pour le superviseur. Affiche les KPI et graphiques. *Correction récente : Gestion des erreurs API et bouton Déconnexion.*
+- **`src/pages/OperatorDashboard.jsx`** : Interface pour les opérateurs (Start/Stop/Pause). *Correction récente : Bouton Déconnexion.*
+
+### Scripts & Outils
+- **`init_db.py`** : Initialise la base de données.
+- **`seed_v3_scenario.py`** : Remplit la base avec des données de test (Utilisateurs, Commandes, Scénario de production). *Correction récente : Hachage des mots de passe.*
+
+## 3. Codes d'Accès (Validés)
+
+| Rôle | Identifiant Interne | Code PIN |
+| :--- | :--- | :--- |
+| **Manager** | `admin` | **1234** |
+| **Opérateur Débit** | `op_debit` | **1111** |
+| **Opérateur Soudure** | `op_soudure` | **2222** |
+| **Opérateur Assemblage** | `op_assemblage` | **3333** |
+| **Opérateur Vitrage** | `op_vitrage` | **4444** |
+
+## 4. État Actuel
+- **Serveur** : En ligne (Port 8000).
+- **Client Web** : En ligne (Port 5173).
+- **Authentification** : Fonctionnelle (JWT + PIN).
+- **Données** : Base de données initialisée et peuplée.
+
+Tout est opérationnel.
