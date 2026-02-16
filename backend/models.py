@@ -34,6 +34,7 @@ class PlanningStatus(str, enum.Enum):
     PAUSED = "PAUSED"
     DONE = "DONE"
     DEFECT = "DEFECT"
+    ISSUE = "ISSUE"
 
 class User(Base):
     __tablename__ = "users"
@@ -42,8 +43,15 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     pin_hash = Column(String) # Hashed 4-digit PIN
     role = Column(SAEnum(UserRole), default=UserRole.OPERATOR)
-    station = Column(String, nullable=True) # Changed from Enum to String for flexibility
     is_active = Column(Boolean, default=True)
+    
+    # Many-to-many relationship with Stations
+    stations = relationship("Station", secondary="user_stations")
+
+class UserStation(Base):
+    __tablename__ = "user_stations"
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    station_id = Column(Integer, ForeignKey("stations.id"), primary_key=True)
 
 class Planning(Base):
     __tablename__ = "planning"
@@ -53,6 +61,7 @@ class Planning(Base):
     station = Column(String) # Changed from Enum to String
     priority = Column(Integer, default=0) # Higher = More urgent
     status = Column(SAEnum(PlanningStatus), default=PlanningStatus.PENDING)
+    issue_notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     order = relationship("Order")
@@ -99,3 +108,67 @@ class Station(Base):
     display_name = Column(String) # ex: Débit PVC
     material = Column(SAEnum(MaterialType)) # PVC or ALU
     order_index = Column(Integer, default=0) # Sequence order
+
+class MMGStatus(str, enum.Enum):
+    SENT = "SENT"
+    IN_STUDY = "IN_STUDY"
+    VALIDATED = "VALIDATED"
+    IN_PRODUCTION = "IN_PRODUCTION"
+
+class MMG(Base):
+    __tablename__ = "mmg_dossiers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True) # MMG-2026-XXXXX
+    client_name = Column(String)
+    client_contact = Column(String)
+    client_address = Column(String) # Billing address
+    site_address = Column(String, nullable=True) # Adresse du chantier
+    client_email = Column(String)
+    client_type = Column(String, default="PARTICULIER") # PRO / PARTICULIER
+    
+    width = Column(Float)
+    height = Column(Float)
+    passage_height = Column(Float)
+    
+    sill_height = Column(Float, nullable=True) # Hsoubassement
+    transom_height = Column(Float, nullable=True) # Himposte
+    shutter_type = Column(String, nullable=True) # gauche/droite/centre
+    
+    opening_type = Column(String) # tirant/poussant
+    opening_side = Column(String) # gauche/droite
+    sash_count = Column(Integer) # 1/2/3
+    view_type = Column(String, default="interior") # interior/exterior
+    
+    # Professional & Quoting Fields
+    material = Column(String, nullable=True) # ALU, PVC, etc.
+    product_series = Column(String, nullable=True) # Standard, Premium, etc.
+    color_ral = Column(String, nullable=True) # Ex: RAL 7016
+    is_bicolor = Column(Boolean, default=False)
+    texture = Column(String, nullable=True) # Sablé, Grainé
+    glazing_type = Column(String, nullable=True) # Ex: 4/16/4
+    installation_type = Column(String, nullable=True) # Neuf, Reno
+    doublage_thickness = Column(String, nullable=True) # For Neuf: 70, 100, etc.
+    keep_existing_frame = Column(Boolean, default=False) # For Reno
+    
+    hardware_type = Column(String, nullable=True) # Standard, Security
+    is_pmr_compliant = Column(Boolean, default=False)
+    
+    # Logistics
+    floor_number = Column(Integer, default=0)
+    access_difficulty = Column(String, nullable=True) # None, Crane, etc.
+    environment = Column(String, default="Standard") # Standard, Coastal, Urban High-Rise
+    
+    photos = Column(String) # Comma separated filenames or JSON list
+    signature = Column(String) # Path to signature image
+    
+    # Sales info
+    quote_sent_at = Column(DateTime, nullable=True)
+    
+    status = Column(SAEnum(MMGStatus), default=MMGStatus.SENT)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Link to Order (once validated and imported)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
+    order = relationship("Order")

@@ -5,6 +5,7 @@ import Login from './pages/Login';
 import OperatorDashboard from './pages/OperatorDashboard';
 import ManagerDashboard from './pages/ManagerDashboard';
 import ManualUpload from './pages/ManualUpload';
+import MMGDossiers from './pages/MMGDossiers';
 
 const ProtectedRoute = ({ children }) => {
     const { user } = useAuth();
@@ -35,6 +36,14 @@ export default function App() {
                         element={
                             <ProtectedRoute>
                                 <ManagerDashboard />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/mmg"
+                        element={
+                            <ProtectedRoute>
+                                <MMGDossiers />
                             </ProtectedRoute>
                         }
                     />

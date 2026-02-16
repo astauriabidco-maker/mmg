@@ -11,7 +11,12 @@ def get_queue(station: str, db: Session = Depends(get_db)):
     # Get pending or in_progress items for this station, ordered by priority
     queue = db.query(models.Planning).filter(
         models.Planning.station == station,
-        models.Planning.status.in_([models.PlanningStatus.PENDING, models.PlanningStatus.IN_PROGRESS])
+        models.Planning.status.in_([
+            models.PlanningStatus.PENDING, 
+            models.PlanningStatus.IN_PROGRESS,
+            models.PlanningStatus.PAUSED,
+            models.PlanningStatus.ISSUE
+        ])
     ).order_by(models.Planning.priority.desc(), models.Planning.created_at).all()
     return queue
 
@@ -157,8 +162,8 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db)):
     await manager.broadcast("refresh")
     return {"status": "stopped", "next_station": next_station}
 
-@router.post("/{planning_id}/defect")
-async def report_defect(planning_id: int, db: Session = Depends(get_db)):
+@router.post("/{planning_id}/issue")
+async def report_issue(planning_id: int, item: schemas.PlanningIssue, db: Session = Depends(get_db)):
     from ..core.websocket import manager
     from datetime import datetime
     
@@ -166,7 +171,8 @@ async def report_defect(planning_id: int, db: Session = Depends(get_db)):
     if not task:
         raise HTTPException(404, "Task not found")
         
-    task.status = models.PlanningStatus.DEFECT
+    task.status = models.PlanningStatus.ISSUE
+    task.issue_notes = item.notes
     
     # Close Production Log if running
     log = db.query(models.ProductionLog).filter(
@@ -182,7 +188,6 @@ async def report_defect(planning_id: int, db: Session = Depends(get_db)):
     db.commit()
     await manager.broadcast("refresh")
     
-    # Send Alert (Email/Console)
-    print(f"!!! DEFECT REPORTED ON ORDER {task.order_id} STATION {task.station} !!!")
+    print(f"!!! PROBLEM REPORTED ON ORDER {task.order_id} STATION {task.station}: {item.notes} !!!")
     
-    return {"status": "defect_reported"}
+    return {"status": "issue_reported"}

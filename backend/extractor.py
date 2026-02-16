@@ -19,16 +19,17 @@ logger = logging.getLogger("PDFExtractor")
 class PDFExtractor:
     def __init__(self):
         # Global Patterns
-        self.devis_ref_pattern = re.compile(r"DEVIS N°\s*(\d+(?:-\d+)?)", re.IGNORECASE)
-        self.client_pattern = re.compile(r"Nom du client\s*:\s*(.*)", re.IGNORECASE)
+        self.devis_ref_pattern = re.compile(r"DEVIS N°\s*([\w\d-]+)", re.IGNORECASE)
+        # We will use iterative search for client in the process method
         
         # Position Splitter
-        self.pos_pattern = re.compile(r"POS\s*(\d+)[:\s]+(\d+)\s*(?:Pce|PCE)", re.MULTILINE | re.IGNORECASE)
+        # Matches "BAT D 1 Pce" OR "Position : 1 Quantite : 2"
+        self.pos_pattern = re.compile(r"^(?:Position\s*:\s*(\d+)\s*Quantite\s*:\s*(\d+)|([\w\s\.-]+?)\s+(\d+)\s*(?:Pce|PCE))", re.MULTILINE | re.IGNORECASE)
         
         # Detail Patterns (per position)
-        self.dim_pattern = re.compile(r"(?:châssis\s+|L:\s*)(\d+)\s*(?:mm\s+x\s+|H:\s*)(\d+)\s*(?:mm)?", re.IGNORECASE)
-        self.color_pattern = re.compile(r"(?:RAL\s+|Couleur:\s*)(\d+\w*)\s*(?:\(([^)]+)\))?", re.IGNORECASE)
-        self.system_pattern = re.compile(r"(?:Système|Gamme):\s*(.*)", re.IGNORECASE)
+        self.dim_pattern = re.compile(r"(?:châssis|L[:\s]+|Largeur)\s*(\d+)\s*mm\s*(?:x|Hauteur)\s*(?:H[:\s]+)?(\d+)\s*mm", re.IGNORECASE)
+        self.color_pattern = re.compile(r"(?:RAL\s+|Couleur[:\s]+|Profilés[:\s]+RAL\s+| Couleur\s+Ex\s+)([\w\d\s/-]+?)(?:\(([^)]+)\)|/BI//|$)", re.IGNORECASE)
+        self.system_pattern = re.compile(r"(?:Système|Gamme)[:\s]+(.*)", re.IGNORECASE)
 
     def process(self, file_path: str) -> List[Dict]:
         """
@@ -59,13 +60,33 @@ class PDFExtractor:
                     logger.error(f"Error reading PDF: {e}")
             
             # 1. Global Field Extraction
-            global_ref_match = self.devis_ref_pattern.search(text)
+            global_ref_match = re.search(r"(?:DEVIS N°|Offre Nouveau document)\s*[:\s]*([\w\d-]+)", text, re.IGNORECASE)
             devis_ref = global_ref_match.group(1) if global_ref_match else file_ref
             
-            client_match = self.client_pattern.search(text)
-            client = client_match.group(1).strip() if client_match else "UNKNOWN"
+            client = "UNKNOWN"
+            # Try specific keywords first
+            for kw in ["Nom d'Affaire", "Etablissement", "Nom du client", "Client", "Adressé à"]:
+                match = re.search(fr"{kw}\s*[:\s]+(.*)", text, re.IGNORECASE)
+                if match:
+                    val = match.group(1).strip()
+                    if len(val) > 2 and "RIB" not in val:
+                         client = val
+                         break
             
-            material = "ALU" if ("Aluminium" in text or "Cortizo" in text) else "PVC"
+            # Fallback for Model 3: First line usually contains client code/name
+            if client == "UNKNOWN":
+                lines = [l.strip() for l in text.split('\n') if l.strip()]
+                for line in lines[:5]: # Check first 5 lines
+                    # Skip if line looks like a date (DD/MM/YYYY)
+                    if re.match(r"\d{1,2}/\d{1,2}/\d{2,4}", line):
+                        continue
+                    if len(line) > 2 and "RIB" not in line.upper() and "PAGE" not in line.upper():
+                         client = line
+                         break
+            
+            material = "PVC" if ("PVC" in text or "KOMMERLING" in text) else "ALU"
+            if "CORTIZO" in text or "Aluminium" in text:
+                material = "ALU"
 
             # 2. Multi-Position Extraction
             positions = list(self.pos_pattern.finditer(text))
@@ -81,8 +102,9 @@ class PDFExtractor:
                 end = positions[i+1].start() if i+1 < len(positions) else len(text)
                 section_text = text[start:end]
                 
-                pos_name = f"POS-{match.group(1)}"
-                qty = int(match.group(2))
+                pos_num = match.group(1) or match.group(3)
+                pos_name = f"POS-{pos_num.strip()}"
+                qty = int(match.group(2) or match.group(4))
                 
                 res = self._create_result(section_text, devis_ref, client, material, pos_name)
                 res["quantity"] = qty
@@ -110,7 +132,16 @@ class PDFExtractor:
         color = "UNKNOWN"
         color_match = self.color_pattern.search(text)
         if color_match:
-            color = f"RAL {color_match.group(1)} ({color_match.group(2)})"
+            raw_color = color_match.group(1).strip()
+            # Don't prefix with RAL if it already has it or if it's a specific label
+            if "RAL" in raw_color.upper() or "BLANC" in raw_color.upper():
+                color = raw_color
+                if color_match.group(2):
+                    color += f" ({color_match.group(2)})"
+            else:
+                color = f"RAL {raw_color}"
+                if color_match.group(2):
+                    color += f" ({color_match.group(2)})"
             
         # System
         sys_type = "UNKNOWN"
@@ -119,7 +150,7 @@ class PDFExtractor:
             sys_type = sys_match.group(1).strip()
 
         # Clean reference
-        clean_pos = pos_name.replace(" ", "-").replace("/", "-")
+        clean_pos = re.sub(r'[\s\n]+', '-', pos_name.strip())
         full_ref = f"CMD-{base_ref}-{clean_pos}"
         if len(full_ref) > 50: # Pruning long refs
              full_ref = full_ref[:50]

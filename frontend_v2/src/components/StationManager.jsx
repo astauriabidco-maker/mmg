@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, ArrowUp, ArrowDown, Save, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, ArrowUp, ArrowDown, Save, RefreshCw, Edit2, X } from 'lucide-react';
 import api from '../services/api';
 
 export default function StationManager() {
     const [stations, setStations] = useState([]);
     const [loading, setLoading] = useState(true);
     const [newStation, setNewStation] = useState({ code: '', display_name: '', material: 'PVC', order_index: 0 });
+    const [editingStation, setEditingStation] = useState(null);
 
     const fetchStations = async () => {
         setLoading(true);
@@ -31,6 +32,17 @@ export default function StationManager() {
             fetchStations();
         } catch (err) {
             alert(err.response?.data?.detail || "Erreur de création");
+        }
+    };
+
+    const handleUpdate = async () => {
+        if (!editingStation.code || !editingStation.display_name) return alert("Remplissez tous les champs");
+        try {
+            await api.put(`/v2/config/stations/${editingStation.id}`, editingStation);
+            setEditingStation(null);
+            fetchStations();
+        } catch (err) {
+            alert(err.response?.data?.detail || "Erreur de mise à jour");
         }
     };
 
@@ -90,6 +102,9 @@ export default function StationManager() {
                             <button onClick={() => handleMove(s.id, 'down')} disabled={i === arr.length - 1} className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-500 disabled:opacity-20">
                                 <ArrowDown className="w-4 h-4" />
                             </button>
+                            <button onClick={() => setEditingStation(s)} className="p-1.5 hover:bg-indigo-50 rounded text-slate-400 hover:text-indigo-600">
+                                <Edit2 className="w-4 h-4" />
+                            </button>
                             <button onClick={() => handleDelete(s.id)} className="p-1.5 hover:bg-red-50 rounded text-slate-400 hover:text-red-500 ml-2">
                                 <Trash2 className="w-4 h-4" />
                             </button>
@@ -115,46 +130,64 @@ export default function StationManager() {
                 </button>
             </div>
 
-            {/* CREATE FORM */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm mb-10 flex flex-wrap gap-4 items-end">
-                <div className="flex-1 min-w-[150px]">
-                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-2">Code Technique</label>
-                    <input
-                        type="text"
-                        placeholder="ex: PVC_FINITION"
-                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 ring-blue-500/20 outline-none font-mono text-sm"
-                        value={newStation.code}
-                        onChange={e => setNewStation({ ...newStation, code: e.target.value })}
-                    />
+            {/* CREATE / EDIT FORM */}
+            <div className={`bg-white p-6 rounded-2xl border ${editingStation ? 'border-indigo-200 bg-indigo-50/10' : 'border-slate-100'} shadow-sm mb-10`}>
+                <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2">
+                    {editingStation ? <Edit2 className="w-3 h-3 text-indigo-500" /> : <Plus className="w-3 h-3 text-blue-500" />}
+                    {editingStation ? `Modifier le poste: ${editingStation.display_name}` : 'Nouveau Poste'}
+                </h3>
+                <div className="flex flex-wrap gap-4 items-end">
+                    <div className="flex-1 min-w-[150px]">
+                        <label className="block text-[10px] uppercase font-bold text-slate-400 mb-2">Code Technique</label>
+                        <input
+                            type="text"
+                            placeholder="ex: PVC_FINITION"
+                            className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 ring-blue-500/20 outline-none font-mono text-sm"
+                            value={editingStation ? editingStation.code : newStation.code}
+                            onChange={e => editingStation ? setEditingStation({ ...editingStation, code: e.target.value }) : setNewStation({ ...newStation, code: e.target.value })}
+                        />
+                    </div>
+                    <div className="flex-1 min-w-[200px]">
+                        <label className="block text-[10px] uppercase font-bold text-slate-400 mb-2">Nom Affiché</label>
+                        <input
+                            type="text"
+                            placeholder="ex: Finition & Nettoyage"
+                            className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 ring-blue-500/20 outline-none"
+                            value={editingStation ? editingStation.display_name : newStation.display_name}
+                            onChange={e => editingStation ? setEditingStation({ ...editingStation, display_name: e.target.value }) : setNewStation({ ...newStation, display_name: e.target.value })}
+                        />
+                    </div>
+                    {!editingStation && (
+                        <div className="w-[120px]">
+                            <label className="block text-[10px] uppercase font-bold text-slate-400 mb-2">Gamme</label>
+                            <select
+                                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 ring-blue-500/20 outline-none font-bold text-slate-700"
+                                value={newStation.material}
+                                onChange={e => setNewStation({ ...newStation, material: e.target.value })}
+                            >
+                                <option value="PVC">PVC</option>
+                                <option value="ALU">ALU</option>
+                            </select>
+                        </div>
+                    )}
+                    <div className="flex gap-2">
+                        <button
+                            onClick={editingStation ? handleUpdate : handleCreate}
+                            className={`px-6 py-2.5 ${editingStation ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/20' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/20'} text-white font-bold rounded-xl transition-all shadow-lg active:scale-95 flex items-center gap-2`}
+                        >
+                            {editingStation ? <Save className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+                            {editingStation ? 'Sauvegarder' : 'Ajouter'}
+                        </button>
+                        {editingStation && (
+                            <button
+                                onClick={() => setEditingStation(null)}
+                                className="p-2.5 bg-slate-100 text-slate-500 hover:bg-slate-200 rounded-xl transition-all"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        )}
+                    </div>
                 </div>
-                <div className="flex-1 min-w-[200px]">
-                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-2">Nom Affiché</label>
-                    <input
-                        type="text"
-                        placeholder="ex: Finition & Nettoyage"
-                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 ring-blue-500/20 outline-none"
-                        value={newStation.display_name}
-                        onChange={e => setNewStation({ ...newStation, display_name: e.target.value })}
-                    />
-                </div>
-                <div className="w-[120px]">
-                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-2">Gamme</label>
-                    <select
-                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 ring-blue-500/20 outline-none font-bold text-slate-700"
-                        value={newStation.material}
-                        onChange={e => setNewStation({ ...newStation, material: e.target.value })}
-                    >
-                        <option value="PVC">PVC</option>
-                        <option value="ALU">ALU</option>
-                    </select>
-                </div>
-                <button
-                    onClick={handleCreate}
-                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20 active:scale-95 flex items-center gap-2"
-                >
-                    <Plus className="w-5 h-5" />
-                    Ajouter
-                </button>
             </div>
 
             {/* STATION LISTS */}

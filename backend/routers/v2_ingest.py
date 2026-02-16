@@ -55,6 +55,11 @@ def ingest_order(
     db.add(planning)
     db.commit()
 
+    # 4. Notify Operators (Real-time Broadcast)
+    from ..core.websocket import manager
+    import asyncio
+    asyncio.run(manager.broadcast("refresh"))
+
     return new_order
 
 @router.post("/upload")

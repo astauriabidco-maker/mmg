@@ -10,7 +10,9 @@ export const AuthProvider = ({ children }) => {
     useEffect(() => {
         const token = localStorage.getItem('token');
         if (token) {
-            setUser({ username: 'Operator' });
+            const role = localStorage.getItem('role');
+            const stations = JSON.parse(localStorage.getItem('stations') || '[]');
+            setUser({ username: 'Operator', role, stations });
             api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         }
         setLoading(false);
@@ -24,14 +26,14 @@ export const AuthProvider = ({ children }) => {
 
             const res = await api.post('/token', formData);
 
-            const { access_token, role, station } = res.data;
+            const { access_token, role, stations } = res.data;
             if (access_token) {
                 localStorage.setItem('token', access_token);
                 localStorage.setItem('role', role);
-                if (station) localStorage.setItem('station', station);
+                localStorage.setItem('stations', JSON.stringify(stations || []));
 
                 api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
-                setUser({ username, role, station });
+                setUser({ username, role, stations });
                 return true;
             }
         } catch (e) {

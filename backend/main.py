@@ -1,14 +1,25 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from . import models, database
-from .routers import web, api, v2_planning, v2_analytics, v2_printer, v2_ingest, v2_config
+from .routers import web, api, v2_planning, v2_analytics, v2_printer, v2_ingest, v2_config, v2_mmg
 from .core.websocket import manager
 from fastapi import WebSocket, WebSocketDisconnect
+
+from fastapi.middleware.cors import CORSMiddleware
 
 # Initialize DB
 models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI(title="Atelier Menuiserie V1 Pro")
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # For production, specify ["http://localhost:5173"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Mount Static Config (CSS, JS)
 app.mount("/static", StaticFiles(directory="backend/static"), name="static")
@@ -21,6 +32,7 @@ app.include_router(v2_analytics.router)
 app.include_router(v2_printer.router)
 app.include_router(v2_ingest.router)
 app.include_router(v2_config.router)
+app.include_router(v2_mmg.router)
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: int):
@@ -64,6 +76,15 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     
     access_token = security.create_access_token(
-        data={"sub": user.username, "role": user.role.value, "station": user.station if user.station else None}
+        data={
+            "sub": user.username, 
+            "role": user.role.value, 
+            "stations": [s.code for s in user.stations]
+        }
     )
-    return {"access_token": access_token, "token_type": "bearer", "role": user.role.value, "station": user.station if user.station else None}
+    return {
+        "access_token": access_token, 
+        "token_type": "bearer", 
+        "role": user.role.value, 
+        "stations": [s.code for s in user.stations]
+    }
