@@ -1,0 +1,1273 @@
+import React, { useState, useEffect } from 'react';
+import api from '../services/api';
+import { 
+    Package, MapPin, Search, Plus, Trash2, Layers, 
+    ArrowRight, Box, Hash, ChevronRight, ChevronDown, 
+    Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download
+} from 'lucide-react';
+import ChatterWidget from '../components/ChatterWidget';
+
+export default function StockDashboard() {
+    const [products, setProducts] = useState([]);
+    const [locations, setLocations] = useState([]);
+    const [quants, setQuants] = useState([]);
+    const [transactions, setTransactions] = useState([]);
+    
+    const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
+    const [searchTerm, setSearchTerm] = useState('');
+    const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
+    const [showLowStockOnly, setShowLowStockOnly] = useState(false);
+    const [showAuditLogs, setShowAuditLogs] = useState(false);
+    const [expandedProducts, setExpandedProducts] = useState({});
+    
+    // Inline edit states
+    const [addingSubLocTo, setAddingSubLocTo] = useState(null);
+    const [newSubLocName, setNewSubLocName] = useState('');
+    
+    const [editingQuant, setEditingQuant] = useState(null); // { variantId: 1, locId: 2 }
+    const [quantInputValue, setQuantInputValue] = useState('');
+    
+    // Modals
+    const [showTransferModal, setShowTransferModal] = useState(false);
+    const [transferData, setTransferData] = useState({ variant: null, sourceLocId: null, targetLocId: '', qty: '' });
+    
+    const [showNewProductModal, setShowNewProductModal] = useState(false);
+    const [showImportModal, setShowImportModal] = useState(false);
+    const [newProductForm, setNewProductForm] = useState({
+        reference_base: '', name: '', material_type: 'PVC', unit: 'pce', supplier: '', product_type: 'stockable', available_in_pos: false, image_url: '',
+        variant_ref: '', barcode: '', color: '', length_per_unit: '', supplier_reference: '', cost_price: '', min_threshold: 10
+    });
+
+    const [showEditProductModal, setShowEditProductModal] = useState(false);
+    const [editProductForm, setEditProductForm] = useState(null);
+
+    const [showEditVariantModal, setShowEditVariantModal] = useState(false);
+    const [editVariantForm, setEditVariantForm] = useState(null);
+
+    const [showAddVariantModal, setShowAddVariantModal] = useState(false);
+    const [addVariantForm, setAddVariantForm] = useState(null);
+
+    const [showReceptionModal, setShowReceptionModal] = useState(false);
+    const [receptionData, setReceptionData] = useState({ variant: null, targetLocId: '', qty: '' });
+    const [receptionSearch, setReceptionSearch] = useState('');
+
+
+    const [appConfigs, setAppConfigs] = useState([]);
+
+    const fetchData = async () => {
+        try {
+            const [prodRes, locRes, quantRes, txRes, configRes] = await Promise.all([
+                api.get('/v2/stock/products'),
+                api.get('/v2/stock/locations'),
+                api.get('/v2/stock/quants'),
+                api.get('/v2/stock/transactions'),
+                api.get('/v2/config/app_configs')
+            ]);
+            setAppConfigs(configRes.data || []);
+            setProducts(prodRes.data);
+            setLocations(locRes.data);
+            setQuants(quantRes.data);
+            setTransactions(txRes.data);
+        } catch (e) {
+            console.error("Erreur chargement données:", e);
+        }
+    };
+
+    useEffect(() => {
+        fetchData();
+    }, []);
+
+    // -------- INLINE LOCATION CREATION --------
+    const handleAddSubLocation = async (e, parentId) => {
+        if (e && e.preventDefault) e.preventDefault();
+        if (!newSubLocName.trim()) { setAddingSubLocTo(null); return; }
+        
+        // Find parent to inherit usage, or default to internal
+        const parent = locations.find(l => l.id === parentId);
+        const usage = parent ? parent.usage : 'internal';
+
+        try {
+            await api.post('/v2/stock/locations', {
+                name: newSubLocName,
+                usage: usage,
+                parent_id: parentId === 'root' ? null : parentId
+            });
+            setNewSubLocName('');
+            setAddingSubLocTo(null);
+            fetchData();
+        } catch (e) {
+            alert("Erreur lors de la création du lieu.");
+        }
+    };
+
+    const handleDeleteLocation = async (id, e) => {
+        e.stopPropagation();
+        if (!window.confirm("Action critique. Souhaitez-vous retirer ce lieu ?")) return;
+        try {
+            const res = await api.delete(`/v2/stock/locations/${id}`);
+            if (activeLocationId === id) setActiveLocationId('global');
+            fetchData();
+            if (res.data && res.data.status === 'archived') {
+                alert("Information : Cet emplacement ayant un historique de mouvements, il n'a pas été supprimé mais Archivé.");
+            }
+        } catch (e) {
+            const errDetail = e.response?.data?.detail || "Impossible de traiter la demande.";
+            alert(errDetail);
+        }
+    };
+
+    // -------- INLINE QUANT EDITING (Auto-Adjustment) --------
+    const startEditingQuant = (variantId, locId, currentQty) => {
+        setEditingQuant({ variantId, locId });
+        setQuantInputValue(currentQty.toString());
+    };
+
+    const submitQuantEdit = async () => {
+        if (!editingQuant) return;
+        const newVal = parseFloat(quantInputValue);
+        if (isNaN(newVal)) { setEditingQuant(null); return; }
+
+        const { variantId, locId } = editingQuant;
+        const currentQuant = quants.find(q => q.variant_id === variantId && q.location_id === locId);
+        const currentQty = currentQuant ? currentQuant.quantity : 0;
+        
+        const diff = newVal - currentQty;
+        if (diff === 0) { setEditingQuant(null); return; }
+
+        // Determine counter-part location (Inventory Virtual)
+        const inventoryLoc = locations.find(l => l.usage === 'inventory');
+        if (!inventoryLoc) {
+            alert("Veuillez d'abord créer un lieu virtuel (usage: Perte/Ajustement) pour balancer l'inventaire dans la hiérarchie.");
+            setEditingQuant(null);
+            return;
+        }
+
+        const src = diff > 0 ? inventoryLoc.id : locId;
+        const dst = diff > 0 ? locId : inventoryLoc.id;
+        const qty = Math.abs(diff);
+
+        try {
+            await api.post('/v2/stock/transaction', {
+                variant_id: variantId,
+                quantity: qty,
+                location_id: src,
+                location_dest_id: dst,
+                notes: "Ajustement express"
+            });
+            fetchData();
+        } catch (e) {
+            alert("Erreur à l'ajustement du stock.");
+        }
+        setEditingQuant(null);
+    };
+
+    const handleQuantInputKeyDown = (e) => {
+        if (e.key === 'Enter') submitQuantEdit();
+        if (e.key === 'Escape') setEditingQuant(null);
+    };
+
+    // -------- EXPLICIT TRANSFER (A -> B) --------
+    const openTransferModal = (variant, sourceLocId) => {
+        setTransferData({ variant, sourceLocId, targetLocId: '', qty: '' });
+        setShowTransferModal(true);
+    };
+
+    const submitTransfer = async () => {
+        if (!transferData.targetLocId || !transferData.qty || isNaN(transferData.qty) || transferData.qty <= 0) return;
+        try {
+            await api.post('/v2/stock/transaction', {
+                variant_id: transferData.variant.id,
+                quantity: parseFloat(transferData.qty),
+                location_id: transferData.sourceLocId,
+                location_dest_id: parseInt(transferData.targetLocId),
+                notes: "Transfert Interne/Manuel"
+            });
+            setShowTransferModal(false);
+            fetchData();
+        } catch (e) {
+            alert("Erreur lors du transfert.");
+        }
+    };
+
+    // -------- RECEPTION (FOURNISSEUR -> DEPOT) --------
+    const openReceptionModal = () => {
+        setReceptionData({ variant: null, targetLocId: '', qty: '' });
+        setReceptionSearch('');
+        setShowReceptionModal(true);
+    };
+
+    const submitReception = async () => {
+        if (!receptionData.variant || !receptionData.targetLocId || !receptionData.qty || isNaN(receptionData.qty) || receptionData.qty <= 0) return;
+        
+        const supplierLoc = locations.find(l => l.usage === 'supplier');
+        if (!supplierLoc) {
+            alert("Erreur: Aucun lieu 'Fournisseur' trouvé dans la hiérarchie !");
+            return;
+        }
+
+        try {
+            await api.post('/v2/stock/transaction', {
+                variant_id: receptionData.variant.id,
+                quantity: parseFloat(receptionData.qty),
+                location_id: supplierLoc.id,               // Source: Virtual Supplier
+                location_dest_id: parseInt(receptionData.targetLocId), // Dest: Chosen Internal Shelf
+                notes: "Réception Achat Direct"
+            });
+            setShowReceptionModal(false);
+            fetchData();
+        } catch (e) {
+            alert("Erreur lors de la réception.");
+        }
+    };
+
+    // -------- PRODUCT AND VARIANT EDITING --------
+    const openEditProduct = (e, product) => {
+        e.stopPropagation();
+        setEditProductForm({
+            id: product.id,
+            reference_base: product.reference_base,
+            name: product.name,
+            material_type: product.material_type || '',
+            unit: product.unit || '',
+            supplier: product.supplier || '',
+            product_type: product.product_type || 'stockable',
+            available_in_pos: product.available_in_pos || false,
+            image_url: product.image_url || ''
+        });
+        setShowEditProductModal(true);
+    };
+
+    const submitEditProduct = async () => {
+        try {
+            await api.put(`/v2/stock/products/${editProductForm.id}`, {
+                reference_base: editProductForm.reference_base,
+                name: editProductForm.name,
+                material_type: editProductForm.material_type,
+                unit: editProductForm.unit,
+                supplier: editProductForm.supplier,
+                product_type: editProductForm.product_type,
+                available_in_pos: editProductForm.available_in_pos,
+                image_url: editProductForm.image_url
+            });
+            setShowEditProductModal(false);
+            fetchData();
+        } catch (e) { alert("Erreur lors de la modification du produit"); }
+    };
+
+    const openEditVariant = (e, variant) => {
+        e.stopPropagation();
+        setEditVariantForm({
+            id: variant.id,
+            reference: variant.reference,
+            barcode: variant.barcode || '',
+            color: variant.color || '',
+            cost_price: variant.cost_price || '',
+            min_threshold: variant.min_threshold || 10,
+            image_url: variant.image_url || ''
+        });
+        setShowEditVariantModal(true);
+    };
+
+    const submitEditVariant = async () => {
+        try {
+            await api.put(`/v2/stock/variants/${editVariantForm.id}`, {
+                reference: editVariantForm.reference,
+                barcode: editVariantForm.barcode || null,
+                color: editVariantForm.color,
+                cost_price: parseFloat(editVariantForm.cost_price) || 0,
+                min_threshold: parseFloat(editVariantForm.min_threshold) || 10,
+                image_url: editVariantForm.image_url || null
+            });
+            setShowEditVariantModal(false);
+            fetchData();
+        } catch (e) { alert("Erreur lors de la modification de la variante"); }
+    };
+
+    // -------- IMPORT CSV --------
+    const submitImportFile = async (e) => {
+        e.preventDefault();
+        const fileInput = document.getElementById('import-file-input');
+        if (!fileInput || !fileInput.files.length) return;
+        
+        const file = fileInput.files[0];
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+            const res = await api.post('/v2/stock/import/upload', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            alert(res.data.message);
+            setShowImportModal(false);
+            fetchData();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Erreur lors de l'import : Vérifiez votre fichier");
+        }
+    };
+
+    const openAddVariant = (e, product) => {
+        e.stopPropagation();
+        setAddVariantForm({
+            productId: product.id,
+            productName: product.name,
+            reference: `${product.reference_base}-`,
+            barcode: '',
+            color: '',
+            cost_price: '',
+            min_threshold: 10,
+            image_url: ''
+        });
+        setShowAddVariantModal(true);
+    };
+
+    const submitAddVariant = async () => {
+        try {
+            await api.post(`/v2/stock/products/${addVariantForm.productId}/variants`, {
+                reference: addVariantForm.reference,
+                barcode: addVariantForm.barcode || null,
+                color: addVariantForm.color,
+                cost_price: parseFloat(addVariantForm.cost_price) || 0,
+                min_threshold: parseFloat(addVariantForm.min_threshold) || 10,
+                image_url: addVariantForm.image_url || null
+            });
+            setShowAddVariantModal(false);
+            fetchData();
+        } catch (e) { alert("Erreur lors de l'ajout de la déclinaison"); }
+    };
+
+    // -------- NEW PRODUCT FAST --------
+    const handleQuickCreateProduct = async () => {
+        if (!newProductForm.name || !newProductForm.reference_base || !newProductForm.variant_ref) {
+            return alert("Nom et Références requises");
+        }
+        try {
+            await api.post('/v2/stock/products', {
+                reference_base: newProductForm.reference_base, name: newProductForm.name, material_type: newProductForm.material_type, unit: newProductForm.unit, supplier: newProductForm.supplier, product_type: newProductForm.product_type, available_in_pos: newProductForm.available_in_pos, image_url: newProductForm.image_url,
+                variants: [{
+                    reference: newProductForm.variant_ref, barcode: newProductForm.barcode || null, color: newProductForm.color, length_per_unit: newProductForm.length_per_unit ? parseFloat(newProductForm.length_per_unit) : null,
+                    supplier_reference: newProductForm.supplier_reference, cost_price: newProductForm.cost_price ? parseFloat(newProductForm.cost_price) : null,
+                    min_threshold: parseFloat(newProductForm.min_threshold)
+                }]
+            });
+            setShowNewProductModal(false);
+            fetchData();
+        } catch (e) {
+            alert("Erreur lors de la création.");
+        }
+    };
+
+    const handlePrintBarcode = async (variantId) => {
+        try {
+            const res = await api.post(`/v2/printer/print_barcode/${variantId}`);
+            alert(res.data.message);
+        } catch (e) {
+            const msg = e.response?.data?.detail || "Erreur d'impression";
+            alert(msg);
+        }
+    };
+
+    const handleExportExcel = () => {
+        window.open(`${api.defaults.baseURL}/v2/stock/export/inventory`, '_blank');
+    };
+
+    // -------- RENDERERS --------
+    const renderLocationTree = (parentLoc, depth = 0) => {
+        const children = locations.filter(l => l.parent_id === parentLoc.id);
+        const isInternal = parentLoc.usage === 'internal';
+        const isActive = activeLocationId === parentLoc.id;
+
+        return (
+            <div key={parentLoc.id} className="w-full">
+                <div 
+                    className={`group flex items-center justify-between py-2 px-3 cursor-pointer rounded-lg transition-colors border-l-4 ${isActive ? 'bg-blue-50 border-blue-500 text-blue-800' : 'border-transparent hover:bg-slate-100/50 text-slate-700'}`}
+                    style={{ paddingLeft: `${depth * 16 + 12}px` }}
+                    onClick={() => setActiveLocationId(parentLoc.id)}
+                >
+                    <div className="flex items-center gap-2">
+                        {isInternal ? <FolderOpen className={`w-4 h-4 ${isActive ? 'text-blue-500' : 'text-slate-400'}`} /> : <Truck className="w-4 h-4 text-emerald-500" />}
+                        <span className={`font-semibold text-sm ${isActive ? 'font-bold' : ''}`}>{parentLoc.name}</span>
+                        {!isInternal && <span className="text-[9px] uppercase font-black bg-emerald-100 text-emerald-700 px-1 rounded">{parentLoc.usage}</span>}
+                    </div>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={(e) => { e.stopPropagation(); setAddingSubLocTo(parentLoc.id); }} className="p-1 hover:bg-white rounded shadow-sm text-slate-400 hover:text-blue-600">
+                            <Plus className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={(e) => handleDeleteLocation(parentLoc.id, e)} className="p-1 hover:bg-red-50 rounded shadow-sm text-slate-400 hover:text-red-500">
+                            <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                </div>
+
+                {/* Inline Add Input */}
+                {addingSubLocTo === parentLoc.id && (
+                    <div className="pl-4 py-1" style={{ paddingLeft: `${(depth+1) * 16 + 12}px` }}>
+                        <div className="flex items-center gap-2">
+                            <input 
+                                autoFocus 
+                                value={newSubLocName} 
+                                onChange={e=>setNewSubLocName(e.target.value)} 
+                                onBlur={() => setAddingSubLocTo(null)} 
+                                onKeyDown={e => {
+                                    if (e.key === 'Escape') setAddingSubLocTo(null);
+                                    if (e.key === 'Enter') handleAddSubLocation(e, parentLoc.id);
+                                }} 
+                                className="flex-1 text-sm p-1.5 border border-blue-300 rounded shadow-inner outline-none focus:ring-2 focus:ring-blue-500" 
+                                placeholder="Nom sous-lieu... Entrée" 
+                            />
+                        </div>
+                    </div>
+                )}
+
+                {children.length > 0 && (
+                    <div className="flex flex-col">
+                        {children.map(c => renderLocationTree(c, depth + 1))}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const toggleExpand = (id) => {
+        setExpandedProducts(prev => ({ ...prev, [id]: !prev[id] }));
+    };
+
+    const getFullLocationName = (loc) => {
+        if (!loc.parent_id) return loc.name;
+        const parent = locations.find(l => l.id === loc.parent_id);
+        return parent ? `${getFullLocationName(parent)} > ${loc.name}` : loc.name;
+    };
+
+    // Calculate Grid Data grouped by Product
+    let groupedData = [];
+    let totalValuation = 0;
+    let totalLowStockCount = 0;
+
+    products.forEach(p => {
+        let hasVisibleVariant = false;
+        const variantsData = [];
+
+        p.variants.forEach(v => {
+            let stockToDisplay = 0;
+            let locId = null;
+            if (activeLocationId === 'global') {
+                const totalInternalStock = quants.filter(q => q.variant_id === v.id && locations.find(l => l.id === q.location_id)?.usage === 'internal').reduce((acc, curr) => acc + curr.quantity, 0);
+                stockToDisplay = totalInternalStock;
+            } else {
+                // Find all descendant location IDs including the active one
+                const getDescendants = (id) => {
+                    const children = locations.filter(l => l.parent_id === id).map(l => l.id);
+                    return [id, ...children.flatMap(getDescendants)];
+                };
+                const validLocIds = getDescendants(activeLocationId);
+                
+                const totalInSubTree = quants.filter(q => q.variant_id === v.id && validLocIds.includes(q.location_id)).reduce((acc, curr) => acc + curr.quantity, 0);
+                stockToDisplay = totalInSubTree;
+                locId = activeLocationId;
+            }
+
+            const matchSearch = searchTerm === '' || 
+                p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                p.reference_base.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                v.reference.toLowerCase().includes(searchTerm.toLowerCase());
+
+            const isVisibleBase = searchTerm ? matchSearch : (activeLocationId === 'global' ? true : stockToDisplay > 0);
+            
+            const isLowStock = stockToDisplay <= (v.min_threshold || 0);
+            if (activeLocationId === 'global') {
+                totalValuation += stockToDisplay * (v.cost_price || 0);
+                if (isLowStock) totalLowStockCount++;
+            }
+
+            const isVisible = isVisibleBase && (!showLowStockOnly || isLowStock);
+
+            if (isVisible) {
+                hasVisibleVariant = true;
+                variantsData.push({ fullVariant: v, variantLabel: v.color || "Standard", variantRef: v.reference, variantId: v.id, stockToDisplay, locId, isLowStock });
+            }
+        });
+
+        if (hasVisibleVariant) {
+            groupedData.push({
+                product: p,
+                variants: variantsData
+            });
+        }
+    });
+
+    return (
+        <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex overflow-hidden bg-white border border-slate-200 rounded-2xl shadow-sm animate-fade-in relative">
+            
+            {/* LEFT SIDEBAR : LOCATIONS TREE */}
+            <div className="w-[320px] bg-slate-50/50 border-r border-slate-200 flex flex-col items-stretch h-full">
+                <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white">
+                    <h3 className="font-black text-slate-800 flex items-center gap-2"><MapPin className="text-blue-600 w-5 h-5"/> Emplacements</h3>
+                    <div className="flex gap-1">
+                        <button onClick={(e) => setAddingSubLocTo('root')} className="p-1.5 hover:bg-slate-100 rounded-md text-slate-500 transition-colors" title="Créer un Entrepôt Principal"><Plus className="w-4 h-4"/></button>
+                    </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-2 scrollbar-hide space-y-1">
+                    <div 
+                        className={`flex items-center gap-2 py-2 px-3 cursor-pointer rounded-lg transition-colors border-left-4 mb-2 ${activeLocationId === 'global' ? 'bg-slate-800 text-white border-slate-800' : 'border-transparent hover:bg-slate-100 text-slate-700'}`}
+                        onClick={() => setActiveLocationId('global')}
+                    >
+                        <Layers className={`w-4 h-4 ${activeLocationId === 'global' ? 'text-blue-400' : 'text-slate-400'}`}/>
+                        <span className="font-black text-sm">Vue Globale (Tous Stocks)</span>
+                    </div>
+
+                    <div className="text-xs font-black text-blue-500 uppercase tracking-widest px-3 mb-2 mt-4 flex justify-between items-center">
+                        Nos Entrepôts
+                        <button onClick={(e) => setAddingSubLocTo('root')} className="p-1 hover:bg-blue-100 rounded text-blue-500 transition-colors" title="Créer un Entrepôt Principal"><Plus className="w-3.5 h-3.5"/></button>
+                    </div>
+                    
+                    {addingSubLocTo === 'root' && (
+                        <div className="px-3 mb-2">
+                            <div className="flex items-center gap-2">
+                                <input 
+                                    autoFocus 
+                                    value={newSubLocName} 
+                                    onChange={e=>setNewSubLocName(e.target.value)} 
+                                    onBlur={() => setAddingSubLocTo(null)} 
+                                    onKeyDown={e => {
+                                        if (e.key === 'Escape') setAddingSubLocTo(null);
+                                        if (e.key === 'Enter') handleAddSubLocation(e, 'root');
+                                    }} 
+                                    className="w-full text-sm p-2 border border-blue-300 rounded-lg shadow-inner outline-none focus:ring-2 focus:ring-blue-500" 
+                                    placeholder="Nom Entrepôt + Entrée" 
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    {locations.filter(l => !l.parent_id && l.usage === 'internal').map(rootLoc => renderLocationTree(rootLoc))}
+
+                    <div className="text-xs font-black text-slate-400 uppercase tracking-widest px-3 mb-2 mt-6 border-t border-slate-200 pt-4">Lieux Virtuels & Partenaires</div>
+                    {locations.filter(l => !l.parent_id && l.usage !== 'internal').map(rootLoc => renderLocationTree(rootLoc))}
+                </div>
+            </div>
+
+            {/* MAIN CONTENT : GRID */}
+            <div className="flex-1 flex flex-col bg-slate-50/50 relative">
+                
+                {/* TOOLBAR */}
+                <div className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-10">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-slate-100 p-2 rounded-lg text-slate-500">
+                            <Search className="w-4 h-4" />
+                        </div>
+                        <input 
+                            type="text" 
+                            placeholder="Rechercher article, réf, variante..." 
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="bg-transparent border-none outline-none font-medium text-slate-700 w-80 placeholder-slate-400"
+                        />
+                        {searchTerm && <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">Pour ajouter au lieu, cherchez ici</span>}
+                    </div>
+
+                    <div className="flex gap-3">
+                        <div className="flex items-center bg-slate-100 rounded-xl p-1 mr-4">
+                            <button onClick={() => setViewMode('list')} className={`px-3 py-1.5 rounded-lg flex items-center justify-center transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
+                                <List className="w-4 h-4"/>
+                            </button>
+                            <button onClick={() => setViewMode('kanban')} className={`px-3 py-1.5 rounded-lg flex items-center justify-center transition-colors ${viewMode === 'kanban' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
+                                <LayoutGrid className="w-4 h-4"/>
+                            </button>
+                        </div>
+                        <button onClick={() => setShowAuditLogs(true)} className="px-3 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-2 font-bold text-sm mr-2">
+                            <Layers className="w-4 h-4"/> Audit Mouvements
+                        </button>
+                        <button onClick={() => fetchData()} className="px-3 py-2 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-2 font-bold text-sm">
+                            <RefreshCw className="w-4 h-4"/> Sync
+                        </button>
+                        <button onClick={openReceptionModal} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-sm shadow-emerald-500/30 transition-colors flex items-center gap-2 font-bold text-sm">
+                            <Truck className="w-4 h-4"/> Entrée Stock
+                        </button>
+                        <button onClick={() => setShowNewProductModal(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-sm shadow-blue-500/30 transition-colors flex items-center gap-2 font-bold text-sm">
+                            <Plus className="w-4 h-4"/> Nv. PIM
+                        </button>
+                        <button onClick={handleExportExcel} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm shadow-emerald-500/30 rounded-xl transition-colors flex items-center gap-2 font-bold text-sm">
+                            <Download className="w-4 h-4"/> Export Excel
+                        </button>
+                        <button onClick={() => setShowImportModal(true)} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl transition-colors flex items-center gap-2 font-bold text-sm">
+                            <FileText className="w-4 h-4"/> Import (XLSX)
+                        </button>
+                    </div>
+                </div>
+
+                {/* HEADER INFO */}
+                <div className="px-6 py-4 bg-white/50 border-b border-slate-200 shrink-0 flex justify-between items-start">
+                    <div>
+                        <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                            {activeLocationId === 'global' ? "Inventaire Global Unifié" : `Contenu de : ${locations.find(l => l.id === activeLocationId)?.name}`}
+                        </h2>
+                        <p className="text-sm font-medium text-slate-500 mt-1">
+                            {activeLocationId === 'global' 
+                                ? "⚠️ VUE GLOBALE : Les quantités ne sont PAS modifiables ici."
+                                : "✅ Ajustez les stocks en 1 Clic : Double-cliquez sur la quantité de la variante pour la modifier."}
+                        </p>
+                    </div>
+
+                    <div className="flex gap-4">
+                        {activeLocationId === 'global' && (
+                            <div className="bg-slate-800 text-white px-4 py-2 rounded-xl flex flex-col justify-center shadow-lg border border-slate-700">
+                                <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Valorisation du Stock</span>
+                                <span className="text-xl font-black tracking-tight">{totalValuation.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
+                            </div>
+                        )}
+                        <button 
+                            onClick={() => setShowLowStockOnly(!showLowStockOnly)}
+                            className={`px-4 py-2 rounded-xl border flex flex-col justify-center transition-all ${showLowStockOnly || totalLowStockCount > 0 ? 'bg-red-50 border-red-200 hover:bg-red-100 text-red-600 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500'}`}
+                        >
+                            <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Alertes Rupture</span>
+                            <span className="text-lg font-black tracking-tight">{totalLowStockCount} variante(s)</span>
+                        </button>
+                    </div>
+                </div>
+
+                {/* THE GRID / LIST */}
+                <div className="flex-1 overflow-y-auto w-full relative p-6">
+                    {groupedData.length === 0 && (
+                        <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-200 rounded-3xl m-6">
+                            <Box className="w-12 h-12 text-slate-300 mb-4" />
+                            <p className="text-center text-slate-400 font-bold">
+                                Aucun produit trouvé ou vide dans cet emplacement. <br/> <span className="text-sm font-medium italic">Faites une recherche pour le faire apparaître ici et ajuster son stock.</span>
+                            </p>
+                        </div>
+                    )}
+
+                    {viewMode === 'list' && groupedData.length > 0 && (
+                        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                            <table className="w-full text-left border-collapse">
+                                <thead className="bg-slate-50 border-b border-slate-200">
+                                    <tr>
+                                        <th className="py-3 px-6 text-xs font-black text-slate-400 uppercase tracking-widest w-1/3">Famille PIM</th>
+                                        <th className="py-3 px-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Catégorie</th>
+                                        <th className="py-3 px-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Fournisseur</th>
+                                        <th className="py-3 px-6 text-xs font-black text-slate-400 uppercase tracking-widest text-right">Contenu Visuel</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {groupedData.map(({ product, variants }) => {
+                                        const isExpanded = expandedProducts[product.id];
+                                        return (
+                                            <React.Fragment key={product.id}>
+                                                <tr className="group hover:bg-slate-50 transition-colors cursor-pointer border-l-4 border-l-transparent hover:border-l-blue-400" onClick={() => toggleExpand(product.id)}>
+                                                    <td className="py-4 px-6 flex items-center gap-4">
+                                                        <button className="text-slate-400 bg-white shadow-sm p-1 rounded-md border border-slate-100 group-hover:text-blue-500 transition-colors">
+                                                            {isExpanded ? <ChevronDown className="w-5 h-5"/> : <ChevronRight className="w-5 h-5"/>}
+                                                        </button>
+                                                        <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-slate-50 border border-slate-200 shrink-0 overflow-hidden relative">
+                                                            {product.image_url ? 
+                                                                <img src={product.image_url} alt={product.name} className="w-full h-full object-cover" /> :
+                                                                <Image className="w-5 h-5 text-slate-300" />
+                                                            }
+                                                        </div>
+                                                        <div>
+                                                            <p className="font-bold text-slate-800 text-lg group-hover:text-blue-700 transition-colors">{product.name}</p>
+                                                            <p className="text-xs font-bold text-slate-400">Réf : {product.reference_base}</p>
+                                                        </div>
+                                                    </td>
+                                                    <td className="py-4 px-4 text-center">
+                                                        <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider">{product.material_type}</span>
+                                                    </td>
+                                                    <td className="py-4 px-4 text-center">
+                                                        {product.supplier ? <span className="bg-slate-800 text-white px-3 py-1.5 rounded-lg text-xs uppercase tracking-wide font-black">{product.supplier}</span> : <span className="text-slate-300">-</span>}
+                                                    </td>
+                                                    <td className="py-4 px-6 text-right">
+                                                        <div className="flex items-center justify-end gap-3">
+                                                            <span className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-black border border-blue-100">{variants.length} {variants.length > 1 ? 'déclinaisons' : 'déclinaison'}</span>
+                                                            <button 
+                                                                onClick={(e) => { e.stopPropagation(); openAddVariant(e, product); }} 
+                                                                className="px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-lg border border-emerald-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
+                                                                title="Ajouter une déclinaison"
+                                                            >
+                                                                <Plus className="w-3.5 h-3.5"/> Ajouter Variante
+                                                            </button>
+                                                            <button 
+                                                                onClick={(e) => { e.stopPropagation(); openEditProduct(e, product); }} 
+                                                                className="px-3 py-1.5 bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-800 rounded-lg border border-slate-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
+                                                            >
+                                                                <Edit3 className="w-3.5 h-3.5"/> Modifier
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                                
+                                                {/* EXPANDED VARIANTS SUB-TABLE */}
+                                                {isExpanded && variants.map((v) => {
+                                                    const isEditing = editingQuant?.variantId === v.variantId && editingQuant?.locId === v.locId;
+                                                    const canEditInline = activeLocationId !== 'global';
+                                                    return (
+                                                        <tr key={v.variantId} className="bg-slate-50/60 transition-colors border-l-4 border-l-blue-400">
+                                                            <td colSpan="4" className="py-0 px-0">
+                                                                <div className="pl-24 pr-6 py-4 flex items-center justify-between border-b border-slate-100/50 hover:bg-white transition-colors group/var">
+                                                                    <div className="flex flex-col">
+                                                                        <span className="font-bold text-slate-800 text-[15px]">{v.variantLabel}</span>
+                                                                        <span className="text-xs font-mono text-slate-500 uppercase tracking-widest">{v.variantRef}</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-6">
+                                                                        {/* QUANTITY : INLINE EDIT */}
+                                                                        <div className="text-right flex items-center gap-3 bg-slate-50 border border-slate-100 rounded-xl pr-1">
+                                                                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-3">STOCK</span>
+                                                                            {isEditing ? (
+                                                                                <input 
+                                                                                    autoFocus type="number" value={quantInputValue} onChange={(e) => setQuantInputValue(e.target.value)} onKeyDown={handleQuantInputKeyDown} onBlur={submitQuantEdit} className="w-20 text-center py-1 border-2 border-emerald-400 rounded-lg text-lg font-black bg-emerald-50 outline-none shadow-inner"
+                                                                                />
+                                                                            ) : (
+                                                                                <div 
+                                                                                    className={`inline-block px-3 py-1.5 rounded-lg cursor-text min-w-[3.5rem] text-center border-2 border-transparent hover:border-emerald-200 hover:bg-emerald-50 transition-colors font-black text-lg ${v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${!canEditInline ? 'cursor-not-allowed opacity-50' : ''}`}
+                                                                                    onClick={() => canEditInline && startEditingQuant(v.variantId, v.locId, v.stockToDisplay)}
+                                                                                    title={canEditInline ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible en vue globale"}
+                                                                                >
+                                                                                    {Math.round(v.stockToDisplay*100)/100}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                        {/* ROW ACTIONS */}
+                                                                        <div className="w-auto flex items-center gap-2 justify-end">
+                                                                            <button onClick={(e) => { e.stopPropagation(); handlePrintBarcode(v.variantId); }} className="opacity-0 group-hover/var:opacity-100 transition-opacity text-slate-400 hover:text-slate-700 bg-white border border-slate-200 hover:border-slate-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Imprimer Code-barre"><Hash className="w-3.5 h-3.5"/></button>
+                                                                            <button onClick={(e) => openEditVariant(e, v.fullVariant)} className="opacity-0 group-hover/var:opacity-100 transition-opacity text-slate-400 hover:text-blue-600 bg-white border border-slate-200 hover:border-blue-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Modifier Variante"><FileEdit className="w-3.5 h-3.5"/></button>
+                                                                            {activeLocationId !== 'global' && (
+                                                                                <button onClick={() => openTransferModal(v.fullVariant, activeLocationId)} className="opacity-0 group-hover/var:opacity-100 transition-opacity bg-white border border-slate-200 hover:border-slate-300 text-slate-800 px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 shadow-sm">
+                                                                                    Trsf <ArrowRight className="w-3.5 h-3.5"/>
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </React.Fragment>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                    {viewMode === 'kanban' && groupedData.length > 0 && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
+                            {groupedData.map(({ product, variants }) => {
+                                const totalStock = variants.reduce((acc, v) => acc + (v.stockToDisplay || 0), 0);
+                                const isLowStock = false; // Add logic if needed
+
+                                return (
+                                    <div key={product.id} className="bg-white rounded-3xl border border-slate-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group cursor-pointer" onClick={() => toggleExpand(product.id)}>
+                                        <div className="h-48 w-full bg-slate-50 relative overflow-hidden border-b border-slate-100">
+                                            {product.image_url ? (
+                                                <img src={product.image_url} alt={product.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                                            ) : (
+                                                <div className="w-full h-full flex flex-col items-center justify-center text-slate-300">
+                                                    <Image className="w-12 h-12 mb-2 opacity-50" />
+                                                    <span className="text-xs font-bold uppercase tracking-widest">Sans Image</span>
+                                                </div>
+                                            )}
+                                            <div className="absolute top-3 left-3 px-2.5 py-1 bg-white/90 backdrop-blur border border-white/50 rounded-lg shadow-sm text-[10px] font-black tracking-wider text-slate-700 uppercase">
+                                                {product.material_type}
+                                            </div>
+                                        </div>
+                                        <div className="p-5 flex-1 flex flex-col">
+                                            <p className="text-xs font-bold text-slate-400 mb-1">{product.reference_base}</p>
+                                            <h3 className="font-black text-lg text-slate-800 leading-tight mb-4 group-hover:text-blue-600 transition-colors">{product.name}</h3>
+                                            
+                                            <div className="mt-auto space-y-3">
+                                                <div className="flex items-end justify-between items-center py-2 border-t border-slate-100 mt-2">
+                                                    <div>
+                                                        <p className="text-[10px] uppercase text-slate-400 font-bold mb-0.5">Stock Total</p>
+                                                        <p className={`font-black text-xl leading-none ${isLowStock ? 'text-red-500' : 'text-emerald-500'}`}>{totalStock.toFixed(0)} <span className="text-sm font-bold text-slate-400">{product.unit || 'pce'}</span></p>
+                                                    </div>
+                                                    <div className="bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100">
+                                                        <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5"><Layers className="w-3.5 h-3.5" /> {variants.length} réf.</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* -------- TRANSFER POPUP -------- */}
+            {showTransferModal && (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl p-6 w-[400px] border border-slate-100">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="font-black text-lg">Transfert <ArrowRight className="inline w-4 h-4 mx-1"/> Interne</h3>
+                            <button onClick={()=>setShowTransferModal(false)} className="text-slate-400 hover:bg-slate-100 p-1.5 rounded"><X className="w-5 h-5"/></button>
+                        </div>
+                        <p className="text-sm font-bold text-slate-500 mb-4">{transferData.variant?.reference}</p>
+                        
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase mb-1">Destination (Interne)</label>
+                                <select 
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                                    value={transferData.targetLocId} onChange={e=>setTransferData({...transferData, targetLocId: e.target.value})}
+                                >
+                                    <option value="">-- Choisir un emplacement --</option>
+                                    {locations.filter(l => l.usage === 'internal').map(l => (
+                                        <option key={l.id} value={l.id} disabled={l.id === transferData.sourceLocId}>{getFullLocationName(l)}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase mb-1">Quantité (Total Pces/M)</label>
+                                <input 
+                                    type="number" 
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 font-black text-2xl text-center outline-none focus:ring-2 focus:ring-blue-500"
+                                    value={transferData.qty} onChange={e=>setTransferData({...transferData, qty: e.target.value})} placeholder="0"
+                                    autoFocus
+                                    onKeyDown={e => e.key === 'Enter' && submitTransfer()}
+                                />
+                            </div>
+                            <button onClick={submitTransfer} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 mt-2">
+                                Valider Mouvement
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* -------- RECEPTION MODAL -------- */}
+            {showReceptionModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-slate-100">
+                        <div className="flex items-center gap-3 mb-6 border-b border-slate-100 pb-4">
+                            <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-inner">
+                                <Truck className="w-6 h-6" />
+                            </div>
+                            <div>
+                                <h3 className="font-black text-2xl text-slate-800">Réceptionner du Matériel</h3>
+                                <p className="text-sm font-medium text-slate-500">Ajouter du stock depuis un fournisseur</p>
+                            </div>
+                            <button onClick={()=>setShowReceptionModal(false)} className="ml-auto text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                        </div>
+                        
+                        <div className="space-y-5">
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center justify-between">
+                                    <span>Article Réceptionné</span>
+                                </label>
+                                <div className="mb-2 relative">
+                                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                                    <input 
+                                        type="text" 
+                                        placeholder="Rechercher (Nom, Réf, Gencod)..." 
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 pl-10 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                                        value={receptionSearch}
+                                        onChange={(e) => setReceptionSearch(e.target.value)}
+                                    />
+                                </div>
+                                <select 
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                                    onChange={e => {
+                                        const v = products.flatMap(p => p.variants).find(vx => vx.id === parseInt(e.target.value));
+                                        setReceptionData({...receptionData, variant: v});
+                                    }}
+                                    value={receptionData.variant?.id || ''}
+                                >
+                                    <option value="">-- Choisir parmi les résultats --</option>
+                                    {products.map(p => {
+                                        const filteredVariants = p.variants.filter(v => 
+                                            !receptionSearch 
+                                            || p.name.toLowerCase().includes(receptionSearch.toLowerCase())
+                                            || p.reference_base.toLowerCase().includes(receptionSearch.toLowerCase())
+                                            || v.reference.toLowerCase().includes(receptionSearch.toLowerCase())
+                                            || (v.barcode && v.barcode.includes(receptionSearch))
+                                        );
+                                        if (filteredVariants.length === 0) return null;
+                                        return (
+                                            <optgroup key={p.id} label={p.name}>
+                                                {filteredVariants.map(v => <option key={v.id} value={v.id}>{v.reference} ({v.color || 'Std'})</option>)}
+                                            </optgroup>
+                                        );
+                                    })}
+                                </select>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Ranger dans le lieu</label>
+                                    <select 
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                                        value={receptionData.targetLocId} onChange={e=>setReceptionData({...receptionData, targetLocId: e.target.value})}
+                                    >
+                                        <option value="">- Dépôt Physique -</option>
+                                        {locations.filter(l => l.usage === 'internal').map(l => (
+                                            <option key={l.id} value={l.id}>{getFullLocationName(l)}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-emerald-500 uppercase tracking-widest mb-1.5">Quantité (Qté)</label>
+                                    <input 
+                                        type="number" 
+                                        className="w-full bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl p-3 font-black text-2xl text-center outline-none focus:ring-2 focus:ring-emerald-500 shadow-inner placeholder-emerald-300"
+                                        value={receptionData.qty} onChange={e=>setReceptionData({...receptionData, qty: e.target.value})} placeholder="0"
+                                    />
+                                </div>
+                            </div>
+
+                            <button onClick={submitReception} disabled={!receptionData.variant || !receptionData.targetLocId || !receptionData.qty} className="w-full py-4 mt-2 bg-emerald-600 disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-emerald-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 text-lg">
+                                Valider l'entrée en stock
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* -------- EDIT PRODUCT MODAL -------- */}
+            {showEditProductModal && editProductForm && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-slate-100">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="font-black text-2xl">Modifier Famille</h3>
+                            <button onClick={()=>setShowEditProductModal(false)} className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
+                        </div>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Réf Parent</label>
+                                <input value={editProductForm.reference_base} onChange={e=>setEditProductForm({...editProductForm, reference_base: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Nom Long</label>
+                                <input value={editProductForm.name} onChange={e=>setEditProductForm({...editProductForm, name: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Matière</label>
+                                    <input value={editProductForm.material_type} onChange={e=>setEditProductForm({...editProductForm, material_type: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Fournisseur</label>
+                                    <input value={editProductForm.supplier} onChange={e=>setEditProductForm({...editProductForm, supplier: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
+                                </div>
+                            </div>
+                            <div className="col-span-2 border-t border-slate-100 my-2 pt-4 flex gap-4">
+                                <div className="flex-1">
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Type d'Article</label>
+                                    <select value={editProductForm.product_type} onChange={e=>setEditProductForm({...editProductForm, product_type: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700">
+                                        <option value="stockable">Article Stockable (Inventaire)</option>
+                                        <option value="consumable">Consommable (Sans suivi fin)</option>
+                                        <option value="service">Service (Pose, Main d'oeuvre)</option>
+                                    </select>
+                                </div>
+                                <div className="flex-1">
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Image Produit (Optionnel)</label>
+                                    <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setEditProductForm, editProductForm)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
+                                    {editProductForm.image_url && <p className="text-xs text-emerald-500 mt-1 font-bold">Image chargée ✓</p>}
+                                </div>
+                            </div>
+                            <div className="col-span-2 flex items-center bg-slate-50 border border-slate-200 rounded-xl px-4 mt-2 py-2">
+                                <label className="flex items-center gap-3 cursor-pointer w-full">
+                                    <input type="checkbox" checked={editProductForm.available_in_pos} onChange={e=>setEditProductForm({...editProductForm, available_in_pos: e.target.checked})} className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                                    <span className="font-bold text-sm text-slate-700">Visible dans l'Application Vente (PDV)</span>
+                                </label>
+                            </div>
+
+                        </div>
+                        <button onClick={submitEditProduct} className="w-full mt-6 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black text-lg shadow-lg">Enregistrer</button>
+                    </div>
+                </div>
+            )}
+
+            {/* -------- EDIT VARIANT MODAL -------- */}
+            {showEditVariantModal && editVariantForm && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-slate-100">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="font-black text-2xl">Modifier Variante</h3>
+                            <button onClick={()=>setShowEditVariantModal(false)} className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
+                        </div>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="text-xs font-black text-emerald-500 mb-1 block">Référence Exacte (Interne)</label>
+                                <input value={editVariantForm.reference} onChange={e=>setEditVariantForm({...editVariantForm, reference: e.target.value})} className="w-full p-3 bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 rounded-xl" />
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-blue-500 mb-1 block">Code Barre / EAN13</label>
+                                <input value={editVariantForm.barcode} onChange={e=>setEditVariantForm({...editVariantForm, barcode: e.target.value})} className="w-full p-3 bg-blue-50 text-blue-700 font-mono border border-blue-200 rounded-xl" placeholder="Scanner..." />
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Spécificités (Couleur, Sens, Finition...)</label>
+                                <input list="specs-list" value={editVariantForm.color} onChange={e=>setEditVariantForm({...editVariantForm, color: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Prix Achat (€)</label>
+                                    <input type="number" value={editVariantForm.cost_price} onChange={e=>setEditVariantForm({...editVariantForm, cost_price: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Seuil d'alerte (Qté)</label>
+                                    <input type="number" value={editVariantForm.min_threshold} onChange={e=>setEditVariantForm({...editVariantForm, min_threshold: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Image Spécifique Variante (Optionnel)</label>
+                                <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setEditVariantForm, editVariantForm)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
+                                {editVariantForm.image_url && <p className="text-xs text-emerald-500 mt-1 font-bold">Image chargée ✓</p>}
+                            </div>
+                        </div>
+                        <button onClick={submitEditVariant} className="w-full mt-6 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-lg shadow-lg mb-6">Enregistrer Modifications</button>
+                        
+                        <div className="border-t border-slate-200 pt-6">
+                            <ChatterWidget modelName="variant" recordId={editVariantForm.id} />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* -------- ADD VARIANT MODAL -------- */}
+            {showAddVariantModal && addVariantForm && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-slate-100">
+                        <div className="flex justify-between items-center mb-6">
+                            <div>
+                                <h3 className="font-black text-2xl">Nouvelle Déclinaison</h3>
+                                <p className="text-sm font-bold text-slate-500">Pour : {addVariantForm.productName}</p>
+                            </div>
+                            <button onClick={()=>setShowAddVariantModal(false)} className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
+                        </div>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="text-xs font-black text-emerald-500 mb-1 block">Référence Exacte (Interne)</label>
+                                <input autoFocus value={addVariantForm.reference} onChange={e=>setAddVariantForm({...addVariantForm, reference: e.target.value})} className="w-full p-3 bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 rounded-xl" />
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-blue-500 mb-1 block">Code Barre / EAN13</label>
+                                <input value={addVariantForm.barcode} onChange={e=>setAddVariantForm({...addVariantForm, barcode: e.target.value})} className="w-full p-3 bg-blue-50 text-blue-700 font-mono border border-blue-200 rounded-xl" placeholder="Scanner..." />
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Spécificités (Couleur, Sens, Finition...)</label>
+                                <input list="specs-list" value={addVariantForm.color} onChange={e=>setAddVariantForm({...addVariantForm, color: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="Ex: RAL 9016 - GAUCHE" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Prix Achat (€)</label>
+                                    <input type="number" value={addVariantForm.cost_price} onChange={e=>setAddVariantForm({...addVariantForm, cost_price: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Seuil d'alerte (Qté)</label>
+                                    <input type="number" value={addVariantForm.min_threshold} onChange={e=>setAddVariantForm({...addVariantForm, min_threshold: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Image Spécifique Variante (Optionnel)</label>
+                                <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setAddVariantForm, addVariantForm)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
+                                {addVariantForm.image_url && <p className="text-xs text-emerald-500 mt-1 font-bold">Image chargée ✓</p>}
+                            </div>
+                        </div>
+                        <button onClick={submitAddVariant} className="w-full mt-6 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-lg shadow-lg">Ajouter au catalogue</button>
+                    </div>
+                </div>
+            )}
+
+            {/* -------- NEW PRODUCT MODAL (QUICK) -------- */}
+            {showNewProductModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-2xl w-full">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="font-black text-2xl">Créer un Produit</h3>
+                            <button onClick={()=>setShowNewProductModal(false)} className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="col-span-1">
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Réf Parent (ex: VEK-70)</label>
+                                <input value={newProductForm.reference_base} onChange={e=>setNewProductForm({...newProductForm, reference_base: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="Réf générique"/>
+                            </div>
+                            <div className="col-span-1">
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Nom Commercial / Description</label>
+                                <input value={newProductForm.name} onChange={e=>setNewProductForm({...newProductForm, name: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" placeholder="Dormant 70mm..."/>
+                            </div>
+                            
+                            {/* Nouveaux Champs PIM : Catégorie, Unité, Fournisseur */}
+                            <div className="col-span-1">
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Catégorie Matériau</label>
+                                <select value={newProductForm.material_type} onChange={e=>setNewProductForm({...newProductForm, material_type: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700">
+                                    <option value="">Sélectionner...</option>
+                                    {appConfigs.filter(c => c.category === 'material').map(c => (
+                                        <option key={c.id} value={c.value}>{c.value}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="col-span-1 grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Unité de Mesure</label>
+                                    <select value={newProductForm.unit} onChange={e=>setNewProductForm({...newProductForm, unit: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700">
+                                        <option value="">Sélectionner...</option>
+                                        {appConfigs.filter(c => c.category === 'unit').map(c => (
+                                            <option key={c.id} value={c.value}>{c.value}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Fournisseur (opt.)</label>
+                                    {/* Pour le fournisseur on laisse libre ou on propose le dictionnaire via Datalist */}
+                                    <input list="supplier-list" value={newProductForm.supplier} onChange={e=>setNewProductForm({...newProductForm, supplier: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="Cortizo..."/>
+                                    <datalist id="supplier-list">
+                                        {appConfigs.filter(c => c.category === 'supplier').map(c => (
+                                            <option key={c.id} value={c.value} />
+                                        ))}
+                                    </datalist>
+                                </div>
+                            </div>
+                            
+                            <div className="col-span-2 border-t border-slate-100 my-2 pt-4 flex gap-4">
+                                <div className="flex-1">
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Type d'Article</label>
+                                    <select value={newProductForm.product_type} onChange={e=>setNewProductForm({...newProductForm, product_type: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700">
+                                        <option value="stockable">Article Stockable (Inventaire)</option>
+                                        <option value="consumable">Consommable (Sans suivi fin)</option>
+                                        <option value="service">Service (Pose, Main d'oeuvre)</option>
+                                    </select>
+                                </div>
+                                <div className="flex-1">
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Image Produit (Optionnel)</label>
+                                    <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setNewProductForm, newProductForm)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
+                                    {newProductForm.image_url && <p className="text-xs text-emerald-500 mt-1 font-bold">Image chargée ✓</p>}
+                                </div>
+                            </div>
+                            <div className="col-span-2 flex items-center bg-slate-50 border border-slate-200 rounded-xl px-4 mt-2 py-2">
+                                <label className="flex items-center gap-3 cursor-pointer w-full">
+                                    <input type="checkbox" checked={newProductForm.available_in_pos} onChange={e=>setNewProductForm({...newProductForm, available_in_pos: e.target.checked})} className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                                    <span className="font-bold text-sm text-slate-700">Visible dans l'Application Vente (PDV)</span>
+                                </label>
+                            </div>
+                            
+                            <div className="col-span-2 border-t border-slate-100 my-2 pt-4">
+                                <label className="text-xs font-black text-emerald-500 mb-1 block">Déclinaison Initiale (Réf Interne)</label>
+                                <input value={newProductForm.variant_ref} onChange={e=>setNewProductForm({...newProductForm, variant_ref: e.target.value})} className="w-full p-3 bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 rounded-xl" placeholder="VEK-70-BLANC"/>
+                            </div>
+                            
+                            <div className="col-span-1">
+                                <label className="text-xs font-black text-blue-500 mb-1 block">Code Barre / EAN13</label>
+                                <input value={newProductForm.barcode} onChange={e=>setNewProductForm({...newProductForm, barcode: e.target.value})} className="w-full p-3 bg-blue-50 text-blue-700 font-mono border border-blue-200 rounded-xl" placeholder="Scanner ici..."/>
+                            </div>
+                            
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Spécificités (Couleur, Sens, Finition...)</label>
+                                <input list="specs-list" value={newProductForm.color} onChange={e=>setNewProductForm({...newProductForm, color: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="Ex: ANODISÉ - DROIT"/>
+                                <datalist id="specs-list">
+                                        {appConfigs.filter(c => c.category === 'specs').map(c => (
+                                            <option key={c.id} value={c.value} />
+                                        ))}
+                                </datalist>
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Prix Achat (€)</label>
+                                <input type="number" value={newProductForm.cost_price} onChange={e=>setNewProductForm({...newProductForm, cost_price: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" placeholder="45.50"/>
+                            </div>
+                        </div>
+                        <button onClick={handleQuickCreateProduct} className="w-full mt-6 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-lg shadow-lg">Enregistrer et Continuer</button>
+                    </div>
+                </div>
+            )}
+
+            {/* -------- AUDIT LOGS MODAL (Transactions) -------- */}
+            {showAuditLogs && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl overflow-hidden max-w-4xl w-full flex flex-col max-h-[85vh]">
+                        <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                            <div>
+                                <h3 className="font-black text-2xl flex items-center gap-2">
+                                    <Layers className="w-6 h-6 text-slate-800" />
+                                    Journal d'Audit des Stocks
+                                </h3>
+                                <p className="text-sm font-medium text-slate-500 mt-1">Historique complet des mouvements matériels</p>
+                            </div>
+                            <button onClick={() => setShowAuditLogs(false)} className="bg-white border border-slate-200 hover:bg-slate-100 p-2 rounded-full text-slate-500 shadow-sm"><X className="w-5 h-5"/></button>
+                        </div>
+                        
+                        <div className="overflow-y-auto w-full p-0">
+                            <table className="w-full text-left border-collapse">
+                                <thead className="bg-slate-50 sticky top-0 z-10">
+                                    <tr>
+                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Date & Heure</th>
+                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Référence</th>
+                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Produit Impacté</th>
+                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-center">Mouvement</th>
+                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-center">Qté</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {transactions.map(tx => (
+                                        <tr key={tx.id} className="hover:bg-slate-50 border-b border-slate-50 transition-colors">
+                                            <td className="px-6 py-4 text-sm text-slate-600 font-medium">
+                                                {new Date(tx.created_at).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })}
+                                                <div className="text-[10px] text-slate-400 font-mono mt-1">{tx.author}</div>
+                                            </td>
+                                            <td className="px-6 py-4 text-sm font-mono text-slate-500 font-bold">{tx.reference || `TX-#${tx.id}`}</td>
+                                            <td className="px-6 py-4">
+                                                <span className="font-bold text-slate-800 text-[13px] block">{tx.item_name}</span>
+                                                {tx.notes && <span className="text-[10px] italic text-slate-400 line-clamp-1">{tx.notes}</span>}
+                                            </td>
+                                            <td className="px-6 py-4 text-center">
+                                                <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-bold uppercase whitespace-nowrap">
+                                                    {tx.transaction_type}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 text-center">
+                                                <span className={`font-black ${tx.quantity_change > 0 ? 'text-emerald-500' : 'text-blue-500'}`}>
+                                                    {tx.quantity_change > 0 ? '+' : ''}{tx.quantity_change}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {transactions.length === 0 && (
+                                        <tr>
+                                            <td colSpan="5" className="text-center py-12 text-slate-400 font-bold">Aucun mouvement enregistré.</td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div className="px-8 py-4 border-t border-slate-100 bg-slate-50 text-right">
+                            <span className="text-xs font-black text-slate-400 uppercase">Affichage limité aux 100 derniers mouvements</span>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* -------- IMPORT EXCEL MODAL -------- */}
+            {showImportModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-slate-100 flex flex-col items-center">
+                        <div className="w-full flex justify-between items-center mb-6">
+                            <h3 className="font-black text-2xl flex items-center gap-2">
+                                <FileText className="w-6 h-6 text-slate-800" />
+                                Import de Masse (PIM)
+                            </h3>
+                            <button onClick={()=>setShowImportModal(false)} className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
+                        </div>
+                        
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 mb-8 w-full">
+                            <p className="text-sm font-medium text-slate-600 mb-4 font-sans">
+                                Générez et remplissez le template officiel pour importer de multiples familles de produits et leurs déclinaisons instantanément.
+                            </p>
+                            <a href={`${api.defaults.baseURL}/v2/stock/import/template`} className="w-full inline-flex font-bold justify-center items-center gap-2 py-3 bg-white border border-slate-300 shadow-sm hover:bg-slate-50 rounded-xl text-slate-700 transition-colors">
+                                Télécharger le Template (.xlsx)
+                            </a>
+                        </div>
+
+                        <form onSubmit={submitImportFile} className="w-full space-y-4 text-center">
+                            <label className="border-2 border-dashed border-blue-300 bg-blue-50 hover:bg-blue-100 transition-colors rounded-2xl flex flex-col items-center justify-center py-10 cursor-pointer group">
+                                <FileText className="w-10 h-10 text-blue-400 group-hover:text-blue-500 mb-3 transition-colors" />
+                                <span className="font-bold text-blue-700">Cliquez ou glissez un fichier Excel ici</span>
+                                <span className="text-xs text-blue-500/70 font-medium mt-1">Format natif .xlsx</span>
+                                <input type="file" id="import-file-input" accept=".xlsx" className="hidden" />
+                            </label>
+
+                            <button type="submit" className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black text-lg shadow-lg">Lancer l'Importation</button>
+                        </form>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}

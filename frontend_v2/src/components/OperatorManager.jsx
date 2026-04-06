@@ -6,19 +6,22 @@ export default function OperatorManager() {
     const [users, setUsers] = useState([]);
     const [stations, setStations] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [newUser, setNewUser] = useState({ username: '', pin: '', station_codes: [] });
+    const [roles, setRoles] = useState([]);
+    const [newUser, setNewUser] = useState({ username: '', pin: '', role: 'OPERATOR', station_codes: [] });
     const [editingUser, setEditingUser] = useState(null);
     const [message, setMessage] = useState({ type: '', text: '' });
 
     const fetchData = async () => {
         setLoading(true);
         try {
-            const [usersRes, stationsRes] = await Promise.all([
+            const [usersRes, stationsRes, rolesRes] = await Promise.all([
                 api.get('/v2/config/users'),
-                api.get('/v2/config/stations')
+                api.get('/v2/config/stations'),
+                api.get('/v2/config/roles')
             ]);
             setUsers(usersRes.data);
             setStations(stationsRes.data);
+            setRoles(rolesRes.data);
         } catch (e) {
             console.error(e);
             setMessage({ type: 'error', text: 'Erreur lors du chargement des données' });
@@ -34,12 +37,9 @@ export default function OperatorManager() {
     const handleCreate = async (e) => {
         e.preventDefault();
         try {
-            await api.post('/v2/config/users', {
-                ...newUser,
-                role: 'OPERATOR'
-            });
-            setMessage({ type: 'success', text: `Opérateur ${newUser.username} créé !` });
-            setNewUser({ username: '', pin: '', station_codes: [] });
+            await api.post('/v2/config/users', { ...newUser });
+            setMessage({ type: 'success', text: `Utilisateur ${newUser.username} créé !` });
+            setNewUser({ username: '', pin: '', role: 'OPERATOR', station_codes: [] });
             fetchData();
         } catch (e) {
             setMessage({ type: 'error', text: e.response?.data?.detail || 'Erreur de création' });
@@ -51,12 +51,13 @@ export default function OperatorManager() {
         try {
             const payload = {
                 username: editingUser.username,
+                role: editingUser.role,
                 station_codes: editingUser.station_codes
             };
             if (editingUser.pin) payload.pin = editingUser.pin;
 
             await api.put(`/v2/config/users/${editingUser.id}`, payload);
-            setMessage({ type: 'success', text: `Opérateur ${editingUser.username} mis à jour !` });
+            setMessage({ type: 'success', text: `Utilisateur ${editingUser.username} mis à jour !` });
             setEditingUser(null);
             fetchData();
         } catch (e) {
@@ -89,7 +90,7 @@ export default function OperatorManager() {
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
                 <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
                     {editingUser ? <Edit2 className="text-indigo-500" /> : <UserPlus className="text-blue-500" />}
-                    {editingUser ? `Modifier ${editingUser.username}` : 'Nouvel Opérateur'}
+                    {editingUser ? `Modifier ${editingUser.username}` : 'Nouvel Employé'}
                 </h3>
 
                 <form onSubmit={editingUser ? handleUpdate : handleCreate} className="space-y-6">
@@ -104,6 +105,18 @@ export default function OperatorManager() {
                                 onChange={e => editingUser ? setEditingUser({ ...editingUser, username: e.target.value }) : setNewUser({ ...newUser, username: e.target.value })}
                                 required
                             />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Rôle / Accès</label>
+                            <select
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 font-bold"
+                                value={editingUser ? editingUser.role : newUser.role}
+                                onChange={e => editingUser ? setEditingUser({ ...editingUser, role: e.target.value }) : setNewUser({ ...newUser, role: e.target.value })}
+                            >
+                                {roles.map(r => (
+                                    <option key={r.id} value={r.name}>{r.name} - {r.description}</option>
+                                ))}
+                            </select>
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-400 uppercase mb-2">
@@ -122,7 +135,7 @@ export default function OperatorManager() {
                     </div>
 
                     <div>
-                        <label className="block text-xs font-bold text-slate-400 uppercase mb-4">Affectation aux Postes (Plusieurs choix possibles)</label>
+                        <label className="block text-xs font-bold text-slate-400 uppercase mb-4">Affectation aux Postes PVS/ALU (Pour les Opérateurs Atelier)</label>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                             {stations.map(s => {
                                 const isSelected = editingUser
@@ -180,7 +193,7 @@ export default function OperatorManager() {
                 <div className="flex justify-between items-center mb-6">
                     <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                         <Shield className="text-emerald-500" />
-                        Liste des Opérateurs
+                        Équipe & Collaborateurs
                     </h3>
                     <button onClick={fetchData} className="p-2 text-slate-400 hover:text-blue-500 transition-colors">
                         <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />

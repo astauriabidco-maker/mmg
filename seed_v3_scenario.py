@@ -33,8 +33,7 @@ def seed_scenario():
             new_user = models.User(
                 username=username, 
                 pin_hash=hash_pin(pin), # Mock hash function needed or use plain for local dev if implemented that way
-                role=role,
-                station=station
+                role=role
             )
             # Simple hash simulation if imported, else just store plain for this script
             # new_user.pin_hash = pin # Storing plain for dev environment simplicity/speed in this script

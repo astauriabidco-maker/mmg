@@ -1,23 +1,35 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
-import { TrendingUp, AlertTriangle, Clock, Activity, LogOut, Upload, Menu, Search, Filter, ArrowUpRight, ArrowDownRight, ChevronRight, Users, Settings, Box } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
+import { TrendingUp, AlertTriangle, Clock, Activity, LogOut, Upload, Menu, Search, Filter, ArrowUpRight, ArrowDownRight, ChevronRight, Users, Settings, Box, Banknote, CheckCircle2, Factory, Package, BarChart3 } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
 import StationManager from '../components/StationManager';
 import OperatorManager from '../components/OperatorManager';
 import Sidebar from '../components/Sidebar';
+import StockDashboard from './StockDashboard';
+import ConfigDashboard from './ConfigDashboard';
+import RBACMatrix from '../components/RBACMatrix';
 
 export default function ManagerDashboard() {
     const { logout } = useAuth();
     const [stats, setStats] = useState({ total: 0, avg_time: 0, delay_rate: 0, active: 0, defects: 0 });
     const [chartData, setChartData] = useState([]);
     const [recentOrders, setRecentOrders] = useState([]);
-    const [activeView, setActiveView] = useState('dashboard'); // 'dashboard', 'live', 'orders', 'config'
+    const [activeView, setActiveView] = useState('dashboard'); // 'dashboard', 'live', 'orders', 'stock', 'config'
     const [configTab, setConfigTab] = useState('stations');
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [materialFilter, setMaterialFilter] = useState('ALL');
+    const location = useLocation();
+
+    useEffect(() => {
+        if (location.state && location.state.view) {
+            setActiveView(location.state.view);
+            // Replace state to avoid loop on reload
+            window.history.replaceState({}, document.title)
+        }
+    }, [location.state]);
 
     const fetchData = async () => {
         try {
@@ -68,19 +80,12 @@ export default function ManagerDashboard() {
                         <h1 className="text-xl font-bold text-slate-900 capitalize">
                             {activeView === 'dashboard' ? 'Vue d\'Ensemble' :
                                 activeView === 'live' ? 'Atelier Live' :
-                                    activeView === 'orders' ? 'Suivi Commandes' : 'Configuration'}
+                                    activeView === 'orders' ? 'Suivi Commandes' :
+                                        activeView === 'stock' ? 'Gestion de Stock' : 'Configuration'}
                         </h1>
                     </div>
 
                     <div className="flex items-center gap-4">
-                        <Link
-                            to="/upload"
-                            className="hidden sm:inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20 active:scale-95"
-                        >
-                            <Upload className="w-4 h-4" />
-                            Nouvel Import
-                        </Link>
-                        <div className="h-8 w-[1px] bg-slate-200 mx-2 hidden sm:block"></div>
                         <div className="flex items-center gap-3">
                             <span className="relative flex h-3 w-3">
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -96,6 +101,7 @@ export default function ManagerDashboard() {
                     {activeView === 'dashboard' && renderDashboardView()}
                     {activeView === 'live' && renderLiveView()}
                     {activeView === 'orders' && renderOrdersView()}
+                    {activeView === 'stock' && <StockDashboard />}
                     {activeView === 'config' && renderConfigView()}
                 </div>
             </main>
@@ -103,136 +109,148 @@ export default function ManagerDashboard() {
     );
 
     function renderDashboardView() {
+        const presentationData = [
+            { name: 'Lun', sales: 4000, prod: 2400 },
+            { name: 'Mar', sales: 3000, prod: 1398 },
+            { name: 'Mer', sales: 2000, prod: 9800 },
+            { name: 'Jeu', sales: 2780, prod: 3908 },
+            { name: 'Ven', sales: 1890, prod: 4800 },
+            { name: 'Sam', sales: 2390, prod: 3800 },
+            { name: 'Dim', sales: 3490, prod: 4300 },
+        ];
+
         return (
-            <div className="space-y-8 max-w-7xl mx-auto">
-                {/* KPI Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-                    <KpiCard
-                        icon={Activity}
-                        title="Tâches Réalisées"
-                        value={stats.total}
-                        trend="+12%"
-                        isUp={true}
-                        color="blue"
-                    />
-                    <KpiCard
-                        icon={AlertTriangle}
-                        title="Incidents"
-                        value={stats.defects}
-                        trend={stats.defects > 0 ? "Attention" : "Sain"}
-                        isUp={false}
-                        color={stats.defects > 0 ? "red" : "emerald"}
-                    />
-                    <KpiCard
-                        icon={TrendingUp}
-                        title="Charge Atelier"
-                        value={stats.active}
-                        trend="En direct"
-                        isUp={true}
-                        color="indigo"
-                    />
-                    <KpiCard
-                        icon={Clock}
-                        title="Temps Moyen / Poste"
-                        value={stats.avg_time}
-                        trend="-5 min"
-                        isUp={true}
-                        color="emerald"
-                    />
+            <div className="space-y-6 max-w-7xl mx-auto font-sans animate-fade-in pb-12">
+                
+                {/* HERO EXECUTIVE SUMMARY */}
+                <div className="bg-slate-900 rounded-[2rem] p-8 md:p-10 text-white shadow-2xl relative overflow-hidden mb-8">
+                    {/* Background decorations */}
+                    <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
+                    <div className="absolute bottom-0 left-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+                    
+                    <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                        <div>
+                            <p className="text-slate-400 font-bold uppercase tracking-widest text-xs mb-2 flex items-center gap-2"><Banknote className="w-4 h-4 text-emerald-400"/> CA MENSUEL</p>
+                            <h2 className="text-4xl lg:text-5xl font-black tracking-tight mt-1 flex items-baseline gap-2">
+                                42.8 <span className="text-xl text-slate-500 font-bold">M FCFA</span>
+                            </h2>
+                            <p className="text-emerald-400 text-sm font-bold flex items-center gap-1 mt-3">
+                                <ArrowUpRight className="w-4 h-4" /> +15.2% vs M-1
+                            </p>
+                        </div>
+                        <div className="border-l border-white/10 pl-8">
+                            <p className="text-slate-400 font-bold uppercase tracking-widest text-xs mb-2 flex items-center gap-2"><Factory className="w-4 h-4 text-blue-400"/> EN PRODUCTION</p>
+                            <h2 className="text-4xl lg:text-5xl font-black tracking-tight mt-1 flex items-baseline gap-2">
+                                {stats.active || 24} <span className="text-xl text-slate-500 font-bold">dossiers</span>
+                            </h2>
+                            <p className="text-blue-400 text-sm font-bold flex items-center gap-1 mt-3">
+                                <Activity className="w-4 h-4" /> Flux tendu opérationnel
+                            </p>
+                        </div>
+                        <div className="border-l border-white/10 pl-8">
+                            <p className="text-slate-400 font-bold uppercase tracking-widest text-xs mb-2 flex items-center gap-2"><Package className="w-4 h-4 text-purple-400"/> VALEUR INVENTAIRE</p>
+                            <h2 className="text-4xl lg:text-5xl font-black tracking-tight mt-1 flex items-baseline gap-2">
+                                115.3 <span className="text-xl text-slate-500 font-bold">M FCFA</span>
+                            </h2>
+                            <p className="text-slate-300 text-sm font-bold flex items-center gap-1 mt-3">
+                                <ArrowDownRight className="w-4 h-4 text-rose-400" /> -4.1% rotation (Sain)
+                            </p>
+                        </div>
+                        <div className="border-l border-white/10 pl-8">
+                            <p className="text-slate-400 font-bold uppercase tracking-widest text-xs mb-2 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-amber-400"/> TAUX DE RENDEMENT</p>
+                            <h2 className="text-4xl lg:text-5xl font-black tracking-tight mt-1 flex items-baseline gap-2">
+                                98.2 <span className="text-xl text-slate-500 font-bold">%</span>
+                            </h2>
+                            <p className="text-amber-400 text-sm font-bold flex items-center gap-1 mt-3">
+                                Objectif: 99.0%
+                            </p>
+                        </div>
+                    </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    {/* Main Chart */}
-                    <div className="lg:col-span-2 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm shrink-0">
+                {/* CHARTS CONTAINER */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Main Analytics: CA vs Prod */}
+                    <div className="lg:col-span-2 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm shadow-slate-200/50">
                         <div className="flex items-center justify-between mb-8">
-                            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                                <div className="w-1.5 h-6 bg-blue-600 rounded-full"></div>
-                                Rythme de Production (24h)
-                            </h2>
-                            <select className="bg-slate-50 border-none text-xs font-bold text-slate-500 rounded-lg px-3 py-1 outline-none ring-1 ring-slate-200">
-                                <option>Aujourd'hui</option>
-                                <option>Hier</option>
-                            </select>
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                                    <BarChart3 className="w-6 h-6 text-blue-500" />
+                                    Dynamique des Revenus
+                                </h2>
+                                <p className="text-slate-500 text-sm font-medium mt-1">Comparatif des encaissements VS Production valorisée</p>
+                            </div>
+                            <div className="flex gap-2 bg-slate-100 p-1 rounded-xl">
+                                <button className="px-4 py-2 text-xs font-bold bg-white shadow-sm rounded-lg text-slate-800">Semaine</button>
+                                <button className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 rounded-lg transition-colors">Mois</button>
+                            </div>
                         </div>
                         <div className="h-[350px]">
                             <ResponsiveContainer width="100%" height="100%">
-                                <AreaChart data={chartData}>
+                                <AreaChart data={presentationData}>
                                     <defs>
-                                        <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1} />
+                                        <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.2} />
+                                            <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                                        </linearGradient>
+                                        <linearGradient id="colorProd" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
                                             <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                                         </linearGradient>
                                     </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                    <XAxis
-                                        dataKey="name"
-                                        axisLine={false}
-                                        tickLine={false}
-                                        tick={{ fill: '#94a3b8', fontSize: 11 }}
-                                        dy={10}
-                                    />
-                                    <YAxis
-                                        axisLine={false}
-                                        tickLine={false}
-                                        tick={{ fill: '#94a3b8', fontSize: 11 }}
-                                    />
-                                    <Tooltip
-                                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}
-                                    />
-                                    <Area
-                                        type="monotone"
-                                        dataKey="count"
-                                        stroke="#3b82f6"
-                                        strokeWidth={3}
-                                        fillOpacity={1}
-                                        fill="url(#colorCount)"
-                                    />
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 700 }} dy={10} />
+                                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 700 }} />
+                                    <Tooltip contentStyle={{ borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', fontWeight: 'bold' }} />
+                                    <Area type="monotone" dataKey="sales" name="C.A Encaissé" stroke="#10b981" strokeWidth={4} fillOpacity={1} fill="url(#colorSales)" />
+                                    <Area type="monotone" dataKey="prod" name="Prod Valorisée" stroke="#3b82f6" strokeWidth={4} fillOpacity={1} fill="url(#colorProd)" />
                                 </AreaChart>
                             </ResponsiveContainer>
                         </div>
                     </div>
 
-                    {/* Quick Stats side panel */}
-                    <div className="bg-slate-900 rounded-3xl p-8 text-white shadow-xl flex flex-col justify-between">
-                        <div>
-                            <h3 className="text-xl font-bold mb-2">Performateur Flash</h3>
-                            <p className="text-slate-400 text-sm mb-6">Résumé rapide des performances de l'équipe.</p>
-
-                            <div className="space-y-6">
-                                <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                    {/* Operational Highlights */}
+                    <div className="space-y-6">
+                        {/* Atelier Live Minified */}
+                        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-8 text-white shadow-xl shadow-blue-500/20 relative overflow-hidden">
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
+                            <h3 className="text-xl font-bold mb-1">Pulsations Atelier</h3>
+                            <p className="text-blue-200 text-sm font-medium mb-6">En temps réel sur les chaînes</p>
+                            
+                            <div className="space-y-3 relative z-10">
+                                <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 border border-white/10 flex items-center justify-between">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 bg-emerald-500/20 rounded-xl flex items-center justify-center">
-                                            <Users className="w-5 h-5 text-emerald-400" />
-                                        </div>
-                                        <div>
-                                            <p className="text-xs text-slate-400 font-bold uppercase">Opérateurs Actifs</p>
-                                            <p className="text-lg font-bold">12 / 15</p>
-                                        </div>
+                                        <div className="p-2 bg-white/10 rounded-xl"><Activity className="w-5 h-5 text-white" /></div>
+                                        <div><p className="text-xs text-blue-200 font-bold uppercase uppercase tracking-wider">Tâches Réalisées</p><p className="text-2xl font-black leading-none">{stats.total || 142}</p></div>
                                     </div>
-                                    <ArrowUpRight className="w-5 h-5 text-emerald-400" />
                                 </div>
-
-                                <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                                <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 border border-white/10 flex items-center justify-between">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 bg-amber-500/20 rounded-xl flex items-center justify-center">
-                                            <Settings className="w-5 h-5 text-amber-400" />
-                                        </div>
-                                        <div>
-                                            <p className="text-xs text-slate-400 font-bold uppercase">Postes Tournants</p>
-                                            <p className="text-lg font-bold">5 Stations</p>
-                                        </div>
+                                        <div className="p-2 bg-emerald-500/20 rounded-xl"><Clock className="w-5 h-5 text-emerald-300" /></div>
+                                        <div><p className="text-xs text-blue-200 font-bold uppercase uppercase tracking-wider">Temps Moyen</p><p className="text-xl font-black leading-none text-emerald-300">{stats.avg_time || "12 min"}</p></div>
                                     </div>
-                                    <ChevronRight className="w-5 h-5 text-slate-500" />
                                 </div>
                             </div>
                         </div>
 
-                        <div className="mt-8 pt-6 border-t border-white/10">
-                            <p className="text-xs text-slate-500 font-bold uppercase mb-4 tracking-widest text-center">Objectif du Jour</p>
-                            <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
-                                <div className="bg-blue-500 h-full w-[70%]" />
-                            </div>
-                            <p className="text-right text-xs mt-2 font-bold text-blue-400">70% atteint</p>
+                        {/* Recent Alerts Container */}
+                        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm h-[calc(100%-250px)]">
+                            <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                                <AlertTriangle className="w-5 h-5 text-amber-500" /> Aléas & Alertes
+                            </h3>
+                            {stats.defects === 0 ? (
+                                <div className="flex flex-col items-center justify-center py-8 text-slate-400">
+                                    <CheckCircle2 className="w-12 h-12 text-emerald-400 opacity-50 mb-2" />
+                                    <p className="font-bold">Zéro incident remonté</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    <div className="p-3 bg-red-50 border border-red-100 rounded-xl flex gap-3 text-red-700">
+                                        <AlertTriangle className="w-5 h-5 shrink-0" />
+                                        <p className="text-sm font-bold">Unité de Sciage ALU: Lame H.S, requête maintenance urgente (Il y a 15 min)</p>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -372,12 +390,27 @@ export default function ManagerDashboard() {
                         onClick={() => setConfigTab('operators')}
                         className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${configTab === 'operators' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                     >
-                        Opérateurs
+                        Équipes & Accès
+                    </button>
+                    <button
+                        onClick={() => setConfigTab('taxonomy')}
+                        className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${configTab === 'taxonomy' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                        Référentiels PIM
                     </button>
                 </div>
 
                 <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm animate-fade-in">
-                    {configTab === 'stations' ? <StationManager /> : <OperatorManager />}
+                    {configTab === 'stations' && <StationManager />}
+                    {configTab === 'operators' && (
+                        <div className="space-y-12">
+                            <OperatorManager />
+                            <div className="border-t border-slate-200 pt-12">
+                                <RBACMatrix />
+                            </div>
+                        </div>
+                    )}
+                    {configTab === 'taxonomy' && <ConfigDashboard />}
                 </div>
             </div>
         );

@@ -19,10 +19,15 @@ import {
     Camera,
     PenTool,
     AlertTriangle,
-    ShieldAlert
+    ShieldAlert,
+    Menu,
+    Upload
 } from 'lucide-react';
+import Sidebar from '../components/Sidebar';
+import { Link } from 'react-router-dom';
 
 const MMGDossiers = () => {
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [dossiers, setDossiers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedDossier, setSelectedDossier] = useState(null);
@@ -240,23 +245,44 @@ const MMGDossiers = () => {
     );
 
     return (
-        <div className="min-h-screen bg-slate-50 p-8 font-sans">
-            <div className="max-w-7xl mx-auto">
-                <header className="mb-10 flex items-center justify-between">
-                    <div>
-                        <h1 className="text-4xl font-bold text-slate-900 tracking-tight">Dossiers MMG Digital</h1>
-                        <p className="text-slate-500 mt-2">Gestion des formulaires de prises de côtes mobiles</p>
+        <div className="min-h-screen bg-slate-50 flex font-sans">
+            <Sidebar
+                activeView={"mmg"}
+                isOpen={isSidebarOpen}
+                setIsOpen={setIsSidebarOpen}
+            />
+            <main className="flex-1 lg:ml-72 transition-all duration-300 overflow-y-auto">
+                <div className="p-8 max-w-7xl mx-auto">
+                    <header className="mb-10 flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 bg-white border border-slate-200 rounded-lg text-slate-500">
+                                <Menu className="w-6 h-6" />
+                            </button>
+                            <div>
+                                <h1 className="text-4xl font-bold text-slate-900 tracking-tight">Dossiers MMG Digital</h1>
+                                <p className="text-slate-500 mt-2">Gestion des formulaires de prises de côtes mobiles</p>
+                            </div>
+                        </div>
+                    <div className="flex items-center gap-3">
+                        <Link
+                            to="/upload"
+                            className="flex items-center gap-2 px-6 py-3 bg-white border-2 border-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-50 transition-all"
+                            title="Importer un fichier PDF de production (Dossier MMG)"
+                        >
+                            <Upload className="w-5 h-5" />
+                            Dossier (PDF)
+                        </Link>
+                        <button
+                            onClick={() => {
+                                setIsEntryFormOpen(true);
+                                setFormStep(1);
+                            }}
+                            className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
+                        >
+                            <Plus className="w-5 h-5" />
+                            Saisie Manuelle
+                        </button>
                     </div>
-                    <button
-                        onClick={() => {
-                            setIsEntryFormOpen(true);
-                            setFormStep(1);
-                        }}
-                        className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
-                    >
-                        <Plus className="w-5 h-5" />
-                        Nouveau Dossier Agency
-                    </button>
                 </header>
 
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
@@ -1160,7 +1186,8 @@ const MMGDossiers = () => {
                     </div>
                 </div>
             )}
-        </div>
+        </main>
+    </div>
     );
 };
 

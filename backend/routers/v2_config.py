@@ -61,7 +61,7 @@ def reorder_stations(order_map: dict, db: Session = Depends(get_db)):
 
 @router.get("/users", response_model=List[schemas.User])
 def get_users(db: Session = Depends(get_db)):
-    return db.query(models.User).filter(models.User.role == models.UserRole.OPERATOR).all()
+    return db.query(models.User).all()
 
 @router.post("/users", response_model=schemas.User)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
@@ -124,3 +124,73 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     return {"status": "deleted"}
 
 # Removed @router.put("/users/{user_id}/station") as it's merged into update_user
+
+# --- APP CONFIGS (REFERENTIELS) ---
+
+@router.get("/app_configs", response_model=List[schemas.AppConfigResponse])
+def get_app_configs(db: Session = Depends(get_db)):
+    return db.query(models.AppConfig).all()
+
+@router.post("/app_configs", response_model=schemas.AppConfigResponse)
+def create_app_config(config: schemas.AppConfigCreate, db: Session = Depends(get_db)):
+    new_config = models.AppConfig(**config.dict())
+    db.add(new_config)
+    db.commit()
+    db.refresh(new_config)
+    return new_config
+
+@router.delete("/app_configs/{config_id}")
+def delete_app_config(config_id: int, db: Session = Depends(get_db)):
+    db_config = db.query(models.AppConfig).filter(models.AppConfig.id == config_id).first()
+    if db_config:
+        db.delete(db_config)
+        db.commit()
+    return {"status": "deleted"}
+
+# --- RBAC (ROLES & PERMISSIONS) ---
+
+@router.get("/roles", response_model=List[schemas.RoleSchema])
+def get_roles(db: Session = Depends(get_db)):
+    from sqlalchemy.orm import joinedload
+    return db.query(models.Role).options(joinedload(models.Role.permissions)).all()
+
+@router.get("/permissions", response_model=List[schemas.PermissionSchema])
+def get_permissions(db: Session = Depends(get_db)):
+    return db.query(models.Permission).all()
+
+@router.post("/roles/{role_id}/permissions")
+def update_role_permissions(role_id: int, permission_ids: List[int], db: Session = Depends(get_db)):
+    db_role = db.query(models.Role).filter(models.Role.id == role_id).first()
+    if not db_role:
+        raise HTTPException(404, "Role not found")
+        
+    permissions = db.query(models.Permission).filter(models.Permission.id.in_(permission_ids)).all()
+    db_role.permissions = permissions
+    db.commit()
+    return {"status": "success"}
+
+@router.post("/roles", response_model=schemas.RoleSchema)
+def create_role(role: schemas.RoleCreate, db: Session = Depends(get_db)):
+    existing = db.query(models.Role).filter(models.Role.name == role.name.upper()).first()
+    if existing:
+        raise HTTPException(400, "Ce rôle existe déjà")
+        
+    db_role = models.Role(name=role.name.upper(), description=role.description)
+    db.add(db_role)
+    db.commit()
+    db.refresh(db_role)
+    return db_role
+
+@router.delete("/roles/{role_id}")
+def delete_role(role_id: int, db: Session = Depends(get_db)):
+    db_role = db.query(models.Role).filter(models.Role.id == role_id).first()
+    if not db_role:
+        raise HTTPException(404, "Role not found")
+        
+    # Prevent deleting ADMIN role
+    if db_role.name == "ADMIN":
+        raise HTTPException(400, "Impossible de supprimer le rôle Administrateur Système")
+        
+    db.delete(db_role)
+    db.commit()
+    return {"status": "deleted"}

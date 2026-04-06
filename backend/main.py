@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from . import models, database
-from .routers import web, api, v2_planning, v2_analytics, v2_printer, v2_ingest, v2_config, v2_mmg
+from .routers import web, api, v2_planning, v2_analytics, v2_printer, v2_ingest, v2_config, v2_mmg, v2_stock, v2_sales, v2_pos
 from .core.websocket import manager
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -21,8 +21,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount Static Config (CSS, JS)
+# Mount Static Config (CSS, JS) & Uploads
 app.mount("/static", StaticFiles(directory="backend/static"), name="static")
+import os
+os.makedirs("uploads", exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Include Routers
 app.include_router(web.router)
@@ -33,6 +36,9 @@ app.include_router(v2_printer.router)
 app.include_router(v2_ingest.router)
 app.include_router(v2_config.router)
 app.include_router(v2_mmg.router)
+app.include_router(v2_stock.router)
+app.include_router(v2_sales.router)
+app.include_router(v2_pos.router)
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: int):
@@ -78,13 +84,13 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     access_token = security.create_access_token(
         data={
             "sub": user.username, 
-            "role": user.role.value, 
+            "role": user.role, 
             "stations": [s.code for s in user.stations]
         }
     )
     return {
         "access_token": access_token, 
         "token_type": "bearer", 
-        "role": user.role.value, 
+        "role": user.role, 
         "stations": [s.code for s in user.stations]
     }

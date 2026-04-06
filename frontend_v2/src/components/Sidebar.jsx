@@ -1,16 +1,20 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
-import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box } from 'lucide-react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }) {
     const { logout } = useAuth();
+    const navigate = useNavigate();
+    const location = useLocation();
 
     const menuItems = [
         { id: 'dashboard', label: 'Tableau de Bord', icon: LayoutDashboard, type: 'internal' },
         { id: 'live', label: 'Atelier Live', icon: Activity, type: 'internal' },
         { id: 'orders', label: 'Suivi Commandes', icon: ClipboardList, type: 'internal' },
-        { id: 'mmg', label: 'Dossiers MMG', icon: ClipboardList, type: 'external', path: '/mmg' },
+        { id: 'stock', label: 'Inventaire & Stock', icon: Archive, type: 'internal' },
+        { id: 'mmg', label: 'CRM & Devis (Dossiers)', icon: ClipboardList, type: 'external', path: '/mmg' },
+        { id: 'pos', label: 'Point de Vente (POS)', icon: ShoppingCart, type: 'external', path: '/pos' },
         { id: 'config', label: 'Configuration', icon: Settings, type: 'internal' },
     ];
 
@@ -80,8 +84,12 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                 <button
                                     key={item.id}
                                     onClick={() => {
-                                        setActiveView(item.id);
-                                        if (window.innerWidth < 1024) setIsOpen(false);
+                                        if (location.pathname !== '/manager') {
+                                            navigate('/manager', { state: { view: item.id } });
+                                        } else if (setActiveView) {
+                                            setActiveView(item.id);
+                                        }
+                                        if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
                                     }}
                                     className={className}
                                 >

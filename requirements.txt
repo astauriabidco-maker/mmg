@@ -11,3 +11,8 @@ pdf2image
 reportlab
 python-jose[cryptography]
 passlib[bcrypt]
+jinja2
+python-multipart
+pdfplumber
+PyMuPDF
+openpyxl

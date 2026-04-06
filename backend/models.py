@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean
+from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text
 from sqlalchemy.orm import relationship
 from .database import Base
 import enum
@@ -42,7 +42,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     pin_hash = Column(String) # Hashed 4-digit PIN
-    role = Column(SAEnum(UserRole), default=UserRole.OPERATOR)
+    role = Column(String, default="OPERATOR") # Link to roles.name
     is_active = Column(Boolean, default=True)
     
     # Many-to-many relationship with Stations
@@ -109,6 +109,82 @@ class Station(Base):
     material = Column(SAEnum(MaterialType)) # PVC or ALU
     order_index = Column(Integer, default=0) # Sequence order
 
+# --- STOCK (V3 PIM) ---
+
+class Product(Base):
+    __tablename__ = "products"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference_base = Column(String, unique=True, index=True) # Ex: VEK-70
+    name = Column(String) # Ex: Dormant 70mm
+    material_type = Column(String) # PVC, ALU, VITRAGE, ACCESSOIRE
+    unit = Column(String) # ml, m2, pce
+    supplier = Column(String, nullable=True)
+    product_type = Column(String, default="stockable") # stockable, consumable, service
+    available_in_pos = Column(Boolean, default=False)
+    image_url = Column(String, nullable=True)
+    
+    variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")
+
+class ProductVariant(Base):
+    __tablename__ = "product_variants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"))
+    reference = Column(String, unique=True, index=True) # Ex: VEK-70-BLANC
+    barcode = Column(String, unique=True, index=True, nullable=True) # Code-barres / EAN13
+    color = Column(String, nullable=True)
+    length_per_unit = Column(Float, nullable=True) # Ex: 6m pour barre ALU
+    supplier_reference = Column(String, nullable=True)
+    cost_price = Column(Float, nullable=True)
+    quantity_in_stock = Column(Float, default=0.0)
+    min_threshold = Column(Float, default=10.0)
+    image_url = Column(String, nullable=True)
+    location = Column(String, nullable=True) # Ex: Rayon B3
+
+    product = relationship("Product", back_populates="variants")
+    quants = relationship("StockQuant", back_populates="variant", cascade="all, delete-orphan")
+    moves = relationship("StockMove", back_populates="variant", cascade="all, delete-orphan")
+
+# --- ODOO INVENTORY ENGINE ---
+class StockLocation(Base):
+    __tablename__ = "stock_locations"
+    id = Column(Integer, primary_key=True, index=True)
+    parent_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True)
+    name = Column(String, index=True) # WH/Stock, Virtual/Inventory, Partner/Vendor
+    usage = Column(String, default="internal") # internal, supplier, customer, inventory, production
+    is_active = Column(Boolean, default=True)
+
+    children = relationship("StockLocation", back_populates="parent", cascade="all, delete-orphan")
+    parent = relationship("StockLocation", back_populates="children", remote_side=[id])
+
+class StockQuant(Base):
+    __tablename__ = "stock_quants"
+    id = Column(Integer, primary_key=True, index=True)
+    variant_id = Column(Integer, ForeignKey("product_variants.id"))
+    location_id = Column(Integer, ForeignKey("stock_locations.id"))
+    quantity = Column(Float, default=0.0)
+
+    variant = relationship("ProductVariant")
+    location = relationship("StockLocation")
+
+class StockMove(Base):
+    __tablename__ = "stock_moves"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, index=True) # e.g. WH/IN/0001
+    date = Column(DateTime, default=datetime.utcnow)
+    variant_id = Column(Integer, ForeignKey("product_variants.id"))
+    location_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True) # Source
+    location_dest_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True) # Dest
+    quantity = Column(Float)
+    state = Column(String, default="done")
+    notes = Column(String, nullable=True)
+    author = Column(String, default="Système")
+
+    variant = relationship("ProductVariant")
+    source_location = relationship("StockLocation", foreign_keys=[location_id])
+    dest_location = relationship("StockLocation", foreign_keys=[location_dest_id])
+
 class MMGStatus(str, enum.Enum):
     SENT = "SENT"
     IN_STUDY = "IN_STUDY"
@@ -172,3 +248,116 @@ class MMG(Base):
     # Link to Order (once validated and imported)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
     order = relationship("Order")
+
+# --- REGLAGES & REFERENTIELS (CONFIG) ---
+class AppConfig(Base):
+    __tablename__ = "app_configs"
+    id = Column(Integer, primary_key=True, index=True)
+    category = Column(String, index=True)
+    value = Column(String)
+
+# --- CHATTER & AUDIT LOG ---
+class ChatterMessage(Base):
+    __tablename__ = "chatter_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    model_name = Column(String, index=True) # e.g. "product", "variant", "location", "order"
+    record_id = Column(Integer, index=True)
+    body = Column(Text)
+    author = Column(String)
+    is_system_log = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+# --- RBAC DIRECTORY ---
+class Role(Base):
+    __tablename__ = "roles"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    description = Column(String)
+    permissions = relationship("Permission", secondary="role_permissions", backref="roles")
+
+class Permission(Base):
+    __tablename__ = "permissions"
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, index=True)
+    module = Column(String)
+    description = Column(String)
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+    permission_id = Column(Integer, ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True)
+
+# --- SALES & CRM (B2B) ---
+class SaleOrder(Base):
+    __tablename__ = "sale_orders"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True) # DEVIS-2026-0001
+    client_name = Column(String)
+    client_contact = Column(String, nullable=True)
+    client_email = Column(String, nullable=True)
+    client_address = Column(String, nullable=True)
+    status = Column(String, default="DRAFT") # DRAFT, SENT, VALIDATED, CANCELLED, DELIVERED
+    validity_days = Column(Integer, default=30)
+    tax_rate = Column(Float, default=18.0) # percentage
+    currency = Column(String, default="EUR")
+    notes = Column(Text, nullable=True)
+    author = Column(String, default="Système")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    lines = relationship("SaleOrderLine", back_populates="order", cascade="all, delete-orphan")
+
+class SaleOrderLine(Base):
+    __tablename__ = "sale_order_lines"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("sale_orders.id"))
+    variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=True) # None if custom line
+    description = Column(String) # Derived from variant or custom input
+    quantity = Column(Float, default=1.0)
+    unit_price = Column(Float, default=0.0) # HT
+    discount_pct = Column(Float, default=0.0) # % discount
+    
+    order = relationship("SaleOrder", back_populates="lines")
+    variant = relationship("ProductVariant")
+
+# --- POINT OF SALE (B2C) ---
+class POSSession(Base):
+    __tablename__ = "pos_sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True) # POS-S-0001
+    opened_by_user = Column(String)
+    opened_at = Column(DateTime, default=datetime.utcnow)
+    closed_at = Column(DateTime, nullable=True)
+    starting_cash = Column(Float, default=0.0)
+    closing_cash = Column(Float, nullable=True)
+    status = Column(String, default="OPEN") # OPEN, CLOSED
+    
+    orders = relationship("POSOrder", back_populates="session")
+
+class POSOrder(Base):
+    __tablename__ = "pos_orders"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("pos_sessions.id"))
+    reference = Column(String, unique=True, index=True) # TK-2026-00001
+    date = Column(DateTime, default=datetime.utcnow)
+    payment_method = Column(String, default="CASH") # CASH, CB, MOBO
+    tax_rate = Column(Float, default=18.0)
+    currency = Column(String, default="EUR")
+    amount_total = Column(Float, default=0.0)
+    amount_paid = Column(Float, default=0.0)
+    amount_return = Column(Float, default=0.0)
+    
+    session = relationship("POSSession", back_populates="orders")
+    lines = relationship("POSOrderLine", back_populates="order", cascade="all, delete-orphan")
+
+class POSOrderLine(Base):
+    __tablename__ = "pos_order_lines"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("pos_orders.id"))
+    variant_id = Column(Integer, ForeignKey("product_variants.id"))
+    product_name = Column(String) # Saved at time of checkout
+    quantity = Column(Float, default=1.0)
+    unit_price = Column(Float, default=0.0) # HT
+    
+    order = relationship("POSOrder", back_populates="lines")
+    variant = relationship("ProductVariant")

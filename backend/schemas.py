@@ -7,7 +7,7 @@ from .models import MaterialType, StationName, UserRole, PlanningStatus
 
 class UserBase(BaseModel):
     username: str
-    role: UserRole = UserRole.OPERATOR
+    role: str = "OPERATOR"
     stations: List['Station'] = [] # Changed to list of Station objects
 
 class UserCreate(UserBase):
@@ -16,7 +16,7 @@ class UserCreate(UserBase):
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
-    role: Optional[UserRole] = None
+    role: Optional[str] = None
     pin: Optional[str] = None # Optional PIN reset
     station_codes: Optional[List[str]] = None
 
@@ -226,5 +226,247 @@ class MMGDetail(MMGResponse):
     signature: str
     order_id: Optional[int]
     
+    class Config:
+        from_attributes = True
+
+# --- STOCK V3 PIM ---
+from typing import List
+
+class ProductVariantBase(BaseModel):
+    reference: str
+    barcode: Optional[str] = None
+    color: Optional[str] = None
+    length_per_unit: Optional[float] = None
+    supplier_reference: Optional[str] = None
+    cost_price: Optional[float] = None
+    quantity_in_stock: float = 0.0
+    min_threshold: float = 10.0
+    image_url: Optional[str] = None
+    location: Optional[str] = None
+
+class ProductVariantCreate(ProductVariantBase):
+    pass
+
+class ProductVariantResponse(ProductVariantBase):
+    id: int
+    product_id: int
+    class Config:
+        from_attributes = True
+
+class ProductBase(BaseModel):
+    reference_base: str
+    name: str
+    material_type: str
+    unit: str
+    supplier: Optional[str] = None
+    product_type: str = "stockable"
+    available_in_pos: bool = False
+    image_url: Optional[str] = None
+
+class ProductCreate(ProductBase):
+    variants: List[ProductVariantCreate] = []
+
+class ProductResponse(ProductBase):
+    id: int
+    variants: List[ProductVariantResponse] = []
+    class Config:
+        from_attributes = True
+
+class StockLocationBase(BaseModel):
+    name: str
+    usage: str = "internal" # internal, supplier, customer, inventory
+    parent_id: Optional[int] = None
+    is_active: bool = True
+
+class StockLocationCreate(StockLocationBase):
+    pass
+
+class StockLocationResponse(StockLocationBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class StockQuantBase(BaseModel):
+    variant_id: int
+    location_id: int
+    quantity: float
+
+class StockQuantResponse(StockQuantBase):
+    id: int
+    location: StockLocationResponse
+    class Config:
+        from_attributes = True
+
+class StockMoveCreate(BaseModel):
+    variant_id: int
+    location_id: Optional[int] = None # Source
+    location_dest_id: Optional[int] = None # Dest
+    quantity: float
+    notes: Optional[str] = None
+
+class StockMoveResponse(BaseModel):
+    id: int
+    reference: str
+    variant_id: int
+    quantity: float
+    date: datetime
+    state: str
+    author: Optional[str] = None
+    location_id: Optional[int] = None
+    location_dest_id: Optional[int] = None
+    notes: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+# --- REGLAGES & REFERENTIELS (CONFIG) ---
+class AppConfigBase(BaseModel):
+    category: str
+    value: str
+
+class AppConfigCreate(AppConfigBase):
+    pass
+
+class AppConfigResponse(AppConfigBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+# --- CHATTER (AUDIT LOG) ---
+class ChatterMessageBase(BaseModel):
+    model_name: str
+    record_id: int
+    body: str
+    is_system_log: bool = False
+
+class ChatterMessageCreate(ChatterMessageBase):
+    pass
+
+class ChatterMessageResponse(ChatterMessageBase):
+    id: int
+    author: str
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+# --- RBAC (ROLES & PERMISSIONS) ---
+
+class PermissionSchema(BaseModel):
+    id: int
+    code: str
+    module: str
+    description: str
+    class Config:
+        from_attributes = True
+
+class RoleCreate(BaseModel):
+    name: str
+    description: str
+
+class RoleSchema(BaseModel):
+    id: int
+    name: str
+    description: str
+    permissions: List[PermissionSchema] = []
+    class Config:
+        from_attributes = True
+
+# --- SALES & POS ---
+
+class POSOrderLineSchema(BaseModel):
+    id: int
+    variant_id: int
+    product_name: str
+    quantity: float
+    unit_price: float
+    class Config:
+        from_attributes = True
+
+class POSOrderSchema(BaseModel):
+    id: int
+    session_id: int
+    reference: str
+    date: datetime
+    payment_method: str
+    tax_rate: float
+    currency: str
+    amount_total: float
+    amount_paid: float
+    amount_return: float
+    lines: List[POSOrderLineSchema] = []
+    class Config:
+        from_attributes = True
+
+class POSSessionSchema(BaseModel):
+    id: int
+    reference: str
+    opened_by_user: str
+    opened_at: datetime
+    closed_at: Optional[datetime]
+    starting_cash: float
+    closing_cash: Optional[float]
+    status: str
+    orders: List[POSOrderSchema] = []
+    class Config:
+        from_attributes = True
+
+class POSCartItem(BaseModel):
+    variant_id: int
+    quantity: float
+    price: float
+    product_name: str
+
+class POSCheckoutRequest(BaseModel):
+    items: List[POSCartItem]
+    payment_method: str # CASH, CB, MOBO
+    amount_paid: float
+    tax_rate: float = 18.0
+    currency: str = "EUR"
+
+# B2B CRM
+
+class SaleOrderLineCreate(BaseModel):
+    variant_id: Optional[int] = None
+    description: str
+    quantity: float
+    unit_price: float
+    discount_pct: float = 0.0
+
+class SaleOrderCreate(BaseModel):
+    client_name: str
+    client_contact: Optional[str] = None
+    client_email: Optional[str] = None
+    client_address: Optional[str] = None
+    validity_days: int = 30
+    tax_rate: float = 18.0
+    currency: str = "EUR"
+    notes: Optional[str] = None
+    lines: List[SaleOrderLineCreate]
+
+class SaleOrderLineSchema(BaseModel):
+    id: int
+    variant_id: Optional[int]
+    description: str
+    quantity: float
+    unit_price: float
+    discount_pct: float
+    class Config:
+        from_attributes = True
+
+class SaleOrderSchema(BaseModel):
+    id: int
+    reference: str
+    client_name: str
+    client_contact: Optional[str]
+    client_email: Optional[str]
+    client_address: Optional[str]
+    status: str
+    validity_days: int
+    tax_rate: float
+    currency: str
+    notes: Optional[str]
+    author: str
+    created_at: datetime
+    updated_at: datetime
+    lines: List[SaleOrderLineSchema] = []
     class Config:
         from_attributes = True

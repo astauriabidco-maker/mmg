@@ -157,6 +157,10 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db)):
             db.add(new_plan)
     # ---------------------------
 
+    # --- STOCK AUTO-DEDUCTION ---
+    from ..services.stock_service import StockService
+    StockService.deduct_stock_for_order(db, task.order_id, task.station)
+
     db.commit()
     
     await manager.broadcast("refresh")

@@ -6,6 +6,7 @@ import OperatorDashboard from './pages/OperatorDashboard';
 import ManagerDashboard from './pages/ManagerDashboard';
 import ManualUpload from './pages/ManualUpload';
 import MMGDossiers from './pages/MMGDossiers';
+import POSDashboard from './pages/POSDashboard';
 
 const ProtectedRoute = ({ children }) => {
     const { user } = useAuth();
@@ -52,6 +53,14 @@ export default function App() {
                         element={
                             <ProtectedRoute>
                                 <ManualUpload />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/pos"
+                        element={
+                            <ProtectedRoute>
+                                <POSDashboard />
                             </ProtectedRoute>
                         }
                     />

@@ -31,3 +31,20 @@ def reprint_label(order_ref: str, db: Session = Depends(get_db)):
         return {"status": "sent_to_printer", "file": file_path}
     except Exception as e:
         raise HTTPException(500, f"Print failed: {str(e)}")
+
+@router.post("/print_barcode/{variant_id}")
+def print_barcode(variant_id: int, db: Session = Depends(get_db)):
+    variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == variant_id).first()
+    if not variant:
+        raise HTTPException(404, "Variant not found")
+        
+    barcode = variant.barcode or variant.reference
+    
+    # Mocking ZPL generation and print order
+    zpl_data = f"^XA^FO50,50^ADN,36,20^FD{variant.reference}^FS^FO50,100^BCN,100,Y,N,N^FD{barcode}^FS^XZ"
+    
+    # Normally we would send this over TCP to printer IP (e.g. 9100) or save to file
+    with open(f"generated_qr/{variant.reference}_barcode.zpl", "w") as f:
+        f.write(zpl_data)
+        
+    return {"status": "success", "message": f"Barcode for {variant.reference} sent to thermal printer.", "barcode": barcode}
