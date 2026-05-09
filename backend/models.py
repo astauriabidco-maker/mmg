@@ -62,6 +62,7 @@ class Planning(Base):
     priority = Column(Integer, default=0) # Higher = More urgent
     status = Column(SAEnum(PlanningStatus), default=PlanningStatus.PENDING)
     issue_notes = Column(String, nullable=True)
+    assigned_to = Column(String, nullable=True) # Name of the operator
     created_at = Column(DateTime, default=datetime.utcnow)
 
     order = relationship("Order")
@@ -94,6 +95,7 @@ class ProductionLog(Base):
     order_id = Column(Integer, ForeignKey("orders.id"))
     station = Column(String) # Changed from Enum to String
     material = Column(String) # PVC or ALU
+    operator_name = Column(String, nullable=True) # Who did the task
     start_time = Column(DateTime, default=datetime.utcnow)
     end_time = Column(DateTime, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
@@ -305,6 +307,11 @@ class SaleOrder(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # E-Signature Portal
+    signature_token = Column(String, unique=True, index=True, nullable=True)
+    signed_at = Column(DateTime, nullable=True)
+    signed_by_ip = Column(String, nullable=True)
+    
     lines = relationship("SaleOrderLine", back_populates="order", cascade="all, delete-orphan")
 
 class SaleOrderLine(Base):
@@ -316,6 +323,7 @@ class SaleOrderLine(Base):
     quantity = Column(Float, default=1.0)
     unit_price = Column(Float, default=0.0) # HT
     discount_pct = Column(Float, default=0.0) # % discount
+    visual_config = Column(Text, nullable=True) # JSON string for drawing
     
     order = relationship("SaleOrder", back_populates="lines")
     variant = relationship("ProductVariant")
@@ -361,3 +369,144 @@ class POSOrderLine(Base):
     
     order = relationship("POSOrder", back_populates="lines")
     variant = relationship("ProductVariant")
+
+# --- CLIENTS (CRM) ---
+class Client(Base):
+    __tablename__ = "clients"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    contact_name = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    tax_id = Column(String, nullable=True) # NIU
+    customer_type = Column(String, default="B2B") # B2B, B2C
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+# --- FOURNISSEURS (SUPPLIERS) ---
+class Supplier(Base):
+    __tablename__ = "suppliers"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    contact_name = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    tax_id = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+# --- ACHATS (PURCHASES) ---
+class PurchaseOrderStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    SENT = "SENT"
+    PARTIAL = "PARTIAL"
+    RECEIVED = "RECEIVED"
+    CANCELLED = "CANCELLED"
+
+class PurchaseOrder(Base):
+    __tablename__ = "purchase_orders"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True) # Ex: PO-2026-0001
+    supplier = Column(String)
+    order_date = Column(DateTime, default=datetime.utcnow)
+    expected_date = Column(DateTime, nullable=True)
+    status = Column(SAEnum(PurchaseOrderStatus), default=PurchaseOrderStatus.DRAFT)
+    total_amount = Column(Float, default=0.0)
+    notes = Column(Text, nullable=True)
+    author = Column(String, default="Système")
+    
+    lines = relationship("PurchaseOrderLine", back_populates="order", cascade="all, delete-orphan")
+
+class PurchaseOrderLine(Base):
+    __tablename__ = "purchase_order_lines"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("purchase_orders.id"))
+    variant_id = Column(Integer, ForeignKey("product_variants.id"))
+    quantity = Column(Float, default=1.0)
+    quantity_received = Column(Float, default=0.0)
+    unit_price = Column(Float, default=0.0)
+    
+    order = relationship("PurchaseOrder", back_populates="lines")
+    variant = relationship("ProductVariant")
+
+# --- FACTURATION (FRANCE NF525) ---
+
+class Invoice(Base):
+    __tablename__ = "invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True) # F-YYYY-XXXX
+    sale_order_id = Column(Integer, ForeignKey("sale_orders.id"), nullable=True)
+    client_name = Column(String)
+    client_address = Column(String, nullable=True)
+    client_siret = Column(String, nullable=True) # France Specific
+    issue_date = Column(DateTime, default=datetime.utcnow)
+    due_date = Column(DateTime)
+    status = Column(String, default="DRAFT") # DRAFT, UNPAID, PARTIAL, PAID, AVOIR
+    
+    subtotal = Column(Float, default=0.0)
+    tax_rate = Column(Float, default=20.0) # French standard TVA
+    tax_amount = Column(Float, default=0.0)
+    total = Column(Float, default=0.0)
+    
+    qr_code_hash = Column(String, nullable=True) # Anti-fraude seal
+    
+    lines = relationship("InvoiceLine", back_populates="invoice", cascade="all, delete-orphan")
+    payments = relationship("Payment", back_populates="invoice", cascade="all, delete-orphan")
+    sale_order = relationship("SaleOrder")
+
+class InvoiceLine(Base):
+    __tablename__ = "invoice_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    invoice_id = Column(Integer, ForeignKey("invoices.id"))
+    description = Column(String)
+    quantity = Column(Float, default=1.0)
+    unit_price = Column(Float)
+    tax_rate = Column(Float, default=20.0)
+    
+    invoice = relationship("Invoice", back_populates="lines")
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    invoice_id = Column(Integer, ForeignKey("invoices.id"))
+    amount = Column(Float)
+    payment_date = Column(DateTime, default=datetime.utcnow)
+    method = Column(String) # VIREMENT, CB, CHEQUE, ESPECES
+    reference = Column(String, nullable=True) # Transaction ID
+    
+    invoice = relationship("Invoice", back_populates="payments")
+
+# --- LOGISTIQUE & LIVRAISON ---
+class DeliveryRoute(Base):
+    __tablename__ = "delivery_routes"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True) # ROUTE-YYYY-XXXX
+    driver_name = Column(String)
+    vehicle = Column(String)
+    planned_date = Column(DateTime)
+    status = Column(String, default="PLANNED") # PLANNED, IN_TRANSIT, COMPLETED
+    
+    notes = relationship("DeliveryNote", back_populates="route")
+
+class DeliveryNote(Base):
+    __tablename__ = "delivery_notes"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True) # BL-YYYY-XXXX
+    route_id = Column(Integer, ForeignKey("delivery_routes.id"), nullable=True)
+    order_id = Column(Integer, ForeignKey("orders.id"))
+    
+    client_name = Column(String)
+    delivery_address = Column(String, nullable=True)
+    contact_phone = Column(String, nullable=True)
+    
+    status = Column(String, default="READY") # READY, ASSIGNED, IN_TRANSIT, DELIVERED, ISSUE
+    signed_at = Column(DateTime, nullable=True)
+    delivery_notes = Column(Text, nullable=True) # Changed from 'notes' to avoid name clash
+    
+    order = relationship("Order")
+    route = relationship("DeliveryRoute", back_populates="notes")

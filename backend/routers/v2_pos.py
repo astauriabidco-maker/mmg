@@ -6,6 +6,7 @@ from typing import List
 from ..database import get_db
 from .. import models, schemas
 from ..core.security import get_current_user
+from .v2_accounting import generate_invoice_reference, compute_qr_seal
 
 router = APIRouter(
     prefix="/v2/pos",
@@ -66,11 +67,61 @@ def close_session(session_id: int, closing_cash: float, db: Session = Depends(ge
     if session.status == "CLOSED":
         raise HTTPException(status_code=400, detail="Session déjà fermée.")
         
+    # Calculate expected cash
+    cash_orders = db.query(models.POSOrder).filter(
+        models.POSOrder.session_id == session.id,
+        models.POSOrder.payment_method == "CASH"
+    ).all()
+    
+    total_cash_sales = sum(o.amount_total for o in cash_orders)
+    expected_cash = session.starting_cash + total_cash_sales
+    
     session.status = "CLOSED"
     session.closed_at = datetime.utcnow()
     session.closing_cash = closing_cash
     db.commit()
-    return {"message": "Caisse fermée avec succès", "expected": session.starting_cash, "actual": closing_cash}
+    
+    difference = closing_cash - expected_cash
+    
+    return {
+        "message": "Caisse fermée avec succès", 
+        "expected": expected_cash, 
+        "actual": closing_cash,
+        "difference": difference
+    }
+
+@router.get("/sessions/{session_id}/report")
+def get_session_report(session_id: int, db: Session = Depends(get_db)):
+    session = db.query(models.POSSession).filter(models.POSSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session non trouvée.")
+        
+    orders = db.query(models.POSOrder).filter(models.POSOrder.session_id == session.id).all()
+    
+    total_sales = sum(o.amount_total for o in orders)
+    total_cash = sum(o.amount_total for o in orders if o.payment_method == "CASH")
+    total_cb = sum(o.amount_total for o in orders if o.payment_method == "CARD")
+    
+    # Best-selling products logic
+    product_sales = {}
+    for o in orders:
+        for line in o.lines:
+            product_sales[line.product_name] = product_sales.get(line.product_name, 0) + line.quantity
+            
+    top_products = sorted([{"name": k, "qty": v} for k, v in product_sales.items()], key=lambda x: x["qty"], reverse=True)[:5]
+    
+    return {
+        "session_reference": session.reference,
+        "status": session.status,
+        "opened_at": session.opened_at,
+        "starting_cash": session.starting_cash,
+        "total_sales": total_sales,
+        "total_cash_collected": total_cash,
+        "total_cb_collected": total_cb,
+        "expected_cash_in_drawer": session.starting_cash + total_cash,
+        "top_products": top_products,
+        "ticket_count": len(orders)
+    }
 
 @router.post("/checkout", response_model=schemas.POSOrderSchema)
 def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db)):
@@ -148,6 +199,49 @@ def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db))
         )
         db.add(mv)
         
+    # --- AUTO-GENERATE NF525 INVOICE ---
+    subtotal = amount_total / (1 + (req.tax_rate / 100.0))
+    tax_amount = amount_total - subtotal
+    
+    new_invoice = models.Invoice(
+        reference=generate_invoice_reference(db),
+        sale_order_id=None,
+        client_name="Client Comptoir (POS)",
+        client_address="Vente au détail",
+        due_date=datetime.utcnow(),
+        status="PAID", # POS sales are paid immediately
+        subtotal=subtotal,
+        tax_rate=req.tax_rate,
+        tax_amount=tax_amount,
+        total=amount_total
+    )
+    db.add(new_invoice)
+    db.flush()
+    
+    # Auto-Payment
+    new_payment = models.Payment(
+        invoice_id=new_invoice.id,
+        amount=req.amount_paid if req.amount_paid <= amount_total else amount_total, # Only record what covers the invoice
+        method=req.payment_method,
+        reference=f"POS Ticket {ref}"
+    )
+    db.add(new_payment)
+    
+    for item in req.items:
+        db_inv_line = models.InvoiceLine(
+            invoice_id=new_invoice.id,
+            description=item.product_name,
+            quantity=item.quantity,
+            unit_price=item.price / (1 + (req.tax_rate / 100.0)), # Price in POS is usually TTC, invoice line needs HT
+            tax_rate=req.tax_rate
+        )
+        db.add(db_inv_line)
+        
+    new_invoice.qr_code_hash = compute_qr_seal(new_invoice)
+        
     db.commit()
     db.refresh(order)
+    
+    # Attach NF525 ref to order temporarily if needed (we can return it in the schema, but order schema doesn't have it yet)
+    # We will just return the order.
     return order

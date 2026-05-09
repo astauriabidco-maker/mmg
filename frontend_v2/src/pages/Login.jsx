@@ -5,6 +5,9 @@ import { Lock, Delete } from 'lucide-react';
 
 export default function Login() {
     const [pin, setPin] = useState('');
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [isKioskMode, setIsKioskMode] = useState(true);
     const [error, setError] = useState('');
     const { login } = useAuth();
     const navigate = useNavigate();
@@ -20,36 +23,40 @@ export default function Login() {
         setPin(prev => prev.slice(0, -1));
     };
 
-    const handleSubmit = async () => {
-        if (pin.length !== 4) return;
+    const handleSubmit = async (e) => {
+        if (e) e.preventDefault();
+        
+        let loginUsername = username;
+        let loginPassword = password;
 
-        // Simple PIN mapping for Kiosk mode (MVP)
-        let username = 'admin'; // Default fallback
-        if (pin === '1111') username = 'op_debit';
-        if (pin === '2222') username = 'op_soudure';
-        if (pin === '3333') username = 'op_assemblage';
-        if (pin === '4444') username = 'op_vitrage';
-        if (pin === '1234') username = 'admin'; // Explicit
-        if (pin === '0000') username = 'manager';
+        if (isKioskMode) {
+            if (pin.length !== 4) return;
+            // Simple PIN mapping for Kiosk mode
+            loginUsername = 'admin'; // Default fallback
+            if (pin === '1111') loginUsername = 'op_debit';
+            if (pin === '2222') loginUsername = 'op_soudure';
+            if (pin === '3333') loginUsername = 'op_assemblage';
+            if (pin === '4444') loginUsername = 'op_vitrage';
+            if (pin === '1234') loginUsername = 'admin';
+            if (pin === '0000') loginUsername = 'manager';
+            loginPassword = pin;
+        }
 
-        const success = await login(username, pin);
+        const success = await login(loginUsername, loginPassword);
         if (success) {
-            // Redirect based on role/station (handled by App.jsx or here)
-            // Ideally, we check the role returned by login and redirect accordingly
-            // For now, simpler:
-            if (username === 'admin' || username === 'manager') {
+            if (loginUsername === 'admin' || loginUsername === 'manager') {
                 navigate('/manager');
             } else {
-                // Determine station from username for redirection
                 let station = 'PVC_DEBIT';
-                if (username === 'op_soudure') station = 'PVC_SOUDURE';
-                if (username === 'op_assemblage') station = 'PVC_ASSEMBLAGE';
-                if (username === 'op_vitrage') station = 'PVC_VITRAGE';
+                if (loginUsername === 'op_soudure') station = 'PVC_SOUDURE';
+                if (loginUsername === 'op_assemblage') station = 'PVC_ASSEMBLAGE';
+                if (loginUsername === 'op_vitrage') station = 'PVC_VITRAGE';
                 navigate(`/dashboard/${station}`);
             }
         } else {
-            setError('Code PIN Incorrect');
+            setError('Identifiants incorrects');
             setPin('');
+            setPassword('');
         }
     };
 
@@ -60,18 +67,25 @@ export default function Login() {
                     <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-600/20">
                         <Lock className="text-white w-8 h-8" />
                     </div>
-                    <h1 className="text-2xl font-bold text-white mb-2">Atelier Connecté</h1>
-                    <p className="text-slate-400">Entrez votre code PIN</p>
+                    <h1 className="text-2xl font-bold text-white mb-2">MMG Industrie</h1>
+                    <p className="text-slate-400">
+                        {isKioskMode ? "Atelier: Entrez votre code PIN" : "Bureau: Connectez-vous"}
+                    </p>
                 </div>
-
-                <div className="flex justify-center gap-4 mb-8">
-                    {[0, 1, 2, 3].map((i) => (
-                        <div
-                            key={i}
-                            className={`w-4 h-4 rounded-full transition-all duration-300 ${i < pin.length ? 'bg-blue-500 scale-125' : 'bg-slate-600'
-                                }`}
-                        />
-                    ))}
+                
+                <div className="flex bg-slate-700 p-1 rounded-xl mb-8">
+                    <button 
+                        onClick={() => { setIsKioskMode(true); setError(''); }}
+                        className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${isKioskMode ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
+                    >
+                        Atelier (PIN)
+                    </button>
+                    <button 
+                        onClick={() => { setIsKioskMode(false); setError(''); }}
+                        className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${!isKioskMode ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
+                    >
+                        Bureau (Login)
+                    </button>
                 </div>
 
                 {error && (
@@ -80,8 +94,19 @@ export default function Login() {
                     </div>
                 )}
 
-                <div className="grid grid-cols-3 gap-4 mb-6">
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                {isKioskMode ? (
+                    <>
+                        <div className="flex justify-center gap-4 mb-8">
+                            {[0, 1, 2, 3].map((i) => (
+                                <div
+                                    key={i}
+                                    className={`w-4 h-4 rounded-full transition-all duration-300 ${i < pin.length ? 'bg-blue-500 scale-125' : 'bg-slate-600'}`}
+                                />
+                            ))}
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-4 mb-6">
+                            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
                         <button
                             key={num}
                             onClick={() => handleNum(num)}
@@ -97,27 +122,62 @@ export default function Login() {
                         >
                             0
                         </button>
+                        </div>
+                        <div className="col-start-3">
+                            <button
+                                onClick={handleDelete}
+                                className="w-full bg-slate-700 hover:bg-slate-600 text-red-400 text-2xl font-bold py-6 rounded-xl transition-all active:scale-95 shadow-lg border border-slate-600 flex items-center justify-center"
+                            >
+                                <Delete className="w-8 h-8" />
+                            </button>
+                        </div>
                     </div>
-                    <div className="col-start-3">
-                        <button
-                            onClick={handleDelete}
-                            className="w-full bg-slate-700 hover:bg-slate-600 text-red-400 text-2xl font-bold py-6 rounded-xl transition-all active:scale-95 shadow-lg border border-slate-600 flex items-center justify-center"
-                        >
-                            <Delete className="w-8 h-8" />
-                        </button>
-                    </div>
-                </div>
 
-                <button
-                    onClick={handleSubmit}
-                    disabled={pin.length !== 4}
-                    className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${pin.length === 4
-                        ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/30 active:scale-95'
-                        : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                        }`}
-                >
-                    CONNEXION
-                </button>
+                    <button
+                        onClick={() => handleSubmit()}
+                        disabled={pin.length !== 4}
+                        className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${pin.length === 4
+                            ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/30 active:scale-95'
+                            : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                            }`}
+                    >
+                        CONNEXION
+                    </button>
+                </>
+                ) : (
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                        <label className="block text-slate-400 text-sm font-bold mb-2">Nom d'utilisateur</label>
+                        <input 
+                            type="text" 
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            className="w-full bg-slate-700 border border-slate-600 text-white rounded-xl p-4 outline-none focus:border-blue-500 transition-colors"
+                            placeholder="ex: admin"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-slate-400 text-sm font-bold mb-2">Mot de passe</label>
+                        <input 
+                            type="password" 
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            className="w-full bg-slate-700 border border-slate-600 text-white rounded-xl p-4 outline-none focus:border-blue-500 transition-colors"
+                            placeholder="••••••••"
+                        />
+                    </div>
+                    <button
+                        type="submit"
+                        disabled={!username || !password}
+                        className={`w-full py-4 mt-4 rounded-xl text-lg font-bold transition-all ${username && password
+                            ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/30 active:scale-95'
+                            : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                            }`}
+                    >
+                        SE CONNECTER
+                    </button>
+                </form>
+                )}
             </div>
         </div>
     );

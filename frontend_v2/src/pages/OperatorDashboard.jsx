@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Square, Clock, List, LogOut, ChevronDown, Repeat, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Square, Clock, List, LogOut, ChevronDown, Repeat, AlertTriangle, CheckCircle2, Users } from 'lucide-react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -212,6 +212,11 @@ export default function OperatorDashboard() {
                                             {item.status === "PAUSED" ? "PAUSE" : "PROBLÈME"}
                                         </span>
                                     )}
+                                    {item.status === "IN_PROGRESS" && item.assigned_to && (
+                                        <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase bg-blue-500 text-white shadow-sm flex items-center gap-1">
+                                            <Users className="w-2 h-2"/> {item.assigned_to}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -248,6 +253,13 @@ export default function OperatorDashboard() {
                             </span>
                             <h1 className="text-7xl font-black text-slate-900 mb-2 tracking-tighter">{selectedTask.order_reference}</h1>
                             <p className="text-3xl text-slate-500 font-light tracking-wide">{STATION}</p>
+                            
+                            {selectedTask.status === "IN_PROGRESS" && selectedTask.assigned_to && (
+                                <div className="mt-4 inline-flex items-center gap-2 bg-blue-50 border border-blue-100 text-blue-700 px-4 py-2 rounded-full font-bold text-sm">
+                                    <Users className="w-4 h-4"/>
+                                    Pris en charge par : {selectedTask.assigned_to}
+                                </div>
+                            )}
 
                             <div className="flex justify-center gap-6 mt-6">
                                 <div className="bg-white px-6 py-3 rounded-2xl shadow-sm border border-slate-100 text-left">
@@ -262,6 +274,32 @@ export default function OperatorDashboard() {
                                     <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Quantité</p>
                                     <p className="font-black text-blue-600">{selectedTask.order?.quantity || 1} PCE</p>
                                 </div>
+                            </div>
+                            
+                            {/* SCHEMA TECHNIQUE SVG */}
+                            <div className="mt-8 flex justify-center opacity-80 mix-blend-multiply">
+                                {selectedTask.order?.width && selectedTask.order?.height && (
+                                    <div className="relative border-2 border-dashed border-slate-300 p-8 rounded-2xl bg-white flex items-center justify-center shadow-inner">
+                                        <div className="absolute -top-3 bg-slate-100 text-slate-500 text-[10px] font-bold px-2 rounded-full border border-slate-200">L {selectedTask.order.width}mm</div>
+                                        <div className="absolute -left-3 -rotate-90 bg-slate-100 text-slate-500 text-[10px] font-bold px-2 rounded-full border border-slate-200">H {selectedTask.order.height}mm</div>
+                                        <svg 
+                                            width={Math.min(200, (selectedTask.order.width / selectedTask.order.height) * 200)} 
+                                            height={Math.min(200, (selectedTask.order.height / selectedTask.order.width) * 200)} 
+                                            viewBox="0 0 100 100" 
+                                            preserveAspectRatio="none"
+                                            className="overflow-visible"
+                                        >
+                                            {/* Cadre Extérieur */}
+                                            <rect x="0" y="0" width="100" height="100" fill="none" stroke="#64748b" strokeWidth="4" />
+                                            {/* Cadre Intérieur (Ouvrant) */}
+                                            <rect x="5" y="5" width="90" height="90" fill="#f8fafc" stroke="#94a3b8" strokeWidth="2" />
+                                            {/* Poignée (Droite) */}
+                                            <rect x="85" y="45" width="4" height="10" fill="#cbd5e1" rx="1" />
+                                            {/* Vitrage (Effet Reflet) */}
+                                            <polygon points="10,90 90,10 90,90" fill="#e2e8f0" opacity="0.4" />
+                                        </svg>
+                                    </div>
+                                )}
                             </div>
 
                             {selectedTask.status === "ISSUE" && selectedTask.issue_notes && (

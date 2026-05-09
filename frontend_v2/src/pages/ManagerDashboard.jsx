@@ -2,25 +2,33 @@ import React, { useState, useEffect } from 'react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
-import { TrendingUp, AlertTriangle, Clock, Activity, LogOut, Upload, Menu, Search, Filter, ArrowUpRight, ArrowDownRight, ChevronRight, Users, Settings, Box, Banknote, CheckCircle2, Factory, Package, BarChart3 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { TrendingUp, AlertTriangle, Clock, Activity, LogOut, Upload, Menu, Search, Filter, ArrowUpRight, ArrowDownRight, ChevronRight, Users, Settings, Box, Banknote, CheckCircle2, Factory, Package, BarChart3, Sparkles, X, Scissors } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import StationManager from '../components/StationManager';
 import OperatorManager from '../components/OperatorManager';
 import Sidebar from '../components/Sidebar';
+import CuttingOptimizerModal from '../components/CuttingOptimizerModal';
 import StockDashboard from './StockDashboard';
+import PurchasesDashboard from './PurchasesDashboard';
+import SalesDashboard from './SalesDashboard';
 import ConfigDashboard from './ConfigDashboard';
+import AccountingDashboard from './AccountingDashboard';
+import DeliveryDashboard from './DeliveryDashboard';
+import InsightDashboard from './InsightDashboard';
 import RBACMatrix from '../components/RBACMatrix';
+import PlatformSettings from '../components/PlatformSettings';
 
 export default function ManagerDashboard() {
     const { logout } = useAuth();
-    const [stats, setStats] = useState({ total: 0, avg_time: 0, delay_rate: 0, active: 0, defects: 0 });
-    const [chartData, setChartData] = useState([]);
-    const [recentOrders, setRecentOrders] = useState([]);
+
     const [activeView, setActiveView] = useState('dashboard'); // 'dashboard', 'live', 'orders', 'stock', 'config'
     const [configTab, setConfigTab] = useState('stations');
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [materialFilter, setMaterialFilter] = useState('ALL');
+    const [insightModalOpen, setInsightModalOpen] = useState(false);
+    const [cuttingModalOpen, setCuttingModalOpen] = useState(false);
     const location = useLocation();
 
     useEffect(() => {
@@ -31,25 +39,32 @@ export default function ManagerDashboard() {
         }
     }, [location.state]);
 
-    const fetchData = async () => {
-        try {
-            const kpi = await api.get('/v2/analytics/daily');
-            setStats(kpi.data);
-            const chart = await api.get('/v2/analytics/hourly');
-            setChartData(chart.data);
-            const recent = await api.get('/v2/ingest/recent');
-            setRecentOrders(recent.data);
-        } catch (e) {
-            console.error(e);
-            setStats({ total: 0, avg_time: "Err", delay_rate: 0, active: 0, defects: 0 });
-        }
-    };
+    const { data: stats = { total: 0, avg_time: "...", delay_rate: 0, active: 0, defects: 0 } } = useQuery({
+        queryKey: ['manager-stats'],
+        queryFn: async () => {
+            const { data } = await api.get('/v2/analytics/daily');
+            return data;
+        },
+        refetchInterval: 10000,
+    });
 
-    useEffect(() => {
-        fetchData();
-        const interval = setInterval(fetchData, 10000);
-        return () => clearInterval(interval);
-    }, []);
+    const { data: chartData = [] } = useQuery({
+        queryKey: ['manager-chart'],
+        queryFn: async () => {
+            const { data } = await api.get('/v2/analytics/hourly');
+            return data;
+        },
+        refetchInterval: 10000,
+    });
+
+    const { data: recentOrders = [] } = useQuery({
+        queryKey: ['manager-recent-orders'],
+        queryFn: async () => {
+            const { data } = await api.get('/v2/ingest/recent');
+            return data;
+        },
+        refetchInterval: 10000,
+    });
 
     const filteredOrders = recentOrders.filter(o =>
         (searchTerm === '' || o.reference.toLowerCase().includes(searchTerm.toLowerCase()) || o.client_name?.toLowerCase().includes(searchTerm.toLowerCase())) &&
@@ -81,7 +96,11 @@ export default function ManagerDashboard() {
                             {activeView === 'dashboard' ? 'Vue d\'Ensemble' :
                                 activeView === 'live' ? 'Atelier Live' :
                                     activeView === 'orders' ? 'Suivi Commandes' :
-                                        activeView === 'stock' ? 'Gestion de Stock' : 'Configuration'}
+                                        activeView === 'stock' ? 'Gestion de Stock' : 
+                                            activeView === 'purchases' ? 'Achats & Approvisionnement' :
+                                                activeView === 'sales' ? 'CRM & Devis (Ventes)' : 
+                                                        activeView === 'logistics' ? 'Logistique & Expéditions' : 
+                                                            activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration'}
                         </h1>
                     </div>
 
@@ -96,14 +115,61 @@ export default function ManagerDashboard() {
                     </div>
                 </header>
 
+                {/* AI Search Bar directly below header */}
+                {activeView === 'dashboard' && (
+                    <div className="bg-white border-b border-slate-200 p-4 shadow-sm relative z-20">
+                        <div 
+                            onClick={() => setInsightModalOpen(true)}
+                            className="max-w-3xl mx-auto bg-slate-100 hover:bg-slate-200 cursor-text transition-colors rounded-full flex items-center px-6 py-3 border border-transparent focus-within:border-indigo-400 focus-within:bg-white focus-within:shadow-lg focus-within:shadow-indigo-500/10"
+                        >
+                            <Sparkles className="w-5 h-5 text-indigo-500 mr-3 shrink-0" />
+                            <input 
+                                type="text"
+                                placeholder="Demander à l'IA... (Ex: Quel est le CA ? Quels sont les produits les plus vendus ?)"
+                                className="bg-transparent border-none outline-none w-full font-medium text-slate-700 pointer-events-none"
+                                readOnly
+                            />
+                            <div className="flex items-center gap-1">
+                                <kbd className="hidden sm:inline-block bg-white border border-slate-300 rounded px-2 py-0.5 text-xs font-bold text-slate-500">⌘</kbd>
+                                <kbd className="hidden sm:inline-block bg-white border border-slate-300 rounded px-2 py-0.5 text-xs font-bold text-slate-500">K</kbd>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* View Container */}
                 <div className="p-8">
                     {activeView === 'dashboard' && renderDashboardView()}
                     {activeView === 'live' && renderLiveView()}
                     {activeView === 'orders' && renderOrdersView()}
                     {activeView === 'stock' && <StockDashboard />}
-                    {activeView === 'config' && renderConfigView()}
+                    {activeView === 'purchases' && <PurchasesDashboard />}
+                    {activeView === 'sales' && <SalesDashboard />}
+                    {activeView === 'accounting' && <AccountingDashboard />}
+                    {activeView === 'logistics' && <DeliveryDashboard />}
+                    {activeView === 'insight' && <InsightDashboard />}
+                    {activeView === 'config' && <PlatformSettings />}
                 </div>
+
+                {/* CUTTING OPTIMIZER MODAL */}
+                {cuttingModalOpen && <CuttingOptimizerModal onClose={() => setCuttingModalOpen(false)} />}
+
+                {/* FLOATING INSIGHT MODAL */}
+                {insightModalOpen && (
+                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                        <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col relative animate-fade-in border border-slate-200">
+                            <button 
+                                onClick={() => setInsightModalOpen(false)}
+                                className="absolute top-4 right-4 z-10 w-10 h-10 bg-white/80 backdrop-blur-md rounded-full flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors shadow-sm"
+                            >
+                                <X className="w-6 h-6" />
+                            </button>
+                            <div className="h-[80vh]">
+                                <InsightDashboard />
+                            </div>
+                        </div>
+                    </div>
+                )}
             </main>
         </div>
     );
@@ -132,7 +198,7 @@ export default function ManagerDashboard() {
                         <div>
                             <p className="text-slate-400 font-bold uppercase tracking-widest text-xs mb-2 flex items-center gap-2"><Banknote className="w-4 h-4 text-emerald-400"/> CA MENSUEL</p>
                             <h2 className="text-4xl lg:text-5xl font-black tracking-tight mt-1 flex items-baseline gap-2">
-                                42.8 <span className="text-xl text-slate-500 font-bold">M FCFA</span>
+                                42.8 <span className="text-xl text-slate-500 font-bold">K €</span>
                             </h2>
                             <p className="text-emerald-400 text-sm font-bold flex items-center gap-1 mt-3">
                                 <ArrowUpRight className="w-4 h-4" /> +15.2% vs M-1
@@ -150,7 +216,7 @@ export default function ManagerDashboard() {
                         <div className="border-l border-white/10 pl-8">
                             <p className="text-slate-400 font-bold uppercase tracking-widest text-xs mb-2 flex items-center gap-2"><Package className="w-4 h-4 text-purple-400"/> VALEUR INVENTAIRE</p>
                             <h2 className="text-4xl lg:text-5xl font-black tracking-tight mt-1 flex items-baseline gap-2">
-                                115.3 <span className="text-xl text-slate-500 font-bold">M FCFA</span>
+                                115.3 <span className="text-xl text-slate-500 font-bold">K €</span>
                             </h2>
                             <p className="text-slate-300 text-sm font-bold flex items-center gap-1 mt-3">
                                 <ArrowDownRight className="w-4 h-4 text-rose-400" /> -4.1% rotation (Sain)
@@ -266,6 +332,13 @@ export default function ManagerDashboard() {
                         <h2 className="text-2xl font-bold text-slate-900">Vue au Sol - Live</h2>
                         <p className="text-slate-500">État de charge en temps réel par poste de travail.</p>
                     </div>
+                    <button 
+                        onClick={() => setCuttingModalOpen(true)}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-lg flex items-center gap-2 font-bold transition-all"
+                    >
+                        <Scissors className="w-5 h-5" />
+                        IA : Optimisation Découpe
+                    </button>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -375,46 +448,6 @@ export default function ManagerDashboard() {
             </div>
         );
     }
-
-    function renderConfigView() {
-        return (
-            <div className="max-w-4xl mx-auto space-y-8">
-                <div className="flex gap-4 p-1.5 bg-slate-100 rounded-2xl w-fit">
-                    <button
-                        onClick={() => setConfigTab('stations')}
-                        className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${configTab === 'stations' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Postes de Travail
-                    </button>
-                    <button
-                        onClick={() => setConfigTab('operators')}
-                        className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${configTab === 'operators' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Équipes & Accès
-                    </button>
-                    <button
-                        onClick={() => setConfigTab('taxonomy')}
-                        className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${configTab === 'taxonomy' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Référentiels PIM
-                    </button>
-                </div>
-
-                <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm animate-fade-in">
-                    {configTab === 'stations' && <StationManager />}
-                    {configTab === 'operators' && (
-                        <div className="space-y-12">
-                            <OperatorManager />
-                            <div className="border-t border-slate-200 pt-12">
-                                <RBACMatrix />
-                            </div>
-                        </div>
-                    )}
-                    {configTab === 'taxonomy' && <ConfigDashboard />}
-                </div>
-            </div>
-        );
-    }
 }
 
 // Sub-components
@@ -456,17 +489,21 @@ function KpiCard({ icon: Icon, title, value, trend, isUp, color }) {
 }
 
 function StationLiveCard({ name }) {
-    const [stats, setStats] = useState({ queue: 0, in_progress: 0 });
+    const { data: queueData = [], isLoading } = useQuery({
+        queryKey: ['station-queue', name],
+        queryFn: async () => {
+            const res = await api.get(`/v2/planning/${name}`);
+            return res.data;
+        },
+        refetchInterval: 5000, // Auto-refresh every 5s
+    });
 
-    // In a real app, this would fetch from a per-station stats endpoint
-    useEffect(() => {
-        setStats({
-            queue: Math.floor(Math.random() * 10),
-            in_progress: Math.floor(Math.random() * 3)
-        });
-    }, []);
+    const stats = {
+        queue: queueData.filter(item => item.status === 'PENDING').length,
+        in_progress: queueData.filter(item => item.status === 'IN_PROGRESS').length
+    };
 
-    const hasIssue = stats.queue > 8;
+    const hasIssue = stats.queue > 8 || queueData.some(item => item.status === 'ISSUE');
 
     return (
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:border-blue-300 transition-all group">

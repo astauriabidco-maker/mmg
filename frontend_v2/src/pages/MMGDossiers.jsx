@@ -26,7 +26,7 @@ import {
 import Sidebar from '../components/Sidebar';
 import { Link } from 'react-router-dom';
 
-const MMGDossiers = () => {
+const MMGDossiers = ({ isEmbedded = false }) => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [dossiers, setDossiers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -64,18 +64,28 @@ const MMGDossiers = () => {
             hardware_type: 'Standard',
             is_pmr_compliant: false,
             doublage_thickness: '100',
-            keep_existing_frame: false
+            keep_existing_frame: false,
+            ventilation: 'Aucune',
+            shape: 'Rectangulaire',
+            soubassement_type: 'Vitré'
         },
         logistics: {
             floor_number: 0,
             access_difficulty: 'Standard',
             environment: 'Standard'
         },
+        annexes: {
+            volet_roulant: 'Aucun',
+            volet_battant: 'Aucun',
+            moustiquaire: false,
+            frais_pose: 'Aucun',
+            livraison: false
+        },
         photos: ["default_agency.jpg"],
         signature: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" // Mock signature for agency
     });
 
-    const API_URL = 'http://localhost:8000';
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
     useEffect(() => {
         fetchDossiers();
@@ -147,6 +157,10 @@ const MMGDossiers = () => {
         }
 
         setFormData({ ...formData, configuration: newConfig });
+    };
+
+    const updateAnnexes = (field, value) => {
+        setFormData({ ...formData, annexes: { ...formData.annexes, [field]: value } });
     };
 
     const updateLogistics = (field, value) => {
@@ -245,47 +259,69 @@ const MMGDossiers = () => {
     );
 
     return (
-        <div className="min-h-screen bg-slate-50 flex font-sans">
-            <Sidebar
-                activeView={"mmg"}
-                isOpen={isSidebarOpen}
-                setIsOpen={setIsSidebarOpen}
-            />
-            <main className="flex-1 lg:ml-72 transition-all duration-300 overflow-y-auto">
+        <div className={`min-h-screen bg-slate-50 flex font-sans ${isEmbedded ? 'h-[calc(100vh-100px)] min-h-[0]' : ''}`}>
+            {!isEmbedded && (
+                <Sidebar
+                    activeView={"mmg"}
+                    isOpen={isSidebarOpen}
+                    setIsOpen={setIsSidebarOpen}
+                />
+            )}
+            <main className={`flex-1 transition-all duration-300 overflow-y-auto ${!isEmbedded ? 'lg:ml-72' : ''}`}>
                 <div className="p-8 max-w-7xl mx-auto">
-                    <header className="mb-10 flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                            <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 bg-white border border-slate-200 rounded-lg text-slate-500">
-                                <Menu className="w-6 h-6" />
-                            </button>
-                            <div>
-                                <h1 className="text-4xl font-bold text-slate-900 tracking-tight">Dossiers MMG Digital</h1>
-                                <p className="text-slate-500 mt-2">Gestion des formulaires de prises de côtes mobiles</p>
+                    {!isEmbedded && (
+                        <header className="mb-10 flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                                <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 bg-white border border-slate-200 rounded-lg text-slate-500">
+                                    <Menu className="w-6 h-6" />
+                                </button>
+                                <div>
+                                    <h1 className="text-4xl font-bold text-slate-900 tracking-tight">Dossiers MMG Digital</h1>
+                                    <p className="text-slate-500 mt-2">Gestion des formulaires de prises de côtes mobiles</p>
+                                </div>
                             </div>
+                            <div className="flex items-center gap-3">
+                                <Link
+                                    to="/upload"
+                                    className="flex items-center gap-2 px-6 py-3 bg-white border-2 border-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-50 transition-all"
+                                    title="Importer un fichier PDF de production (Dossier MMG)"
+                                >
+                                    <Upload className="w-5 h-5" />
+                                    Dossier (PDF)
+                                </Link>
+                                <button
+                                    onClick={() => {
+                                        setIsEntryFormOpen(true);
+                                        setFormStep(1);
+                                    }}
+                                    className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
+                                >
+                                    <Plus className="w-5 h-5" />
+                                    Saisie Manuelle
+                                </button>
+                            </div>
+                        </header>
+                    )}
+                    
+                    {isEmbedded && (
+                        <div className="mb-6 flex items-center justify-between">
+                            <div>
+                                <h2 className="text-2xl font-black text-slate-900">Dossiers Techniques</h2>
+                                <p className="text-slate-500 text-sm">Convertissez vos prises de côtes en devis commerciaux.</p>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setIsEntryFormOpen(true);
+                                    setFormStep(1);
+                                }}
+                                className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
+                            >
+                                <Plus className="w-5 h-5" />
+                                Nouvelle Prise de Côte
+                            </button>
                         </div>
-                    <div className="flex items-center gap-3">
-                        <Link
-                            to="/upload"
-                            className="flex items-center gap-2 px-6 py-3 bg-white border-2 border-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-50 transition-all"
-                            title="Importer un fichier PDF de production (Dossier MMG)"
-                        >
-                            <Upload className="w-5 h-5" />
-                            Dossier (PDF)
-                        </Link>
-                        <button
-                            onClick={() => {
-                                setIsEntryFormOpen(true);
-                                setFormStep(1);
-                            }}
-                            className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
-                        >
-                            <Plus className="w-5 h-5" />
-                            Saisie Manuelle
-                        </button>
-                    </div>
-                </header>
-
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                    )}
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                     <table className="w-full text-left border-collapse">
                         <thead>
                             <tr className="text-slate-400 text-xs font-bold uppercase tracking-wider border-b border-slate-50 bg-slate-50/50">
@@ -874,6 +910,18 @@ const MMGDossiers = () => {
                                                 </label>
                                             </div>
                                         </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Grille de Ventilation</label>
+                                            <select
+                                                className="w-full p-4 bg-slate-50 border-0 rounded-2xl font-bold text-slate-700"
+                                                value={formData.configuration.ventilation}
+                                                onChange={(e) => updateConfig('ventilation', e.target.value)}
+                                            >
+                                                <option value="Aucune">Aucune (Non ventilé)</option>
+                                                <option value="Standard">Aérateur Standard (30m³/h)</option>
+                                                <option value="Acoustique">Aérateur Acoustique (Renforcé)</option>
+                                            </select>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -972,11 +1020,97 @@ const MMGDossiers = () => {
                                                 placeholder="2050"
                                             />
                                         </div>
+                                        <div className="col-span-2">
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Forme Spéciale (Architecturale)</label>
+                                            <select
+                                                className="w-full p-4 bg-indigo-50 border-0 rounded-2xl font-bold text-indigo-700"
+                                                value={formData.configuration.shape}
+                                                onChange={(e) => updateConfig('shape', e.target.value)}
+                                            >
+                                                <option value="Rectangulaire">Standard (Rectangulaire/Carré)</option>
+                                                <option value="Cintré">Cintré (Arc de cercle)</option>
+                                                <option value="Trapèze">Trapèze (Sous pente)</option>
+                                                <option value="Triangle">Triangle</option>
+                                            </select>
+                                        </div>
                                     </div>
                                 </div>
                             )}
 
                             {formStep === 5 && (
+                                <div className="space-y-6">
+                                    <div className="flex items-center gap-2 text-violet-600 font-bold mb-4">
+                                        <Plus className="w-5 h-5" />
+                                        <h3>Options & Prestations</h3>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Volet Roulant</label>
+                                            <select
+                                                className="w-full p-4 bg-slate-50 border-0 rounded-2xl font-bold text-slate-700"
+                                                value={formData.annexes.volet_roulant}
+                                                onChange={(e) => updateAnnexes('volet_roulant', e.target.value)}
+                                            >
+                                                <option value="Aucun">Aucun Volet</option>
+                                                <option value="Manuel">Volet Roulant Manuel (Sangle/Treuil)</option>
+                                                <option value="Electrique">Volet Roulant Électrique Filaire</option>
+                                                <option value="Solaire">Volet Roulant Électrique Solaire (Autonome)</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Volet Battant (Alternative)</label>
+                                            <select
+                                                className="w-full p-4 bg-slate-50 border-0 rounded-2xl font-bold text-slate-700"
+                                                value={formData.annexes.volet_battant}
+                                                onChange={(e) => updateAnnexes('volet_battant', e.target.value)}
+                                                disabled={formData.annexes.volet_roulant !== 'Aucun'}
+                                            >
+                                                <option value="Aucun">Aucun Volet Battant</option>
+                                                <option value="1 Vantail">1 Vantail</option>
+                                                <option value="2 Vantaux">2 Vantaux</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Prestation de Pose</label>
+                                            <select
+                                                className="w-full p-4 bg-slate-50 border-0 rounded-2xl font-bold text-slate-700"
+                                                value={formData.annexes.frais_pose}
+                                                onChange={(e) => updateAnnexes('frais_pose', e.target.value)}
+                                            >
+                                                <option value="Aucun">Fourniture Seule (Pas de pose)</option>
+                                                <option value="Standard">Pose Standard (Neuf)</option>
+                                                <option value="Renovation">Pose Rénovation (Dépose totale)</option>
+                                                <option value="Complexe">Pose Complexe (Nacelle/Grande Hauteur)</option>
+                                            </select>
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Prestations Supplémentaires</label>
+                                            <div className="flex gap-4">
+                                                <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl flex-1 cursor-pointer hover:bg-slate-100 transition-colors">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={formData.annexes.moustiquaire}
+                                                        onChange={(e) => updateAnnexes('moustiquaire', e.target.checked)}
+                                                        className="w-5 h-5 accent-violet-600"
+                                                    />
+                                                    <span className="font-bold text-slate-700 tracking-tight">Moustiquaire Intégrée</span>
+                                                </label>
+                                                <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl flex-1 cursor-pointer hover:bg-slate-100 transition-colors">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={formData.annexes.livraison}
+                                                        onChange={(e) => updateAnnexes('livraison', e.target.checked)}
+                                                        className="w-5 h-5 accent-violet-600"
+                                                    />
+                                                    <span className="font-bold text-slate-700 tracking-tight">Livraison sur Chantier</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {formStep === 6 && (
                                 <div className="space-y-6">
                                     <div className="flex items-center gap-2 text-emerald-600 font-bold mb-4">
                                         <CheckCircle2 className="w-5 h-5" />
@@ -985,13 +1119,24 @@ const MMGDossiers = () => {
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div>
                                             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hauteur Soubassement (mm)</label>
-                                            <input
-                                                type="number"
-                                                className="w-full p-4 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-blue-500 font-medium text-slate-900"
-                                                value={formData.options.sill_height_mm}
-                                                onChange={(e) => updateOptions('sill_height_mm', parseFloat(e.target.value) || 0)}
-                                                placeholder="Facultatif"
-                                            />
+                                            <div className="flex gap-2">
+                                                <input
+                                                    type="number"
+                                                    className="w-2/3 p-4 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-blue-500 font-medium text-slate-900"
+                                                    value={formData.options.sill_height_mm}
+                                                    onChange={(e) => updateOptions('sill_height_mm', parseFloat(e.target.value) || 0)}
+                                                    placeholder="Facultatif"
+                                                />
+                                                <select
+                                                    className="w-1/3 p-4 bg-slate-50 border-0 rounded-2xl font-bold text-slate-700"
+                                                    value={formData.configuration.soubassement_type}
+                                                    onChange={(e) => updateConfig('soubassement_type', e.target.value)}
+                                                    disabled={!formData.options.sill_height_mm}
+                                                >
+                                                    <option value="Vitré">Vitré</option>
+                                                    <option value="Plein">Plein</option>
+                                                </select>
+                                            </div>
                                         </div>
                                         <div>
                                             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hauteur Imposte (mm)</label>
@@ -1070,7 +1215,7 @@ const MMGDossiers = () => {
                                 </div>
                             )}
 
-                            {formStep === 6 && (
+                            {formStep === 7 && (
                                 <div className="space-y-6">
                                     <div className="flex items-center gap-2 text-emerald-600 font-bold mb-4">
                                         <CheckCircle2 className="w-5 h-5" />
@@ -1166,7 +1311,7 @@ const MMGDossiers = () => {
                                 Précédent
                             </button>
 
-                            {formStep < 6 ? (
+                            {formStep < 7 ? (
                                 <button
                                     onClick={() => setFormStep(formStep + 1)}
                                     className="px-8 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 shadow-lg shadow-blue-500/20"

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Dict, Any
+from pydantic import BaseModel
 from ..database import get_db
 from .. import models, schemas
 
@@ -20,6 +21,58 @@ def get_queue(station: str, db: Session = Depends(get_db)):
     ).order_by(models.Planning.priority.desc(), models.Planning.created_at).all()
     return queue
 
+class CuttingRequest(BaseModel):
+    pieces: List[float] # List of required lengths in mm
+    bar_length: float = 6000.0 # Standard bar length in mm
+
+@router.post("/optimize-cutting")
+def optimize_cutting_plan(req: CuttingRequest):
+    """
+    Simulated "Directeur de Production IA".
+    Uses a greedy approach (First Fit Decreasing) for 1D Bin Packing to optimize cuts.
+    In a real AI scenario, this might use genetic algorithms or ML for complex constraints (grain direction, etc.)
+    """
+    pieces = sorted(req.pieces, reverse=True)
+    bars = [] # List of bars, where each bar is a list of pieces
+    
+    for piece in pieces:
+        if piece > req.bar_length:
+            raise HTTPException(400, f"Piece {piece}mm is longer than the bar {req.bar_length}mm")
+            
+        placed = False
+        for bar in bars:
+            if sum(bar) + piece <= req.bar_length:
+                bar.append(piece)
+                placed = True
+                break
+                
+        if not placed:
+            bars.append([piece])
+            
+    # Calculate stats
+    total_material_used = len(bars) * req.bar_length
+    total_pieces_length = sum(pieces)
+    waste_percentage = ((total_material_used - total_pieces_length) / total_material_used) * 100 if total_material_used > 0 else 0
+    
+    formatted_bars = []
+    for idx, bar in enumerate(bars):
+        used = sum(bar)
+        waste = req.bar_length - used
+        formatted_bars.append({
+            "bar_id": idx + 1,
+            "cuts": bar,
+            "used": used,
+            "waste": waste,
+            "utilization": (used / req.bar_length) * 100
+        })
+        
+    return {
+        "total_bars_required": len(bars),
+        "total_waste_percentage": round(waste_percentage, 2),
+        "bars": formatted_bars,
+        "ai_message": f"🧠 L'IA a optimisé la découpe : {len(bars)} barres requises avec un taux de chute de seulement {round(waste_percentage, 2)}%."
+    }
+
 @router.post("/", response_model=schemas.Planning)
 def add_to_planning(item: schemas.PlanningCreate, db: Session = Depends(get_db)):
     # Find order
@@ -38,8 +91,10 @@ def add_to_planning(item: schemas.PlanningCreate, db: Session = Depends(get_db))
     db.refresh(new_plan)
     return new_plan
 
+from ..core.security import get_current_user
+
 @router.post("/{planning_id}/start")
-async def start_task(planning_id: int, db: Session = Depends(get_db)):
+async def start_task(planning_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     from ..core.websocket import manager
     from datetime import datetime
     
@@ -48,12 +103,14 @@ async def start_task(planning_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Task not found")
         
     task.status = models.PlanningStatus.IN_PROGRESS
+    task.assigned_to = current_user.username
     
-    # Create Production Log (V1 compatibility logic)
+    # Create Production Log
     log = models.ProductionLog(
         order_id=task.order_id,
         station=task.station,
         material="Unknown", # Should fetch from order
+        operator_name=current_user.username,
         start_time=datetime.utcnow()
     )
     # Fetch material from order
@@ -70,7 +127,7 @@ async def start_task(planning_id: int, db: Session = Depends(get_db)):
 # Logic replaced by DB-driven workflow in stop_task
 
 @router.post("/{planning_id}/pause")
-async def pause_task(planning_id: int, db: Session = Depends(get_db)):
+async def pause_task(planning_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     from ..core.websocket import manager
     from datetime import datetime
     
@@ -99,7 +156,7 @@ async def pause_task(planning_id: int, db: Session = Depends(get_db)):
     return {"status": "paused"}
 
 @router.post("/{planning_id}/stop")
-async def stop_task(planning_id: int, db: Session = Depends(get_db)):
+async def stop_task(planning_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     from ..core.websocket import manager
     from datetime import datetime
     
@@ -155,6 +212,24 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db)):
                 status=models.PlanningStatus.PENDING
             )
             db.add(new_plan)
+    else:
+        # Production is finished, generate DeliveryNote
+        # Check if one already exists
+        exists_note = db.query(models.DeliveryNote).filter(models.DeliveryNote.order_id == task.order_id).first()
+        if not exists_note and order:
+            from datetime import datetime
+            year = datetime.utcnow().year
+            count = db.query(models.DeliveryNote).filter(models.DeliveryNote.reference.like(f"BL-{year}-%")).count()
+            ref = f"BL-{year}-{count + 1:04d}"
+            
+            note = models.DeliveryNote(
+                reference=ref,
+                order_id=task.order_id,
+                client_name=order.client_name,
+                delivery_address="", # Will be filled by dispatcher or from sale order
+                status="READY"
+            )
+            db.add(note)
     # ---------------------------
 
     # --- STOCK AUTO-DEDUCTION ---
@@ -167,7 +242,7 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db)):
     return {"status": "stopped", "next_station": next_station}
 
 @router.post("/{planning_id}/issue")
-async def report_issue(planning_id: int, item: schemas.PlanningIssue, db: Session = Depends(get_db)):
+async def report_issue(planning_id: int, item: schemas.PlanningIssue, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     from ..core.websocket import manager
     from datetime import datetime
     

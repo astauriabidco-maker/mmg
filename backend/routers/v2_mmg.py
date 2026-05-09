@@ -190,8 +190,143 @@ def send_quote(dossier_id: int, db: Session = Depends(get_db)):
     if not db_item:
         raise HTTPException(status_code=404, detail="MMG Dossier not found")
     
+    # Create SaleOrder if it doesn't exist
+    existing_sale = db.query(models.SaleOrder).filter(models.SaleOrder.client_name == db_item.client_name, models.SaleOrder.notes.contains(db_item.reference)).first()
+    
+    if not existing_sale:
+        date_str = datetime.now().strftime("%Y-%m-%d-%H%M")
+        ref = f"DEV-{date_str}"
+        
+        sale = models.SaleOrder(
+            reference=ref,
+            client_name=db_item.client_name,
+            client_contact=db_item.client_contact,
+            client_email=db_item.client_email,
+            client_address=db_item.client_address,
+            status="SENT",
+            notes=f"Devis généré automatiquement depuis le dossier technique {db_item.reference}.",
+            author="Système (Auto)"
+        )
+        db.add(sale)
+        db.flush()
+        
+        # Estimate a price based on dimensions (Mock Logic)
+        surface_m2 = (db_item.width / 1000) * (db_item.height / 1000)
+        base_price_per_m2 = 450 if db_item.material == "ALU" else 250
+        estimated_price = surface_m2 * base_price_per_m2
+        
+        line_desc = f"{db_item.material} - {db_item.product_series} ({db_item.width}x{db_item.height}mm)"
+        if db_item.installation_type:
+            line_desc += f" (Pose: {db_item.installation_type})"
+            
+        sale_line = models.SaleOrderLine(
+            order_id=sale.id,
+            description=line_desc,
+            quantity=1.0,
+            unit_price=round(estimated_price, 2)
+        )
+        db.add(sale_line)
+        
+        # 0. Forme Spéciale (Plue-value)
+        config = db_item.configuration or {}
+        shape = config.get("shape", "Rectangulaire")
+        if shape != "Rectangulaire":
+            shape_markup = 0.40 if shape == "Cintré" else 0.20
+            shape_price = estimated_price * shape_markup
+            db.add(models.SaleOrderLine(
+                order_id=sale.id,
+                description=f"Plue-value Forme : {shape}",
+                quantity=1.0,
+                unit_price=round(shape_price, 2)
+            ))
+            
+        # Tapées d'isolation (Pose à neuf)
+        if db_item.installation_type == "Neuf":
+            perimeter_m = (db_item.width + db_item.height) * 2 / 1000
+            db.add(models.SaleOrderLine(
+                order_id=sale.id,
+                description=f"Tapées d'isolation ({config.get('doublage_thickness', '100')}mm)",
+                quantity=round(perimeter_m, 2),
+                unit_price=15.0 # 15€ per linear meter
+            ))
+            
+        # Grille de Ventilation
+        ventilation = config.get("ventilation", "Aucune")
+        if ventilation != "Aucune":
+            vent_price = 45.0 if ventilation == "Acoustique" else 25.0
+            db.add(models.SaleOrderLine(
+                order_id=sale.id,
+                description=f"Accessoire : Grille de Ventilation {ventilation}",
+                quantity=1.0,
+                unit_price=vent_price
+            ))
+            
+        # Soubassement Plein
+        soubassement_type = config.get("soubassement_type", "Vitré")
+        if soubassement_type == "Plein":
+            db.add(models.SaleOrderLine(
+                order_id=sale.id,
+                description="Option : Panneau de Soubassement Plein isolant",
+                quantity=1.0,
+                unit_price=65.0 # Forfaitaire
+            ))
+        
+        # Add Annexes & Options
+        annexes = config.get("annexes", {})
+        
+        # 1. Volet Roulant / Battant
+        vr_type = annexes.get("volet_roulant", "Aucun")
+        vb_type = annexes.get("volet_battant", "Aucun")
+        
+        if vr_type != "Aucun":
+            vr_price = 150 if vr_type == "Manuel" else (280 if vr_type == "Electrique" else 450)
+            db.add(models.SaleOrderLine(
+                order_id=sale.id,
+                description=f"Option : Volet Roulant {vr_type}",
+                quantity=1.0,
+                unit_price=vr_price
+            ))
+        elif vb_type != "Aucun":
+            vb_price = 120 if vb_type == "1 Vantail" else 200
+            db.add(models.SaleOrderLine(
+                order_id=sale.id,
+                description=f"Option : Volet Battant ALU ({vb_type})",
+                quantity=1.0,
+                unit_price=vb_price
+            ))
+            
+        # 2. Frais de Pose
+        pose_type = annexes.get("frais_pose", "Aucun")
+        if pose_type != "Aucun":
+            pose_price = 100 if pose_type == "Standard" else (180 if pose_type == "Renovation" else 300)
+            db.add(models.SaleOrderLine(
+                order_id=sale.id,
+                description=f"Prestation : Pose {pose_type}",
+                quantity=1.0,
+                unit_price=pose_price
+            ))
+            
+        # 3. Moustiquaire
+        if annexes.get("moustiquaire"):
+            db.add(models.SaleOrderLine(
+                order_id=sale.id,
+                description="Accessoire : Moustiquaire intégrée",
+                quantity=1.0,
+                unit_price=85.0
+            ))
+            
+        # 4. Livraison
+        if annexes.get("livraison"):
+            db.add(models.SaleOrderLine(
+                order_id=sale.id,
+                description="Logistique : Frais de livraison sur chantier",
+                quantity=1.0,
+                unit_price=50.0
+            ))
+    else:
+        existing_sale.status = "SENT"
+        
     db_item.quote_sent_at = datetime.utcnow()
     db.commit()
     
-    # In a real app, this would generate a PDF and email it
-    return {"message": "Devis généré et envoyé au client.", "sent_at": db_item.quote_sent_at}
+    return {"message": "Devis CRM généré et envoyé au client.", "sent_at": db_item.quote_sent_at}

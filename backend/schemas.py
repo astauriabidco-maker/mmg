@@ -33,12 +33,52 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     username: Optional[str] = None
 
+# --- PARTNERS (CLIENTS / FOURNISSEURS) ---
+class ClientBase(BaseModel):
+    name: str
+    contact_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    tax_id: Optional[str] = None
+    customer_type: str = "B2B"
+    is_active: bool = True
+
+class ClientCreate(ClientBase):
+    pass
+
+class ClientResponse(ClientBase):
+    id: int
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class SupplierBase(BaseModel):
+    name: str
+    contact_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    tax_id: Optional[str] = None
+    is_active: bool = True
+
+class SupplierCreate(SupplierBase):
+    pass
+
+class SupplierResponse(SupplierBase):
+    id: int
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
 # --- PLANNING ---
 
 class PlanningBase(BaseModel):
     station: str # Changed from StationName enum to str
     priority: int = 0
     status: PlanningStatus = PlanningStatus.PENDING
+    issue_notes: Optional[str] = None
+    assigned_to: Optional[str] = None
 
 class PlanningCreate(PlanningBase):
     order_reference: str
@@ -57,6 +97,7 @@ class Planning(PlanningBase):
 
 class ProductionLogBase(BaseModel):
     station: str # Changed from StationName enum to str
+    operator_name: Optional[str] = None
     start_time: datetime
     end_time: Optional[datetime] = None
     duration_seconds: Optional[int] = None
@@ -348,7 +389,7 @@ class ChatterMessageResponse(ChatterMessageBase):
     class Config:
         from_attributes = True
 
-# --- RBAC (ROLES & PERMISSIONS) ---
+# --- RBAC ---
 
 class PermissionSchema(BaseModel):
     id: int
@@ -430,6 +471,7 @@ class SaleOrderLineCreate(BaseModel):
     quantity: float
     unit_price: float
     discount_pct: float = 0.0
+    visual_config: Optional[str] = None
 
 class SaleOrderCreate(BaseModel):
     client_name: str
@@ -449,6 +491,7 @@ class SaleOrderLineSchema(BaseModel):
     quantity: float
     unit_price: float
     discount_pct: float
+    visual_config: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -467,6 +510,147 @@ class SaleOrderSchema(BaseModel):
     author: str
     created_at: datetime
     updated_at: datetime
+    signature_token: Optional[str]
+    signed_at: Optional[datetime]
+    signed_by_ip: Optional[str]
     lines: List[SaleOrderLineSchema] = []
+    class Config:
+        from_attributes = True
+
+# --- FACTURATION ---
+class PaymentBase(BaseModel):
+    amount: float
+    method: str
+    reference: Optional[str] = None
+
+class PaymentCreate(PaymentBase):
+    pass
+
+class PaymentResponse(PaymentBase):
+    id: int
+    payment_date: datetime
+    class Config:
+        from_attributes = True
+
+class InvoiceLineBase(BaseModel):
+    description: str
+    quantity: float
+    unit_price: float
+    tax_rate: float = 20.0
+
+class InvoiceBase(BaseModel):
+    client_name: str
+    client_address: Optional[str] = None
+    client_siret: Optional[str] = None
+    due_date: datetime
+    
+class InvoiceCreate(InvoiceBase):
+    sale_order_id: Optional[int] = None
+    lines: List[InvoiceLineBase]
+
+class InvoiceLineResponse(InvoiceLineBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class InvoiceResponse(InvoiceBase):
+    id: int
+    reference: str
+    issue_date: datetime
+    status: str
+    subtotal: float
+    tax_rate: float
+    tax_amount: float
+    total: float
+    qr_code_hash: Optional[str] = None
+    lines: List[InvoiceLineResponse] = []
+    payments: List[PaymentResponse] = []
+    class Config:
+        from_attributes = True
+
+# --- LOGISTIQUE & LIVRAISON ---
+class DeliveryNoteBase(BaseModel):
+    order_id: int
+    client_name: str
+    delivery_address: Optional[str] = None
+    contact_phone: Optional[str] = None
+    status: str = "READY"
+    delivery_notes: Optional[str] = None
+
+class DeliveryNoteCreate(DeliveryNoteBase):
+    pass
+
+class DeliveryNoteResponse(DeliveryNoteBase):
+    id: int
+    reference: str
+    route_id: Optional[int] = None
+    signed_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+class DeliveryRouteBase(BaseModel):
+    driver_name: str
+    vehicle: str
+    planned_date: datetime
+    status: str = "PLANNED"
+
+class DeliveryRouteCreate(DeliveryRouteBase):
+    note_ids: List[int] = [] # Delivery notes to assign
+
+class DeliveryRouteResponse(DeliveryRouteBase):
+    id: int
+    reference: str
+    notes: List[DeliveryNoteResponse] = []
+    
+    class Config:
+        from_attributes = True
+
+# --- POINT DE VENTE (POS) ---
+class POSSessionSchema(BaseModel):
+    id: int
+    reference: str
+    opened_by_user: str
+    opened_at: datetime
+    closed_at: Optional[datetime] = None
+    starting_cash: float
+    closing_cash: Optional[float] = None
+    status: str
+    class Config:
+        from_attributes = True
+
+class POSCartItem(BaseModel):
+    variant_id: int
+    product_name: str
+    quantity: float
+    price: float
+
+class POSCheckoutRequest(BaseModel):
+    items: List[POSCartItem]
+    payment_method: str = "CASH"
+    amount_paid: float
+    tax_rate: float = 20.0
+    currency: str = "EUR"
+
+class POSOrderLineSchema(BaseModel):
+    id: int
+    variant_id: Optional[int]
+    product_name: str
+    quantity: float
+    unit_price: float
+    class Config:
+        from_attributes = True
+
+class POSOrderSchema(BaseModel):
+    id: int
+    session_id: int
+    reference: str
+    date: datetime
+    payment_method: str
+    tax_rate: float
+    amount_total: float
+    amount_paid: float
+    amount_return: float
+    lines: List[POSOrderLineSchema] = []
     class Config:
         from_attributes = True

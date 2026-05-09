@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart } from 'lucide-react';
+import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart, Truck, Users, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }) {
@@ -13,7 +13,11 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
         { id: 'live', label: 'Atelier Live', icon: Activity, type: 'internal' },
         { id: 'orders', label: 'Suivi Commandes', icon: ClipboardList, type: 'internal' },
         { id: 'stock', label: 'Inventaire & Stock', icon: Archive, type: 'internal' },
-        { id: 'mmg', label: 'CRM & Devis (Dossiers)', icon: ClipboardList, type: 'external', path: '/mmg' },
+        { id: 'logistics', label: 'Logistique & Expédition', icon: Truck, type: 'internal' },
+        { id: 'purchases', label: 'Achats & Appro.', icon: Truck, type: 'internal' },
+        { id: 'sales', label: 'CRM & Devis (Ventes)', icon: Users, type: 'internal' },
+        { id: 'accounting', label: 'Facturation (NF525)', icon: ClipboardList, type: 'internal' },
+        { id: 'mmg', label: 'Dossiers Techniques', icon: ClipboardList, type: 'external', path: '/mmg' },
         { id: 'pos', label: 'Point de Vente (POS)', icon: ShoppingCart, type: 'external', path: '/pos' },
         { id: 'config', label: 'Configuration', icon: Settings, type: 'internal' },
     ];

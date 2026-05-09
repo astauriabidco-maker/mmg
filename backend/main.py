@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from . import models, database
-from .routers import web, api, v2_planning, v2_analytics, v2_printer, v2_ingest, v2_config, v2_mmg, v2_stock, v2_sales, v2_pos
+from .routers import api, v2_planning, v2_analytics, v2_printer, v2_ingest, v2_config, v2_mmg, v2_stock, v2_sales, v2_pos, v2_purchases, v2_suppliers, v2_pdf, v2_accounting, v2_logistics, v2_webhook
 from .core.websocket import manager
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -21,14 +21,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount Static Config (CSS, JS) & Uploads
-app.mount("/static", StaticFiles(directory="backend/static"), name="static")
+# Mount Uploads (Zero UI, API ONLY)
 import os
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Include Routers
-app.include_router(web.router)
 app.include_router(api.router)
 app.include_router(v2_planning.router)
 app.include_router(v2_analytics.router)
@@ -39,6 +37,14 @@ app.include_router(v2_mmg.router)
 app.include_router(v2_stock.router)
 app.include_router(v2_sales.router)
 app.include_router(v2_pos.router)
+app.include_router(v2_purchases.router)
+app.include_router(v2_suppliers.router)
+app.include_router(v2_pdf.router)
+app.include_router(v2_accounting.router)
+app.include_router(v2_logistics.router)
+app.include_router(v2_webhook.router)
+from .routers import v2_partners
+app.include_router(v2_partners.router)
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: int):
@@ -65,9 +71,7 @@ def create_order(order: schemas.OrderCreate, db: Session = Depends(database.get_
     db.refresh(new_order)
     return new_order
 
-@app.get("/dashboard/summary")
-def api_dashboard():
-    return {"status": "moved_to_web_ui"}
+
 
 # --- AUTH ---
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm

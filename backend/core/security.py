@@ -40,3 +40,10 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         return payload
     except JWTError:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+def get_current_user_role(token: str = Depends(oauth2_scheme)):
+    payload = get_current_user(token)
+    role: str = payload.get("role")
+    if role is None:
+        raise HTTPException(status_code=401, detail="No role found in token")
+    return role

@@ -379,20 +379,20 @@ export default function StockDashboard() {
         return (
             <div key={parentLoc.id} className="w-full">
                 <div 
-                    className={`group flex items-center justify-between py-2 px-3 cursor-pointer rounded-lg transition-colors border-l-4 ${isActive ? 'bg-blue-50 border-blue-500 text-blue-800' : 'border-transparent hover:bg-slate-100/50 text-slate-700'}`}
+                    className={`group flex items-center justify-between py-2.5 px-3 cursor-pointer rounded-xl transition-all border-l-4 mb-1 ${isActive ? 'bg-blue-600/20 border-blue-500 text-white shadow-inner' : 'border-transparent hover:bg-white/5 text-slate-400 hover:text-slate-200'}`}
                     style={{ paddingLeft: `${depth * 16 + 12}px` }}
                     onClick={() => setActiveLocationId(parentLoc.id)}
                 >
-                    <div className="flex items-center gap-2">
-                        {isInternal ? <FolderOpen className={`w-4 h-4 ${isActive ? 'text-blue-500' : 'text-slate-400'}`} /> : <Truck className="w-4 h-4 text-emerald-500" />}
-                        <span className={`font-semibold text-sm ${isActive ? 'font-bold' : ''}`}>{parentLoc.name}</span>
-                        {!isInternal && <span className="text-[9px] uppercase font-black bg-emerald-100 text-emerald-700 px-1 rounded">{parentLoc.usage}</span>}
+                    <div className="flex items-center gap-3">
+                        {isInternal ? <FolderOpen className={`w-4 h-4 ${isActive ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'}`} /> : <Truck className="w-4 h-4 text-emerald-500" />}
+                        <span className={`text-sm ${isActive ? 'font-black' : 'font-bold'}`}>{parentLoc.name}</span>
+                        {!isInternal && <span className="text-[9px] uppercase font-black bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-md border border-emerald-500/20">{parentLoc.usage}</span>}
                     </div>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={(e) => { e.stopPropagation(); setAddingSubLocTo(parentLoc.id); }} className="p-1 hover:bg-white rounded shadow-sm text-slate-400 hover:text-blue-600">
+                        <button onClick={(e) => { e.stopPropagation(); setAddingSubLocTo(parentLoc.id); }} className="p-1.5 hover:bg-blue-500/20 rounded-lg text-slate-500 hover:text-blue-400 transition-colors">
                             <Plus className="w-3.5 h-3.5" />
                         </button>
-                        <button onClick={(e) => handleDeleteLocation(parentLoc.id, e)} className="p-1 hover:bg-red-50 rounded shadow-sm text-slate-400 hover:text-red-500">
+                        <button onClick={(e) => handleDeleteLocation(parentLoc.id, e)} className="p-1.5 hover:bg-red-500/20 rounded-lg text-slate-500 hover:text-red-400 transition-colors">
                             <Trash2 className="w-3.5 h-3.5" />
                         </button>
                     </div>
@@ -411,7 +411,7 @@ export default function StockDashboard() {
                                     if (e.key === 'Escape') setAddingSubLocTo(null);
                                     if (e.key === 'Enter') handleAddSubLocation(e, parentLoc.id);
                                 }} 
-                                className="flex-1 text-sm p-1.5 border border-blue-300 rounded shadow-inner outline-none focus:ring-2 focus:ring-blue-500" 
+                                className="flex-1 text-sm p-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" 
                                 placeholder="Nom sous-lieu... Entrée" 
                             />
                         </div>
@@ -495,33 +495,37 @@ export default function StockDashboard() {
     });
 
     return (
-        <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex overflow-hidden bg-white border border-slate-200 rounded-2xl shadow-sm animate-fade-in relative">
+        <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in relative">
             
             {/* LEFT SIDEBAR : LOCATIONS TREE */}
-            <div className="w-[320px] bg-slate-50/50 border-r border-slate-200 flex flex-col items-stretch h-full">
-                <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white">
-                    <h3 className="font-black text-slate-800 flex items-center gap-2"><MapPin className="text-blue-600 w-5 h-5"/> Emplacements</h3>
+            <div className="w-[320px] bg-slate-900 border-r border-slate-800 flex flex-col items-stretch h-full text-slate-300 shadow-xl z-20 relative">
+                {/* Decorative glow */}
+                <div className="absolute top-0 left-0 w-full h-48 bg-blue-500/10 rounded-full blur-3xl -translate-y-1/2"></div>
+                <div className="p-6 border-b border-white/5 flex justify-between items-center relative z-10">
+                    <h3 className="font-black text-white flex items-center gap-3 tracking-tight text-lg"><MapPin className="text-blue-400 w-5 h-5"/> Emplacements</h3>
                     <div className="flex gap-1">
-                        <button onClick={(e) => setAddingSubLocTo('root')} className="p-1.5 hover:bg-slate-100 rounded-md text-slate-500 transition-colors" title="Créer un Entrepôt Principal"><Plus className="w-4 h-4"/></button>
+                        <button onClick={(e) => setAddingSubLocTo('root')} className="p-2 hover:bg-white/10 rounded-xl text-slate-400 hover:text-white transition-colors backdrop-blur-sm" title="Créer un Entrepôt Principal"><Plus className="w-4 h-4"/></button>
                     </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-2 scrollbar-hide space-y-1">
+                <div className="flex-1 overflow-y-auto p-4 scrollbar-hide space-y-2 relative z-10">
                     <div 
-                        className={`flex items-center gap-2 py-2 px-3 cursor-pointer rounded-lg transition-colors border-left-4 mb-2 ${activeLocationId === 'global' ? 'bg-slate-800 text-white border-slate-800' : 'border-transparent hover:bg-slate-100 text-slate-700'}`}
+                        className={`flex items-center gap-3 py-3 px-4 cursor-pointer rounded-xl transition-all border-l-4 mb-4 ${activeLocationId === 'global' ? 'bg-blue-600 shadow-lg shadow-blue-500/20 border-blue-400 text-white' : 'border-transparent hover:bg-white/5 text-slate-400 hover:text-slate-200'}`}
                         onClick={() => setActiveLocationId('global')}
                     >
-                        <Layers className={`w-4 h-4 ${activeLocationId === 'global' ? 'text-blue-400' : 'text-slate-400'}`}/>
-                        <span className="font-black text-sm">Vue Globale (Tous Stocks)</span>
+                        <div className={`p-1.5 rounded-lg ${activeLocationId === 'global' ? 'bg-white/20' : 'bg-slate-800'}`}>
+                            <Layers className={`w-4 h-4 ${activeLocationId === 'global' ? 'text-white' : 'text-slate-400'}`}/>
+                        </div>
+                        <span className="font-black text-sm tracking-wide">Vue Globale (Tous Stocks)</span>
                     </div>
 
-                    <div className="text-xs font-black text-blue-500 uppercase tracking-widest px-3 mb-2 mt-4 flex justify-between items-center">
+                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1 mb-3 mt-6 flex justify-between items-center">
                         Nos Entrepôts
-                        <button onClick={(e) => setAddingSubLocTo('root')} className="p-1 hover:bg-blue-100 rounded text-blue-500 transition-colors" title="Créer un Entrepôt Principal"><Plus className="w-3.5 h-3.5"/></button>
+                        <button onClick={(e) => setAddingSubLocTo('root')} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-500 hover:text-white transition-colors" title="Créer un Entrepôt Principal"><Plus className="w-3.5 h-3.5"/></button>
                     </div>
                     
                     {addingSubLocTo === 'root' && (
-                        <div className="px-3 mb-2">
+                        <div className="mb-3">
                             <div className="flex items-center gap-2">
                                 <input 
                                     autoFocus 
@@ -532,7 +536,7 @@ export default function StockDashboard() {
                                         if (e.key === 'Escape') setAddingSubLocTo(null);
                                         if (e.key === 'Enter') handleAddSubLocation(e, 'root');
                                     }} 
-                                    className="w-full text-sm p-2 border border-blue-300 rounded-lg shadow-inner outline-none focus:ring-2 focus:ring-blue-500" 
+                                    className="w-full text-sm p-2.5 bg-slate-800/50 border border-slate-700 rounded-xl text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" 
                                     placeholder="Nom Entrepôt + Entrée" 
                                 />
                             </div>
@@ -541,7 +545,7 @@ export default function StockDashboard() {
 
                     {locations.filter(l => !l.parent_id && l.usage === 'internal').map(rootLoc => renderLocationTree(rootLoc))}
 
-                    <div className="text-xs font-black text-slate-400 uppercase tracking-widest px-3 mb-2 mt-6 border-t border-slate-200 pt-4">Lieux Virtuels & Partenaires</div>
+                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1 mb-3 mt-8 border-t border-white/5 pt-6">Lieux Virtuels & Partenaires</div>
                     {locations.filter(l => !l.parent_id && l.usage !== 'internal').map(rootLoc => renderLocationTree(rootLoc))}
                 </div>
             </div>
@@ -550,77 +554,80 @@ export default function StockDashboard() {
             <div className="flex-1 flex flex-col bg-slate-50/50 relative">
                 
                 {/* TOOLBAR */}
-                <div className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-10">
-                    <div className="flex items-center gap-3">
-                        <div className="bg-slate-100 p-2 rounded-lg text-slate-500">
-                            <Search className="w-4 h-4" />
+                <div className="h-20 bg-white/60 backdrop-blur-xl border-b border-slate-200/60 flex items-center justify-between px-8 shrink-0 z-10">
+                    <div className="flex items-center gap-4">
+                        <div className="bg-slate-100/80 p-2.5 rounded-xl text-slate-500 shadow-inner border border-slate-200/50">
+                            <Search className="w-5 h-5" />
                         </div>
                         <input 
                             type="text" 
                             placeholder="Rechercher article, réf, variante..." 
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="bg-transparent border-none outline-none font-medium text-slate-700 w-80 placeholder-slate-400"
+                            className="bg-transparent border-none outline-none font-bold text-slate-800 w-96 placeholder-slate-400 focus:ring-0"
                         />
-                        {searchTerm && <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">Pour ajouter au lieu, cherchez ici</span>}
+                        {searchTerm && <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-100 px-2 py-1 rounded-md border border-slate-200">Pour ajouter au lieu, cherchez ici</span>}
                     </div>
 
-                    <div className="flex gap-3">
-                        <div className="flex items-center bg-slate-100 rounded-xl p-1 mr-4">
-                            <button onClick={() => setViewMode('list')} className={`px-3 py-1.5 rounded-lg flex items-center justify-center transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
+                    <div className="flex gap-3 items-center">
+                        <div className="flex items-center bg-slate-100/80 rounded-xl p-1 mr-4 border border-slate-200/50 shadow-inner">
+                            <button onClick={() => setViewMode('list')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'list' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
                                 <List className="w-4 h-4"/>
                             </button>
-                            <button onClick={() => setViewMode('kanban')} className={`px-3 py-1.5 rounded-lg flex items-center justify-center transition-colors ${viewMode === 'kanban' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
+                            <button onClick={() => setViewMode('kanban')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'kanban' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
                                 <LayoutGrid className="w-4 h-4"/>
                             </button>
                         </div>
-                        <button onClick={() => setShowAuditLogs(true)} className="px-3 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-2 font-bold text-sm mr-2">
+                        <button onClick={() => setShowAuditLogs(true)} className="px-4 py-2.5 text-slate-600 hover:bg-white rounded-xl transition-all flex items-center gap-2 font-bold text-sm mr-2 shadow-sm border border-slate-200/50">
                             <Layers className="w-4 h-4"/> Audit Mouvements
                         </button>
-                        <button onClick={() => fetchData()} className="px-3 py-2 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-2 font-bold text-sm">
-                            <RefreshCw className="w-4 h-4"/> Sync
+                        <button onClick={() => fetchData()} className="px-3 py-2.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-all flex items-center justify-center">
+                            <RefreshCw className="w-5 h-5"/>
                         </button>
-                        <button onClick={openReceptionModal} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-sm shadow-emerald-500/30 transition-colors flex items-center gap-2 font-bold text-sm">
+                        <div className="h-8 w-px bg-slate-200 mx-1"></div>
+                        <button onClick={openReceptionModal} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/20 transition-all hover:-translate-y-0.5 flex items-center gap-2 font-black text-sm">
                             <Truck className="w-4 h-4"/> Entrée Stock
                         </button>
-                        <button onClick={() => setShowNewProductModal(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-sm shadow-blue-500/30 transition-colors flex items-center gap-2 font-bold text-sm">
-                            <Plus className="w-4 h-4"/> Nv. PIM
+                        <button onClick={() => setShowNewProductModal(true)} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-lg shadow-blue-500/20 transition-all hover:-translate-y-0.5 flex items-center gap-2 font-black text-sm">
+                            <Plus className="w-4 h-4"/> Nv. Article
                         </button>
-                        <button onClick={handleExportExcel} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm shadow-emerald-500/30 rounded-xl transition-colors flex items-center gap-2 font-bold text-sm">
-                            <Download className="w-4 h-4"/> Export Excel
+                        <div className="h-8 w-px bg-slate-200 mx-1"></div>
+                        <button onClick={handleExportExcel} className="px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 shadow-sm rounded-xl transition-all flex items-center gap-2 font-bold text-sm">
+                            <Download className="w-4 h-4"/> Export
                         </button>
-                        <button onClick={() => setShowImportModal(true)} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl transition-colors flex items-center gap-2 font-bold text-sm">
-                            <FileText className="w-4 h-4"/> Import (XLSX)
+                        <button onClick={() => setShowImportModal(true)} className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl shadow-lg shadow-slate-800/20 transition-all flex items-center gap-2 font-bold text-sm">
+                            <FileText className="w-4 h-4"/> Import
                         </button>
                     </div>
                 </div>
 
                 {/* HEADER INFO */}
-                <div className="px-6 py-4 bg-white/50 border-b border-slate-200 shrink-0 flex justify-between items-start">
+                <div className="px-8 py-6 bg-white/40 border-b border-slate-200/60 shrink-0 flex justify-between items-start">
                     <div>
-                        <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
-                            {activeLocationId === 'global' ? "Inventaire Global Unifié" : `Contenu de : ${locations.find(l => l.id === activeLocationId)?.name}`}
+                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
+                            {activeLocationId === 'global' ? "Inventaire Global Unifié" : `Emplacement : ${locations.find(l => l.id === activeLocationId)?.name}`}
                         </h2>
-                        <p className="text-sm font-medium text-slate-500 mt-1">
+                        <p className="text-sm font-bold text-slate-500 mt-1">
                             {activeLocationId === 'global' 
                                 ? "⚠️ VUE GLOBALE : Les quantités ne sont PAS modifiables ici."
-                                : "✅ Ajustez les stocks en 1 Clic : Double-cliquez sur la quantité de la variante pour la modifier."}
+                                : "✅ Ajustement Rapide : Double-cliquez sur la quantité d'une variante pour la modifier."}
                         </p>
                     </div>
 
                     <div className="flex gap-4">
                         {activeLocationId === 'global' && (
-                            <div className="bg-slate-800 text-white px-4 py-2 rounded-xl flex flex-col justify-center shadow-lg border border-slate-700">
-                                <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Valorisation du Stock</span>
-                                <span className="text-xl font-black tracking-tight">{totalValuation.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
+                            <div className="bg-slate-900 text-white px-6 py-3 rounded-2xl flex flex-col justify-center shadow-xl shadow-slate-900/20 border border-slate-800 relative overflow-hidden">
+                                <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/20 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
+                                <span className="text-[10px] uppercase font-black tracking-widest opacity-60 text-blue-200">Valorisation du Stock</span>
+                                <span className="text-2xl font-black tracking-tight">{totalValuation.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
                             </div>
                         )}
                         <button 
                             onClick={() => setShowLowStockOnly(!showLowStockOnly)}
-                            className={`px-4 py-2 rounded-xl border flex flex-col justify-center transition-all ${showLowStockOnly || totalLowStockCount > 0 ? 'bg-red-50 border-red-200 hover:bg-red-100 text-red-600 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500'}`}
+                            className={`px-5 py-3 rounded-2xl border flex flex-col justify-center transition-all ${showLowStockOnly || totalLowStockCount > 0 ? 'bg-red-50 border-red-200 hover:bg-red-100 text-red-600 shadow-lg shadow-red-500/10' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500 shadow-sm'}`}
                         >
                             <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Alertes Rupture</span>
-                            <span className="text-lg font-black tracking-tight">{totalLowStockCount} variante(s)</span>
+                            <span className="text-xl font-black tracking-tight">{totalLowStockCount} variante(s)</span>
                         </button>
                     </div>
                 </div>
@@ -639,12 +646,12 @@ export default function StockDashboard() {
                     {viewMode === 'list' && groupedData.length > 0 && (
                         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                             <table className="w-full text-left border-collapse">
-                                <thead className="bg-slate-50 border-b border-slate-200">
+                                <thead className="bg-slate-50/80 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-10">
                                     <tr>
-                                        <th className="py-3 px-6 text-xs font-black text-slate-400 uppercase tracking-widest w-1/3">Famille PIM</th>
-                                        <th className="py-3 px-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Catégorie</th>
-                                        <th className="py-3 px-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Fournisseur</th>
-                                        <th className="py-3 px-6 text-xs font-black text-slate-400 uppercase tracking-widest text-right">Contenu Visuel</th>
+                                        <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest w-1/3">Famille PIM</th>
+                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Catégorie</th>
+                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Fournisseur</th>
+                                        <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Contenu & Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
@@ -699,24 +706,24 @@ export default function StockDashboard() {
                                                     const isEditing = editingQuant?.variantId === v.variantId && editingQuant?.locId === v.locId;
                                                     const canEditInline = activeLocationId !== 'global';
                                                     return (
-                                                        <tr key={v.variantId} className="bg-slate-50/60 transition-colors border-l-4 border-l-blue-400">
+                                                        <tr key={v.variantId} className="bg-slate-50/40 transition-colors border-l-4 border-l-blue-400">
                                                             <td colSpan="4" className="py-0 px-0">
                                                                 <div className="pl-24 pr-6 py-4 flex items-center justify-between border-b border-slate-100/50 hover:bg-white transition-colors group/var">
                                                                     <div className="flex flex-col">
-                                                                        <span className="font-bold text-slate-800 text-[15px]">{v.variantLabel}</span>
-                                                                        <span className="text-xs font-mono text-slate-500 uppercase tracking-widest">{v.variantRef}</span>
+                                                                        <span className="font-bold text-slate-900 text-[15px] group-hover/var:text-blue-600 transition-colors">{v.variantLabel}</span>
+                                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{v.variantRef}</span>
                                                                     </div>
                                                                     <div className="flex items-center gap-6">
                                                                         {/* QUANTITY : INLINE EDIT */}
-                                                                        <div className="text-right flex items-center gap-3 bg-slate-50 border border-slate-100 rounded-xl pr-1">
-                                                                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-3">STOCK</span>
+                                                                        <div className="text-right flex items-center gap-3 bg-white border border-slate-200 shadow-sm rounded-xl pr-1 overflow-hidden">
+                                                                            <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest pl-3 bg-slate-50 h-full py-2 border-r border-slate-100">STOCK</span>
                                                                             {isEditing ? (
                                                                                 <input 
-                                                                                    autoFocus type="number" value={quantInputValue} onChange={(e) => setQuantInputValue(e.target.value)} onKeyDown={handleQuantInputKeyDown} onBlur={submitQuantEdit} className="w-20 text-center py-1 border-2 border-emerald-400 rounded-lg text-lg font-black bg-emerald-50 outline-none shadow-inner"
+                                                                                    autoFocus type="number" value={quantInputValue} onChange={(e) => setQuantInputValue(e.target.value)} onKeyDown={handleQuantInputKeyDown} onBlur={submitQuantEdit} className="w-20 text-center py-1 border-none text-lg font-black bg-blue-50 text-blue-700 outline-none focus:ring-0"
                                                                                 />
                                                                             ) : (
                                                                                 <div 
-                                                                                    className={`inline-block px-3 py-1.5 rounded-lg cursor-text min-w-[3.5rem] text-center border-2 border-transparent hover:border-emerald-200 hover:bg-emerald-50 transition-colors font-black text-lg ${v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${!canEditInline ? 'cursor-not-allowed opacity-50' : ''}`}
+                                                                                    className={`inline-block px-3 py-1 cursor-text min-w-[3.5rem] text-center border-2 border-transparent hover:border-blue-200 hover:bg-blue-50 transition-colors font-black text-lg rounded-lg mx-1 ${v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${!canEditInline ? 'cursor-not-allowed opacity-50' : ''}`}
                                                                                     onClick={() => canEditInline && startEditingQuant(v.variantId, v.locId, v.stockToDisplay)}
                                                                                     title={canEditInline ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible en vue globale"}
                                                                                 >
@@ -725,11 +732,11 @@ export default function StockDashboard() {
                                                                             )}
                                                                         </div>
                                                                         {/* ROW ACTIONS */}
-                                                                        <div className="w-auto flex items-center gap-2 justify-end">
-                                                                            <button onClick={(e) => { e.stopPropagation(); handlePrintBarcode(v.variantId); }} className="opacity-0 group-hover/var:opacity-100 transition-opacity text-slate-400 hover:text-slate-700 bg-white border border-slate-200 hover:border-slate-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Imprimer Code-barre"><Hash className="w-3.5 h-3.5"/></button>
-                                                                            <button onClick={(e) => openEditVariant(e, v.fullVariant)} className="opacity-0 group-hover/var:opacity-100 transition-opacity text-slate-400 hover:text-blue-600 bg-white border border-slate-200 hover:border-blue-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Modifier Variante"><FileEdit className="w-3.5 h-3.5"/></button>
+                                                                        <div className="w-auto flex items-center gap-2 justify-end opacity-0 group-hover/var:opacity-100 transition-opacity">
+                                                                            <button onClick={(e) => { e.stopPropagation(); handlePrintBarcode(v.variantId); }} className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 hover:border-slate-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Imprimer Code-barre"><Hash className="w-3.5 h-3.5"/></button>
+                                                                            <button onClick={(e) => openEditVariant(e, v.fullVariant)} className="text-slate-400 hover:text-blue-600 bg-white border border-slate-200 hover:border-blue-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Modifier Variante"><FileEdit className="w-3.5 h-3.5"/></button>
                                                                             {activeLocationId !== 'global' && (
-                                                                                <button onClick={() => openTransferModal(v.fullVariant, activeLocationId)} className="opacity-0 group-hover/var:opacity-100 transition-opacity bg-white border border-slate-200 hover:border-slate-300 text-slate-800 px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 shadow-sm">
+                                                                                <button onClick={() => openTransferModal(v.fullVariant, activeLocationId)} className="bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 shadow-md">
                                                                                     Trsf <ArrowRight className="w-3.5 h-3.5"/>
                                                                                 </button>
                                                                             )}

@@ -11,6 +11,8 @@ import time
 import io
 import openpyxl
 from openpyxl.styles import Font, PatternFill
+from sqlalchemy import or_
+from ..services.bom_parser import parse_bom_file
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
@@ -100,9 +102,12 @@ def add_variant(product_id: int, variant_data: schemas.ProductVariantCreate, db:
     db.refresh(new_variant)
     return new_variant
 
+from fastapi import BackgroundTasks
+
 # ODOO ENGINE: Stock Moves
 @router.post("/transaction") # Kept same endpoint name for UI compat momentarily, but treats it as an Odoo Move
-def create_transaction(tx: schemas.StockMoveCreate, db: Session = Depends(get_db)):
+def create_transaction(tx: schemas.StockMoveCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    from ..core.events import EventBus
     # Legacy fallback: If UI doesn't provide locations, let's use the virtual ones
     # Move positive amount = VIRTUAL_LOSS -> WH_STOCK
     # Move negative amount = WH_STOCK -> VIRTUAL_LOSS
@@ -118,7 +123,13 @@ def create_transaction(tx: schemas.StockMoveCreate, db: Session = Depends(get_db
         if not src_quant:
             src_quant = models.StockQuant(variant_id=tx.variant_id, location_id=tx.location_id, quantity=0)
             db.add(src_quant)
+            
+        previous_qty = src_quant.quantity
         src_quant.quantity -= qty
+        
+        # --- INTERNAL AUTOMATION TRIGGER ---
+        if previous_qty > variant.min_threshold and src_quant.quantity <= variant.min_threshold:
+            EventBus.on_stock_alert(variant.reference, src_quant.quantity, background_tasks)
         src_loc = db.query(models.StockLocation).filter_by(id=tx.location_id).first()
         if src_loc and src_loc.usage == 'internal': pass # Stock total is dynamic now
 
@@ -450,3 +461,96 @@ def export_inventory_xlsx(db: Session = Depends(get_db)):
     response = StreamingResponse(iter([stream.getvalue()]), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     response.headers["Content-Disposition"] = "attachment; filename=MMG_Inventaire_Actuel.xlsx"
     return response
+
+@router.post("/import-bom/{sale_order_id}")
+async def import_bom_for_sale_order(sale_order_id: int, background_tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    from ..core.events import EventBus
+    sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_order_id).first()
+    if not sale:
+        raise HTTPException(404, "Sale Order introuvable")
+
+    contents = await file.read()
+    try:
+        content_str = contents.decode("utf-8")
+    except UnicodeDecodeError:
+        content_str = contents.decode("latin-1")
+
+    bom_items = parse_bom_file(content_str, file.filename)
+    if not bom_items:
+        raise HTTPException(400, "Le fichier est vide ou le format n'est pas reconnu.")
+
+    prod_loc = db.query(models.StockLocation).filter(models.StockLocation.name == "Production Ateliers", models.StockLocation.usage == "production").first()
+    if not prod_loc:
+        prod_loc = models.StockLocation(name="Production Ateliers", usage="production", type="virtual")
+        db.add(prod_loc)
+        db.flush()
+
+    wh_loc = db.query(models.StockLocation).filter(models.StockLocation.usage == "internal").first()
+    if not wh_loc:
+        raise HTTPException(400, "Aucun entrepôt physique trouvé.")
+
+    processed_count = 0
+    not_found_refs = []
+    stock_warnings = []
+
+    for item in bom_items:
+        ref = item["reference"]
+        qty = item["quantity"]
+        
+        variant = db.query(models.ProductVariant).filter(or_(
+            models.ProductVariant.reference == ref,
+            models.ProductVariant.barcode == ref,
+            models.ProductVariant.supplier_reference == ref
+        )).first()
+
+        if not variant:
+            not_found_refs.append(ref)
+            continue
+            
+        src_quant = db.query(models.StockQuant).filter_by(variant_id=variant.id, location_id=wh_loc.id).first()
+        if not src_quant:
+            src_quant = models.StockQuant(variant_id=variant.id, location_id=wh_loc.id, quantity=0)
+            db.add(src_quant)
+            
+        dest_quant = db.query(models.StockQuant).filter_by(variant_id=variant.id, location_id=prod_loc.id).first()
+        if not dest_quant:
+            dest_quant = models.StockQuant(variant_id=variant.id, location_id=prod_loc.id, quantity=0)
+            db.add(dest_quant)
+
+        # Check for stock warnings (Non-blocking)
+        if src_quant.quantity < qty:
+            shortage = qty - src_quant.quantity
+            stock_warnings.append(f"{variant.reference} : manque {shortage} {variant.product.unit if variant.product else 'unités'} en stock.")
+
+        previous_qty = src_quant.quantity
+        src_quant.quantity -= qty
+        
+        # --- INTERNAL AUTOMATION TRIGGER ---
+        if previous_qty > variant.min_threshold and src_quant.quantity <= variant.min_threshold:
+            EventBus.on_stock_alert(variant.reference, src_quant.quantity, background_tasks)
+        dest_quant.quantity += qty
+
+        new_move = models.StockMove(
+            reference=f"PROD-{sale.reference}-BOM",
+            variant_id=variant.id,
+            location_id=wh_loc.id,
+            location_dest_id=prod_loc.id,
+            quantity=qty,
+            notes=f"Débit BOM auto ({file.filename})",
+            author="Système / Admin"
+        )
+        db.add(new_move)
+        processed_count += 1
+        
+    sale.status = "READY_FOR_PROD"
+    if stock_warnings:
+        sale.notes = (sale.notes or "") + f"\n[ALERTE STOCK] {len(stock_warnings)} ruptures potentielles au lancement."
+        
+    db.commit()
+
+    return {
+        "status": "success", 
+        "processed_count": processed_count, 
+        "not_found": not_found_refs,
+        "warnings": stock_warnings
+    }
