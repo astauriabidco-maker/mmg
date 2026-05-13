@@ -3,7 +3,7 @@ import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
-import { TrendingUp, AlertTriangle, Clock, Activity, LogOut, Upload, Menu, Search, Filter, ArrowUpRight, ArrowDownRight, ChevronRight, Users, Settings, Box, Banknote, CheckCircle2, Factory, Package, BarChart3, Sparkles, X, Scissors } from 'lucide-react';
+import { TrendingUp, AlertTriangle, Clock, Activity, LogOut, Upload, Menu, Search, Filter, ArrowUpRight, ArrowDownRight, ChevronRight, ChevronLeft, Users, Settings, Box, Banknote, CheckCircle2, Factory, Package, BarChart3, Sparkles, X, Scissors, Download, FileText, FileSpreadsheet, ArrowUpDown } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import StationManager from '../components/StationManager';
 import OperatorManager from '../components/OperatorManager';
@@ -29,6 +29,12 @@ export default function ManagerDashboard() {
     const [materialFilter, setMaterialFilter] = useState('ALL');
     const [insightModalOpen, setInsightModalOpen] = useState(false);
     const [cuttingModalOpen, setCuttingModalOpen] = useState(false);
+    const [statusFilter, setStatusFilter] = useState('ALL');
+    const [selectedOrder, setSelectedOrder] = useState(null);
+    const [selectedStation, setSelectedStation] = useState(null);
+    const [sortConfig, setSortConfig] = useState({ key: 'id', direction: 'desc' });
+    const [currentPage, setCurrentPage] = useState(1);
+    const ITEMS_PER_PAGE = 10;
     const location = useLocation();
 
     useEffect(() => {
@@ -57,6 +63,15 @@ export default function ManagerDashboard() {
         refetchInterval: 10000,
     });
 
+    const { data: kpi = { ca_mensuel: 0, ca_delta_pct: 0, inventory_value: 0, yield_rate: 100, active_dossiers: 0, chart_data: [] } } = useQuery({
+        queryKey: ['dashboard-kpi'],
+        queryFn: async () => {
+            const { data } = await api.get('/v2/analytics/kpi');
+            return data;
+        },
+        refetchInterval: 30000,
+    });
+
     const { data: recentOrders = [] } = useQuery({
         queryKey: ['manager-recent-orders'],
         queryFn: async () => {
@@ -65,6 +80,33 @@ export default function ManagerDashboard() {
         },
         refetchInterval: 10000,
     });
+
+    const { data: stations = [] } = useQuery({
+        queryKey: ['manager-stations'],
+        queryFn: async () => {
+            const { data } = await api.get('/v2/config/stations');
+            return data;
+        }
+    });
+
+    const { data: trackingOrders = [], isLoading: trackingLoading } = useQuery({
+        queryKey: ['orders-tracking'],
+        queryFn: async () => {
+            const { data } = await api.get('/v2/ingest/orders/tracking');
+            return data;
+        },
+        refetchInterval: 5000,
+    });
+
+    const { data: workshopAnalytics, isLoading: analyticsLoading } = useQuery({
+        queryKey: ['workshop-analytics'],
+        queryFn: async () => {
+            const res = await api.get('/v2/analytics/workshop');
+            return res.data;
+        },
+        refetchInterval: 60000 // refresh every minute
+    });
+
 
     const filteredOrders = recentOrders.filter(o =>
         (searchTerm === '' || o.reference.toLowerCase().includes(searchTerm.toLowerCase()) || o.client_name?.toLowerCase().includes(searchTerm.toLowerCase())) &&
@@ -95,16 +137,34 @@ export default function ManagerDashboard() {
                         <h1 className="text-xl font-bold text-slate-900 capitalize">
                             {activeView === 'dashboard' ? 'Vue d\'Ensemble' :
                                 activeView === 'live' ? 'Atelier Live' :
-                                    activeView === 'orders' ? 'Suivi Commandes' :
+                                     activeView === 'orders' ? 'Suivi Commandes' :
                                         activeView === 'stock' ? 'Gestion de Stock' : 
-                                            activeView === 'purchases' ? 'Achats & Approvisionnement' :
+                                            activeView === 'purchases' ? 'Achats & Appro' :
                                                 activeView === 'sales' ? 'CRM & Devis (Ventes)' : 
                                                         activeView === 'logistics' ? 'Logistique & Expéditions' : 
-                                                            activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration'}
+                                                            activeView === 'analytics_atelier' ? 'Performance Atelier' :
+                                                                activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration'}
                         </h1>
                     </div>
 
+                    {/* AI Search Bar - Global */}
+                    <div 
+                        onClick={() => setInsightModalOpen(true)}
+                        className="hidden md:flex flex-1 max-w-lg mx-6 bg-slate-100 hover:bg-slate-200 cursor-pointer transition-colors rounded-full items-center px-5 py-2 border border-transparent hover:border-indigo-300 hover:shadow-sm"
+                    >
+                        <Sparkles className="w-4 h-4 text-indigo-500 mr-2 shrink-0" />
+                        <span className="text-sm font-medium text-slate-400 truncate">Demander à l'IA...</span>
+                        <div className="flex items-center gap-1 ml-auto">
+                            <kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 text-[10px] font-bold text-slate-400">⌘</kbd>
+                            <kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 text-[10px] font-bold text-slate-400">K</kbd>
+                        </div>
+                    </div>
+
                     <div className="flex items-center gap-4">
+                        {/* Mobile AI button */}
+                        <button onClick={() => setInsightModalOpen(true)} className="md:hidden p-2 text-indigo-500 hover:bg-indigo-50 rounded-lg">
+                            <Sparkles className="w-5 h-5" />
+                        </button>
                         <div className="flex items-center gap-3">
                             <span className="relative flex h-3 w-3">
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -115,27 +175,6 @@ export default function ManagerDashboard() {
                     </div>
                 </header>
 
-                {/* AI Search Bar directly below header */}
-                {activeView === 'dashboard' && (
-                    <div className="bg-white border-b border-slate-200 p-4 shadow-sm relative z-20">
-                        <div 
-                            onClick={() => setInsightModalOpen(true)}
-                            className="max-w-3xl mx-auto bg-slate-100 hover:bg-slate-200 cursor-text transition-colors rounded-full flex items-center px-6 py-3 border border-transparent focus-within:border-indigo-400 focus-within:bg-white focus-within:shadow-lg focus-within:shadow-indigo-500/10"
-                        >
-                            <Sparkles className="w-5 h-5 text-indigo-500 mr-3 shrink-0" />
-                            <input 
-                                type="text"
-                                placeholder="Demander à l'IA... (Ex: Quel est le CA ? Quels sont les produits les plus vendus ?)"
-                                className="bg-transparent border-none outline-none w-full font-medium text-slate-700 pointer-events-none"
-                                readOnly
-                            />
-                            <div className="flex items-center gap-1">
-                                <kbd className="hidden sm:inline-block bg-white border border-slate-300 rounded px-2 py-0.5 text-xs font-bold text-slate-500">⌘</kbd>
-                                <kbd className="hidden sm:inline-block bg-white border border-slate-300 rounded px-2 py-0.5 text-xs font-bold text-slate-500">K</kbd>
-                            </div>
-                        </div>
-                    </div>
-                )}
 
                 {/* View Container */}
                 <div className="p-8">
@@ -147,6 +186,7 @@ export default function ManagerDashboard() {
                     {activeView === 'sales' && <SalesDashboard />}
                     {activeView === 'accounting' && <AccountingDashboard />}
                     {activeView === 'logistics' && <DeliveryDashboard />}
+                    {activeView === 'analytics_atelier' && renderAtelierAnalyticsView()}
                     {activeView === 'insight' && <InsightDashboard />}
                     {activeView === 'config' && <PlatformSettings />}
                 </div>
@@ -175,15 +215,12 @@ export default function ManagerDashboard() {
     );
 
     function renderDashboardView() {
-        const presentationData = [
-            { name: 'Lun', sales: 4000, prod: 2400 },
-            { name: 'Mar', sales: 3000, prod: 1398 },
-            { name: 'Mer', sales: 2000, prod: 9800 },
-            { name: 'Jeu', sales: 2780, prod: 3908 },
-            { name: 'Ven', sales: 1890, prod: 4800 },
-            { name: 'Sam', sales: 2390, prod: 3800 },
-            { name: 'Dim', sales: 3490, prod: 4300 },
-        ];
+        const formatMoney = (v) => {
+            if (v >= 1000) return `${(v / 1000).toFixed(1)}`;
+            return v.toFixed(0);
+        };
+        const moneyUnit = (v) => v >= 1000 ? 'K €' : '€';
+        const caUp = kpi.ca_delta_pct >= 0;
 
         return (
             <div className="space-y-6 max-w-7xl mx-auto font-sans animate-fade-in pb-12">
@@ -198,16 +235,16 @@ export default function ManagerDashboard() {
                         <div>
                             <p className="text-slate-400 font-bold uppercase tracking-widest text-xs mb-2 flex items-center gap-2"><Banknote className="w-4 h-4 text-emerald-400"/> CA MENSUEL</p>
                             <h2 className="text-4xl lg:text-5xl font-black tracking-tight mt-1 flex items-baseline gap-2">
-                                42.8 <span className="text-xl text-slate-500 font-bold">K €</span>
+                                {formatMoney(kpi.ca_mensuel)} <span className="text-xl text-slate-500 font-bold">{moneyUnit(kpi.ca_mensuel)}</span>
                             </h2>
-                            <p className="text-emerald-400 text-sm font-bold flex items-center gap-1 mt-3">
-                                <ArrowUpRight className="w-4 h-4" /> +15.2% vs M-1
+                            <p className={`${caUp ? 'text-emerald-400' : 'text-rose-400'} text-sm font-bold flex items-center gap-1 mt-3`}>
+                                {caUp ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />} {caUp ? '+' : ''}{kpi.ca_delta_pct}% vs M-1
                             </p>
                         </div>
                         <div className="border-l border-white/10 pl-8">
                             <p className="text-slate-400 font-bold uppercase tracking-widest text-xs mb-2 flex items-center gap-2"><Factory className="w-4 h-4 text-blue-400"/> EN PRODUCTION</p>
                             <h2 className="text-4xl lg:text-5xl font-black tracking-tight mt-1 flex items-baseline gap-2">
-                                {stats.active || 24} <span className="text-xl text-slate-500 font-bold">dossiers</span>
+                                {kpi.active_dossiers || stats.active || 0} <span className="text-xl text-slate-500 font-bold">dossiers</span>
                             </h2>
                             <p className="text-blue-400 text-sm font-bold flex items-center gap-1 mt-3">
                                 <Activity className="w-4 h-4" /> Flux tendu opérationnel
@@ -216,16 +253,16 @@ export default function ManagerDashboard() {
                         <div className="border-l border-white/10 pl-8">
                             <p className="text-slate-400 font-bold uppercase tracking-widest text-xs mb-2 flex items-center gap-2"><Package className="w-4 h-4 text-purple-400"/> VALEUR INVENTAIRE</p>
                             <h2 className="text-4xl lg:text-5xl font-black tracking-tight mt-1 flex items-baseline gap-2">
-                                115.3 <span className="text-xl text-slate-500 font-bold">K €</span>
+                                {formatMoney(kpi.inventory_value)} <span className="text-xl text-slate-500 font-bold">{moneyUnit(kpi.inventory_value)}</span>
                             </h2>
                             <p className="text-slate-300 text-sm font-bold flex items-center gap-1 mt-3">
-                                <ArrowDownRight className="w-4 h-4 text-rose-400" /> -4.1% rotation (Sain)
+                                <Package className="w-4 h-4 text-purple-400" /> Valorisation temps réel
                             </p>
                         </div>
                         <div className="border-l border-white/10 pl-8">
                             <p className="text-slate-400 font-bold uppercase tracking-widest text-xs mb-2 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-amber-400"/> TAUX DE RENDEMENT</p>
                             <h2 className="text-4xl lg:text-5xl font-black tracking-tight mt-1 flex items-baseline gap-2">
-                                98.2 <span className="text-xl text-slate-500 font-bold">%</span>
+                                {kpi.yield_rate} <span className="text-xl text-slate-500 font-bold">%</span>
                             </h2>
                             <p className="text-amber-400 text-sm font-bold flex items-center gap-1 mt-3">
                                 Objectif: 99.0%
@@ -253,7 +290,7 @@ export default function ManagerDashboard() {
                         </div>
                         <div className="h-[350px]">
                             <ResponsiveContainer width="100%" height="100%">
-                                <AreaChart data={presentationData}>
+                                <AreaChart data={kpi.chart_data.length > 0 ? kpi.chart_data : [{name:'—',sales:0,prod:0}]}>
                                     <defs>
                                         <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
                                             <stop offset="5%" stopColor="#10b981" stopOpacity={0.2} />
@@ -341,21 +378,113 @@ export default function ManagerDashboard() {
                     </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {['PVC_DEBIT', 'PVC_SOUDURE', 'PVC_MOULES', 'ALU_DEBIT', 'ALU_ASSEMBLAGE'].map(station => (
-                        <StationLiveCard key={station} name={station} />
-                    ))}
+                <div className="flex gap-6">
+                    {/* STATIONS GRID */}
+                    <div className={`grid grid-cols-1 md:grid-cols-2 ${selectedStation ? 'xl:grid-cols-2 flex-1' : 'xl:grid-cols-3 w-full'} gap-6 transition-all`}>
+                        {stations.map(station => (
+                            <StationLiveCard 
+                                key={station.code} 
+                                name={station.code} 
+                                displayName={station.display_name} 
+                                isSelected={selectedStation === station.code}
+                                onSelect={(name) => setSelectedStation(selectedStation === name ? null : name)}
+                            />
+                        ))}
+                        {stations.length === 0 && (
+                            <div className="col-span-full py-12 text-center text-slate-400">
+                                Aucune station configurée
+                            </div>
+                        )}
+                    </div>
+
+                    {/* STATION DETAIL PANEL */}
+                    {selectedStation && (
+                        <StationDetailPanel stationCode={selectedStation} onClose={() => setSelectedStation(null)} />
+                    )}
                 </div>
             </div>
         );
     }
 
     function renderOrdersView() {
+        const STATUS_MAP = {
+            'NEW': { label: 'Nouveau', color: 'bg-slate-100 text-slate-600 ring-slate-200', dot: 'bg-slate-400' },
+            'PENDING': { label: 'En attente', color: 'bg-amber-50 text-amber-700 ring-amber-200', dot: 'bg-amber-500' },
+            'IN_PROGRESS': { label: 'En cours', color: 'bg-blue-50 text-blue-700 ring-blue-200', dot: 'bg-blue-500 animate-pulse' },
+            'PAUSED': { label: 'En pause', color: 'bg-orange-50 text-orange-700 ring-orange-200', dot: 'bg-orange-500' },
+            'DONE': { label: 'Terminé', color: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500' },
+            'READY': { label: 'Prêt à livrer', color: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500' },
+            'DELIVERED': { label: 'Livré', color: 'bg-green-50 text-green-800 ring-green-300', dot: 'bg-green-600' },
+            'ISSUE': { label: 'Incident', color: 'bg-red-50 text-red-700 ring-red-200', dot: 'bg-red-500 animate-pulse' },
+            'DEFECT': { label: 'Défaut', color: 'bg-red-50 text-red-700 ring-red-200', dot: 'bg-red-500' },
+        };
+
+
+
+        let filtered = trackingOrders.filter(o =>
+            (searchTerm === '' || o.reference?.toLowerCase().includes(searchTerm.toLowerCase()) || o.client_name?.toLowerCase().includes(searchTerm.toLowerCase())) &&
+            (materialFilter === 'ALL' || o.material === materialFilter) &&
+            (statusFilter === 'ALL' || o.status === statusFilter)
+        );
+
+        // Sorting
+        filtered.sort((a, b) => {
+            let valA = a[sortConfig.key];
+            let valB = b[sortConfig.key];
+            
+            if (valA === null || valA === undefined) valA = '';
+            if (valB === null || valB === undefined) valB = '';
+
+            if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        // Pagination
+        const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE) || 1;
+        const currentData = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+        const handleSort = (key) => {
+            let direction = 'asc';
+            if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
+            setSortConfig({ key, direction });
+            setCurrentPage(1);
+        };
+
+        const handleExportCSV = () => window.open(`${api.defaults.baseURL || 'http://localhost:7000'}/v2/ingest/orders/export/csv`, '_blank');
+        const handleExportPDF = () => window.open(`${api.defaults.baseURL || 'http://localhost:7000'}/v2/ingest/orders/export/pdf`, '_blank');
+
+        // KPI summary
+        const kpiInProgress = trackingOrders.filter(o => o.status === 'IN_PROGRESS').length;
+        const kpiPending = trackingOrders.filter(o => o.status === 'PENDING' || o.status === 'NEW').length;
+        const kpiReady = trackingOrders.filter(o => o.status === 'READY' || o.status === 'DELIVERED').length;
+        const kpiIssue = trackingOrders.filter(o => o.status === 'ISSUE').length;
+
         return (
             <div className="max-w-7xl mx-auto space-y-6">
+                {/* KPI STRIP */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">En cours</p>
+                        <p className="text-3xl font-black text-blue-600">{kpiInProgress}</p>
+                    </div>
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">En attente</p>
+                        <p className="text-3xl font-black text-amber-600">{kpiPending}</p>
+                    </div>
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Prêts / Livrés</p>
+                        <p className="text-3xl font-black text-emerald-600">{kpiReady}</p>
+                    </div>
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Incidents</p>
+                        <p className="text-3xl font-black text-red-600">{kpiIssue}</p>
+                    </div>
+                </div>
+
                 {/* FILTERS BAR */}
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-4">
-                    <div className="flex-1 min-w-[300px] relative">
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-3">
+                    <div className="flex-1 min-w-[250px] relative">
                         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                         <input
                             type="text"
@@ -366,84 +495,286 @@ export default function ManagerDashboard() {
                         />
                     </div>
 
-                    <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl ring-1 ring-slate-100">
-                        <button
-                            onClick={() => setMaterialFilter('ALL')}
-                            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${materialFilter === 'ALL' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                        >
-                            Tout
-                        </button>
-                        <button
-                            onClick={() => setMaterialFilter('PVC')}
-                            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${materialFilter === 'PVC' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                        >
-                            PVC
-                        </button>
-                        <button
-                            onClick={() => setMaterialFilter('ALU')}
-                            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${materialFilter === 'ALU' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                        >
-                            ALU
-                        </button>
+                    {/* Material Filter */}
+                    <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-xl ring-1 ring-slate-100">
+                        {['ALL', 'PVC', 'ALU'].map(mat => (
+                            <button key={mat} onClick={() => setMaterialFilter(mat)}
+                                className={`px-3 py-2 rounded-lg text-xs font-bold transition-all ${materialFilter === mat ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                            >{mat === 'ALL' ? 'Tout' : mat}</button>
+                        ))}
                     </div>
 
-                    <button className="p-3 bg-slate-50 hover:bg-slate-100 text-slate-500 rounded-xl ring-1 ring-slate-100 transition-colors">
-                        <Filter className="w-5 h-5" />
-                    </button>
+                    {/* Status Filter */}
+                    <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-xl ring-1 ring-slate-100 flex-wrap">
+                        {['ALL', 'IN_PROGRESS', 'PENDING', 'READY', 'ISSUE'].map(st => (
+                            <button key={st} onClick={() => setStatusFilter(st)}
+                                className={`px-3 py-2 rounded-lg text-xs font-bold transition-all ${statusFilter === st ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                            >{st === 'ALL' ? 'Tous' : (STATUS_MAP[st]?.label || st)}</button>
+                        ))}
+                    </div>
+
+                    <div className="text-xs font-bold text-slate-400 ml-auto mr-4">{filtered.length} commande{filtered.length > 1 ? 's' : ''}</div>
+
+                    {/* Export Buttons */}
+                    <div className="flex items-center gap-2 border-l border-slate-200 pl-4">
+                        <button onClick={handleExportCSV} className="p-2 hover:bg-slate-100 text-slate-500 rounded-lg transition-colors group relative" title="Export CSV">
+                            <FileSpreadsheet className="w-5 h-5 group-hover:text-emerald-600 transition-colors" />
+                        </button>
+                        <button onClick={handleExportPDF} className="p-2 hover:bg-slate-100 text-slate-500 rounded-lg transition-colors group relative" title="Export PDF">
+                            <FileText className="w-5 h-5 group-hover:text-red-500 transition-colors" />
+                        </button>
+                    </div>
                 </div>
 
-                {/* TABLE */}
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                    <table className="w-full text-left border-collapse">
-                        <thead>
-                            <tr className="bg-slate-50/50 border-b border-slate-100">
-                                <th className="py-5 px-8 text-xs font-black text-slate-400 uppercase tracking-widest">Référence</th>
-                                <th className="py-5 px-4 text-xs font-black text-slate-400 uppercase tracking-widest">Client</th>
-                                <th className="py-5 px-4 text-xs font-black text-slate-400 uppercase tracking-widest">Produit</th>
-                                <th className="py-5 px-4 text-xs font-black text-slate-400 uppercase tracking-widest">Matériau</th>
-                                <th className="py-5 px-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Qté</th>
-                                <th className="py-5 px-8 text-xs font-black text-slate-400 uppercase tracking-widest text-right">Statut</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-50">
-                            {filteredOrders.map((order) => (
-                                <tr key={order.id} className="group hover:bg-blue-50/30 transition-colors">
-                                    <td className="py-5 px-8">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center text-slate-400 group-hover:bg-blue-100 group-hover:text-blue-600 transition-colors">
-                                                <Box className="w-4 h-4" />
-                                            </div>
-                                            <span className="font-bold text-slate-700">{order.reference}</span>
-                                        </div>
-                                    </td>
-                                    <td className="py-5 px-4">
-                                        <p className="font-semibold text-slate-600 truncate max-w-[150px]">{order.client_name || "N/A"}</p>
-                                    </td>
-                                    <td className="py-5 px-4">
-                                        <p className="text-sm text-slate-500">{order.width} x {order.height} mm</p>
-                                    </td>
-                                    <td className="py-5 px-4">
-                                        <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${order.material === 'PVC' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-700'}`}>
-                                            {order.material}
-                                        </span>
-                                    </td>
-                                    <td className="py-5 px-4 text-center font-bold text-slate-700">{order.quantity}</td>
-                                    <td className="py-5 px-8 text-right">
-                                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-600 text-xs font-bold ring-1 ring-emerald-100">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                            Validé
-                                        </span>
-                                    </td>
+                <div className="flex gap-6">
+                    {/* TABLE */}
+                    <div className={`bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden ${selectedOrder ? 'flex-1' : 'w-full'} transition-all`}>
+                        {trackingLoading ? (
+                            <div className="py-20 text-center"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div></div>
+                        ) : (
+                        <table className="w-full text-left border-collapse">
+                            <thead>
+                                <tr className="bg-slate-50/50 border-b border-slate-100">
+                                    <th onClick={() => handleSort('reference')} className="py-4 px-6 text-xs font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:bg-slate-100/50 transition-colors">
+                                        <div className="flex items-center gap-2">Réf. <ArrowUpDown className="w-3 h-3" /></div>
+                                    </th>
+                                    <th onClick={() => handleSort('client_name')} className="py-4 px-4 text-xs font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:bg-slate-100/50 transition-colors">
+                                        <div className="flex items-center gap-2">Client <ArrowUpDown className="w-3 h-3" /></div>
+                                    </th>
+                                    <th onClick={() => handleSort('material')} className="py-4 px-4 text-xs font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:bg-slate-100/50 transition-colors">
+                                        <div className="flex items-center gap-2">Matériau <ArrowUpDown className="w-3 h-3" /></div>
+                                    </th>
+                                    <th onClick={() => handleSort('station_display')} className="py-4 px-4 text-xs font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:bg-slate-100/50 transition-colors">
+                                        <div className="flex items-center gap-2">Station <ArrowUpDown className="w-3 h-3" /></div>
+                                    </th>
+                                    <th onClick={() => handleSort('progress')} className="py-4 px-4 text-xs font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:bg-slate-100/50 transition-colors">
+                                        <div className="flex items-center gap-2">Progression <ArrowUpDown className="w-3 h-3" /></div>
+                                    </th>
+                                    <th onClick={() => handleSort('quantity')} className="py-4 px-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center cursor-pointer hover:bg-slate-100/50 transition-colors">
+                                        <div className="flex items-center justify-center gap-2">Qté <ArrowUpDown className="w-3 h-3" /></div>
+                                    </th>
+                                    <th onClick={() => handleSort('status')} className="py-4 px-6 text-xs font-black text-slate-400 uppercase tracking-widest text-right cursor-pointer hover:bg-slate-100/50 transition-colors">
+                                        <div className="flex items-center justify-end gap-2"><ArrowUpDown className="w-3 h-3" /> Statut</div>
+                                    </th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                    {filteredOrders.length === 0 && (
-                        <div className="py-20 text-center space-y-4">
-                            <Search className="w-12 h-12 text-slate-200 mx-auto" />
-                            <p className="text-slate-400 font-medium italic">Aucune commande ne correspond à votre recherche.</p>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                                {currentData.map((order) => {
+                                    const st = STATUS_MAP[order.status] || STATUS_MAP['NEW'];
+                                    return (
+                                    <tr key={order.id} onClick={() => setSelectedOrder(selectedOrder?.id === order.id ? null : order)} className={`group hover:bg-blue-50/30 transition-colors cursor-pointer ${selectedOrder?.id === order.id ? 'bg-blue-50/50' : ''}`}>
+                                        <td className="py-4 px-6">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center text-slate-400 group-hover:bg-blue-100 group-hover:text-blue-600 transition-colors">
+                                                    <Box className="w-4 h-4" />
+                                                </div>
+                                                <span className="font-bold text-slate-700 text-sm">{order.reference}</span>
+                                            </div>
+                                        </td>
+                                        <td className="py-4 px-4">
+                                            <p className="font-semibold text-slate-600 truncate max-w-[130px] text-sm">{order.client_name || "—"}</p>
+                                        </td>
+                                        <td className="py-4 px-4">
+                                            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${order.material === 'PVC' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-700'}`}>
+                                                {order.material}
+                                            </span>
+                                        </td>
+                                        <td className="py-4 px-4">
+                                            {order.station_display ? (
+                                                <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-lg">{order.station_display}</span>
+                                            ) : (
+                                                <span className="text-xs text-slate-300">—</span>
+                                            )}
+                                        </td>
+                                        <td className="py-4 px-4">
+                                            <div className="flex items-center gap-2">
+                                                <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden max-w-[80px]">
+                                                    <div className={`h-full rounded-full transition-all ${order.progress >= 100 ? 'bg-emerald-500' : order.progress > 0 ? 'bg-blue-500' : 'bg-slate-200'}`} style={{width: `${order.progress}%`}}></div>
+                                                </div>
+                                                <span className="text-xs font-bold text-slate-500">{order.progress}%</span>
+                                            </div>
+                                        </td>
+                                        <td className="py-4 px-4 text-center font-bold text-slate-700 text-sm">{order.quantity}</td>
+                                        <td className="py-4 px-6 text-right">
+                                            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ring-1 ${st.color}`}>
+                                                <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`}></span>
+                                                {st.label}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                        )}
+
+                        {/* Pagination */}
+                        {!trackingLoading && filtered.length > 0 && (
+                            <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/30">
+                                <span className="text-xs font-medium text-slate-500">
+                                    Affichage de {(currentPage - 1) * ITEMS_PER_PAGE + 1} à {Math.min(currentPage * ITEMS_PER_PAGE, filtered.length)} sur {filtered.length} commandes
+                                </span>
+                                <div className="flex items-center gap-1">
+                                    <button 
+                                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                        disabled={currentPage === 1}
+                                        className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:shadow-sm disabled:opacity-50 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all"
+                                    >
+                                        <ChevronLeft className="w-4 h-4" />
+                                    </button>
+                                    <span className="px-3 py-1 text-xs font-bold text-slate-700 bg-white rounded-lg shadow-sm border border-slate-200">
+                                        Page {currentPage} / {totalPages}
+                                    </span>
+                                    <button 
+                                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                        disabled={currentPage === totalPages}
+                                        className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:shadow-sm disabled:opacity-50 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all"
+                                    >
+                                        <ChevronRight className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {!trackingLoading && filtered.length === 0 && (
+                            <div className="py-20 text-center space-y-4">
+                                <Search className="w-12 h-12 text-slate-200 mx-auto" />
+                                <p className="text-slate-400 font-medium italic">Aucune commande ne correspond à votre recherche.</p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* DETAIL PANEL */}
+                    {selectedOrder && (
+                        <div className="w-96 bg-white rounded-3xl border border-slate-200 shadow-sm p-6 space-y-6 shrink-0 animate-fade-in">
+                            <div className="flex items-center justify-between">
+                                <h3 className="font-black text-lg text-slate-800">{selectedOrder.reference}</h3>
+                                <button onClick={() => setSelectedOrder(null)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors">✕</button>
+                            </div>
+
+                            <div className="space-y-3">
+                                <div className="flex justify-between text-sm"><span className="text-slate-400 font-bold">Client</span><span className="font-semibold text-slate-700">{selectedOrder.client_name || "—"}</span></div>
+                                <div className="flex justify-between text-sm"><span className="text-slate-400 font-bold">Dimensions</span><span className="font-semibold text-slate-700">{selectedOrder.width} × {selectedOrder.height} mm</span></div>
+                                <div className="flex justify-between text-sm"><span className="text-slate-400 font-bold">Matériau</span><span className="font-semibold text-slate-700">{selectedOrder.material}</span></div>
+                                <div className="flex justify-between text-sm"><span className="text-slate-400 font-bold">Couleur</span><span className="font-semibold text-slate-700">{selectedOrder.color || "—"}</span></div>
+                                <div className="flex justify-between text-sm"><span className="text-slate-400 font-bold">Système</span><span className="font-semibold text-slate-700">{selectedOrder.system_type || "—"}</span></div>
+                                <div className="flex justify-between text-sm"><span className="text-slate-400 font-bold">Opérateur</span><span className="font-semibold text-slate-700">{selectedOrder.assigned_to || "Non assigné"}</span></div>
+                            </div>
+
+                            {/* Progress */}
+                            <div>
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Progression</span>
+                                    <span className="text-sm font-black text-blue-600">{selectedOrder.progress}%</span>
+                                </div>
+                                <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+                                    <div className={`h-full rounded-full transition-all duration-500 ${selectedOrder.progress >= 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{width: `${selectedOrder.progress}%`}}></div>
+                                </div>
+                            </div>
+
+                            {/* Steps Timeline */}
+                            <div>
+                                <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3">Étapes de fabrication</p>
+                                <div className="space-y-0">
+                                    {selectedOrder.steps && selectedOrder.steps.map((step, i) => {
+                                        const stepColor = step.status === 'DONE' ? 'bg-emerald-500' : step.status === 'IN_PROGRESS' ? 'bg-blue-500 animate-pulse' : step.status === 'ISSUE' ? 'bg-red-500' : 'bg-slate-300';
+                                        const lineColor = step.status === 'DONE' ? 'bg-emerald-300' : 'bg-slate-200';
+                                        return (
+                                            <div key={i} className="flex items-start gap-3">
+                                                <div className="flex flex-col items-center">
+                                                    <div className={`w-3 h-3 rounded-full ${stepColor} shrink-0 mt-0.5`}></div>
+                                                    {i < selectedOrder.steps.length - 1 && <div className={`w-0.5 h-8 ${lineColor}`}></div>}
+                                                </div>
+                                                <div className="pb-4">
+                                                    <p className="text-sm font-bold text-slate-700">{step.station.replace(/_/g, ' ')}</p>
+                                                    <p className="text-xs text-slate-400 font-medium">{STATUS_MAP[step.status]?.label || step.status}</p>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                    {(!selectedOrder.steps || selectedOrder.steps.length === 0) && (
+                                        <p className="text-sm text-slate-400 italic">Aucune étape planifiée</p>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     )}
+                </div>
+            </div>
+        );
+    }
+
+    function renderAtelierAnalyticsView() {
+        if (analyticsLoading || !workshopAnalytics) {
+            return <div className="py-20 text-center"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div></div>;
+        }
+
+        const analytics = workshopAnalytics;
+
+        return (
+            <div className="max-w-7xl mx-auto space-y-6 animate-fade-in">
+                <div className="flex items-center justify-between mb-8">
+                    <div>
+                        <h2 className="text-2xl font-bold text-slate-900">Analyse & Performance Atelier</h2>
+                        <p className="text-slate-500">Métriques de production sur les 7 derniers jours.</p>
+                    </div>
+                </div>
+
+                {/* KPIs */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Lead Time Moyen (Global)</p>
+                        <p className="text-3xl font-black text-slate-800">{analytics.global.avg_lead_time_min} <span className="text-lg text-slate-400">min</span></p>
+                    </div>
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Tâches Réalisées</p>
+                        <p className="text-3xl font-black text-blue-600">{analytics.global.tasks_completed_7d}</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Taux de Défauts</p>
+                        <p className="text-3xl font-black text-amber-600">{analytics.global.defect_rate_pct}%</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Incidents & Aléas (7J)</p>
+                        <p className="text-3xl font-black text-red-600">{analytics.global.issues_7d}</p>
+                    </div>
+                </div>
+
+                {/* CHARTS */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                        <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
+                            <Clock className="w-5 h-5 text-blue-500" /> Temps Moyen par Station (Min)
+                        </h3>
+                        <div className="h-[300px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={analytics.station_avg_time} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E2E8F0" />
+                                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 700 }} />
+                                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 700 }} width={120} />
+                                    <Tooltip cursor={{fill: '#f1f5f9'}} contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
+                                    <Bar dataKey="avg_time" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={20} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                        <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
+                            <Users className="w-5 h-5 text-emerald-500" /> Top Productivité (Opérateurs)
+                        </h3>
+                        <div className="h-[300px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={analytics.operator_productivity} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E2E8F0" />
+                                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 700 }} />
+                                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 700 }} width={100} />
+                                    <Tooltip cursor={{fill: '#f1f5f9'}} contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
+                                    <Bar dataKey="tasks" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
                 </div>
             </div>
         );
@@ -488,31 +819,58 @@ function KpiCard({ icon: Icon, title, value, trend, isUp, color }) {
     );
 }
 
-function StationLiveCard({ name }) {
+function StationLiveCard({ name, displayName, isSelected, onSelect }) {
     const { data: queueData = [], isLoading } = useQuery({
         queryKey: ['station-queue', name],
         queryFn: async () => {
             const res = await api.get(`/v2/planning/${name}`);
             return res.data;
         },
-        refetchInterval: 5000, // Auto-refresh every 5s
+        refetchInterval: 5000,
     });
 
+    const pendingTasks = queueData.filter(item => item.status === 'PENDING');
+    const inProgressTasks = queueData.filter(item => item.status === 'IN_PROGRESS');
+    
     const stats = {
-        queue: queueData.filter(item => item.status === 'PENDING').length,
-        in_progress: queueData.filter(item => item.status === 'IN_PROGRESS').length
+        queue: pendingTasks.length,
+        in_progress: inProgressTasks.length
     };
 
     const hasIssue = stats.queue > 8 || queueData.some(item => item.status === 'ISSUE');
+    const activeTask = inProgressTasks[0]; // Take the first active task if any
 
     return (
-        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:border-blue-300 transition-all group">
-            <div className="flex items-center justify-between mb-6">
-                <h4 className="font-black text-slate-800 tracking-tight">{name.replace('_', ' ')}</h4>
-                <div className={`w-3 h-3 rounded-full ${hasIssue ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`} />
+        <div 
+            onClick={() => onSelect(name)}
+            className={`bg-white p-6 rounded-3xl border shadow-sm transition-all cursor-pointer group flex flex-col h-full
+                ${isSelected ? 'border-blue-500 ring-4 ring-blue-50' : 'border-slate-200 hover:border-blue-300'}`}
+        >
+            <div className="flex items-center justify-between mb-6 shrink-0">
+                <h4 className="font-black text-slate-800 tracking-tight">{displayName || name.replace('_', ' ')}</h4>
+                <div className={`w-3 h-3 rounded-full ${hasIssue ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]'}`} />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            {/* Active Task Highlight */}
+            {activeTask ? (
+                <div className="mb-6 bg-blue-50/50 rounded-2xl p-4 border border-blue-100 flex-1">
+                    <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-1">
+                            <Activity className="w-3 h-3" /> Production en cours
+                        </span>
+                    </div>
+                    <p className="text-lg font-black text-slate-800 mb-1">{activeTask.order_reference}</p>
+                    <p className="text-sm font-semibold text-slate-600 truncate">Opérateur : <span className="text-blue-700">{activeTask.operator?.name || 'Inconnu'}</span></p>
+                </div>
+            ) : (
+                <div className="mb-6 bg-slate-50 rounded-2xl p-4 border border-slate-100 flex-1 flex flex-col items-center justify-center text-center">
+                    <Clock className="w-6 h-6 text-slate-300 mb-2" />
+                    <p className="text-sm font-bold text-slate-400">Station en attente</p>
+                    <p className="text-xs font-medium text-slate-400">Aucune production active</p>
+                </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4 shrink-0">
                 <div className="bg-slate-50 p-4 rounded-2xl">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">En attente</p>
                     <p className="text-2xl font-black text-slate-800">{stats.queue}</p>
@@ -523,15 +881,138 @@ function StationLiveCard({ name }) {
                 </div>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-slate-50 flex items-center justify-between">
-                <Link
-                    to={`/dashboard/${name}`}
-                    className="text-xs font-black text-blue-500 hover:text-blue-600 flex items-center gap-1 group/btn"
-                >
-                    Voir File
-                    <ChevronRight className="w-4 h-4 group-hover/btn:translate-x-1 transition-transform" />
-                </Link>
-                {hasIssue && <span className="text-[10px] font-black text-red-500 uppercase tracking-widest">Surcharge</span>}
+            <div className="mt-6 pt-4 border-t border-slate-50 flex items-center justify-between shrink-0">
+                <span className={`text-xs font-black flex items-center gap-1 transition-colors ${isSelected ? 'text-blue-600' : 'text-slate-400 group-hover:text-blue-500'}`}>
+                    Voir la file détaillée
+                    <ChevronRight className={`w-4 h-4 transition-transform ${isSelected ? 'translate-x-1' : 'group-hover:translate-x-1'}`} />
+                </span>
+                {hasIssue && <span className="text-[10px] font-black text-red-500 uppercase tracking-widest bg-red-50 px-2 py-1 rounded-md">Surcharge</span>}
+            </div>
+        </div>
+    );
+}
+
+function StationDetailPanel({ stationCode, onClose }) {
+    const { data: queueData = [], refetch } = useQuery({
+        queryKey: ['station-queue', stationCode],
+        queryFn: async () => {
+            const res = await api.get(`/v2/planning/${stationCode}`);
+            return res.data;
+        },
+        refetchInterval: 5000,
+    });
+
+    const [draggedItem, setDraggedItem] = useState(null);
+
+    const handleDragStart = (e, task) => {
+        setDraggedItem(task);
+        e.dataTransfer.effectAllowed = 'move';
+        setTimeout(() => {
+            e.target.style.opacity = '0.5';
+        }, 0);
+    };
+
+    const handleDragEnd = (e) => {
+        e.target.style.opacity = '1';
+        setDraggedItem(null);
+    };
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    };
+
+    const handleDrop = async (e, targetTask) => {
+        e.preventDefault();
+        if (!draggedItem || draggedItem.id === targetTask.id) return;
+        
+        const newPriority = targetTask.priority + 1;
+        try {
+            await api.put(`/v2/planning/${draggedItem.id}`, { priority: newPriority });
+            refetch();
+        } catch(err) {
+            console.error("Erreur réorganisation", err);
+        }
+    };
+
+    const pending = queueData.filter(item => item.status === 'PENDING');
+    const inProgress = queueData.filter(item => item.status === 'IN_PROGRESS');
+
+    return (
+        <div className="w-96 bg-white rounded-3xl border border-slate-200 shadow-sm p-6 shrink-0 animate-fade-in flex flex-col h-[calc(100vh-200px)] sticky top-8">
+            <div className="flex items-center justify-between mb-6 shrink-0">
+                <h3 className="font-black text-xl text-slate-800 tracking-tight">{stationCode.replace('_', ' ')}</h3>
+                <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors">✕</button>
+            </div>
+
+            <div className="flex items-center justify-between mb-4 shrink-0 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <div className="text-center">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">En attente</p>
+                    <p className="text-xl font-black text-slate-800">{pending.length}</p>
+                </div>
+                <div className="w-px h-8 bg-slate-200"></div>
+                <div className="text-center">
+                    <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">En cours</p>
+                    <p className="text-xl font-black text-blue-600">{inProgress.length}</p>
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto pr-2 space-y-3">
+                <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 sticky top-0 bg-white py-2 z-10">File d'attente détaillée (Glisser pour prioriser)</h4>
+                {queueData.length === 0 ? (
+                    <p className="text-slate-400 text-sm italic text-center py-8">Aucun dossier planifié</p>
+                ) : (
+                    queueData.sort((a, b) => {
+                        if (a.status === 'IN_PROGRESS' && b.status !== 'IN_PROGRESS') return -1;
+                        if (b.status === 'IN_PROGRESS' && a.status !== 'IN_PROGRESS') return 1;
+                        return b.priority - a.priority;
+                    }).map((task) => (
+                        <div 
+                            key={task.id} 
+                            draggable={task.status === 'PENDING'}
+                            onDragStart={(e) => handleDragStart(e, task)}
+                            onDragEnd={handleDragEnd}
+                            onDragOver={handleDragOver}
+                            onDrop={(e) => handleDrop(e, task)}
+                            className={`p-4 rounded-2xl border ${task.status === 'IN_PROGRESS' ? 'bg-blue-50/50 border-blue-200 shadow-sm' : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-md cursor-grab active:cursor-grabbing'} transition-all relative group`}
+                        >
+                            <div className="flex items-start justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                    {task.status === 'IN_PROGRESS' ? (
+                                        <span className="relative flex h-2 w-2">
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                                            <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                                        </span>
+                                    ) : (
+                                        <div className="w-2 h-2 rounded-full bg-slate-300"></div>
+                                    )}
+                                    <span className="font-bold text-slate-800">{task.order_reference}</span>
+                                </div>
+                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg uppercase tracking-wider ${task.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
+                                    {task.status === 'IN_PROGRESS' ? 'Actif' : 'Attente'}
+                                </span>
+                            </div>
+                            <div className="text-xs font-medium text-slate-500 flex justify-between items-center mt-2">
+                                <div className="flex items-center gap-1">
+                                    <span>Assigné : </span>
+                                    <select 
+                                        className="font-bold text-slate-700 bg-transparent outline-none hover:bg-slate-100 rounded px-1 py-0.5 cursor-pointer"
+                                        value={task.assigned_to || ""}
+                                        onChange={async (e) => {
+                                            await api.put(`/v2/planning/${task.id}`, { assigned_to: e.target.value || null });
+                                            refetch();
+                                        }}
+                                    >
+                                        <option value="">Automatique</option>
+                                        <option value="john">John (Opérateur)</option>
+                                        <option value="admin">Admin</option>
+                                    </select>
+                                </div>
+                                <span className="bg-slate-100 px-2 py-0.5 rounded text-slate-600 font-bold">Prio: {task.priority}</span>
+                            </div>
+                        </div>
+                    ))
+                )}
             </div>
         </div>
     );

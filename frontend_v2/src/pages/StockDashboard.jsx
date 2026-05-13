@@ -1,23 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { 
     Package, MapPin, Search, Plus, Trash2, Layers, 
     ArrowRight, Box, Hash, ChevronRight, ChevronDown, 
-    Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download
+    Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download, TrendingUp
 } from 'lucide-react';
 import ChatterWidget from '../components/ChatterWidget';
+import StockValuationView from '../components/StockValuationView';
+import { useAuth } from '../context/AuthContext';
 
 export default function StockDashboard() {
-    const [products, setProducts] = useState([]);
-    const [locations, setLocations] = useState([]);
-    const [quants, setQuants] = useState([]);
-    const [transactions, setTransactions] = useState([]);
+    const queryClient = useQueryClient();
+    const { user } = useAuth();
+    const isManager = user?.role === 'ADMIN' || user?.role === 'MANAGER';
+    const isAdmin = user?.role === 'ADMIN';
+
+    const { data: appConfigs = [] } = useQuery({ queryKey: ['configs'], queryFn: async () => { const res = await api.get('/v2/config/app_configs'); return res.data; }});
+    const { data: products = [], isLoading: loadingProducts } = useQuery({ queryKey: ['products'], queryFn: async () => { const res = await api.get('/v2/stock/products'); return res.data; }});
+    const { data: locations = [], isLoading: loadingLocations } = useQuery({ queryKey: ['locations'], queryFn: async () => { const res = await api.get('/v2/stock/locations'); return res.data; }});
+    const { data: quants = [], isLoading: loadingQuants } = useQuery({ queryKey: ['quants'], queryFn: async () => { const res = await api.get('/v2/stock/quants'); return res.data; }});
+    const { data: transactions = [], isLoading: loadingTransactions } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const res = await api.get('/v2/stock/transactions'); return res.data; }});
     
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
+    const [currentMenu, setCurrentMenu] = useState('inventory'); // 'inventory' | 'audit' | 'settings'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
-    const [showAuditLogs, setShowAuditLogs] = useState(false);
     const [expandedProducts, setExpandedProducts] = useState({});
     
     // Inline edit states
@@ -34,8 +43,8 @@ export default function StockDashboard() {
     const [showNewProductModal, setShowNewProductModal] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
     const [newProductForm, setNewProductForm] = useState({
-        reference_base: '', name: '', material_type: 'PVC', unit: 'pce', supplier: '', product_type: 'stockable', available_in_pos: false, image_url: '',
-        variant_ref: '', barcode: '', color: '', length_per_unit: '', supplier_reference: '', cost_price: '', min_threshold: 10
+        reference_base: '', name: '', material_type: 'PVC', unit: 'pce', supplier: '', product_type: 'stockable', available_in_pos: false, image_url: '', technical_doc_url: '', compatible_series: '',
+        variant_ref: '', barcode: '', color: '', length_per_unit: '', supplier_reference: '', cost_price: '', min_threshold: 10, location: ''
     });
 
     const [showEditProductModal, setShowEditProductModal] = useState(false);
@@ -50,32 +59,41 @@ export default function StockDashboard() {
     const [showReceptionModal, setShowReceptionModal] = useState(false);
     const [receptionData, setReceptionData] = useState({ variant: null, targetLocId: '', qty: '' });
     const [receptionSearch, setReceptionSearch] = useState('');
-
-
-    const [appConfigs, setAppConfigs] = useState([]);
-
-    const fetchData = async () => {
+    
+    const handleFileUpload = async (file, setForm, currentForm, field = 'image_url') => {
+        const formData = new FormData();
+        formData.append("file", file);
         try {
-            const [prodRes, locRes, quantRes, txRes, configRes] = await Promise.all([
-                api.get('/v2/stock/products'),
-                api.get('/v2/stock/locations'),
-                api.get('/v2/stock/quants'),
-                api.get('/v2/stock/transactions'),
-                api.get('/v2/config/app_configs')
-            ]);
-            setAppConfigs(configRes.data || []);
-            setProducts(prodRes.data);
-            setLocations(locRes.data);
-            setQuants(quantRes.data);
-            setTransactions(txRes.data);
-        } catch (e) {
-            console.error("Erreur chargement données:", e);
+            const res = await api.post('/v2/stock/products/upload_image', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            setForm({...currentForm, [field]: res.data.image_url});
+        } catch(e) {
+            alert("Erreur lors de l'upload du fichier");
         }
     };
 
-    useEffect(() => {
-        fetchData();
-    }, []);
+    const handleFileInput = (e, setForm, currentForm, field = 'image_url') => {
+        if (e.target.files && e.target.files.length > 0) {
+            handleFileUpload(e.target.files[0], setForm, currentForm, field);
+        }
+    };
+
+    const handlePaste = (e, setForm, currentForm) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf('image') !== -1) {
+                const file = items[i].getAsFile();
+                handleFileUpload(file, setForm, currentForm, 'image_url');
+                e.preventDefault();
+                break;
+            }
+        }
+    };
+
+
+
 
     // -------- INLINE LOCATION CREATION --------
     const handleAddSubLocation = async (e, parentId) => {
@@ -94,7 +112,7 @@ export default function StockDashboard() {
             });
             setNewSubLocName('');
             setAddingSubLocTo(null);
-            fetchData();
+            queryClient.invalidateQueries();
         } catch (e) {
             alert("Erreur lors de la création du lieu.");
         }
@@ -106,13 +124,17 @@ export default function StockDashboard() {
         try {
             const res = await api.delete(`/v2/stock/locations/${id}`);
             if (activeLocationId === id) setActiveLocationId('global');
-            fetchData();
+            await queryClient.invalidateQueries({ queryKey: ['locations'] });
+            
             if (res.data && res.data.status === 'archived') {
                 alert("Information : Cet emplacement ayant un historique de mouvements, il n'a pas été supprimé mais Archivé.");
+            } else {
+                alert("Emplacement supprimé avec succès.");
             }
-        } catch (e) {
-            const errDetail = e.response?.data?.detail || "Impossible de traiter la demande.";
-            alert(errDetail);
+        } catch (error) {
+            console.error(error);
+            const errDetail = error.response?.data?.detail || error.message || "Impossible de traiter la demande.";
+            alert("Erreur : " + errDetail);
         }
     };
 
@@ -154,7 +176,7 @@ export default function StockDashboard() {
                 location_dest_id: dst,
                 notes: "Ajustement express"
             });
-            fetchData();
+            queryClient.invalidateQueries();
         } catch (e) {
             alert("Erreur à l'ajustement du stock.");
         }
@@ -183,7 +205,7 @@ export default function StockDashboard() {
                 notes: "Transfert Interne/Manuel"
             });
             setShowTransferModal(false);
-            fetchData();
+            queryClient.invalidateQueries();
         } catch (e) {
             alert("Erreur lors du transfert.");
         }
@@ -214,7 +236,7 @@ export default function StockDashboard() {
                 notes: "Réception Achat Direct"
             });
             setShowReceptionModal(false);
-            fetchData();
+            queryClient.invalidateQueries();
         } catch (e) {
             alert("Erreur lors de la réception.");
         }
@@ -232,7 +254,9 @@ export default function StockDashboard() {
             supplier: product.supplier || '',
             product_type: product.product_type || 'stockable',
             available_in_pos: product.available_in_pos || false,
-            image_url: product.image_url || ''
+            image_url: product.image_url || '',
+            technical_doc_url: product.technical_doc_url || '',
+            compatible_series: product.compatible_series || ''
         });
         setShowEditProductModal(true);
     };
@@ -247,10 +271,12 @@ export default function StockDashboard() {
                 supplier: editProductForm.supplier,
                 product_type: editProductForm.product_type,
                 available_in_pos: editProductForm.available_in_pos,
-                image_url: editProductForm.image_url
+                image_url: editProductForm.image_url,
+                technical_doc_url: editProductForm.technical_doc_url,
+                compatible_series: editProductForm.compatible_series
             });
             setShowEditProductModal(false);
-            fetchData();
+            queryClient.invalidateQueries();
         } catch (e) { alert("Erreur lors de la modification du produit"); }
     };
 
@@ -263,7 +289,8 @@ export default function StockDashboard() {
             color: variant.color || '',
             cost_price: variant.cost_price || '',
             min_threshold: variant.min_threshold || 10,
-            image_url: variant.image_url || ''
+            image_url: variant.image_url || '',
+            location: variant.location || ''
         });
         setShowEditVariantModal(true);
     };
@@ -276,10 +303,11 @@ export default function StockDashboard() {
                 color: editVariantForm.color,
                 cost_price: parseFloat(editVariantForm.cost_price) || 0,
                 min_threshold: parseFloat(editVariantForm.min_threshold) || 10,
-                image_url: editVariantForm.image_url || null
+                image_url: editVariantForm.image_url || null,
+                location: editVariantForm.location || null
             });
             setShowEditVariantModal(false);
-            fetchData();
+            queryClient.invalidateQueries();
         } catch (e) { alert("Erreur lors de la modification de la variante"); }
     };
 
@@ -299,7 +327,7 @@ export default function StockDashboard() {
             });
             alert(res.data.message);
             setShowImportModal(false);
-            fetchData();
+            queryClient.invalidateQueries();
         } catch (error) {
             alert(error.response?.data?.detail || "Erreur lors de l'import : Vérifiez votre fichier");
         }
@@ -315,7 +343,8 @@ export default function StockDashboard() {
             color: '',
             cost_price: '',
             min_threshold: 10,
-            image_url: ''
+            image_url: '',
+            location: ''
         });
         setShowAddVariantModal(true);
     };
@@ -328,10 +357,11 @@ export default function StockDashboard() {
                 color: addVariantForm.color,
                 cost_price: parseFloat(addVariantForm.cost_price) || 0,
                 min_threshold: parseFloat(addVariantForm.min_threshold) || 10,
-                image_url: addVariantForm.image_url || null
+                image_url: addVariantForm.image_url || null,
+                location: addVariantForm.location || null
             });
             setShowAddVariantModal(false);
-            fetchData();
+            queryClient.invalidateQueries();
         } catch (e) { alert("Erreur lors de l'ajout de la déclinaison"); }
     };
 
@@ -342,7 +372,7 @@ export default function StockDashboard() {
         }
         try {
             await api.post('/v2/stock/products', {
-                reference_base: newProductForm.reference_base, name: newProductForm.name, material_type: newProductForm.material_type, unit: newProductForm.unit, supplier: newProductForm.supplier, product_type: newProductForm.product_type, available_in_pos: newProductForm.available_in_pos, image_url: newProductForm.image_url,
+                reference_base: newProductForm.reference_base, name: newProductForm.name, material_type: newProductForm.material_type, unit: newProductForm.unit, supplier: newProductForm.supplier, product_type: newProductForm.product_type, available_in_pos: newProductForm.available_in_pos, image_url: newProductForm.image_url, compatible_series: newProductForm.compatible_series,
                 variants: [{
                     reference: newProductForm.variant_ref, barcode: newProductForm.barcode || null, color: newProductForm.color, length_per_unit: newProductForm.length_per_unit ? parseFloat(newProductForm.length_per_unit) : null,
                     supplier_reference: newProductForm.supplier_reference, cost_price: newProductForm.cost_price ? parseFloat(newProductForm.cost_price) : null,
@@ -350,7 +380,7 @@ export default function StockDashboard() {
                 }]
             });
             setShowNewProductModal(false);
-            fetchData();
+            queryClient.invalidateQueries();
         } catch (e) {
             alert("Erreur lors de la création.");
         }
@@ -388,14 +418,16 @@ export default function StockDashboard() {
                         <span className={`text-sm ${isActive ? 'font-black' : 'font-bold'}`}>{parentLoc.name}</span>
                         {!isInternal && <span className="text-[9px] uppercase font-black bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-md border border-emerald-500/20">{parentLoc.usage}</span>}
                     </div>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={(e) => { e.stopPropagation(); setAddingSubLocTo(parentLoc.id); }} className="p-1.5 hover:bg-blue-500/20 rounded-lg text-slate-500 hover:text-blue-400 transition-colors">
-                            <Plus className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={(e) => handleDeleteLocation(parentLoc.id, e)} className="p-1.5 hover:bg-red-500/20 rounded-lg text-slate-500 hover:text-red-400 transition-colors">
-                            <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                    </div>
+                    {isAdmin && (
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button type="button" onClick={(e) => { e.stopPropagation(); setAddingSubLocTo(parentLoc.id); }} className="p-1.5 hover:bg-blue-500/20 rounded-lg text-slate-500 hover:text-blue-400 transition-colors">
+                                <Plus className="w-3.5 h-3.5" />
+                            </button>
+                            <button type="button" onClick={(e) => handleDeleteLocation(parentLoc.id, e)} className="p-1.5 hover:bg-red-500/20 rounded-lg text-slate-500 hover:text-red-400 transition-colors">
+                                <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Inline Add Input */}
@@ -497,80 +529,131 @@ export default function StockDashboard() {
     return (
         <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in relative">
             
-            {/* LEFT SIDEBAR : LOCATIONS TREE */}
+            {/* LEFT SIDEBAR : NAVIGATION & LOCATIONS */}
             <div className="w-[320px] bg-slate-900 border-r border-slate-800 flex flex-col items-stretch h-full text-slate-300 shadow-xl z-20 relative">
                 {/* Decorative glow */}
                 <div className="absolute top-0 left-0 w-full h-48 bg-blue-500/10 rounded-full blur-3xl -translate-y-1/2"></div>
-                <div className="p-6 border-b border-white/5 flex justify-between items-center relative z-10">
-                    <h3 className="font-black text-white flex items-center gap-3 tracking-tight text-lg"><MapPin className="text-blue-400 w-5 h-5"/> Emplacements</h3>
-                    <div className="flex gap-1">
-                        <button onClick={(e) => setAddingSubLocTo('root')} className="p-2 hover:bg-white/10 rounded-xl text-slate-400 hover:text-white transition-colors backdrop-blur-sm" title="Créer un Entrepôt Principal"><Plus className="w-4 h-4"/></button>
+                <div className="p-6 border-b border-white/5 flex flex-col gap-4 relative z-10">
+                    <h3 className="font-black text-white flex items-center gap-3 tracking-tight text-xl">
+                        <Box className="text-blue-400 w-6 h-6"/> Inventaire & Stock
+                    </h3>
+                    
+                    <div className="relative">
+                        <Search className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                        <input 
+                            type="text" 
+                            placeholder="Rechercher produit, réf..." 
+                            value={searchTerm}
+                            onChange={(e) => {
+                                setSearchTerm(e.target.value);
+                                if (currentMenu !== 'inventory') setCurrentMenu('inventory');
+                            }}
+                            className="w-full bg-slate-800/50 border border-slate-700 rounded-xl py-2.5 pl-10 pr-4 text-sm font-bold text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder-slate-500"
+                        />
                     </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 scrollbar-hide space-y-2 relative z-10">
-                    <div 
-                        className={`flex items-center gap-3 py-3 px-4 cursor-pointer rounded-xl transition-all border-l-4 mb-4 ${activeLocationId === 'global' ? 'bg-blue-600 shadow-lg shadow-blue-500/20 border-blue-400 text-white' : 'border-transparent hover:bg-white/5 text-slate-400 hover:text-slate-200'}`}
-                        onClick={() => setActiveLocationId('global')}
-                    >
-                        <div className={`p-1.5 rounded-lg ${activeLocationId === 'global' ? 'bg-white/20' : 'bg-slate-800'}`}>
-                            <Layers className={`w-4 h-4 ${activeLocationId === 'global' ? 'text-white' : 'text-slate-400'}`}/>
-                        </div>
-                        <span className="font-black text-sm tracking-wide">Vue Globale (Tous Stocks)</span>
+                <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                    {/* VUES PRINCIPALES */}
+                    <div>
+                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-2">Vues Principales</div>
+                        <button 
+                            onClick={() => setCurrentMenu('inventory')}
+                            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold transition-all text-sm ${currentMenu === 'inventory' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
+                        >
+                            <LayoutGrid className="w-4 h-4"/> Articles & Stocks
+                        </button>
+                        <button 
+                            onClick={() => setCurrentMenu('audit')}
+                            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold transition-all text-sm mt-1 ${currentMenu === 'audit' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
+                        >
+                            <Layers className="w-4 h-4"/> Historique Mouvements
+                        </button>
+                        {isAdmin && (
+                            <button 
+                                onClick={() => setCurrentMenu('valuation')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold transition-all text-sm mt-1 ${currentMenu === 'valuation' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
+                            >
+                                <TrendingUp className="w-4 h-4"/> Valorisation Financière
+                            </button>
+                        )}
                     </div>
 
-                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1 mb-3 mt-6 flex justify-between items-center">
-                        Nos Entrepôts
-                        <button onClick={(e) => setAddingSubLocTo('root')} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-500 hover:text-white transition-colors" title="Créer un Entrepôt Principal"><Plus className="w-3.5 h-3.5"/></button>
-                    </div>
-                    
-                    {addingSubLocTo === 'root' && (
-                        <div className="mb-3">
-                            <div className="flex items-center gap-2">
-                                <input 
-                                    autoFocus 
-                                    value={newSubLocName} 
-                                    onChange={e=>setNewSubLocName(e.target.value)} 
-                                    onBlur={() => setAddingSubLocTo(null)} 
-                                    onKeyDown={e => {
-                                        if (e.key === 'Escape') setAddingSubLocTo(null);
-                                        if (e.key === 'Enter') handleAddSubLocation(e, 'root');
-                                    }} 
-                                    className="w-full text-sm p-2.5 bg-slate-800/50 border border-slate-700 rounded-xl text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" 
-                                    placeholder="Nom Entrepôt + Entrée" 
-                                />
-                            </div>
+                    {/* ACTIONS RAPIDES */}
+                    <div>
+                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-2">Actions Rapides</div>
+                        <div className="grid grid-cols-2 gap-2">
+                            {isManager && (
+                                <>
+                                    <button onClick={() => setShowNewProductModal(true)} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
+                                        <Plus className="w-5 h-5 text-blue-400"/>
+                                        <span className="text-[10px] font-bold">Nv. Article</span>
+                                    </button>
+                                    <button onClick={openReceptionModal} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
+                                        <Truck className="w-5 h-5 text-emerald-400"/>
+                                        <span className="text-[10px] font-bold">Entrée Stock</span>
+                                    </button>
+                                    <button onClick={() => setShowImportModal(true)} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
+                                        <FileText className="w-5 h-5 text-indigo-400"/>
+                                        <span className="text-[10px] font-bold">Import</span>
+                                    </button>
+                                </>
+                            )}
+                            <button onClick={handleExportExcel} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
+                                <Download className="w-5 h-5 text-orange-400"/>
+                                <span className="text-[10px] font-bold">Export</span>
+                            </button>
                         </div>
+                    </div>
+
+                    {/* EMPLACEMENTS */}
+                    {currentMenu === 'inventory' && (
+                    <div className="pt-2 border-t border-white/5">
+                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-3 flex justify-between items-center">
+                            Filtres par Emplacements
+                            {isAdmin && <button onClick={(e) => setAddingSubLocTo('root')} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors" title="Créer un Entrepôt Principal"><Plus className="w-3.5 h-3.5"/></button>}
+                        </div>
+
+                        <div 
+                            onClick={() => setActiveLocationId('global')}
+                            className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border ${activeLocationId === 'global' ? 'bg-blue-900/40 border-blue-500/50 text-blue-400 shadow-inner' : 'border-transparent text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+                        >
+                            <MapPin className={`w-5 h-5 ${activeLocationId === 'global' ? 'text-blue-400' : 'text-slate-500'}`} />
+                            <span className="font-black text-sm tracking-wide">Vue Globale (Tous Stocks)</span>
+                        </div>
+                        
+                        <div className="space-y-0.5 mt-2">
+                            {addingSubLocTo === 'root' && (
+                                <div className="mb-2 px-2">
+                                    <input 
+                                        autoFocus 
+                                        value={newSubLocName} 
+                                        onChange={e=>setNewSubLocName(e.target.value)} 
+                                        onBlur={() => setAddingSubLocTo(null)} 
+                                        onKeyDown={e => {
+                                            if (e.key === 'Escape') setAddingSubLocTo(null);
+                                            if (e.key === 'Enter') handleAddSubLocation(e, 'root');
+                                        }} 
+                                        className="w-full text-sm p-2 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500 transition-all" 
+                                        placeholder="Nom Entrepôt + Entrée" 
+                                    />
+                                </div>
+                            )}
+                            {locations.filter(l => !l.parent_id).map(rootLoc => renderLocationTree(rootLoc))}
+                        </div>
+                    </div>
                     )}
-
-                    {locations.filter(l => !l.parent_id && l.usage === 'internal').map(rootLoc => renderLocationTree(rootLoc))}
-
-                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1 mb-3 mt-8 border-t border-white/5 pt-6">Lieux Virtuels & Partenaires</div>
-                    {locations.filter(l => !l.parent_id && l.usage !== 'internal').map(rootLoc => renderLocationTree(rootLoc))}
                 </div>
             </div>
 
-            {/* MAIN CONTENT : GRID */}
+            {/* MAIN CONTENT : GRID / AUDIT */}
             <div className="flex-1 flex flex-col bg-slate-50/50 relative">
                 
                 {/* TOOLBAR */}
                 <div className="h-20 bg-white/60 backdrop-blur-xl border-b border-slate-200/60 flex items-center justify-between px-8 shrink-0 z-10">
-                    <div className="flex items-center gap-4">
-                        <div className="bg-slate-100/80 p-2.5 rounded-xl text-slate-500 shadow-inner border border-slate-200/50">
-                            <Search className="w-5 h-5" />
-                        </div>
-                        <input 
-                            type="text" 
-                            placeholder="Rechercher article, réf, variante..." 
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="bg-transparent border-none outline-none font-bold text-slate-800 w-96 placeholder-slate-400 focus:ring-0"
-                        />
-                        {searchTerm && <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-100 px-2 py-1 rounded-md border border-slate-200">Pour ajouter au lieu, cherchez ici</span>}
-                    </div>
-
-                    <div className="flex gap-3 items-center">
-                        <div className="flex items-center bg-slate-100/80 rounded-xl p-1 mr-4 border border-slate-200/50 shadow-inner">
+                    <div className="flex items-center gap-3">
+                        {currentMenu === 'inventory' && (
+                        <div className="flex items-center bg-slate-100/80 rounded-xl p-1 border border-slate-200/50 shadow-inner">
                             <button onClick={() => setViewMode('list')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'list' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
                                 <List className="w-4 h-4"/>
                             </button>
@@ -578,30 +661,27 @@ export default function StockDashboard() {
                                 <LayoutGrid className="w-4 h-4"/>
                             </button>
                         </div>
-                        <button onClick={() => setShowAuditLogs(true)} className="px-4 py-2.5 text-slate-600 hover:bg-white rounded-xl transition-all flex items-center gap-2 font-bold text-sm mr-2 shadow-sm border border-slate-200/50">
-                            <Layers className="w-4 h-4"/> Audit Mouvements
-                        </button>
-                        <button onClick={() => fetchData()} className="px-3 py-2.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-all flex items-center justify-center">
-                            <RefreshCw className="w-5 h-5"/>
-                        </button>
-                        <div className="h-8 w-px bg-slate-200 mx-1"></div>
-                        <button onClick={openReceptionModal} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/20 transition-all hover:-translate-y-0.5 flex items-center gap-2 font-black text-sm">
-                            <Truck className="w-4 h-4"/> Entrée Stock
-                        </button>
-                        <button onClick={() => setShowNewProductModal(true)} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-lg shadow-blue-500/20 transition-all hover:-translate-y-0.5 flex items-center gap-2 font-black text-sm">
-                            <Plus className="w-4 h-4"/> Nv. Article
-                        </button>
-                        <div className="h-8 w-px bg-slate-200 mx-1"></div>
-                        <button onClick={handleExportExcel} className="px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 shadow-sm rounded-xl transition-all flex items-center gap-2 font-bold text-sm">
-                            <Download className="w-4 h-4"/> Export
-                        </button>
-                        <button onClick={() => setShowImportModal(true)} className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl shadow-lg shadow-slate-800/20 transition-all flex items-center gap-2 font-bold text-sm">
-                            <FileText className="w-4 h-4"/> Import
+                        )}
+                    </div>
+
+                    <div className="flex gap-3 items-center">
+                        <button onClick={() => queryClient.invalidateQueries()} className="px-4 py-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-all flex items-center justify-center gap-2 font-bold text-sm">
+                            <RefreshCw className="w-4 h-4"/> Actualiser
                         </button>
                     </div>
                 </div>
 
-                {/* HEADER INFO */}
+                {currentMenu === 'audit' ? (
+                    <div className="flex-1 overflow-y-auto w-full relative p-6">
+                        <AuditLogs transactions={transactions} locations={locations} />
+                    </div>
+                ) : currentMenu === 'valuation' ? (
+                    <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
+                        <StockValuationView products={products} locations={locations} quants={quants} />
+                    </div>
+                ) : (
+                    <>
+                        {/* HEADER INFO */}
                 <div className="px-8 py-6 bg-white/40 border-b border-slate-200/60 shrink-0 flex justify-between items-start">
                     <div>
                         <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
@@ -672,7 +752,17 @@ export default function StockDashboard() {
                                                         </div>
                                                         <div>
                                                             <p className="font-bold text-slate-800 text-lg group-hover:text-blue-700 transition-colors">{product.name}</p>
-                                                            <p className="text-xs font-bold text-slate-400">Réf : {product.reference_base}</p>
+                                                            <div className="flex items-center gap-2 mt-0.5">
+                                                                <p className="text-xs font-bold text-slate-400">Réf : {product.reference_base}</p>
+                                                                {product.technical_doc_url && (
+                                                                    <a href={product.technical_doc_url} target="_blank" rel="noreferrer" title="Voir Fiche Technique (PDF)" className="text-xs text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-1 rounded-md transition-colors" onClick={e => e.stopPropagation()}>
+                                                                        <FileText className="w-3.5 h-3.5" />
+                                                                    </a>
+                                                                )}
+                                                                {product.compatible_series && (
+                                                                    <span className="text-[9px] uppercase font-black bg-blue-50 text-blue-500 px-1.5 py-0.5 rounded-md border border-blue-100">Gammes: {product.compatible_series}</span>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                     </td>
                                                     <td className="py-4 px-4 text-center">
@@ -684,19 +774,23 @@ export default function StockDashboard() {
                                                     <td className="py-4 px-6 text-right">
                                                         <div className="flex items-center justify-end gap-3">
                                                             <span className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-black border border-blue-100">{variants.length} {variants.length > 1 ? 'déclinaisons' : 'déclinaison'}</span>
-                                                            <button 
-                                                                onClick={(e) => { e.stopPropagation(); openAddVariant(e, product); }} 
-                                                                className="px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-lg border border-emerald-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
-                                                                title="Ajouter une déclinaison"
-                                                            >
-                                                                <Plus className="w-3.5 h-3.5"/> Ajouter Variante
-                                                            </button>
-                                                            <button 
-                                                                onClick={(e) => { e.stopPropagation(); openEditProduct(e, product); }} 
-                                                                className="px-3 py-1.5 bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-800 rounded-lg border border-slate-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
-                                                            >
-                                                                <Edit3 className="w-3.5 h-3.5"/> Modifier
-                                                            </button>
+                                                            {isManager && (
+                                                                <>
+                                                                    <button 
+                                                                        onClick={(e) => { e.stopPropagation(); openAddVariant(e, product); }} 
+                                                                        className="px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-lg border border-emerald-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
+                                                                        title="Ajouter une déclinaison"
+                                                                    >
+                                                                        <Plus className="w-3.5 h-3.5"/> Ajouter Variante
+                                                                    </button>
+                                                                    <button 
+                                                                        onClick={(e) => { e.stopPropagation(); openEditProduct(e, product); }} 
+                                                                        className="px-3 py-1.5 bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-800 rounded-lg border border-slate-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
+                                                                    >
+                                                                        <Edit3 className="w-3.5 h-3.5"/> Modifier
+                                                                    </button>
+                                                                </>
+                                                            )}
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -711,7 +805,14 @@ export default function StockDashboard() {
                                                                 <div className="pl-24 pr-6 py-4 flex items-center justify-between border-b border-slate-100/50 hover:bg-white transition-colors group/var">
                                                                     <div className="flex flex-col">
                                                                         <span className="font-bold text-slate-900 text-[15px] group-hover/var:text-blue-600 transition-colors">{v.variantLabel}</span>
-                                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{v.variantRef}</span>
+                                                                        <div className="flex items-center gap-2">
+                                                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{v.variantRef}</span>
+                                                                            {v.fullVariant.location && (
+                                                                                <div className="text-[10px] font-black bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded-md flex items-center gap-1 border border-orange-100 mt-0.5" title="Chemin de Rangement (Allée/Rayon)">
+                                                                                    <MapPin className="w-2.5 h-2.5"/> {v.fullVariant.location}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
                                                                     </div>
                                                                     <div className="flex items-center gap-6">
                                                                         {/* QUANTITY : INLINE EDIT */}
@@ -723,9 +824,9 @@ export default function StockDashboard() {
                                                                                 />
                                                                             ) : (
                                                                                 <div 
-                                                                                    className={`inline-block px-3 py-1 cursor-text min-w-[3.5rem] text-center border-2 border-transparent hover:border-blue-200 hover:bg-blue-50 transition-colors font-black text-lg rounded-lg mx-1 ${v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${!canEditInline ? 'cursor-not-allowed opacity-50' : ''}`}
-                                                                                    onClick={() => canEditInline && startEditingQuant(v.variantId, v.locId, v.stockToDisplay)}
-                                                                                    title={canEditInline ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible en vue globale"}
+                                                                                    className={`inline-block px-3 py-1 min-w-[3.5rem] text-center border-2 border-transparent hover:border-blue-200 hover:bg-blue-50 transition-colors font-black text-lg rounded-lg mx-1 ${v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${!canEditInline || !isManager ? 'cursor-not-allowed opacity-50' : 'cursor-text'}`}
+                                                                                    onClick={() => (canEditInline && isManager) && startEditingQuant(v.variantId, v.locId, v.stockToDisplay)}
+                                                                                    title={(canEditInline && isManager) ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible (Vue globale ou permissions insuffisantes)"}
                                                                                 >
                                                                                     {Math.round(v.stockToDisplay*100)/100}
                                                                                 </div>
@@ -734,11 +835,15 @@ export default function StockDashboard() {
                                                                         {/* ROW ACTIONS */}
                                                                         <div className="w-auto flex items-center gap-2 justify-end opacity-0 group-hover/var:opacity-100 transition-opacity">
                                                                             <button onClick={(e) => { e.stopPropagation(); handlePrintBarcode(v.variantId); }} className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 hover:border-slate-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Imprimer Code-barre"><Hash className="w-3.5 h-3.5"/></button>
-                                                                            <button onClick={(e) => openEditVariant(e, v.fullVariant)} className="text-slate-400 hover:text-blue-600 bg-white border border-slate-200 hover:border-blue-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Modifier Variante"><FileEdit className="w-3.5 h-3.5"/></button>
-                                                                            {activeLocationId !== 'global' && (
-                                                                                <button onClick={() => openTransferModal(v.fullVariant, activeLocationId)} className="bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 shadow-md">
-                                                                                    Trsf <ArrowRight className="w-3.5 h-3.5"/>
-                                                                                </button>
+                                                                            {isManager && (
+                                                                                <>
+                                                                                    <button onClick={(e) => openEditVariant(e, v.fullVariant)} className="text-slate-400 hover:text-blue-600 bg-white border border-slate-200 hover:border-blue-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Modifier Variante"><FileEdit className="w-3.5 h-3.5"/></button>
+                                                                                    {activeLocationId !== 'global' && (
+                                                                                        <button onClick={() => openTransferModal(v.fullVariant, activeLocationId)} className="bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 shadow-md">
+                                                                                            Trsf <ArrowRight className="w-3.5 h-3.5"/>
+                                                                                        </button>
+                                                                                    )}
+                                                                                </>
                                                                             )}
                                                                         </div>
                                                                     </div>
@@ -798,8 +903,9 @@ export default function StockDashboard() {
                         </div>
                     )}
                 </div>
+            </>
+            )}
             </div>
-
             {/* -------- TRANSFER POPUP -------- */}
             {showTransferModal && (
                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -931,7 +1037,10 @@ export default function StockDashboard() {
 
             {/* -------- EDIT PRODUCT MODAL -------- */}
             {showEditProductModal && editProductForm && (
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div 
+                    className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+                    onPaste={e => handlePaste(e, setEditProductForm, editProductForm)}
+                >
                     <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-slate-100">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="font-black text-2xl">Modifier Famille</h3>
@@ -956,6 +1065,10 @@ export default function StockDashboard() {
                                     <input value={editProductForm.supplier} onChange={e=>setEditProductForm({...editProductForm, supplier: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
                                 </div>
                             </div>
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Gammes Compatibles (Séparées par virgule)</label>
+                                <input value={editProductForm.compatible_series} onChange={e=>setEditProductForm({...editProductForm, compatible_series: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
+                            </div>
                             <div className="col-span-2 border-t border-slate-100 my-2 pt-4 flex gap-4">
                                 <div className="flex-1">
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Type d'Article</label>
@@ -967,8 +1080,13 @@ export default function StockDashboard() {
                                 </div>
                                 <div className="flex-1">
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Image Produit (Optionnel)</label>
-                                    <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setEditProductForm, editProductForm)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
+                                    <input type="file" accept="image/*" onChange={e => handleFileInput(e, setEditProductForm, editProductForm, 'image_url')} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
                                     {editProductForm.image_url && <p className="text-xs text-emerald-500 mt-1 font-bold">Image chargée ✓</p>}
+                                </div>
+                                <div className="flex-1">
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Fiche Technique (PDF)</label>
+                                    <input type="file" accept="application/pdf,image/*" onChange={e => handleFileInput(e, setEditProductForm, editProductForm, 'technical_doc_url')} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
+                                    {editProductForm.technical_doc_url && <p className="text-xs text-blue-500 mt-1 font-bold">Doc chargée ✓</p>}
                                 </div>
                             </div>
                             <div className="col-span-2 flex items-center bg-slate-50 border border-slate-200 rounded-xl px-4 mt-2 py-2">
@@ -1017,7 +1135,7 @@ export default function StockDashboard() {
                             </div>
                             <div>
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Image Spécifique Variante (Optionnel)</label>
-                                <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setEditVariantForm, editVariantForm)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
+                                <input type="file" accept="image/*" onChange={e => handleFileInput(e, setEditVariantForm, editVariantForm, 'image_url')} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
                                 {editVariantForm.image_url && <p className="text-xs text-emerald-500 mt-1 font-bold">Image chargée ✓</p>}
                             </div>
                         </div>
@@ -1066,7 +1184,7 @@ export default function StockDashboard() {
                             </div>
                             <div>
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Image Spécifique Variante (Optionnel)</label>
-                                <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setAddVariantForm, addVariantForm)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
+                                <input type="file" accept="image/*" onChange={e => handleFileInput(e, setAddVariantForm, addVariantForm, 'image_url')} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
                                 {addVariantForm.image_url && <p className="text-xs text-emerald-500 mt-1 font-bold">Image chargée ✓</p>}
                             </div>
                         </div>
@@ -1077,7 +1195,10 @@ export default function StockDashboard() {
 
             {/* -------- NEW PRODUCT MODAL (QUICK) -------- */}
             {showNewProductModal && (
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div 
+                    className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+                    onPaste={e => handlePaste(e, setNewProductForm, newProductForm)}
+                >
                     <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-2xl w-full">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="font-black text-2xl">Créer un Produit</h3>
@@ -1125,6 +1246,11 @@ export default function StockDashboard() {
                                 </div>
                             </div>
                             
+                            <div className="col-span-2 border-t border-slate-100 my-2 pt-4">
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Gammes Compatibles (Séparées par virgule, ex: COR 60, COR 70)</label>
+                                <input value={newProductForm.compatible_series} onChange={e=>setNewProductForm({...newProductForm, compatible_series: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" placeholder="Applicable pour quelles gammes ?"/>
+                            </div>
+
                             <div className="col-span-2 border-t border-slate-100 my-2 pt-4 flex gap-4">
                                 <div className="flex-1">
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Type d'Article</label>
@@ -1136,8 +1262,13 @@ export default function StockDashboard() {
                                 </div>
                                 <div className="flex-1">
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Image Produit (Optionnel)</label>
-                                    <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setNewProductForm, newProductForm)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
+                                    <input type="file" accept="image/*" onChange={e => handleFileInput(e, setNewProductForm, newProductForm, 'image_url')} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
                                     {newProductForm.image_url && <p className="text-xs text-emerald-500 mt-1 font-bold">Image chargée ✓</p>}
+                                </div>
+                                <div className="flex-1">
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Fiche Technique (PDF)</label>
+                                    <input type="file" accept="application/pdf,image/*" onChange={e => handleFileInput(e, setNewProductForm, newProductForm, 'technical_doc_url')} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
+                                    {newProductForm.technical_doc_url && <p className="text-xs text-blue-500 mt-1 font-bold">Doc chargée ✓</p>}
                                 </div>
                             </div>
                             <div className="col-span-2 flex items-center bg-slate-50 border border-slate-200 rounded-xl px-4 mt-2 py-2">
@@ -1176,71 +1307,6 @@ export default function StockDashboard() {
                 </div>
             )}
 
-            {/* -------- AUDIT LOGS MODAL (Transactions) -------- */}
-            {showAuditLogs && (
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl overflow-hidden max-w-4xl w-full flex flex-col max-h-[85vh]">
-                        <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                            <div>
-                                <h3 className="font-black text-2xl flex items-center gap-2">
-                                    <Layers className="w-6 h-6 text-slate-800" />
-                                    Journal d'Audit des Stocks
-                                </h3>
-                                <p className="text-sm font-medium text-slate-500 mt-1">Historique complet des mouvements matériels</p>
-                            </div>
-                            <button onClick={() => setShowAuditLogs(false)} className="bg-white border border-slate-200 hover:bg-slate-100 p-2 rounded-full text-slate-500 shadow-sm"><X className="w-5 h-5"/></button>
-                        </div>
-                        
-                        <div className="overflow-y-auto w-full p-0">
-                            <table className="w-full text-left border-collapse">
-                                <thead className="bg-slate-50 sticky top-0 z-10">
-                                    <tr>
-                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Date & Heure</th>
-                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Référence</th>
-                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Produit Impacté</th>
-                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-center">Mouvement</th>
-                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-center">Qté</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {transactions.map(tx => (
-                                        <tr key={tx.id} className="hover:bg-slate-50 border-b border-slate-50 transition-colors">
-                                            <td className="px-6 py-4 text-sm text-slate-600 font-medium">
-                                                {new Date(tx.created_at).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })}
-                                                <div className="text-[10px] text-slate-400 font-mono mt-1">{tx.author}</div>
-                                            </td>
-                                            <td className="px-6 py-4 text-sm font-mono text-slate-500 font-bold">{tx.reference || `TX-#${tx.id}`}</td>
-                                            <td className="px-6 py-4">
-                                                <span className="font-bold text-slate-800 text-[13px] block">{tx.item_name}</span>
-                                                {tx.notes && <span className="text-[10px] italic text-slate-400 line-clamp-1">{tx.notes}</span>}
-                                            </td>
-                                            <td className="px-6 py-4 text-center">
-                                                <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-bold uppercase whitespace-nowrap">
-                                                    {tx.transaction_type}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4 text-center">
-                                                <span className={`font-black ${tx.quantity_change > 0 ? 'text-emerald-500' : 'text-blue-500'}`}>
-                                                    {tx.quantity_change > 0 ? '+' : ''}{tx.quantity_change}
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {transactions.length === 0 && (
-                                        <tr>
-                                            <td colSpan="5" className="text-center py-12 text-slate-400 font-bold">Aucun mouvement enregistré.</td>
-                                        </tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                        <div className="px-8 py-4 border-t border-slate-100 bg-slate-50 text-right">
-                            <span className="text-xs font-black text-slate-400 uppercase">Affichage limité aux 100 derniers mouvements</span>
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {/* -------- IMPORT EXCEL MODAL -------- */}
             {showImportModal && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -1275,6 +1341,67 @@ export default function StockDashboard() {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+// Composant AuditLogs
+function AuditLogs({ transactions }) {
+    return (
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden w-full max-w-5xl mx-auto mt-4">
+            <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <div>
+                    <h3 className="font-black text-xl flex items-center gap-2">
+                        <Layers className="w-5 h-5 text-slate-800" />
+                        Journal d'Audit des Mouvements
+                    </h3>
+                    <p className="text-xs font-medium text-slate-500 mt-1">Traçabilité complète des entrées, sorties et transferts (100 derniers mouvements).</p>
+                </div>
+            </div>
+            
+            <div className="w-full p-0">
+                <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50 sticky top-0 z-10">
+                        <tr>
+                            <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Date & Heure</th>
+                            <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Référence</th>
+                            <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Produit Impacté</th>
+                            <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-center">Mouvement</th>
+                            <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-center">Qté</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {transactions.map(tx => (
+                            <tr key={tx.id} className="hover:bg-slate-50 border-b border-slate-50 transition-colors">
+                                <td className="px-6 py-4 text-sm text-slate-600 font-medium">
+                                    {new Date(tx.created_at).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })}
+                                    <div className="text-[10px] text-slate-400 font-mono mt-1">{tx.author}</div>
+                                </td>
+                                <td className="px-6 py-4 text-sm font-mono text-slate-500 font-bold">{tx.reference || `TX-#${tx.id}`}</td>
+                                <td className="px-6 py-4">
+                                    <span className="font-bold text-slate-800 text-[13px] block">{tx.item_name}</span>
+                                    {tx.notes && <span className="text-[10px] italic text-slate-400 line-clamp-1">{tx.notes}</span>}
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                    <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-bold uppercase whitespace-nowrap">
+                                        {tx.transaction_type}
+                                    </span>
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                    <span className={`font-black ${tx.quantity_change > 0 ? 'text-emerald-500' : 'text-blue-500'}`}>
+                                        {tx.quantity_change > 0 ? '+' : ''}{tx.quantity_change}
+                                    </span>
+                                </td>
+                            </tr>
+                        ))}
+                        {transactions.length === 0 && (
+                            <tr>
+                                <td colSpan="5" className="text-center py-12 text-slate-400 font-bold">Aucun mouvement enregistré.</td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 }

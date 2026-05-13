@@ -135,7 +135,7 @@ export default function PartnerDirectory({ type = "CLIENT" }) {
                                     {partner.tax_id && (
                                         <div className="flex items-center gap-2 text-sm text-slate-600 mt-3 pt-3 border-t border-slate-100">
                                             <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
-                                            <span className="font-bold">NIU: {partner.tax_id}</span>
+                                            <span className="font-bold">SIRET: {partner.tax_id}</span>
                                         </div>
                                     )}
                                 </div>
@@ -177,7 +177,7 @@ export default function PartnerDirectory({ type = "CLIENT" }) {
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-xs font-bold text-slate-500 mb-1">Numéro Fiscal (NIU)</label>
+                                    <label className="block text-xs font-bold text-slate-500 mb-1">Numéro SIRET / TVA</label>
                                     <input name="tax_id" defaultValue={editingPartner?.tax_id} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
                                 </div>
                                 {type === 'CLIENT' && (

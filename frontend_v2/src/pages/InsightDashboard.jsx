@@ -189,10 +189,14 @@ export default function InsightDashboard() {
                             <Send className="w-5 h-5 ml-1" />
                         </button>
                     </form>
-                    <div className="text-center mt-3 text-xs font-medium text-slate-400 flex justify-center items-center gap-4">
-                        <button onClick={() => setInput("Quel est le chiffre d'affaires ?")} className="hover:text-indigo-500 transition-colors">CA Total</button>
-                        <button onClick={() => setInput("Quels sont les produits les plus vendus ?")} className="hover:text-indigo-500 transition-colors">Top Produits</button>
-                        <button onClick={() => setInput("Analyse de la production et retards")} className="hover:text-indigo-500 transition-colors">Délais Production</button>
+                    <div className="text-center mt-3 text-xs font-medium text-slate-400 flex justify-center items-center gap-2 flex-wrap">
+                        <button onClick={() => setInput("Quel est le chiffre d'affaires ?")} className="hover:text-indigo-500 transition-colors px-2 py-1 rounded-lg hover:bg-indigo-50">💰 CA</button>
+                        <button onClick={() => setInput("Quels sont les produits les plus vendus ?")} className="hover:text-indigo-500 transition-colors px-2 py-1 rounded-lg hover:bg-indigo-50">📦 Produits</button>
+                        <button onClick={() => setInput("Analyse de la production et retards")} className="hover:text-indigo-500 transition-colors px-2 py-1 rounded-lg hover:bg-indigo-50">🏭 Production</button>
+                        <button onClick={() => setInput("État du stock et ruptures")} className="hover:text-indigo-500 transition-colors px-2 py-1 rounded-lg hover:bg-indigo-50">📊 Inventaire</button>
+                        <button onClick={() => setInput("Bilan des achats fournisseurs")} className="hover:text-indigo-500 transition-colors px-2 py-1 rounded-lg hover:bg-indigo-50">🛒 Achats</button>
+                        <button onClick={() => setInput("État des livraisons")} className="hover:text-indigo-500 transition-colors px-2 py-1 rounded-lg hover:bg-indigo-50">🚚 Logistique</button>
+                        <button onClick={() => setInput("Analyse du portefeuille clients et devis")} className="hover:text-indigo-500 transition-colors px-2 py-1 rounded-lg hover:bg-indigo-50">👥 CRM</button>
                     </div>
                 </div>
             </div>

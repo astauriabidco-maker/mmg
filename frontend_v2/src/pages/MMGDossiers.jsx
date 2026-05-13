@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import api from '../services/api';
 import {
     Search,
     FileText,
@@ -29,11 +30,15 @@ import { Link } from 'react-router-dom';
 const MMGDossiers = ({ isEmbedded = false }) => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [dossiers, setDossiers] = useState([]);
+    const [clients, setClients] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedDossier, setSelectedDossier] = useState(null);
     const [importingId, setImportingId] = useState(null);
     const [activeTab, setActiveTab] = useState('tech'); // tech, sales, media
     const [sendingQuote, setSendingQuote] = useState(false);
+    const [isNewClient, setIsNewClient] = useState(false);
+    const [clientSearch, setClientSearch] = useState('');
+    const [isSameAddress, setIsSameAddress] = useState(true);
 
     // Entry Form State
     const [isEntryFormOpen, setIsEntryFormOpen] = useState(false);
@@ -89,7 +94,17 @@ const MMGDossiers = ({ isEmbedded = false }) => {
 
     useEffect(() => {
         fetchDossiers();
+        fetchClients();
     }, []);
+
+    const fetchClients = async () => {
+        try {
+            const res = await api.get('/v2/partners/clients');
+            setClients(res.data);
+        } catch (err) {
+            console.error("Error fetching clients", err);
+        }
+    };
 
     const fetchDossiers = async () => {
         try {
@@ -276,8 +291,8 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                     <Menu className="w-6 h-6" />
                                 </button>
                                 <div>
-                                    <h1 className="text-4xl font-bold text-slate-900 tracking-tight">Dossiers MMG Digital</h1>
-                                    <p className="text-slate-500 mt-2">Gestion des formulaires de prises de côtes mobiles</p>
+                                    <h1 className="text-4xl font-bold text-slate-900 tracking-tight">Métrés & Dossiers Techniques</h1>
+                                    <p className="text-slate-500 mt-2">Gestion des relevés sur chantiers et spécifications de production</p>
                                 </div>
                             </div>
                             <div className="flex items-center gap-3">
@@ -317,7 +332,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                 className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
                             >
                                 <Plus className="w-5 h-5" />
-                                Nouvelle Prise de Côte
+                                Nouvelle Prise de Côte (Métré)
                             </button>
                         </div>
                     )}
@@ -673,7 +688,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                     <Plus className="w-6 h-6" />
                                 </div>
                                 <div>
-                                    <h2 className="text-xl font-bold text-slate-900">Nouvelle Prise de Côte Agence</h2>
+                                    <h2 className="text-xl font-bold text-slate-900">Nouveau Métré (Prise de Côte)</h2>
                                     <p className="text-slate-500 text-sm">Étape {formStep} sur 6</p>
                                 </div>
                             </div>
@@ -691,70 +706,198 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                         <h3>Information Client</h3>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div className="md:col-span-2">
-                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Type de Client</label>
-                                            <div className="flex gap-2">
-                                                {['PARTICULIER', 'PRO'].map(t => (
-                                                    <button
-                                                        key={t}
-                                                        onClick={() => updateClient('client_type', t)}
-                                                        className={`flex-1 p-3 rounded-xl font-bold transition-all ${formData.client.client_type === t ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}
-                                                    >
-                                                        {t}
-                                                    </button>
-                                                ))}
+                                        <div className="md:col-span-2 relative z-50">
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Rechercher un client</label>
+                                            <div className="relative">
+                                                <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                <input 
+                                                    type="text"
+                                                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-blue-500 transition-all font-bold text-slate-900 shadow-inner"
+                                                    placeholder="Tapez un nom ou téléphone..."
+                                                    value={clientSearch}
+                                                    onChange={(e) => {
+                                                        setClientSearch(e.target.value);
+                                                        setIsNewClient(false);
+                                                        if (formData.client.name) {
+                                                            setFormData({...formData, client: {...formData.client, name: ''}});
+                                                        }
+                                                    }}
+                                                />
                                             </div>
+
+                                            {/* Dropdown Suggestions */}
+                                            {clientSearch && !formData.client.name && !isNewClient && (
+                                                <div className="absolute top-full mt-2 left-0 right-0 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden">
+                                                    {clients.filter(c => c.name.toLowerCase().includes(clientSearch.toLowerCase()) || (c.phone && c.phone.includes(clientSearch))).map(c => (
+                                                        <button 
+                                                            key={c.id} 
+                                                            className="w-full text-left px-6 py-4 hover:bg-slate-50 border-b border-slate-100 last:border-0 transition-colors flex items-center justify-between"
+                                                            onClick={() => {
+                                                                setFormData({
+                                                                    ...formData, 
+                                                                    client: { 
+                                                                        name: c.name,
+                                                                        contact: c.phone || '',
+                                                                        email: c.email || '',
+                                                                        address: c.address || '',
+                                                                        site_address: c.address || '',
+                                                                        client_type: c.client_type || 'PARTICULIER'
+                                                                    }
+                                                                });
+                                                                setClientSearch('');
+                                                                setIsSameAddress(true);
+                                                            }}
+                                                        >
+                                                            <div>
+                                                                <p className="font-bold text-slate-900">{c.name}</p>
+                                                                <p className="text-xs text-slate-500">{c.phone} • {c.email}</p>
+                                                            </div>
+                                                            <ChevronRight className="w-4 h-4 text-slate-300" />
+                                                        </button>
+                                                    ))}
+                                                    <button 
+                                                        className="w-full text-left px-6 py-4 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold transition-colors flex items-center gap-2"
+                                                        onClick={() => {
+                                                            setIsNewClient(true);
+                                                            updateClient('name', clientSearch);
+                                                            setClientSearch('');
+                                                        }}
+                                                    >
+                                                        <Plus className="w-5 h-5"/> Créer le nouveau client "{clientSearch}"
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nom Complet / Raison Sociale</label>
-                                            <input
-                                                type="text"
-                                                className="w-full p-4 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-blue-500 transition-all font-medium text-slate-900"
-                                                value={formData.client.name}
-                                                onChange={(e) => updateClient('name', e.target.value)}
-                                                placeholder="ex: Jean Dupont"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Téléphone</label>
-                                            <input
-                                                type="text"
-                                                className="w-full p-4 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-blue-500 transition-all font-medium text-slate-900"
-                                                value={formData.client.contact}
-                                                onChange={(e) => updateClient('contact', e.target.value)}
-                                                placeholder="06 ..."
-                                            />
-                                        </div>
-                                        <div className="md:col-span-2">
-                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Email</label>
-                                            <input
-                                                type="email"
-                                                className="w-full p-4 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-blue-500 transition-all font-medium text-slate-900"
-                                                value={formData.client.email}
-                                                onChange={(e) => updateClient('email', e.target.value)}
-                                                placeholder="jean@exemple.com"
-                                            />
-                                        </div>
-                                        <div className="md:col-span-2">
-                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Adresse de Facturation</label>
-                                            <input
-                                                type="text"
-                                                className="w-full p-4 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-blue-500 transition-all font-medium text-slate-900"
-                                                value={formData.client.address}
-                                                onChange={(e) => updateClient('address', e.target.value)}
-                                                placeholder="Adresse complète ..."
-                                            />
-                                        </div>
-                                        <div className="md:col-span-2">
-                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1 text-blue-600">Adresse du Chantier (si différente)</label>
-                                            <input
-                                                type="text"
-                                                className="w-full p-4 bg-blue-50/50 border border-blue-100 rounded-2xl focus:ring-2 focus:ring-blue-500 transition-all font-medium text-slate-900"
-                                                value={formData.client.site_address}
-                                                onChange={(e) => updateClient('site_address', e.target.value)}
-                                                placeholder="Lieu de la pose ..."
-                                            />
-                                        </div>
+
+                                        {/* Fiche Résumé Client Existant */}
+                                        {!isNewClient && formData.client.name && (
+                                            <div className="md:col-span-2 bg-gradient-to-r from-blue-50 to-indigo-50/30 p-6 rounded-2xl border border-blue-100 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                                                <div className="absolute top-0 right-0 p-4 opacity-10 scale-150 transform translate-x-4 -translate-y-4">
+                                                    <User className="w-24 h-24 text-blue-600"/>
+                                                </div>
+                                                <div className="relative z-10">
+                                                    <div className="flex items-center gap-3 mb-1">
+                                                        <h4 className="font-black text-xl text-blue-900">{formData.client.name}</h4>
+                                                        <span className="text-[10px] font-black text-blue-600 bg-blue-200/50 px-2 py-1 rounded-md uppercase tracking-widest">{formData.client.client_type}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-4 text-sm font-medium text-blue-700/80">
+                                                        <span className="flex items-center gap-1"><Phone className="w-4 h-4"/> {formData.client.contact}</span>
+                                                        <span className="flex items-center gap-1"><Mail className="w-4 h-4"/> {formData.client.email}</span>
+                                                    </div>
+                                                </div>
+                                                <button onClick={() => {
+                                                    setFormData({...formData, client: {...formData.client, name: ''}});
+                                                    setIsNewClient(false);
+                                                }} className="relative z-10 bg-white/50 hover:bg-white text-blue-600 p-2 rounded-xl transition-all shadow-sm">
+                                                    <X className="w-5 h-5"/>
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        {/* Formulaire Nouveau Client */}
+                                        {isNewClient && (
+                                            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                                                <div className="md:col-span-2 flex items-center justify-between mb-2">
+                                                    <h4 className="font-black text-slate-800">Création Fiche Client</h4>
+                                                    <button onClick={() => setIsNewClient(false)} className="text-xs font-bold text-slate-400 hover:text-slate-600 flex items-center gap-1">
+                                                        <X className="w-4 h-4"/> Annuler
+                                                    </button>
+                                                </div>
+                                                
+                                                <div className="md:col-span-2">
+                                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Type de Client</label>
+                                                    <div className="flex gap-2">
+                                                        {['PARTICULIER', 'PRO'].map(t => (
+                                                            <button
+                                                                key={t}
+                                                                onClick={() => updateClient('client_type', t)}
+                                                                className={`flex-1 p-3 rounded-xl font-black transition-all ${formData.client.client_type === t ? 'bg-slate-900 text-white shadow-md' : 'bg-white text-slate-400 border border-slate-200'}`}
+                                                            >
+                                                                {t}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div className="md:col-span-2">
+                                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Nom / Raison Sociale</label>
+                                                    <input
+                                                        type="text"
+                                                        className="w-full p-4 bg-white border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold text-slate-900 shadow-sm"
+                                                        value={formData.client.name}
+                                                        onChange={(e) => updateClient('name', e.target.value)}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Téléphone</label>
+                                                    <input
+                                                        type="text"
+                                                        className="w-full p-4 bg-white border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold text-slate-900 shadow-sm"
+                                                        value={formData.client.contact}
+                                                        onChange={(e) => updateClient('contact', e.target.value)}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Email</label>
+                                                    <input
+                                                        type="email"
+                                                        className="w-full p-4 bg-white border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold text-slate-900 shadow-sm"
+                                                        value={formData.client.email}
+                                                        onChange={(e) => updateClient('email', e.target.value)}
+                                                    />
+                                                </div>
+                                                <div className="md:col-span-2">
+                                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Adresse de Facturation</label>
+                                                    <input
+                                                        type="text"
+                                                        className="w-full p-4 bg-white border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold text-slate-900 shadow-sm"
+                                                        value={formData.client.address}
+                                                        onChange={(e) => {
+                                                            updateClient('address', e.target.value);
+                                                            if (isSameAddress) updateClient('site_address', e.target.value);
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Adresse du Chantier */}
+                                        {(formData.client.name) && (
+                                            <div className="md:col-span-2 mt-4 space-y-4">
+                                                <label className="flex items-center gap-3 cursor-pointer group">
+                                                    <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${isSameAddress ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-300 bg-white'}`}>
+                                                        {isSameAddress && <CheckCircle2 className="w-4 h-4" />}
+                                                    </div>
+                                                    <span className="font-bold text-slate-700 group-hover:text-slate-900">L'adresse du chantier est identique à l'adresse de facturation</span>
+                                                    <input 
+                                                        type="checkbox" 
+                                                        className="hidden"
+                                                        checked={isSameAddress}
+                                                        onChange={(e) => {
+                                                            setIsSameAddress(e.target.checked);
+                                                            if (e.target.checked) updateClient('site_address', formData.client.address);
+                                                            else updateClient('site_address', '');
+                                                        }}
+                                                    />
+                                                </label>
+
+                                                {!isSameAddress && (
+                                                    <div className="animate-in slide-in-from-top-4 fade-in duration-300">
+                                                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 text-blue-600">Adresse Spécifique du Chantier</label>
+                                                        <div className="relative">
+                                                            <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-blue-400" />
+                                                            <input
+                                                                type="text"
+                                                                className="w-full pl-12 pr-4 py-4 bg-blue-50/50 border border-blue-100 rounded-2xl focus:ring-2 focus:ring-blue-500 transition-all font-bold text-blue-900 shadow-inner"
+                                                                value={formData.client.site_address}
+                                                                onChange={(e) => updateClient('site_address', e.target.value)}
+                                                                placeholder="Lieu exact de la pose ..."
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             )}

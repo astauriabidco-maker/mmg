@@ -84,22 +84,24 @@ export default function ConfigDashboard() {
                         <option value="unit">Unités de Mesure</option>
                         <option value="supplier">Fournisseurs</option>
                         <option value="specs">Spécificités (Couleur, Sens, Finition...)</option>
+                        <option value="bank_rib">Coordonnées Bancaires (RIB / IBAN)</option>
                     </select>
                 </div>
                 <div className="flex-1">
                     <label className="block text-xs font-black text-blue-800 uppercase tracking-widest mb-2">Valeur :</label>
-                    <input autoFocus value={newVal} onChange={e=>setNewVal(e.target.value)} className="w-full p-3 bg-white border border-blue-200 rounded-xl font-bold uppercase text-slate-700 focus:ring-2 outline-none" placeholder="Ex: NOIR MAT, CÔTÉ GAUCHE..." />
+                    <input autoFocus value={newVal} onChange={e=>setNewVal(e.target.value)} className="w-full p-3 bg-white border border-blue-200 rounded-xl font-bold uppercase text-slate-700 focus:ring-2 outline-none" placeholder="Ex: IBAN FR76..., NOIR MAT..." />
                 </div>
                 <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white font-black px-6 py-3 rounded-xl shadow border-b-4 border-blue-700 active:border-b-0 active:translate-y-1 transition-all flex items-center gap-2">
                     <Plus className="w-5 h-5"/> Sauvegarder
                 </button>
             </form>
 
-            <div className="grid grid-cols-4 gap-6">
+            <div className="grid grid-cols-5 gap-6">
                 {renderTable('material', 'Catégories (Matériaux)')}
                 {renderTable('unit', 'Unités')}
                 {renderTable('supplier', 'Fournisseurs')}
                 {renderTable('specs', 'Spécificités Variantes')}
+                {renderTable('bank_rib', 'Coordonnées Bancaires')}
             </div>
         </div>
     );

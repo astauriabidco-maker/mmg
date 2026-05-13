@@ -21,6 +21,62 @@ def get_active_session(db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Aucune caisse ouverte.")
     return session
 
+@router.get("/invoices/pending")
+def get_pending_invoices(db: Session = Depends(get_db)):
+    invoices = db.query(models.Invoice).filter(models.Invoice.status.in_(["DRAFT", "UNPAID", "PARTIAL"])).all()
+    results = []
+    for inv in invoices:
+        paid_amount = sum(p.amount for p in inv.payments)
+        due_amount = inv.total - paid_amount
+        if due_amount > 0:
+            results.append({
+                "id": inv.id,
+                "reference": inv.reference,
+                "client_name": inv.client_name,
+                "total": inv.total,
+                "due_amount": due_amount,
+                "issue_date": inv.issue_date
+            })
+    return results
+
+@router.post("/invoices/{invoice_id}/pay")
+def pay_invoice_pos(invoice_id: int, req: schemas.POSInvoicePaymentReq, db: Session = Depends(get_db)):
+    session = db.query(models.POSSession).filter(models.POSSession.status == "OPEN").first()
+    if not session:
+        raise HTTPException(status_code=400, detail="Caisse fermée.")
+        
+    invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(404, "Facture non trouvée")
+        
+    pmt = models.Payment(
+        invoice_id=invoice.id,
+        amount=req.amount,
+        method=req.method,
+        reference=f"Payé en Caisse ({session.reference})"
+    )
+    db.add(pmt)
+    
+    if req.method == "CASH":
+        mv = models.POSCashMovement(
+            session_id=session.id,
+            movement_type="IN",
+            amount=req.amount,
+            reason=f"Paiement Facture {invoice.reference}",
+            author=req.author
+        )
+        db.add(mv)
+        
+    db.flush()
+    paid_amount = sum(p.amount for p in invoice.payments)
+    if paid_amount >= invoice.total:
+        invoice.status = "PAID"
+    else:
+        invoice.status = "PARTIAL"
+        
+    db.commit()
+    return {"message": "Facture encaissée avec succès"}
+
 @router.get("/items")
 def get_pos_items(db: Session = Depends(get_db)):
     variants = db.query(models.ProductVariant).join(models.ProductVariant.product).filter(
@@ -29,15 +85,35 @@ def get_pos_items(db: Session = Depends(get_db)):
     
     results = []
     for v in variants:
+        cat_name = "Général"
+        if v.product and getattr(v.product, "category", None) and getattr(v.product.category, "name", None):
+            cat_name = v.product.category.name
+            
         results.append({
             "variant_id": v.id,
             "product_name": f"{v.product.name} ({v.color or 'Std'})",
             "reference": v.reference,
             "barcode": v.barcode,
             "price": v.cost_price or 0, # Note: using cost_price as sell_price for mockup
-            "stock": v.quantity_in_stock
+            "stock": v.quantity_in_stock,
+            "category": cat_name
         })
     return results
+
+@router.put("/items/{variant_id}")
+def update_pos_item(variant_id: int, price: float = None, stock: float = None, db: Session = Depends(get_db)):
+    variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == variant_id).first()
+    if not variant:
+        raise HTTPException(status_code=404, detail="Article non trouvé")
+        
+    if price is not None:
+        variant.cost_price = price
+    if stock is not None:
+        # Note: simplistic stock update for POS Zero-UI edit. Real ERP should make a stock move.
+        variant.quantity_in_stock = stock
+        
+    db.commit()
+    return {"message": "Article mis à jour", "price": variant.cost_price, "stock": variant.quantity_in_stock}
 
 @router.post("/sessions/open", response_model=schemas.POSSessionSchema)
 def open_session(starting_cash: float = 0.0, db: Session = Depends(get_db)):
@@ -59,6 +135,24 @@ def open_session(starting_cash: float = 0.0, db: Session = Depends(get_db)):
     db.refresh(new_session)
     return new_session
 
+@router.post("/sessions/{session_id}/movements", response_model=schemas.POSCashMovementSchema)
+def create_cash_movement(session_id: int, req: schemas.POSCashMovementRequest, db: Session = Depends(get_db)):
+    session = db.query(models.POSSession).filter(models.POSSession.id == session_id).first()
+    if not session or session.status == "CLOSED":
+        raise HTTPException(status_code=400, detail="Session invalide ou fermée.")
+        
+    mv = models.POSCashMovement(
+        session_id=session.id,
+        movement_type=req.movement_type,
+        amount=req.amount,
+        reason=req.reason,
+        author=req.author
+    )
+    db.add(mv)
+    db.commit()
+    db.refresh(mv)
+    return mv
+
 @router.post("/sessions/{session_id}/close")
 def close_session(session_id: int, closing_cash: float, db: Session = Depends(get_db)):
     session = db.query(models.POSSession).filter(models.POSSession.id == session_id).first()
@@ -72,9 +166,14 @@ def close_session(session_id: int, closing_cash: float, db: Session = Depends(ge
         models.POSOrder.session_id == session.id,
         models.POSOrder.payment_method == "CASH"
     ).all()
-    
     total_cash_sales = sum(o.amount_total for o in cash_orders)
-    expected_cash = session.starting_cash + total_cash_sales
+    
+    # Calculate movements
+    movements = db.query(models.POSCashMovement).filter(models.POSCashMovement.session_id == session.id).all()
+    cash_in = sum(m.amount for m in movements if m.movement_type == "IN")
+    cash_out = sum(m.amount for m in movements if m.movement_type == "OUT")
+    
+    expected_cash = session.starting_cash + total_cash_sales + cash_in - cash_out
     
     session.status = "CLOSED"
     session.closed_at = datetime.utcnow()
@@ -97,10 +196,15 @@ def get_session_report(session_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Session non trouvée.")
         
     orders = db.query(models.POSOrder).filter(models.POSOrder.session_id == session.id).all()
-    
     total_sales = sum(o.amount_total for o in orders)
     total_cash = sum(o.amount_total for o in orders if o.payment_method == "CASH")
     total_cb = sum(o.amount_total for o in orders if o.payment_method == "CARD")
+    
+    movements = db.query(models.POSCashMovement).filter(models.POSCashMovement.session_id == session.id).all()
+    cash_in = sum(m.amount for m in movements if m.movement_type == "IN")
+    cash_out = sum(m.amount for m in movements if m.movement_type == "OUT")
+    
+    expected_cash = session.starting_cash + total_cash + cash_in - cash_out
     
     # Best-selling products logic
     product_sales = {}
@@ -118,7 +222,9 @@ def get_session_report(session_id: int, db: Session = Depends(get_db)):
         "total_sales": total_sales,
         "total_cash_collected": total_cash,
         "total_cb_collected": total_cb,
-        "expected_cash_in_drawer": session.starting_cash + total_cash,
+        "cash_in": cash_in,
+        "cash_out": cash_out,
+        "expected_cash_in_drawer": expected_cash,
         "top_products": top_products,
         "ticket_count": len(orders)
     }
@@ -148,7 +254,8 @@ def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db))
         currency=req.currency,
         amount_total=amount_total,
         amount_paid=req.amount_paid,
-        amount_return=amount_return
+        amount_return=amount_return,
+        seller_name=req.seller_name
     )
     db.add(order)
     db.flush()
@@ -198,6 +305,17 @@ def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db))
             notes=f"Vente Caisse Ticket {ref}"
         )
         db.add(mv)
+        
+        # Log to Chatter
+        audit_log = models.ChatterMessage(
+            model_name="variant",
+            record_id=item.variant_id,
+            body=f"Vente effectuée au comptoir (Caisse) - Ticket {ref}. Quantité décrémentée : {item.quantity}",
+            author=req.seller_name or "Vendeur POS",
+            is_system_log=True
+        )
+        db.add(audit_log)
+        
         
     # --- AUTO-GENERATE NF525 INVOICE ---
     subtotal = amount_total / (1 + (req.tax_rate / 100.0))

@@ -41,6 +41,10 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
     pin_hash = Column(String) # Hashed 4-digit PIN
     role = Column(String, default="OPERATOR") # Link to roles.name
     is_active = Column(Boolean, default=True)
@@ -125,6 +129,8 @@ class Product(Base):
     product_type = Column(String, default="stockable") # stockable, consumable, service
     available_in_pos = Column(Boolean, default=False)
     image_url = Column(String, nullable=True)
+    technical_doc_url = Column(String, nullable=True) # Fiche technique PDF
+    compatible_series = Column(String, nullable=True) # Ex: "COR 60, COR 70"
     
     variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")
 
@@ -242,8 +248,11 @@ class MMG(Base):
     
     # Sales info
     quote_sent_at = Column(DateTime, nullable=True)
+    sale_order_id = Column(Integer, ForeignKey("sale_orders.id"), nullable=True)
     
     status = Column(SAEnum(MMGStatus), default=MMGStatus.SENT)
+    
+    sale_order = relationship("SaleOrder", back_populates="mmg_dossiers")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -313,6 +322,7 @@ class SaleOrder(Base):
     signed_by_ip = Column(String, nullable=True)
     
     lines = relationship("SaleOrderLine", back_populates="order", cascade="all, delete-orphan")
+    mmg_dossiers = relationship("MMG", back_populates="sale_order")
 
 class SaleOrderLine(Base):
     __tablename__ = "sale_order_lines"
@@ -340,7 +350,20 @@ class POSSession(Base):
     closing_cash = Column(Float, nullable=True)
     status = Column(String, default="OPEN") # OPEN, CLOSED
     
-    orders = relationship("POSOrder", back_populates="session")
+    orders = relationship("POSOrder", back_populates="session", cascade="all, delete-orphan")
+    cash_movements = relationship("POSCashMovement", back_populates="session", cascade="all, delete-orphan")
+
+class POSCashMovement(Base):
+    __tablename__ = "pos_cash_movements"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("pos_sessions.id"))
+    movement_type = Column(String) # IN, OUT
+    amount = Column(Float, default=0.0)
+    reason = Column(String)
+    author = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    session = relationship("POSSession", back_populates="cash_movements")
 
 class POSOrder(Base):
     __tablename__ = "pos_orders"
@@ -354,6 +377,8 @@ class POSOrder(Base):
     amount_total = Column(Float, default=0.0)
     amount_paid = Column(Float, default=0.0)
     amount_return = Column(Float, default=0.0)
+    seller_name = Column(String, default="Admin")
+    
     
     session = relationship("POSSession", back_populates="orders")
     lines = relationship("POSOrderLine", back_populates="order", cascade="all, delete-orphan")
@@ -510,3 +535,12 @@ class DeliveryNote(Base):
     
     order = relationship("Order")
     route = relationship("DeliveryRoute", back_populates="notes")
+
+class BusinessRule(Base):
+    __tablename__ = "business_rules"
+    id = Column(Integer, primary_key=True, index=True)
+    category = Column(String, nullable=False) # PRODUCTION, PLANNING, COMMERCIAL, LOGISTIQUE
+    rule_key = Column(String, unique=True, index=True, nullable=False)
+    value = Column(String, nullable=False)
+    value_type = Column(String, nullable=False) # number, string, boolean
+    description = Column(String, nullable=True)

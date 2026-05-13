@@ -1,35 +1,40 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
-    FileText, Download, CheckCircle, Clock, AlertTriangle, Filter, Search, Plus, CreditCard, Banknote 
+    FileText, Download, CheckCircle, Clock, AlertTriangle, Filter, Search, Plus, CreditCard, Banknote, BellRing, Undo2
 } from 'lucide-react';
 import api from '../services/api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function AccountingDashboard() {
-    const [invoices, setInvoices] = useState([]);
+    const queryClient = useQueryClient();
+
+    const { data: invoices = [], isLoading } = useQuery({
+        queryKey: ['invoices'],
+        queryFn: async () => {
+            const res = await api.get('/v2/accounting/invoices');
+            return res.data;
+        }
+    });
+
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState("ALL");
-    const [isLoading, setIsLoading] = useState(true);
 
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [selectedInvoice, setSelectedInvoice] = useState(null);
     const [paymentData, setPaymentData] = useState({ amount: 0, method: "VIREMENT", reference: "" });
 
-    useEffect(() => {
-        fetchInvoices();
-    }, []);
-
-    const fetchInvoices = async () => {
-        setIsLoading(true);
-        try {
-            const res = await api.get('/v2/accounting/invoices');
-            setInvoices(res.data);
-        } catch (error) {
-            console.error("Error fetching invoices:", error);
-        } finally {
-            setIsLoading(false);
-        }
-    };
+    const [showNewInvoiceModal, setShowNewInvoiceModal] = useState(false);
+    const [newInvoiceData, setNewInvoiceData] = useState({
+        client_name: '',
+        client_address: '',
+        client_siret: '',
+        due_date: new Date(new Date().setDate(new Date().getDate() + 30)).toISOString().split('T')[0],
+        description: '',
+        quantity: 1,
+        unit_price: 0,
+        tax_rate: 20
+    });
 
     const handleExportFEC = () => {
         window.open(`${api.defaults.baseURL}/v2/accounting/export/fec`, '_blank');
@@ -41,9 +46,56 @@ export default function AccountingDashboard() {
         try {
             await api.post(`/v2/accounting/invoices/${selectedInvoice.id}/pay`, paymentData);
             setShowPaymentModal(false);
-            fetchInvoices();
+            queryClient.invalidateQueries({ queryKey: ['invoices'] });
         } catch (error) {
             alert(error.response?.data?.detail || "Erreur de paiement");
+        }
+    };
+
+    const handleCreateInvoice = async (e) => {
+        e.preventDefault();
+        try {
+            await api.post('/v2/accounting/invoices', {
+                client_name: newInvoiceData.client_name,
+                client_address: newInvoiceData.client_address,
+                client_siret: newInvoiceData.client_siret,
+                due_date: new Date(newInvoiceData.due_date).toISOString(),
+                lines: [{
+                    description: newInvoiceData.description,
+                    quantity: parseFloat(newInvoiceData.quantity),
+                    unit_price: parseFloat(newInvoiceData.unit_price),
+                    tax_rate: parseFloat(newInvoiceData.tax_rate)
+                }]
+            });
+            setShowNewInvoiceModal(false);
+            setNewInvoiceData({
+                client_name: '', client_address: '', client_siret: '',
+                due_date: new Date(new Date().setDate(new Date().getDate() + 30)).toISOString().split('T')[0],
+                description: '', quantity: 1, unit_price: 0, tax_rate: 20
+            });
+            queryClient.invalidateQueries({ queryKey: ['invoices'] });
+        } catch (e) {
+            alert(e.response?.data?.detail || 'Erreur lors de la création de la facture');
+        }
+    };
+
+    const handleCreditNote = async (inv) => {
+        if (!window.confirm(`Émettre un avoir pour la facture ${inv.reference} ? Cela l'annulera comptablement.`)) return;
+        try {
+            await api.post(`/v2/accounting/invoices/${inv.id}/credit_note`);
+            alert('Avoir généré avec succès !');
+            queryClient.invalidateQueries({ queryKey: ['invoices'] });
+        } catch (e) {
+            alert(e.response?.data?.detail || "Erreur lors de la création de l'avoir.");
+        }
+    };
+
+    const handleRemind = async (inv) => {
+        try {
+            await api.post(`/v2/accounting/invoices/${inv.id}/remind`);
+            alert(`Relance envoyée au client pour la facture ${inv.reference} !`);
+        } catch (e) {
+            alert('Erreur lors de la relance');
         }
     };
 
@@ -125,7 +177,14 @@ export default function AccountingDashboard() {
                             <option value="UNPAID">Non Payé</option>
                             <option value="PARTIAL">Paiement Partiel</option>
                             <option value="PAID">Payé</option>
+                            <option value="AVOIR">Avoir (Annulé)</option>
                         </select>
+                        <button 
+                            onClick={() => setShowNewInvoiceModal(true)}
+                            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-xl shadow-sm transition-colors flex items-center gap-2"
+                        >
+                            <Plus className="w-4 h-4" /> Nouvelle Facture
+                        </button>
                     </div>
                 </div>
 
@@ -160,16 +219,26 @@ export default function AccountingDashboard() {
                                             {inv.status === "PAID" && <span className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><CheckCircle className="w-3 h-3"/> PAYÉ</span>}
                                             {inv.status === "PARTIAL" && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><Clock className="w-3 h-3"/> ACOMPTE</span>}
                                             {inv.status === "UNPAID" && <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><AlertTriangle className="w-3 h-3"/> EN ATTENTE</span>}
+                                            {inv.status === "AVOIR" && <span className="bg-slate-200 text-slate-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><Undo2 className="w-3 h-3"/> AVOIR</span>}
                                         </td>
                                         <td className="p-4 text-right font-black text-slate-800">
                                             {inv.total.toLocaleString('fr-FR', {minimumFractionDigits: 2})} €
                                         </td>
                                         <td className="p-4 text-right font-bold text-slate-500">
-                                            {remainder > 0 ? <span className="text-red-500">{remainder.toLocaleString('fr-FR', {minimumFractionDigits: 2})} €</span> : "-"}
+                                            {remainder > 0 && inv.status !== "AVOIR" ? <span className="text-red-500">{remainder.toLocaleString('fr-FR', {minimumFractionDigits: 2})} €</span> : "-"}
                                         </td>
                                         <td className="p-4 text-center">
                                             <div className="flex justify-center gap-2">
-                                                {inv.status !== "PAID" && (
+                                                {(inv.status === "UNPAID" || inv.status === "PARTIAL") && (
+                                                    <button 
+                                                        onClick={() => handleRemind(inv)}
+                                                        className="p-2 bg-orange-50 text-orange-600 hover:bg-orange-600 hover:text-white rounded-lg transition-colors"
+                                                        title="Envoyer une relance (Email/SMS)"
+                                                    >
+                                                        <BellRing className="w-4 h-4" />
+                                                    </button>
+                                                )}
+                                                {inv.status !== "PAID" && inv.status !== "AVOIR" && (
                                                     <button 
                                                         onClick={() => openPaymentModal(inv)}
                                                         className="p-2 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-colors"
@@ -178,9 +247,19 @@ export default function AccountingDashboard() {
                                                         <CreditCard className="w-4 h-4" />
                                                     </button>
                                                 )}
+                                                {inv.status !== "AVOIR" && (
+                                                    <button 
+                                                        onClick={() => handleCreditNote(inv)}
+                                                        className="p-2 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-lg transition-colors"
+                                                        title="Générer un Avoir comptable"
+                                                    >
+                                                        <Undo2 className="w-4 h-4" />
+                                                    </button>
+                                                )}
                                                 <button 
+                                                    onClick={() => window.open(`${api.defaults.baseURL}/v2/pdf/invoice/${inv.id}`, '_blank')}
                                                     className="p-2 bg-slate-100 text-slate-500 hover:bg-slate-200 rounded-lg transition-colors"
-                                                    title="Générer le PDF NF525"
+                                                    title="Télécharger la facture PDF"
                                                 >
                                                     <FileText className="w-4 h-4" />
                                                 </button>
@@ -254,6 +333,116 @@ export default function AccountingDashboard() {
                                 Valider
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* NEW INVOICE MODAL */}
+            {showNewInvoiceModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-[2rem] max-w-2xl w-full p-8 shadow-2xl animate-fade-in-up max-h-[90vh] overflow-y-auto">
+                        <h3 className="text-2xl font-black text-slate-800 mb-6 flex items-center gap-2">
+                            <FileText className="w-6 h-6 text-blue-500" /> Nouvelle Facture
+                        </h3>
+                        
+                        <form onSubmit={handleCreateInvoice} className="space-y-6">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="col-span-2 md:col-span-1">
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Client *</label>
+                                    <input 
+                                        type="text" required
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 outline-none focus:border-blue-500"
+                                        value={newInvoiceData.client_name}
+                                        onChange={(e) => setNewInvoiceData({...newInvoiceData, client_name: e.target.value})}
+                                    />
+                                </div>
+                                <div className="col-span-2 md:col-span-1">
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">SIRET</label>
+                                    <input 
+                                        type="text" 
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 outline-none focus:border-blue-500"
+                                        value={newInvoiceData.client_siret}
+                                        onChange={(e) => setNewInvoiceData({...newInvoiceData, client_siret: e.target.value})}
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Adresse</label>
+                                    <input 
+                                        type="text" 
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 outline-none focus:border-blue-500"
+                                        value={newInvoiceData.client_address}
+                                        onChange={(e) => setNewInvoiceData({...newInvoiceData, client_address: e.target.value})}
+                                    />
+                                </div>
+                                <div className="col-span-2 md:col-span-1">
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Date d'échéance *</label>
+                                    <input 
+                                        type="date" required
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 outline-none focus:border-blue-500"
+                                        value={newInvoiceData.due_date}
+                                        onChange={(e) => setNewInvoiceData({...newInvoiceData, due_date: e.target.value})}
+                                    />
+                                </div>
+                            </div>
+                            
+                            <hr className="border-slate-100" />
+                            
+                            <h4 className="font-bold text-slate-700">Ligne de Facturation (Simplifiée)</h4>
+                            <div className="grid grid-cols-12 gap-4">
+                                <div className="col-span-12 md:col-span-5">
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Description *</label>
+                                    <input 
+                                        type="text" required
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 outline-none focus:border-blue-500"
+                                        value={newInvoiceData.description}
+                                        onChange={(e) => setNewInvoiceData({...newInvoiceData, description: e.target.value})}
+                                    />
+                                </div>
+                                <div className="col-span-4 md:col-span-2">
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Qté *</label>
+                                    <input 
+                                        type="number" required step="0.01"
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 outline-none focus:border-blue-500"
+                                        value={newInvoiceData.quantity}
+                                        onChange={(e) => setNewInvoiceData({...newInvoiceData, quantity: e.target.value})}
+                                    />
+                                </div>
+                                <div className="col-span-4 md:col-span-3">
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">P.U HT *</label>
+                                    <input 
+                                        type="number" required step="0.01"
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 outline-none focus:border-blue-500"
+                                        value={newInvoiceData.unit_price}
+                                        onChange={(e) => setNewInvoiceData({...newInvoiceData, unit_price: e.target.value})}
+                                    />
+                                </div>
+                                <div className="col-span-4 md:col-span-2">
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">TVA (%) *</label>
+                                    <input 
+                                        type="number" required step="0.1"
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 outline-none focus:border-blue-500"
+                                        value={newInvoiceData.tax_rate}
+                                        onChange={(e) => setNewInvoiceData({...newInvoiceData, tax_rate: e.target.value})}
+                                    />
+                                </div>
+                            </div>
+                            
+                            <div className="flex justify-end gap-4 mt-8">
+                                <button 
+                                    type="button"
+                                    onClick={() => setShowNewInvoiceModal(false)}
+                                    className="px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl transition-colors"
+                                >
+                                    Annuler
+                                </button>
+                                <button 
+                                    type="submit"
+                                    className="px-6 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transition-colors"
+                                >
+                                    Créer la facture
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

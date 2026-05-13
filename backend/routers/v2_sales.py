@@ -31,30 +31,62 @@ import os
 @router.post("/ai-quote")
 def generate_ai_quote(req: AIQuoteRequest, db: Session = Depends(get_db)):
     """
-    Copilote Commercial (IA).
-    Fait appel à OpenAI (si clé présente) ou à Ollama (en local) pour parser le langage naturel.
+    Copilote Commercial (IA). Zero UI Approach.
+    Gère la génération de devis ET la configuration dynamique du pipeline.
     """
-    system_prompt = \"\"\"Tu es un Copilote Commercial pour une menuiserie Alu/PVC.
-Le but est d'extraire la demande du client pour générer un devis structuré en JSON.
-Ne retourne QUE DU JSON valide.
-Le JSON doit respecter cette structure :
-{
-  "client_name": "Nom du client (ou Inconnu)",
+    margin_rule = db.query(models.BusinessRule).filter(models.BusinessRule.rule_key == 'coef_marge_matiere').first()
+    margin = float(margin_rule.value) if margin_rule else 1.8
+    
+    # Get current stages to pass to context
+    config = db.query(models.AppConfig).filter(models.AppConfig.category == "PIPELINE_STAGES").first()
+    import json
+    current_stages = json.loads(config.value) if config else [
+        { "id": 'DRAFT', "title": 'Brouillons' },
+        { "id": 'SENT', "title": 'Envoyés (Négo)' },
+        { "id": 'VALIDATED', "title": 'Gagnés (Signés)' },
+        { "id": 'IN_DESIGN', "title": "Bureau d'Études" },
+        { "id": 'READY_FOR_PROD', "title": 'Prêts pour Prod' },
+        { "id": 'IN_PRODUCTION', "title": 'En Production' }
+    ]
+    stages_json = json.dumps(current_stages, ensure_ascii=False)
+
+    system_prompt = f"""Tu es un Copilote Commercial IA (Approche Zero UI).
+L'utilisateur va formuler une demande en langage naturel.
+Tu dois analyser l'intention et renvoyer UNIQUEMENT DU JSON valide.
+
+Il y a DEUX actions possibles :
+1. "create_quote" : L'utilisateur veut générer un devis.
+2. "update_stages" : L'utilisateur veut configurer/modifier/ajouter/supprimer les étapes du pipeline Kanban.
+
+Si l'action est "update_stages", voici les étapes actuelles : {stages_json}.
+Applique la modification demandée et renvoie TOUTES les étapes dans le tableau "stages".
+
+Le JSON de sortie DOIT avoir ce format exact selon l'action :
+Pour créer un devis :
+{{
+  "action": "create_quote",
+  "client_name": "Nom du client",
   "lines": [
-    {
-      "description": "Nom complet de l'article (ex: Baie Coulissante ALU)",
-      "quantity": 1,
-      "unit_price": 450000,
-      "discount_pct": 0
-    }
+    {{ "description": "Baie Coulissante", "quantity": 1, "unit_price": 450000, "discount_pct": 0 }}
   ]
-}
-Assigne des prix unitaires réalistes en Euro (ex: Baie=800, Fenetre=250, Porte=500).
-\"\"\"
+}}
+
+Pour modifier le pipeline :
+{{
+  "action": "update_stages",
+  "stages": [
+    {{ "id": "DRAFT", "title": "Brouillons" }},
+    ... (toutes les étapes mises à jour)
+  ]
+}}
+
+Prix d'achat de base approximatifs : Baie (500€), Fenetre (150€), Porte (300€).
+Tu DOIS multiplier ces prix de base par le coefficient de {margin} pour le unit_price.
+"""
     
     ai_response_json = None
     
-    # 1. Tentative OpenAI (si clé API)
+    # 1. Tentative OpenAI
     openai_key = os.environ.get("OPENAI_API_KEY")
     if openai_key:
         try:
@@ -80,13 +112,13 @@ Assigne des prix unitaires réalistes en Euro (ex: Baie=800, Fenetre=250, Porte=
         except Exception as e:
             print(f"Erreur OpenAI: {e}")
             
-    # 2. Tentative Ollama (si pas d'OpenAI ou échec)
+    # 2. Tentative Ollama
     if not ai_response_json:
         try:
             url = "http://localhost:11434/api/generate"
             data = json.dumps({
                 "model": "mistral",
-                "prompt": f"{system_prompt}\nRequête client: {req.prompt}\nRéponds uniquement en JSON:",
+                "prompt": f"{system_prompt}\nRequête utilisateur: {req.prompt}\nRéponds uniquement en JSON:",
                 "stream": False,
                 "format": "json"
             }).encode("utf-8")
@@ -98,37 +130,44 @@ Assigne des prix unitaires réalistes en Euro (ex: Baie=800, Fenetre=250, Porte=
         except Exception as e:
             print(f"Erreur Ollama: {e}")
 
-    # 3. Fallback (Moteur de règles) si les deux ont échoué
+    # 3. Fallback
     if not ai_response_json:
-        # NLP basique
-        client_name = "Client Inconnu"
         prompt_lower = req.prompt.lower()
-        if "pour " in prompt_lower:
-            parts = prompt_lower.split("pour ")
-            if len(parts) > 1:
-                client_name = parts[1].split()[0].capitalize()
-                
-        lines = []
-        if "baie" in prompt_lower:
-            lines.append({"description": "Baie Coulissante ALU (Généré hors ligne)", "quantity": 1, "unit_price": 450000.0, "discount_pct": 0})
-        if "fenêtre" in prompt_lower or "fenetre" in prompt_lower:
-            lines.append({"description": "Fenêtre Oscillo-battante (Généré hors ligne)", "quantity": 1, "unit_price": 120000.0, "discount_pct": 0})
-        if "porte" in prompt_lower:
-            lines.append({"description": "Porte d'Entrée (Généré hors ligne)", "quantity": 1, "unit_price": 650000.0, "discount_pct": 0})
-            
-        if not lines:
-             lines.append({"description": "Menuiserie Sur Mesure", "quantity": 1, "unit_price": 100000.0, "discount_pct": 0})
-             
-        ai_response_json = {
-            "client_name": client_name,
-            "lines": lines
-        }
+        if "étape" in prompt_lower or "etape" in prompt_lower or "pipeline" in prompt_lower:
+            ai_response_json = {
+                "action": "update_stages",
+                "stages": current_stages
+            }
+        else:
+            client_name = "Client Inconnu"
+            if "pour " in prompt_lower:
+                parts = prompt_lower.split("pour ")
+                if len(parts) > 1:
+                    client_name = parts[1].split()[0].capitalize()
+            ai_response_json = {
+                "action": "create_quote",
+                "client_name": client_name,
+                "lines": [{"description": "Menuiserie Sur Mesure", "quantity": 1, "unit_price": 100000.0, "discount_pct": 0}]
+            }
 
-    # Formatage final pour le schéma FastAPI
+    # Execute Action
+    action = ai_response_json.get("action", "create_quote")
+    
+    if action == "update_stages":
+        new_stages = ai_response_json.get("stages", [])
+        if not config:
+            config = models.AppConfig(category="PIPELINE_STAGES", value=json.dumps(new_stages))
+            db.add(config)
+        else:
+            config.value = json.dumps(new_stages)
+        db.commit()
+        return {"type": "stages_updated", "message": "Les étapes du pipeline ont été mises à jour."}
+    
+    # Default: create_quote
     final_lines = []
     for l in ai_response_json.get("lines", []):
         final_lines.append({
-            "variant_id": 1, # Fake ID
+            "variant_id": 1,
             "description": l.get("description", "Article généré"),
             "quantity": l.get("quantity", 1),
             "unit_price": l.get("unit_price", 100000),
@@ -136,16 +175,34 @@ Assigne des prix unitaires réalistes en Euro (ex: Baie=800, Fenetre=250, Porte=
         })
 
     return {
-        "client_name": ai_response_json.get("client_name", "Client Inconnu"),
-        "client_contact": "",
-        "client_email": "",
-        "client_address": "",
-        "validity_days": 15,
-        "tax_rate": 20.0,
-        "currency": "EUR",
-        "notes": f"Devis généré par IA Copilot basé sur : '{req.prompt}'",
-        "lines": final_lines
+        "type": "quote_draft",
+        "quote": {
+            "client_name": ai_response_json.get("client_name", "Client Inconnu"),
+            "client_contact": "",
+            "client_email": "",
+            "client_address": "",
+            "validity_days": 15,
+            "tax_rate": 20.0,
+            "currency": "EUR",
+            "notes": f"Devis généré par IA Copilot basé sur : '{req.prompt}'",
+            "lines": final_lines
+        }
     }
+
+@router.get("/stages")
+def get_pipeline_stages(db: Session = Depends(get_db)):
+    config = db.query(models.AppConfig).filter(models.AppConfig.category == "PIPELINE_STAGES").first()
+    import json
+    if config:
+        return json.loads(config.value)
+    return [
+        { "id": 'DRAFT', "title": 'Brouillons' },
+        { "id": 'SENT', "title": 'Envoyés (Négo)' },
+        { "id": 'VALIDATED', "title": 'Gagnés (Signés)' },
+        { "id": 'IN_DESIGN', "title": "Bureau d'Études" },
+        { "id": 'READY_FOR_PROD', "title": 'Prêts pour Prod' },
+        { "id": 'IN_PRODUCTION', "title": 'En Production' }
+    ]
 
 
 @router.post("/", response_model=schemas.SaleOrderSchema)

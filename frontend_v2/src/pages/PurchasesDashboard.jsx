@@ -2,7 +2,16 @@ import React, { useState } from 'react';
 import { ShoppingCart, Plus, FileText, Search, ArrowRight, CheckCircle, PackageOpen, X, Truck, Users, Phone, Mail, MapPin, Sparkles, BrainCircuit, Building2 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
-import PartnerDirectory from '../components/PartnerDirectory';
+const getStatusColor = (status) => {
+    switch (status) {
+        case 'DRAFT': return 'bg-slate-100 text-slate-600';
+        case 'SENT': return 'bg-blue-100 text-blue-700';
+        case 'PARTIAL': return 'bg-orange-100 text-orange-700';
+        case 'RECEIVED': return 'bg-emerald-100 text-emerald-700';
+        case 'CANCELLED': return 'bg-red-100 text-red-700';
+        default: return 'bg-slate-100 text-slate-600';
+    }
+};
 
 export default function PurchasesDashboard() {
     const [currentTab, setCurrentTab] = useState('orders'); // 'orders', 'suppliers', or 'partners'
@@ -12,6 +21,9 @@ export default function PurchasesDashboard() {
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [selectedPO, setSelectedPO] = useState(null);
     const [showReceiveModal, setShowReceiveModal] = useState(false);
+    
+    // Suppliers state
+    const [selectedSupplierId, setSelectedSupplierId] = useState(null);
     
     // AI Recommendations state
     
@@ -36,9 +48,9 @@ export default function PurchasesDashboard() {
     });
 
     const { data: suppliers = [] } = useQuery({
-        queryKey: ['suppliers'],
+        queryKey: ['suppliers', 'v2'],
         queryFn: async () => {
-            const res = await api.get('/v2/suppliers/');
+            const res = await api.get('/v2/partners/suppliers');
             return res.data;
         }
     });
@@ -79,10 +91,10 @@ export default function PurchasesDashboard() {
 
     const handleCreateSupplier = async () => {
         try {
-            await api.post('/v2/suppliers/', newSupplier);
+            await api.post('/v2/partners/suppliers', newSupplier);
             setShowSupplierModal(false);
             setNewSupplier({ name: '', contact_name: '', email: '', phone: '', address: '', tax_id: '' });
-            queryClient.invalidateQueries(['suppliers']);
+            queryClient.invalidateQueries(['suppliers', 'v2']);
         } catch (err) {
             console.error(err);
             alert("Erreur lors de la création du fournisseur.");
@@ -148,16 +160,6 @@ export default function PurchasesDashboard() {
         setNewPO({ ...newPO, lines: newLines });
     };
 
-    const getStatusColor = (status) => {
-        switch (status) {
-            case 'DRAFT': return 'bg-slate-100 text-slate-600';
-            case 'SENT': return 'bg-blue-100 text-blue-700';
-            case 'PARTIAL': return 'bg-orange-100 text-orange-700';
-            case 'RECEIVED': return 'bg-emerald-100 text-emerald-700';
-            case 'CANCELLED': return 'bg-red-100 text-red-700';
-            default: return 'bg-slate-100 text-slate-600';
-        }
-    };
 
     const filteredPurchases = purchases.filter(p => 
         p.reference.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -254,7 +256,11 @@ export default function PurchasesDashboard() {
                     {currentTab === 'suppliers' && (
                         <>
                             {suppliers.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase())).map(sup => (
-                                <div key={sup.id} className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm">
+                                <div 
+                                    key={sup.id} 
+                                    onClick={() => setSelectedSupplierId(sup.id)}
+                                    className={`p-4 rounded-xl cursor-pointer border-2 transition-all ${selectedSupplierId === sup.id ? 'bg-emerald-50 border-emerald-500 shadow-md' : 'bg-white border-slate-100 hover:border-slate-300 shadow-sm'}`}
+                                >
                                     <h4 className="font-black text-slate-800 text-lg flex items-center gap-2"><Truck className="w-4 h-4 text-emerald-500"/> {sup.name}</h4>
                                     <div className="mt-3 space-y-1">
                                         {sup.contact_name && <p className="text-xs text-slate-500 flex items-center gap-2"><Users className="w-3.5 h-3.5"/> {sup.contact_name}</p>}
@@ -325,9 +331,20 @@ export default function PurchasesDashboard() {
             {/* MAIN AREA : PO DETAILS */}
             <div className="flex-1 flex flex-col bg-slate-50 relative overflow-y-auto">
                 {currentTab === 'suppliers' ? (
-                    <div className="h-full">
-                        <PartnerDirectory type="SUPPLIER" />
-                    </div>
+                    selectedSupplierId ? (
+                        <SupplierProfile 
+                            sup={suppliers.find(s => s.id === selectedSupplierId)} 
+                            purchases={purchases} 
+                            openPODetails={openPODetails} 
+                            setCurrentTab={setCurrentTab} 
+                        />
+                    ) : (
+                        <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+                            <Building2 className="w-24 h-24 text-slate-200 mb-6" />
+                            <h2 className="text-2xl font-black text-slate-500">Aucun fournisseur sélectionné</h2>
+                            <p className="font-medium mt-2">Sélectionnez un fournisseur à gauche pour voir sa fiche et son historique.</p>
+                        </div>
+                    )
                 ) : selectedPO ? (
                     <div className="p-8 max-w-4xl mx-auto w-full">
                         <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
@@ -530,6 +547,263 @@ export default function PurchasesDashboard() {
                 </div>
             )}
 
+        </div>
+    );
+}
+
+const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
+    const [activeTab, setActiveTab] = useState('overview');
+
+    const supOrders = purchases.filter(p => p.supplier === sup.name);
+    const totalSpent = supOrders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
+    const totalOrders = supOrders.length;
+    const receivedOrders = supOrders.filter(o => o.status === 'RECEIVED').length;
+    const pendingOrders = supOrders.filter(o => o.status !== 'RECEIVED' && o.status !== 'CANCELLED').length;
+    
+    // Average order value
+    const avgOrderValue = totalOrders > 0 ? (totalSpent / totalOrders) : 0;
+
+    return (
+        <div className="flex flex-col h-full bg-slate-50 relative overflow-hidden animate-fade-in">
+            {/* TOP HEADER - Full Width */}
+            <div className="bg-slate-900 text-white shrink-0 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
+                <div className="absolute bottom-0 left-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl translate-y-1/2 -translate-x-1/3"></div>
+                
+                <div className="px-10 pt-12 pb-6 relative z-10 max-w-6xl mx-auto w-full">
+                    <div className="flex items-start gap-8">
+                        <div className="w-28 h-28 rounded-3xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-white flex items-center justify-center font-black text-5xl shadow-2xl shadow-emerald-500/30 border-4 border-emerald-300/30 shrink-0">
+                            {sup.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-1 mt-2">
+                            <div className="flex items-center gap-4 mb-2">
+                                <h2 className="text-4xl font-black tracking-tight">{sup.name}</h2>
+                                {sup.customer_type && (
+                                    <span className="bg-white/10 text-emerald-300 border border-emerald-400/30 px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest">
+                                        {sup.customer_type}
+                                    </span>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-6 text-slate-300 font-medium">
+                                {sup.tax_id && (
+                                    <div className="flex items-center gap-2">
+                                        <Building2 className="w-4 h-4 text-slate-500" /> SIRET: {sup.tax_id}
+                                    </div>
+                                )}
+                                {sup.contact_name && (
+                                    <div className="flex items-center gap-2">
+                                        <Users className="w-4 h-4 text-slate-500" /> {sup.contact_name}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        <div className="text-right mt-2 flex flex-col items-end">
+                            <button className="bg-white/10 hover:bg-white/20 border border-white/10 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-lg flex items-center gap-2">
+                                <FileText className="w-4 h-4" /> Nouveau Bon
+                            </button>
+                            <span className="text-xs text-slate-400 mt-3 font-medium">Créé le {new Date().toLocaleDateString('fr-FR')}</span>
+                        </div>
+                    </div>
+
+                    {/* Navigation Tabs */}
+                    <div className="flex items-center gap-8 mt-10 border-b border-white/10">
+                        <button onClick={() => setActiveTab('overview')} className={`pb-4 px-2 text-sm font-bold uppercase tracking-widest transition-all ${activeTab === 'overview' ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}>
+                            Vue d'Ensemble
+                        </button>
+                        <button onClick={() => setActiveTab('orders')} className={`pb-4 px-2 text-sm font-bold uppercase tracking-widest transition-all ${activeTab === 'orders' ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}>
+                            Commandes ({totalOrders})
+                        </button>
+                        <button onClick={() => setActiveTab('analytics')} className={`pb-4 px-2 text-sm font-bold uppercase tracking-widest transition-all ${activeTab === 'analytics' ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}>
+                            Analytics
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* TAB CONTENT */}
+            <div className="flex-1 overflow-y-auto">
+                <div className="max-w-6xl mx-auto w-full p-10 space-y-8">
+                    
+                    {activeTab === 'overview' && (
+                        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            {/* KPI Row */}
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+                                            <ShoppingCart className="w-5 h-5 text-blue-600" />
+                                        </div>
+                                    </div>
+                                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Total Dépensé</p>
+                                    <h3 className="text-2xl font-black text-slate-800">{totalSpent.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</h3>
+                                </div>
+                                
+                                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center">
+                                            <PackageOpen className="w-5 h-5 text-orange-600" />
+                                        </div>
+                                    </div>
+                                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Commandes en Cours</p>
+                                    <h3 className="text-2xl font-black text-slate-800">{pendingOrders}</h3>
+                                </div>
+
+                                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center">
+                                            <CheckCircle className="w-5 h-5 text-emerald-600" />
+                                        </div>
+                                    </div>
+                                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Total Réceptionné</p>
+                                    <h3 className="text-2xl font-black text-slate-800">{receivedOrders}</h3>
+                                </div>
+
+                                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center">
+                                            <Sparkles className="w-5 h-5 text-indigo-600" />
+                                        </div>
+                                    </div>
+                                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Panier Moyen</p>
+                                    <h3 className="text-2xl font-black text-slate-800">{avgOrderValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</h3>
+                                </div>
+                            </div>
+
+                            {/* Contact & Info */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                                    <div className="p-6 border-b border-slate-100 bg-slate-50">
+                                        <h3 className="font-black text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-slate-400"/> Informations de Contact</h3>
+                                    </div>
+                                    <div className="p-6 space-y-6">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
+                                                    <Users className="w-5 h-5 text-slate-500" />
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-0.5">Contact Principal</p>
+                                                    <p className="font-bold text-slate-800">{sup.contact_name || 'Non renseigné'}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
+                                                    <Phone className="w-5 h-5 text-slate-500" />
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-0.5">Téléphone</p>
+                                                    <p className="font-bold text-slate-800">{sup.phone || 'Non renseigné'}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
+                                                    <Mail className="w-5 h-5 text-slate-500" />
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-0.5">Email</p>
+                                                    <p className="font-bold text-blue-600 hover:underline cursor-pointer">{sup.email || 'Non renseigné'}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                                    <div className="p-6 border-b border-slate-100 bg-slate-50">
+                                        <h3 className="font-black text-slate-800 flex items-center gap-2"><MapPin className="w-5 h-5 text-slate-400"/> Adresse & Légal</h3>
+                                    </div>
+                                    <div className="p-6 flex-1 flex flex-col justify-center">
+                                        <div className="text-center p-6 bg-slate-50 rounded-2xl border border-slate-100 mb-6">
+                                            <MapPin className="w-8 h-8 text-slate-300 mx-auto mb-3" />
+                                            <p className="font-bold text-slate-600">{sup.address || 'Aucune adresse renseignée.'}</p>
+                                        </div>
+                                        {sup.tax_id && (
+                                            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-center gap-4">
+                                                <Building2 className="w-6 h-6 text-emerald-500" />
+                                                <div>
+                                                    <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Numéro SIRET / TVA</p>
+                                                    <p className="font-black text-emerald-900">{sup.tax_id}</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'orders' && (
+                        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            {supOrders.length > 0 ? (
+                                <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead className="bg-slate-50 border-b border-slate-200">
+                                            <tr>
+                                                <th className="py-4 px-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Référence</th>
+                                                <th className="py-4 px-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Date / Lignes</th>
+                                                <th className="py-4 px-6 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Statut</th>
+                                                <th className="py-4 px-6 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Montant</th>
+                                                <th className="py-4 px-6"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {supOrders.map(order => (
+                                                <tr key={order.id} className="hover:bg-slate-50 transition-colors group">
+                                                    <td className="py-4 px-6 font-black text-slate-900">{order.reference}</td>
+                                                    <td className="py-4 px-6">
+                                                        <span className="block font-bold text-slate-600">{new Date(order.created_at || Date.now()).toLocaleDateString('fr-FR')}</span>
+                                                        <span className="text-xs text-slate-400 font-medium">{order.lines_count} articles</span>
+                                                    </td>
+                                                    <td className="py-4 px-6 text-center">
+                                                        <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-md ${getStatusColor(order.status)}`}>{order.status}</span>
+                                                    </td>
+                                                    <td className="py-4 px-6 text-right font-black text-slate-800">
+                                                        {order.total_amount.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}
+                                                    </td>
+                                                    <td className="py-4 px-6 text-right">
+                                                        <button 
+                                                            onClick={() => {
+                                                                setCurrentTab('orders');
+                                                                openPODetails(order.id);
+                                                            }}
+                                                            className="p-2 bg-white border border-slate-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 rounded-lg opacity-0 group-hover:opacity-100 transition-all shadow-sm flex items-center gap-2 ml-auto"
+                                                        >
+                                                            <ArrowRight className="w-4 h-4" /> Voir Détails
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <div className="bg-white rounded-3xl border border-slate-200 p-16 text-center flex flex-col items-center justify-center shadow-sm">
+                                    <PackageOpen className="w-16 h-16 text-slate-200 mb-4" />
+                                    <h3 className="font-black text-slate-800 text-2xl mb-2">Aucune commande</h3>
+                                    <p className="font-medium text-slate-500 max-w-md">Vous n'avez pas encore passé de commande auprès de ce fournisseur.</p>
+                                    <button className="mt-6 bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-xl font-black shadow-lg shadow-emerald-500/30 flex items-center gap-2 transition-all">
+                                        <Plus className="w-5 h-5"/> Créer un Bon de Commande
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {activeTab === 'analytics' && (
+                        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            <div className="bg-white rounded-3xl border border-slate-200 p-16 text-center flex flex-col items-center justify-center shadow-sm">
+                                <BrainCircuit className="w-16 h-16 text-indigo-200 mb-4" />
+                                <h3 className="font-black text-slate-800 text-2xl mb-2">Analyse SCM & Performance</h3>
+                                <p className="font-medium text-slate-500 max-w-md">Les métriques avancées (délais de livraison moyens, taux de conformité, évolution des prix) seront bientôt disponibles pour ce fournisseur.</p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
     );
 }

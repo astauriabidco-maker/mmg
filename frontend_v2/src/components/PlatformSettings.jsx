@@ -6,11 +6,41 @@ import {
 import StationManager from './StationManager';
 import OperatorManager from './OperatorManager';
 import RBACMatrix from './RBACMatrix';
+import BusinessRulesManager from './BusinessRulesManager';
 import ConfigDashboard from '../pages/ConfigDashboard';
 
 export default function PlatformSettings() {
     const [activeTab, setActiveTab] = useState('general');
     const [isSaving, setIsSaving] = useState(false);
+    
+    // SMTP Test state
+    const [smtpConfig, setSmtpConfig] = useState({
+        host: '',
+        port: '587',
+        username: '',
+        password: '',
+        recipient: ''
+    });
+    const [smtpTestStatus, setSmtpTestStatus] = useState({ loading: false, message: '', type: '' });
+
+    const handleSmtpTest = async () => {
+        setSmtpTestStatus({ loading: true, message: 'Test en cours...', type: 'info' });
+        try {
+            const res = await fetch('/api/v2/config/test-smtp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(smtpConfig)
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setSmtpTestStatus({ loading: false, message: 'Succès: ' + data.message, type: 'success' });
+            } else {
+                setSmtpTestStatus({ loading: false, message: 'Erreur: ' + data.detail, type: 'error' });
+            }
+        } catch (e) {
+            setSmtpTestStatus({ loading: false, message: 'Erreur réseau', type: 'error' });
+        }
+    };
     
     // Simulate save
     const handleSave = () => {
@@ -231,25 +261,58 @@ export default function PlatformSettings() {
                                         </div>
                                     </div>
                                 </section>
+
+                                <div className="h-px bg-slate-100"></div>
+
+                                <section>
+                                    <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4">Serveur SMTP (Envoi d'Emails)</h3>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-2">Hôte (Host)</label>
+                                            <input type="text" placeholder="ex: smtp.gmail.com" value={smtpConfig.host} onChange={e => setSmtpConfig({...smtpConfig, host: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-2">Port</label>
+                                            <input type="text" placeholder="ex: 587 ou 465" value={smtpConfig.port} onChange={e => setSmtpConfig({...smtpConfig, port: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-2">Nom d'utilisateur (Email)</label>
+                                            <input type="text" placeholder="ex: contact@mmg.com" value={smtpConfig.username} onChange={e => setSmtpConfig({...smtpConfig, username: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-2">Mot de passe / Clé d'application</label>
+                                            <input type="password" placeholder="••••••••" value={smtpConfig.password} onChange={e => setSmtpConfig({...smtpConfig, password: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500" />
+                                        </div>
+                                        <div className="md:col-span-2 mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                                            <h4 className="text-sm font-bold text-slate-700 mb-4">Tester la configuration</h4>
+                                            <div className="flex items-end gap-4">
+                                                <div className="flex-1">
+                                                    <label className="block text-xs font-bold text-slate-500 mb-2">Email de destination pour le test</label>
+                                                    <input type="email" placeholder="votre.email@test.com" value={smtpConfig.recipient} onChange={e => setSmtpConfig({...smtpConfig, recipient: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500" />
+                                                </div>
+                                                <button 
+                                                    onClick={handleSmtpTest} 
+                                                    disabled={smtpTestStatus.loading || !smtpConfig.host || !smtpConfig.recipient}
+                                                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded-xl transition-all disabled:opacity-50"
+                                                >
+                                                    {smtpTestStatus.loading ? 'Envoi...' : 'Envoyer Email Test'}
+                                                </button>
+                                            </div>
+                                            {smtpTestStatus.message && (
+                                                <div className={`mt-4 p-3 rounded-lg text-sm font-bold ${smtpTestStatus.type === 'success' ? 'bg-green-100 text-green-700' : smtpTestStatus.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+                                                    {smtpTestStatus.message}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </section>
                             </div>
                         )}
 
                         {/* 3. WORKFLOW & AUTOMATION */}
                         {activeTab === 'workflow' && (
-                            <div className="space-y-8 animate-fade-in">
-                                <section>
-                                    <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4">Constantes de Production</h3>
-                                    <div className="grid grid-cols-2 gap-6">
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 mb-2">Longueur standard des Barres ALU (mm)</label>
-                                            <input type="number" defaultValue="6000" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500" />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 mb-2">Seuil d'alerte chute (%)</label>
-                                            <input type="number" defaultValue="15" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500" />
-                                        </div>
-                                    </div>
-                                </section>
+                            <div className="animate-fade-in">
+                                <BusinessRulesManager />
                             </div>
                         )}
 

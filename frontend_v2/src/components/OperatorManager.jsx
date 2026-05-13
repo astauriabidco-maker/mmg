@@ -7,7 +7,16 @@ export default function OperatorManager() {
     const [stations, setStations] = useState([]);
     const [loading, setLoading] = useState(true);
     const [roles, setRoles] = useState([]);
-    const [newUser, setNewUser] = useState({ username: '', pin: '', role: 'OPERATOR', station_codes: [] });
+    const [newUser, setNewUser] = useState({ 
+        username: '', 
+        first_name: '',
+        last_name: '',
+        email: '',
+        phone: '',
+        pin: '', 
+        role: 'OPERATOR', 
+        station_codes: [] 
+    });
     const [editingUser, setEditingUser] = useState(null);
     const [message, setMessage] = useState({ type: '', text: '' });
 
@@ -39,7 +48,16 @@ export default function OperatorManager() {
         try {
             await api.post('/v2/config/users', { ...newUser });
             setMessage({ type: 'success', text: `Utilisateur ${newUser.username} créé !` });
-            setNewUser({ username: '', pin: '', role: 'OPERATOR', station_codes: [] });
+            setNewUser({ 
+                username: '', 
+                first_name: '',
+                last_name: '',
+                email: '',
+                phone: '',
+                pin: '', 
+                role: 'OPERATOR', 
+                station_codes: [] 
+            });
             fetchData();
         } catch (e) {
             setMessage({ type: 'error', text: e.response?.data?.detail || 'Erreur de création' });
@@ -94,13 +112,56 @@ export default function OperatorManager() {
                 </h3>
 
                 <form onSubmit={editingUser ? handleUpdate : handleCreate} className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div className="col-span-1 md:col-span-2 lg:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Prénom</label>
+                                <input
+                                    type="text"
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                                    placeholder="ex: Jean"
+                                    value={editingUser ? (editingUser.first_name || '') : newUser.first_name}
+                                    onChange={e => editingUser ? setEditingUser({ ...editingUser, first_name: e.target.value }) : setNewUser({ ...newUser, first_name: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Nom de famille</label>
+                                <input
+                                    type="text"
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                                    placeholder="ex: Dupont"
+                                    value={editingUser ? (editingUser.last_name || '') : newUser.last_name}
+                                    onChange={e => editingUser ? setEditingUser({ ...editingUser, last_name: e.target.value }) : setNewUser({ ...newUser, last_name: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Email</label>
+                                <input
+                                    type="email"
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                                    placeholder="ex: jean.dupont@mmg.com"
+                                    value={editingUser ? (editingUser.email || '') : newUser.email}
+                                    onChange={e => editingUser ? setEditingUser({ ...editingUser, email: e.target.value }) : setNewUser({ ...newUser, email: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Téléphone</label>
+                                <input
+                                    type="tel"
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                                    placeholder="ex: 06 12 34 56 78"
+                                    value={editingUser ? (editingUser.phone || '') : newUser.phone}
+                                    onChange={e => editingUser ? setEditingUser({ ...editingUser, phone: e.target.value }) : setNewUser({ ...newUser, phone: e.target.value })}
+                                />
+                            </div>
+                        </div>
+
                         <div>
-                            <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Nom Utilisateur</label>
+                            <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Identifiant (Login)</label>
                             <input
                                 type="text"
                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
-                                placeholder="ex: Jean_Debit"
+                                placeholder="ex: j.dupont"
                                 value={editingUser ? editingUser.username : newUser.username}
                                 onChange={e => editingUser ? setEditingUser({ ...editingUser, username: e.target.value }) : setNewUser({ ...newUser, username: e.target.value })}
                                 required
@@ -120,13 +181,13 @@ export default function OperatorManager() {
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-400 uppercase mb-2">
-                                {editingUser ? 'Nouveau PIN (laisser vide pour inchangé)' : 'Code PIN (4 chiffres)'}
+                                {editingUser ? 'Nouveau Code/Mot de Passe (vide = inchangé)' : ((newUser.role === 'OPERATOR' || (editingUser && editingUser.role === 'OPERATOR')) ? 'Code PIN (4 chiffres)' : 'Mot de passe')}
                             </label>
                             <input
-                                type="text"
-                                maxLength="4"
+                                type={(newUser.role === 'OPERATOR' || (editingUser && editingUser.role === 'OPERATOR')) ? 'text' : 'password'}
+                                maxLength={(newUser.role === 'OPERATOR' || (editingUser && editingUser.role === 'OPERATOR')) ? "4" : "100"}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
-                                placeholder="1234"
+                                placeholder={(newUser.role === 'OPERATOR' || (editingUser && editingUser.role === 'OPERATOR')) ? "1234" : "Mot de passe sécurisé..."}
                                 value={editingUser ? (editingUser.pin || '') : newUser.pin}
                                 onChange={e => editingUser ? setEditingUser({ ...editingUser, pin: e.target.value }) : setNewUser({ ...newUser, pin: e.target.value })}
                                 required={!editingUser}
@@ -203,24 +264,36 @@ export default function OperatorManager() {
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
                         <thead>
-                            <tr className="text-slate-400 text-xs font-bold uppercase tracking-wider border-b border-slate-50">
-                                <th className="pb-4">Utilisateur</th>
-                                <th className="pb-4">Postes Assignés</th>
-                                <th className="pb-4 text-right">Actions</th>
+                            <tr className="bg-slate-50 border-b border-slate-200">
+                                <th className="p-4 text-left font-black text-slate-800">Employé</th>
+                                <th className="p-4 text-left font-black text-slate-800">Identifiant (Login)</th>
+                                <th className="p-4 text-left font-black text-slate-800">Contact</th>
+                                <th className="p-4 text-left font-black text-slate-800">Rôle / Accès</th>
+                                <th className="p-4 text-left font-black text-slate-800">Postes Assignés</th>
+                                <th className="p-4 text-center font-black text-slate-800">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             {users.map((user) => (
                                 <tr key={user.id} className="border-b border-slate-50 group hover:bg-slate-50/50 transition-colors">
-                                    <td className="py-4 font-bold text-slate-700 flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-black">
-                                            {user.username.slice(0, 2).toUpperCase()}
-                                        </div>
-                                        <div>
-                                            <p>{user.username}</p>
-                                            <p className="text-[10px] text-slate-400 font-medium uppercase tracking-widest">{user.role}</p>
+                                    <td className="p-4 font-bold text-slate-800">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-black shadow-inner">
+                                                {user.first_name ? user.first_name.charAt(0).toUpperCase() : user.username.charAt(0).toUpperCase()}
+                                            </div>
+                                            <div>
+                                                <div className="text-sm font-black">{user.first_name} {user.last_name}</div>
+                                                <div className="text-xs text-slate-400 font-medium">{user.role === 'OPERATOR' ? 'Atelier' : 'Bureau'}</div>
+                                            </div>
                                         </div>
                                     </td>
+                                    <td className="p-4 text-slate-600 font-mono text-sm font-medium">{user.username}</td>
+                                    <td className="p-4 text-slate-600 text-sm">
+                                        {user.email && <div className="text-xs">{user.email}</div>}
+                                        {user.phone && <div className="text-xs">{user.phone}</div>}
+                                        {(!user.email && !user.phone) && <span className="text-slate-300 italic">Non renseigné</span>}
+                                    </td>
+                                    <td className="p-4 text-[10px] text-slate-400 font-medium uppercase tracking-widest">{user.role}</td>
                                     <td className="py-4">
                                         <div className="flex flex-wrap gap-1.5">
                                             {user.stations?.length > 0 ? user.stations.map(s => (

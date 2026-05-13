@@ -146,3 +146,138 @@ def generate_quote_pdf(sale_id: int, db: Session = Depends(get_db)):
             "Content-Disposition": f"attachment; filename=Devis_{sale.reference}.pdf"
         }
     )
+
+@router.get("/invoice/{invoice_id}")
+def generate_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
+    invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle(
+        name='TitleStyle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor("#1e293b"),
+        spaceAfter=20,
+    )
+    
+    normal_style = styles["Normal"]
+    
+    # --- HEADER ---
+    header_data = [
+        [
+            Paragraph("<b>MMG MENUISERIES</b><br/>123 Zone Industrielle<br/>75000 PARIS<br/>Tél: 01 23 45 67 89", normal_style),
+            Paragraph(f"<b>FACTURE CLIENT</b><br/>Réf: {invoice.reference}<br/>Date: {invoice.issue_date.strftime('%d/%m/%Y')}", normal_style)
+        ]
+    ]
+    header_table = Table(header_data, colWidths=[300, 200])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+    ]))
+    elements.append(header_table)
+    elements.append(Spacer(1, 30))
+    
+    # --- CLIENT INFO ---
+    client_info = f"""
+    <b>Facturé à :</b><br/>
+    {invoice.client_name}<br/>
+    {invoice.client_address or 'Adresse non renseignée'}<br/>
+    {('SIRET: ' + invoice.client_siret) if invoice.client_siret else ''}
+    """
+    elements.append(Paragraph(client_info, normal_style))
+    elements.append(Spacer(1, 30))
+    
+    # --- TITLE ---
+    elements.append(Paragraph(f"FACTURE N° {invoice.reference}", title_style))
+    elements.append(Spacer(1, 20))
+    
+    # --- ITEMS TABLE ---
+    table_data = [["Description", "Quantité", "Prix Unitaire (HT)", "Total (HT)"]]
+    
+    for line in invoice.lines:
+        line_total = line.quantity * line.unit_price
+        table_data.append([
+            Paragraph(line.description, normal_style),
+            str(line.quantity),
+            f"{line.unit_price:.2f} €",
+            f"{line_total:.2f} €"
+        ])
+        
+    t = Table(table_data, colWidths=[280, 70, 80, 80])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1e293b")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#f8fafc")),
+        ('TEXTCOLOR', (0, 1), (-1, -1), colors.HexColor("#334155")),
+        ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('TOPPADDING', (0, 1), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 10),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1"))
+    ]))
+    elements.append(t)
+    elements.append(Spacer(1, 20))
+    
+    # --- TOTALS ---
+    totals_data = [
+        ["Total HT:", f"{invoice.subtotal:.2f} €"],
+        [f"TVA ({invoice.tax_rate}%):", f"{invoice.tax_amount:.2f} €"],
+        ["Total TTC:", f"{invoice.total:.2f} €"]
+    ]
+    
+    total_paid = sum(p.amount for p in invoice.payments)
+    remainder = invoice.total - total_paid
+    
+    totals_data.append(["Déjà Payé:", f"- {total_paid:.2f} €"])
+    totals_data.append(["Reste à payer:", f"{remainder:.2f} €"])
+    
+    totals_table = Table(totals_data, colWidths=[100, 100])
+    totals_table.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+        ('FONTNAME', (0, 2), (-1, 2), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 2), (-1, 2), 12),
+        ('TEXTCOLOR', (0, 2), (-1, 2), colors.HexColor("#1e293b")),
+        ('TOPPADDING', (0, 2), (-1, 2), 10),
+        ('LINEABOVE', (0, 2), (-1, 2), 1, colors.HexColor("#1e293b")),
+        ('FONTNAME', (0, 4), (-1, 4), 'Helvetica-Bold'),
+        ('TEXTCOLOR', (0, 4), (-1, 4), colors.HexColor("#dc2626")), # Red for remainder
+    ]))
+    
+    wrapper_table = Table([["", totals_table]], colWidths=[310, 200])
+    elements.append(wrapper_table)
+    
+    # --- FOOTER ---
+    elements.append(Spacer(1, 40))
+    footer_text = f"""
+    <b>Mentions Légales:</b><br/>
+    En cas de retard de paiement, indemnité forfaitaire pour frais de recouvrement: 40 euros.<br/>
+    <br/>
+    """
+    if invoice.qr_code_hash:
+        footer_text += f"<font size='7' color='gray'>Signature NF525: {invoice.qr_code_hash}</font>"
+        
+    elements.append(Paragraph(footer_text, normal_style))
+    
+    doc.build(elements)
+    
+    pdf_value = buffer.getvalue()
+    buffer.close()
+    
+    return Response(
+        content=pdf_value,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=Facture_{invoice.reference}.pdf"
+        }
+    )

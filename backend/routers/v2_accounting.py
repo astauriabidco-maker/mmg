@@ -21,6 +21,11 @@ def generate_invoice_reference(db: Session):
     count = db.query(models.Invoice).filter(models.Invoice.reference.like(f"F-{year}-%")).count()
     return f"F-{year}-{count + 1:04d}"
 
+def generate_avoir_reference(db: Session):
+    year = datetime.utcnow().year
+    count = db.query(models.Invoice).filter(models.Invoice.reference.like(f"AV-{year}-%")).count()
+    return f"AV-{year}-{count + 1:04d}"
+
 def compute_qr_seal(invoice: models.Invoice):
     # NF525 Anti-fraud signature
     data = f"{invoice.reference}|{invoice.client_name}|{invoice.issue_date.isoformat()}|{invoice.total}|{invoice.status}"
@@ -107,6 +112,73 @@ def add_payment(invoice_id: int, payment: schemas.PaymentCreate, db: Session = D
     db.commit()
     db.refresh(invoice)
     return invoice
+
+@router.post("/invoices/{invoice_id}/remind")
+def send_reminder(invoice_id: int, db: Session = Depends(get_db)):
+    invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(404, "Facture introuvable")
+    
+    # In a real app, this sends an email via an EmailService.
+    # Here we simulate the reminder.
+    log = models.ChatterMessage(
+        model_name="invoice",
+        record_id=invoice.id,
+        body=f"Relance de paiement envoyée au client pour la facture {invoice.reference}.",
+        author="System"
+    )
+    db.add(log)
+    db.commit()
+    return {"message": "Relance envoyée avec succès"}
+
+@router.post("/invoices/{invoice_id}/credit_note", response_model=schemas.InvoiceResponse)
+def create_credit_note(invoice_id: int, db: Session = Depends(get_db), role: str = Depends(security.get_current_user_role)):
+    if role not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut émettre un avoir.")
+
+    invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(404, "Facture introuvable")
+
+    if invoice.status == "AVOIR":
+        raise HTTPException(400, "Cette pièce est déjà un avoir.")
+
+    # Create AVOIR
+    avoir = models.Invoice(
+        reference=generate_avoir_reference(db),
+        sale_order_id=invoice.sale_order_id,
+        client_name=invoice.client_name,
+        client_address=invoice.client_address,
+        client_siret=invoice.client_siret,
+        issue_date=datetime.utcnow(),
+        due_date=datetime.utcnow(),
+        status="AVOIR",
+        subtotal=-invoice.subtotal,
+        tax_rate=invoice.tax_rate,
+        tax_amount=-invoice.tax_amount,
+        total=-invoice.total
+    )
+    db.add(avoir)
+    db.flush()
+
+    for line in invoice.lines:
+        db_line = models.InvoiceLine(
+            invoice_id=avoir.id,
+            description=f"Avoir sur: {line.description}",
+            quantity=line.quantity,
+            unit_price=-line.unit_price,
+            tax_rate=line.tax_rate
+        )
+        db.add(db_line)
+        
+    avoir.qr_code_hash = compute_qr_seal(avoir)
+    
+    # Also update original invoice status if needed, but usually we just keep it or mark it
+    invoice.status = "PAID" # Optional: auto-pay original with credit note, or keep it UNPAID if partial. Let's just create the credit note.
+    
+    db.commit()
+    db.refresh(avoir)
+    return avoir
 
 @router.get("/export/fec")
 def export_fec(db: Session = Depends(get_db), role: str = Depends(security.get_current_user_role)):

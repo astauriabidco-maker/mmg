@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart, Truck, Users, Sparkles } from 'lucide-react';
+import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart, Truck, Users, Sparkles, FileText, BarChart3 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }) {
@@ -8,18 +8,38 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
     const navigate = useNavigate();
     const location = useLocation();
 
-    const menuItems = [
-        { id: 'dashboard', label: 'Tableau de Bord', icon: LayoutDashboard, type: 'internal' },
-        { id: 'live', label: 'Atelier Live', icon: Activity, type: 'internal' },
-        { id: 'orders', label: 'Suivi Commandes', icon: ClipboardList, type: 'internal' },
-        { id: 'stock', label: 'Inventaire & Stock', icon: Archive, type: 'internal' },
-        { id: 'logistics', label: 'Logistique & Expédition', icon: Truck, type: 'internal' },
-        { id: 'purchases', label: 'Achats & Appro.', icon: Truck, type: 'internal' },
-        { id: 'sales', label: 'CRM & Devis (Ventes)', icon: Users, type: 'internal' },
-        { id: 'accounting', label: 'Facturation (NF525)', icon: ClipboardList, type: 'internal' },
-        { id: 'mmg', label: 'Dossiers Techniques', icon: ClipboardList, type: 'external', path: '/mmg' },
-        { id: 'pos', label: 'Point de Vente (POS)', icon: ShoppingCart, type: 'external', path: '/pos' },
-        { id: 'config', label: 'Configuration', icon: Settings, type: 'internal' },
+    const menuCategories = [
+        {
+            title: 'Atelier & Production',
+            items: [
+                { id: 'dashboard', label: 'Tableau de Bord', icon: LayoutDashboard, type: 'internal' },
+                { id: 'orders', label: 'Suivi Commandes', icon: ClipboardList, type: 'internal' },
+                { id: 'live', label: 'Atelier Live', icon: Activity, type: 'internal' },
+                { id: 'analytics_atelier', label: 'Analyse & Perf.', icon: BarChart3, type: 'internal' },
+            ]
+        },
+        {
+            title: 'Commerce & Ventes',
+            items: [
+                { id: 'sales', label: 'CRM & Devis', icon: Users, type: 'internal' },
+                { id: 'pos', label: 'Point de Vente (POS)', icon: ShoppingCart, type: 'external', path: '/pos' },
+                { id: 'accounting', label: 'Facturation (NF525)', icon: FileText, type: 'internal' },
+            ]
+        },
+        {
+            title: 'Supply Chain',
+            items: [
+                { id: 'stock', label: 'Inventaire & Stock', icon: Archive, type: 'internal' },
+                { id: 'purchases', label: 'Achats & Appro', icon: ShoppingCart, type: 'internal' },
+                { id: 'logistics', label: 'Logistique & Expédition', icon: Truck, type: 'internal' },
+            ]
+        },
+        {
+            title: 'Système',
+            items: [
+                { id: 'config', label: 'Options & Référentiels', icon: Settings, type: 'internal' },
+            ]
+        }
     ];
 
     return (
@@ -55,53 +75,62 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                     </div>
 
                     {/* Navigation */}
-                    <nav className="flex-1 px-4 py-6 space-y-1">
-                        {menuItems.map((item) => {
-                            const isSelected = activeView === item.id;
-                            const content = (
-                                <>
-                                    <item.icon className={`w-5 h-5 ${isSelected ? 'text-white' : 'text-slate-500'}`} />
-                                    {item.label}
-                                </>
-                            );
-                            const className = `
-                                w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all duration-200
-                                ${isSelected
-                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
-                                    : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}
-                            `;
+                    <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-6">
+                        {menuCategories.map((category, catIndex) => (
+                            <div key={catIndex} className="mb-8">
+                                <h3 className="px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
+                                    {category.title}
+                                </h3>
+                                <nav className="space-y-1">
+                                    {category.items.map((item) => {
+                                        const isSelected = activeView === item.id;
+                                        const content = (
+                                            <>
+                                                <item.icon className={`w-5 h-5 ${isSelected ? 'text-white' : 'text-slate-500'}`} />
+                                                {item.label}
+                                            </>
+                                        );
+                                        const className = `
+                                            w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold transition-all duration-200 text-sm
+                                            ${isSelected
+                                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
+                                                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}
+                                        `;
 
-                            if (item.type === 'external') {
-                                return (
-                                    <Link
-                                        key={item.id}
-                                        to={item.path}
-                                        className={className}
-                                        onClick={() => { if (window.innerWidth < 1024) setIsOpen(false); }}
-                                    >
-                                        {content}
-                                    </Link>
-                                );
-                            }
-
-                            return (
-                                <button
-                                    key={item.id}
-                                    onClick={() => {
-                                        if (location.pathname !== '/manager') {
-                                            navigate('/manager', { state: { view: item.id } });
-                                        } else if (setActiveView) {
-                                            setActiveView(item.id);
+                                        if (item.type === 'external') {
+                                            return (
+                                                <Link
+                                                    key={item.id}
+                                                    to={item.path}
+                                                    className={className}
+                                                    onClick={() => { if (window.innerWidth < 1024) setIsOpen(false); }}
+                                                >
+                                                    {content}
+                                                </Link>
+                                            );
                                         }
-                                        if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
-                                    }}
-                                    className={className}
-                                >
-                                    {content}
-                                </button>
-                            );
-                        })}
-                    </nav>
+
+                                        return (
+                                            <button
+                                                key={item.id}
+                                                onClick={() => {
+                                                    if (location.pathname !== '/manager') {
+                                                        navigate('/manager', { state: { view: item.id } });
+                                                    } else if (setActiveView) {
+                                                        setActiveView(item.id);
+                                                    }
+                                                    if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
+                                                }}
+                                                className={className}
+                                            >
+                                                {content}
+                                            </button>
+                                        );
+                                    })}
+                                </nav>
+                            </div>
+                        ))}
+                    </div>
 
                     {/* Footer */}
                     <div className="p-4 border-t border-slate-800 space-y-2">

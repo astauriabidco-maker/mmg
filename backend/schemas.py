@@ -7,6 +7,10 @@ from .models import MaterialType, StationName, UserRole, PlanningStatus
 
 class UserBase(BaseModel):
     username: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
     role: str = "OPERATOR"
     stations: List['Station'] = [] # Changed to list of Station objects
 
@@ -16,6 +20,10 @@ class UserCreate(UserBase):
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
     role: Optional[str] = None
     pin: Optional[str] = None # Optional PIN reset
     station_codes: Optional[List[str]] = None
@@ -219,6 +227,7 @@ class MMGCreate(BaseModel):
     options: MMGOptions
     configuration: MMGConfiguration
     logistics: Optional[MMGLogistics] = None
+    sale_order_id: Optional[int] = None
     photos: List[str]
     signature: str # Base64
 
@@ -227,6 +236,7 @@ class MMGResponse(BaseModel):
     reference: str
     client_name: str
     status: MMGStatus
+    sale_order_id: Optional[int] = None
     created_at: datetime
     
     class Config:
@@ -303,6 +313,8 @@ class ProductBase(BaseModel):
     product_type: str = "stockable"
     available_in_pos: bool = False
     image_url: Optional[str] = None
+    technical_doc_url: Optional[str] = None
+    compatible_series: Optional[str] = None
 
 class ProductCreate(ProductBase):
     variants: List[ProductVariantCreate] = []
@@ -514,6 +526,7 @@ class SaleOrderSchema(BaseModel):
     signed_at: Optional[datetime]
     signed_by_ip: Optional[str]
     lines: List[SaleOrderLineSchema] = []
+    mmg_dossiers: List[MMGResponse] = []
     class Config:
         from_attributes = True
 
@@ -607,6 +620,28 @@ class DeliveryRouteResponse(DeliveryRouteBase):
         from_attributes = True
 
 # --- POINT DE VENTE (POS) ---
+class POSCashMovementRequest(BaseModel):
+    movement_type: str # IN, OUT
+    amount: float
+    reason: str
+    author: str = "Admin"
+
+class POSCashMovementSchema(BaseModel):
+    id: int
+    session_id: int
+    movement_type: str
+    amount: float
+    reason: str
+    author: str
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class POSInvoicePaymentReq(BaseModel):
+    amount: float
+    method: str = "CASH"
+    author: str = "Admin"
+
 class POSSessionSchema(BaseModel):
     id: int
     reference: str
@@ -631,6 +666,7 @@ class POSCheckoutRequest(BaseModel):
     amount_paid: float
     tax_rate: float = 20.0
     currency: str = "EUR"
+    seller_name: Optional[str] = "Admin"
 
 class POSOrderLineSchema(BaseModel):
     id: int
@@ -654,3 +690,33 @@ class POSOrderSchema(BaseModel):
     lines: List[POSOrderLineSchema] = []
     class Config:
         from_attributes = True
+
+class BusinessRuleBase(BaseModel):
+    category: str
+    rule_key: str
+    value: str
+    value_type: str
+    description: Optional[str] = None
+
+class BusinessRuleCreate(BusinessRuleBase):
+    pass
+
+class BusinessRuleUpdate(BaseModel):
+    value: str
+
+class BusinessRuleSchema(BusinessRuleBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class SMTPTestRequest(BaseModel):
+    host: str
+    port: int
+    username: str
+    password: str
+    recipient: str
+
+UserBase.model_rebuild()
+User.model_rebuild()
+UserCreate.model_rebuild()
+UserUpdate.model_rebuild()
