@@ -22,14 +22,27 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private fun extractPlanningId(qrRef: String): Int? {
+    qrRef.trim().toIntOrNull()?.let { return it }
+
+    val match = Regex(
+        pattern = "(?:planning_id|planningId|planning|plan|PLN)[=:/-]?(\\d+)",
+        option = RegexOption.IGNORE_CASE
+    ).find(qrRef)
+
+    return match?.groupValues?.getOrNull(1)?.toIntOrNull()
+}
+
 @Composable
 fun ControlScreen(qrRef: String, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf("PENDING") }
     var timer by remember { mutableStateOf(0) }
+    var actionMessage by remember { mutableStateOf<String?>(null) }
     
     // Simulate Fetch Data
     val orderId = qrRef.replace("CMD-", "")
+    val planningId = remember(qrRef) { extractPlanningId(qrRef) }
 
     // Timer Logic
     LaunchedEffect(status) {
@@ -65,14 +78,18 @@ fun ControlScreen(qrRef: String, onBack: () -> Unit) {
 
     fun handleStart() {
         scope.launch {
-            val stationId = com.atelier.v1.data.NetworkModule.userStation ?: "MOBILE_UNKNOWN"
-            val req = com.atelier.v1.data.StartRequest(order_reference = qrRef, station = stationId)
+            val id = planningId
+            if (id == null) {
+                actionMessage = "planning_id absent du QR: action non envoyée."
+                return@launch
+            }
+            val req = com.atelier.v1.data.PlanningActionRequest(planningId = id)
             try {
-                val response = com.atelier.v1.data.NetworkModule.api.startProduction(req)
+                val response = com.atelier.v1.data.NetworkModule.api.startProduction(id)
                 if (response.isSuccessful) status = "IN_PROGRESS"
             } catch (e: Exception) {
                 // Offline Fallback
-                val json = moshi.adapter(com.atelier.v1.data.StartRequest::class.java).toJson(req)
+                val json = moshi.adapter(com.atelier.v1.data.PlanningActionRequest::class.java).toJson(req)
                 db.pendingActionDao().insert(
                     com.atelier.v1.data.PendingAction(type = "START", payloadJson = json)
                 )
@@ -84,13 +101,17 @@ fun ControlScreen(qrRef: String, onBack: () -> Unit) {
 
     fun handlePause() {
         scope.launch {
-            val stationId = com.atelier.v1.data.NetworkModule.userStation ?: "MOBILE_UNKNOWN"
-            val req = com.atelier.v1.data.StopRequest(order_reference = qrRef, station = stationId)
+            val id = planningId
+            if (id == null) {
+                actionMessage = "planning_id absent du QR: action non envoyée."
+                return@launch
+            }
+            val req = com.atelier.v1.data.PlanningActionRequest(planningId = id)
             try {
-                val response = com.atelier.v1.data.NetworkModule.api.pauseProduction(req)
+                val response = com.atelier.v1.data.NetworkModule.api.pauseProduction(id)
                 if (response.isSuccessful) status = "PAUSED"
             } catch (e: Exception) {
-                val json = moshi.adapter(com.atelier.v1.data.StopRequest::class.java).toJson(req)
+                val json = moshi.adapter(com.atelier.v1.data.PlanningActionRequest::class.java).toJson(req)
                 db.pendingActionDao().insert(
                     com.atelier.v1.data.PendingAction(type = "PAUSE", payloadJson = json)
                 )
@@ -102,16 +123,24 @@ fun ControlScreen(qrRef: String, onBack: () -> Unit) {
 
     fun handleDefect() {
         scope.launch {
-            val stationId = com.atelier.v1.data.NetworkModule.userStation ?: "MOBILE_UNKNOWN"
-            val req = com.atelier.v1.data.StopRequest(order_reference = qrRef, station = stationId)
+            val id = planningId
+            if (id == null) {
+                actionMessage = "planning_id absent du QR: action non envoyée."
+                return@launch
+            }
+            val notes = "Signalé depuis l'application mobile"
+            val req = com.atelier.v1.data.PlanningIssueActionRequest(planningId = id, notes = notes)
             try {
-                val response = com.atelier.v1.data.NetworkModule.api.reportDefect(req)
+                val response = com.atelier.v1.data.NetworkModule.api.reportIssue(
+                    id,
+                    com.atelier.v1.data.PlanningIssueRequest(notes = notes)
+                )
                 if (response.isSuccessful) status = "DEFECT"
             } catch (e: Exception) {
                 // Offline support
-                val json = moshi.adapter(com.atelier.v1.data.StopRequest::class.java).toJson(req)
+                val json = moshi.adapter(com.atelier.v1.data.PlanningIssueActionRequest::class.java).toJson(req)
                 db.pendingActionDao().insert(
-                    com.atelier.v1.data.PendingAction(type = "DEFECT", payloadJson = json)
+                    com.atelier.v1.data.PendingAction(type = "ISSUE", payloadJson = json)
                 )
                 status = "DEFECT (OFFLINE)"
                 scheduleSync()
@@ -121,15 +150,20 @@ fun ControlScreen(qrRef: String, onBack: () -> Unit) {
 
     fun handleStop() {
         scope.launch {
-             val req = com.atelier.v1.data.StopRequest(order_reference = qrRef, station = "MOBILE")
+            val id = planningId
+            if (id == null) {
+                actionMessage = "planning_id absent du QR: action non envoyée."
+                return@launch
+            }
+            val req = com.atelier.v1.data.PlanningActionRequest(planningId = id)
             try {
-                val response = com.atelier.v1.data.NetworkModule.api.stopProduction(req)
+                val response = com.atelier.v1.data.NetworkModule.api.stopProduction(id)
                 if (response.isSuccessful) {
                     status = "DONE"
                     timer = 0
                 }
             } catch (e: Exception) {
-                val json = moshi.adapter(com.atelier.v1.data.StopRequest::class.java).toJson(req)
+                val json = moshi.adapter(com.atelier.v1.data.PlanningActionRequest::class.java).toJson(req)
                 db.pendingActionDao().insert(
                     com.atelier.v1.data.PendingAction(type = "STOP", payloadJson = json)
                 )
@@ -184,6 +218,13 @@ fun ControlScreen(qrRef: String, onBack: () -> Unit) {
                     fontWeight = FontWeight.Black,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                planningId?.let {
+                    Text(
+                        text = "Planning #$it",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Gray
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 // Status Badge
@@ -199,6 +240,14 @@ fun ControlScreen(qrRef: String, onBack: () -> Unit) {
                     )
                 }
             }
+        }
+
+        actionMessage?.let {
+            Text(
+                text = it,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 12.dp)
+            )
         }
         
         // Reprint Action

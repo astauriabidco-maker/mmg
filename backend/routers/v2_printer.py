@@ -2,10 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
 from .. import models
+from ..core import security
 from .. import printer
 import os
 
-router = APIRouter(prefix="/v2/printer", tags=["printer"])
+router = APIRouter(
+    prefix="/v2/printer",
+    tags=["printer"],
+    dependencies=[Depends(security.get_current_user)],
+)
 
 @router.post("/reprint/{order_ref}")
 def reprint_label(order_ref: str, db: Session = Depends(get_db)):
@@ -44,6 +49,7 @@ def print_barcode(variant_id: int, db: Session = Depends(get_db)):
     zpl_data = f"^XA^FO50,50^ADN,36,20^FD{variant.reference}^FS^FO50,100^BCN,100,Y,N,N^FD{barcode}^FS^XZ"
     
     # Normally we would send this over TCP to printer IP (e.g. 9100) or save to file
+    os.makedirs("generated_qr", exist_ok=True)
     with open(f"generated_qr/{variant.reference}_barcode.zpl", "w") as f:
         f.write(zpl_data)
         

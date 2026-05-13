@@ -17,8 +17,8 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
         val actions = dao.getAll()
         
         val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
-        val startAdapter = moshi.adapter(StartRequest::class.java)
-        val stopAdapter = moshi.adapter(StopRequest::class.java)
+        val actionAdapter = moshi.adapter(PlanningActionRequest::class.java)
+        val issueAdapter = moshi.adapter(PlanningIssueActionRequest::class.java)
 
         if (actions.isEmpty()) return@withContext Result.success()
 
@@ -26,18 +26,26 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
             try {
                 when (action.type) {
                     "START" -> {
-                        val req = startAdapter.fromJson(action.payloadJson)!!
-                        val res = NetworkModule.api.startProduction(req)
+                        val req = actionAdapter.fromJson(action.payloadJson)!!
+                        val res = NetworkModule.api.startProduction(req.planningId)
                         if (res.isSuccessful) dao.delete(action)
                     }
                     "STOP" -> {
-                        val req = stopAdapter.fromJson(action.payloadJson)!!
-                        val res = NetworkModule.api.stopProduction(req)
+                        val req = actionAdapter.fromJson(action.payloadJson)!!
+                        val res = NetworkModule.api.stopProduction(req.planningId)
                         if (res.isSuccessful) dao.delete(action)
                     }
                     "PAUSE" -> {
-                        val req = stopAdapter.fromJson(action.payloadJson)!!
-                        val res = NetworkModule.api.pauseProduction(req)
+                        val req = actionAdapter.fromJson(action.payloadJson)!!
+                        val res = NetworkModule.api.pauseProduction(req.planningId)
+                        if (res.isSuccessful) dao.delete(action)
+                    }
+                    "ISSUE", "DEFECT" -> {
+                        val req = issueAdapter.fromJson(action.payloadJson)!!
+                        val res = NetworkModule.api.reportIssue(
+                            req.planningId,
+                            PlanningIssueRequest(notes = req.notes)
+                        )
                         if (res.isSuccessful) dao.delete(action)
                     }
                 }

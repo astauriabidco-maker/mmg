@@ -17,6 +17,7 @@ object NetworkModule {
     // Token stored in memory for simplicity (use EncryptedSharedPreferences in production)
     var authToken: String? = null
     var userStation: String? = null // Stored after login
+    var userStations: List<String> = emptyList()
 
     private val client = OkHttpClient.Builder()
         .addInterceptor { chain ->

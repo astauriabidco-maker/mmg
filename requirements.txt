@@ -16,3 +16,4 @@ python-multipart
 pdfplumber
 PyMuPDF
 openpyxl
+pytest

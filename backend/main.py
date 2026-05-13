@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+import os
 from . import models, database
 from .routers import api, v2_planning, v2_analytics, v2_printer, v2_ingest, v2_config, v2_mmg, v2_stock, v2_sales, v2_pos, v2_purchases, v2_suppliers, v2_pdf, v2_accounting, v2_logistics, v2_webhook
 from .core.websocket import manager
@@ -9,20 +10,25 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Initialize DB
 models.Base.metadata.create_all(bind=database.engine)
+get_db = database.get_db
 
 app = FastAPI(title="Atelier Menuiserie V1 Pro")
 
 # Configure CORS
+allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://localhost:7000").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # For production, specify ["http://localhost:5173"]
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Mount Uploads (Zero UI, API ONLY)
-import os
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 

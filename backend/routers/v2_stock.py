@@ -4,9 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
 from .. import models, schemas
-from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
-from ..core.security import SECRET_KEY, ALGORITHM
+from ..core.security import get_current_user, get_current_user_role, require_roles
 import time
 import io
 import openpyxl
@@ -14,36 +12,21 @@ from openpyxl.styles import Font, PatternFill
 from sqlalchemy import or_
 from ..services.bom_parser import parse_bom_file
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-def get_current_user_role(token: str = Depends(oauth2_scheme)):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload.get("role")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
 router = APIRouter(prefix="/v2/stock", tags=["stock"])
 
 @router.get("/products", response_model=List[schemas.ProductResponse])
-def get_products(db: Session = Depends(get_db)):
+def get_products(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return db.query(models.Product).all()
 
 @router.post("/products", response_model=schemas.ProductResponse)
-def create_product(product_data: schemas.ProductCreate, db: Session = Depends(get_db)):
+def create_product(product_data: schemas.ProductCreate, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
+    if role not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut créer des produits.")
+    
     existing = db.query(models.Product).filter(models.Product.reference_base == product_data.reference_base).first()
     if existing: raise HTTPException(400, "Base reference already exists")
     
-    new_product = models.Product(
-        reference_base=product_data.reference_base, 
-        name=product_data.name, 
-        material_type=product_data.material_type, 
-        unit=product_data.unit, 
-        supplier=product_data.supplier,
-        product_type=product_data.product_type,
-        available_in_pos=product_data.available_in_pos,
-        image_url=product_data.image_url
-    )
+    new_product = models.Product(**product_data.dict(exclude={'variants'}))
     db.add(new_product)
     db.commit()
     db.refresh(new_product)
@@ -56,7 +39,10 @@ def create_product(product_data: schemas.ProductCreate, db: Session = Depends(ge
     return new_product
 
 @router.put("/products/{product_id}", response_model=schemas.ProductResponse)
-def update_product(product_id: int, product_data: schemas.ProductBase, db: Session = Depends(get_db)):
+def update_product(product_id: int, product_data: schemas.ProductBase, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
+    if role not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut modifier des produits.")
+        
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product: raise HTTPException(404, "Product not found")
     for key, value in product_data.dict().items(): setattr(product, key, value)
@@ -69,12 +55,16 @@ import uuid
 import shutil
 
 @router.post("/products/upload_image")
-async def upload_product_image(file: UploadFile = File(...)):
+async def upload_product_image(file: UploadFile = File(...), role: str = Depends(get_current_user_role)):
+    if role not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Non autorisé.")
+        
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
     file_ext = os.path.splitext(file.filename)[1]
     new_filename = f"{uuid.uuid4().hex}{file_ext}"
     filepath = os.path.join("uploads", "products", new_filename)
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
     
     with open(filepath, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -83,7 +73,10 @@ async def upload_product_image(file: UploadFile = File(...)):
 
 
 @router.put("/variants/{variant_id}", response_model=schemas.ProductVariantResponse)
-def update_variant(variant_id: int, variant_data: schemas.ProductVariantBase, db: Session = Depends(get_db)):
+def update_variant(variant_id: int, variant_data: schemas.ProductVariantBase, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
+    if role not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Non autorisé.")
+        
     variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == variant_id).first()
     if not variant: raise HTTPException(404, "Variant not found")
     for key, value in variant_data.dict().items():
@@ -93,7 +86,7 @@ def update_variant(variant_id: int, variant_data: schemas.ProductVariantBase, db
     return variant
 
 @router.post("/products/{product_id}/variants", response_model=schemas.ProductVariantResponse)
-def add_variant(product_id: int, variant_data: schemas.ProductVariantCreate, db: Session = Depends(get_db)):
+def add_variant(product_id: int, variant_data: schemas.ProductVariantCreate, db: Session = Depends(get_db), role: str = Depends(require_roles("ADMIN", "MANAGER"))):
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product: raise HTTPException(404, "Product not found")
     new_variant = models.ProductVariant(product_id=product.id, **variant_data.dict())
@@ -106,11 +99,13 @@ from fastapi import BackgroundTasks
 
 # ODOO ENGINE: Stock Moves
 @router.post("/transaction") # Kept same endpoint name for UI compat momentarily, but treats it as an Odoo Move
-def create_transaction(tx: schemas.StockMoveCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def create_transaction(tx: schemas.StockMoveCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     from ..core.events import EventBus
-    # Legacy fallback: If UI doesn't provide locations, let's use the virtual ones
-    # Move positive amount = VIRTUAL_LOSS -> WH_STOCK
-    # Move negative amount = WH_STOCK -> VIRTUAL_LOSS
+    
+    role = user.get("role")
+    if role not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Privilèges insuffisants pour créer un mouvement de stock.")
+        
     variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == tx.variant_id).first()
     if not variant: raise HTTPException(404, "Variant not found")
     
@@ -150,7 +145,7 @@ def create_transaction(tx: schemas.StockMoveCreate, background_tasks: Background
         location_dest_id=tx.location_dest_id,
         quantity=qty,
         notes=tx.notes,
-        author="Système / Admin"
+        author=user.get("sub", "Admin")
     )
     db.add(new_move)
     
@@ -166,6 +161,17 @@ def create_transaction(tx: schemas.StockMoveCreate, background_tasks: Background
         dest_name = dest_loc.name if dest_loc else "Inconnu"
 
     msg = f"Mouvement de {qty} unité(s): {src_name} ➔ {dest_name} (Mvmt: {new_move.reference})"
+    
+    # Enrichment for Suppliers / Clients traceability
+    variant_db = db.query(models.ProductVariant).filter(models.ProductVariant.id == tx.variant_id).first()
+    supplier_name = variant_db.product.supplier if variant_db and variant_db.product and variant_db.product.supplier else "Fournisseur Inconnu"
+    
+    if tx.location_id and src_loc and src_loc.usage == 'supplier':
+        msg += f"\nRéception depuis : {supplier_name}"
+    elif tx.location_dest_id and dest_loc and dest_loc.usage == 'customer':
+        # Default customer text for manual delivery
+        msg += f"\nLivraison vers : Client"
+
     if tx.notes:
         msg += f"\nNote: {tx.notes}"
 
@@ -173,7 +179,7 @@ def create_transaction(tx: schemas.StockMoveCreate, background_tasks: Background
         model_name="variant",
         record_id=tx.variant_id,
         body=msg,
-        author="Admin (via UI)",
+        author=user.get("sub", "Admin"),
         is_system_log=True
     )
     db.add(audit_log)
@@ -212,7 +218,10 @@ def get_locations(db: Session = Depends(get_db)):
     return db.query(models.StockLocation).filter(models.StockLocation.is_active == True).all()
 
 @router.post("/locations", response_model=schemas.StockLocationResponse)
-def create_location(loc: schemas.StockLocationCreate, db: Session = Depends(get_db)):
+def create_location(loc: schemas.StockLocationCreate, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
+    if role not in ["ADMIN"]:
+        raise HTTPException(status_code=403, detail="Seul un Administrateur peut structurer les entrepôts.")
+        
     existing = db.query(models.StockLocation).filter(models.StockLocation.name == loc.name).first()
     if existing: raise HTTPException(400, "Location name already exists")
     db_loc = models.StockLocation(**loc.dict())
@@ -223,7 +232,7 @@ def create_location(loc: schemas.StockLocationCreate, db: Session = Depends(get_
 
 @router.delete("/locations/{loc_id}")
 def delete_location(loc_id: int, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
-    if role != "ADMIN":
+    if role not in ["ADMIN", "SUPER_ADMIN"]:
         raise HTTPException(status_code=403, detail="Seuls les administrateurs peuvent supprimer ou archiver des emplacements.")
 
     loc = db.query(models.StockLocation).filter(models.StockLocation.id == loc_id).first()
@@ -250,19 +259,32 @@ def delete_location(loc_id: int, db: Session = Depends(get_db), role: str = Depe
     if check_active_stock(loc_id):
         raise HTTPException(400, "Action Interdite : Cet emplacement (ou une de ses étagères) contient du stock actif. Transférez le stock avant la suppression/archivage.")
 
-    # Protection 3 : Archivage au lieu de suppression s'il y a un historique
+    # Get all descendants
+    def get_all_descendants(location_id):
+        children = db.query(models.StockLocation).filter(models.StockLocation.parent_id == location_id).all()
+        descendants = [c.id for c in children]
+        for c in children:
+            descendants.extend(get_all_descendants(c.id))
+        return descendants
+        
+    all_loc_ids = [loc_id] + get_all_descendants(loc_id)
+
+    # Protection 3 : Archivage au lieu de suppression s'il y a un historique dans l'arbre
     historical_moves = db.query(models.StockMove).filter(
-        (models.StockMove.location_id == loc_id) | 
-        (models.StockMove.location_dest_id == loc_id)
+        or_(
+            models.StockMove.location_id.in_(all_loc_ids),
+            models.StockMove.location_dest_id.in_(all_loc_ids)
+        )
     ).count()
 
     if historical_moves > 0:
-        # On archive
-        loc.is_active = False
+        # On archive tout l'arbre
+        db.query(models.StockLocation).filter(models.StockLocation.id.in_(all_loc_ids)).update({"is_active": False}, synchronize_session=False)
         db.commit()
         return {"status": "archived"}
     else:
-        # On supprime physiquement
+        # On supprime physiquement les Quants vides pour éviter une IntegrityError
+        db.query(models.StockQuant).filter(models.StockQuant.location_id.in_(all_loc_ids)).delete(synchronize_session=False)
         db.delete(loc)
         db.commit()
         return {"status": "deleted"}
@@ -282,12 +304,12 @@ def get_chatter(model_name: str, record_id: int, db: Session = Depends(get_db)):
     ).order_by(models.ChatterMessage.created_at.desc()).all()
 
 @router.post("/chatter", response_model=schemas.ChatterMessageResponse)
-def post_chatter_message(msg: schemas.ChatterMessageCreate, db: Session = Depends(get_db)):
+def post_chatter_message(msg: schemas.ChatterMessageCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     db_msg = models.ChatterMessage(
         model_name=msg.model_name,
         record_id=msg.record_id,
         body=msg.body,
-        author="Admin", # In real app, extract from current_user
+        author=user.get("sub", "User"),
         is_system_log=msg.is_system_log
     )
     db.add(db_msg)
@@ -304,8 +326,8 @@ def get_import_template():
     ws.title = "Import_PIM"
     headers = [
         "Reference_Parent", "Nom_Famille", "Matiere", "Unite", "Fournisseur", "Type_Article",
-        "Visible_Vente_PDV", "Reference_Variante", "Code_Barre", "Specificites_Couleur",
-        "Prix_Achat", "Seuil_Alerte"
+        "Visible_Vente_PDV", "Image_Lien", "Fiche_Tech_Lien", "Gammes_Compatibles", "Reference_Variante", "Code_Barre", "Specificites_Couleur",
+        "Prix_Achat", "Seuil_Alerte", "Chemin_Rangement"
     ]
     ws.append(headers)
     for col in range(1, len(headers) + 1):
@@ -314,9 +336,9 @@ def get_import_template():
     
     # Une ligne d'exemple
     ws.append([
-        "VEKA-70", "Dormant Veka 70", "PVC", "ml", "VEKA", "stockable",
-        "0", "VEKA-70-BLANC-G", "340001000211", "BLANC - GAUCHE",
-        25.50, 10
+        "3186", "Double poignée de porte Cortizo", "QUINCAILLERIE", "pce", "CORTIZO", "stockable",
+        "0", "", "COR 60, COR 70", "318601", "340001000211", "Blanc",
+        25.50, 10, "A1-R3-B"
     ])
     
     stream = io.BytesIO()
@@ -327,7 +349,10 @@ def get_import_template():
     return response
 
 @router.post("/import/upload")
-async def upload_import_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_import_file(file: UploadFile = File(...), db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
+    if role not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Import de masse réservé aux managers.")
+        
     if not file.filename.endswith('.xlsx'):
         raise HTTPException(400, "Le fichier doit être un .xlsx")
 
@@ -371,6 +396,8 @@ async def upload_import_file(file: UploadFile = File(...), db: Session = Depends
             
         # 1. Chercher ou créer le Product (Parent)
         product = db.query(models.Product).filter(models.Product.reference_base == ref_parent).first()
+        image_url = str(row.get("Image_Lien") or "").strip()
+        
         if not product:
             product = models.Product(
                 reference_base=ref_parent,
@@ -379,11 +406,16 @@ async def upload_import_file(file: UploadFile = File(...), db: Session = Depends
                 unit=str(row.get("Unite") or "pce"),
                 supplier=str(row.get("Fournisseur") or ""),
                 product_type=str(row.get("Type_Article") or "stockable"),
-                available_in_pos=True if str(row.get("Visible_Vente_PDV") or "") in ["1", "true", "oui", "OUI", "True", 1] else False
+                available_in_pos=True if str(row.get("Visible_Vente_PDV") or "") in ["1", "true", "oui", "OUI", "True", 1] else False,
+                image_url=image_url if image_url else None,
+                technical_doc_url=str(row.get("Fiche_Tech_Lien") or "").strip() or None,
+                compatible_series=str(row.get("Gammes_Compatibles") or "").strip()
             )
             db.add(product)
             db.flush() # get product.id
             created_products += 1
+        elif image_url and not product.image_url:
+            product.image_url = image_url # Update if provided and missing
             
         # 2. Créer la Variante (Enfant)
         variant = db.query(models.ProductVariant).filter(models.ProductVariant.reference == ref_var).first()
@@ -406,7 +438,8 @@ async def upload_import_file(file: UploadFile = File(...), db: Session = Depends
                 barcode=code_barre if code_barre else None,
                 color=str(row.get("Specificites_Couleur") or ""),
                 cost_price=cp,
-                min_threshold=mt
+                min_threshold=mt,
+                location=str(row.get("Chemin_Rangement") or "").strip()
             )
             db.add(variant)
             created_variants += 1
@@ -463,8 +496,12 @@ def export_inventory_xlsx(db: Session = Depends(get_db)):
     return response
 
 @router.post("/import-bom/{sale_order_id}")
-async def import_bom_for_sale_order(sale_order_id: int, background_tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def import_bom_for_sale_order(sale_order_id: int, background_tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     from ..core.events import EventBus
+    
+    if user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul le BE ou un Manager peut importer une nomenclature.")
+        
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_order_id).first()
     if not sale:
         raise HTTPException(404, "Sale Order introuvable")
@@ -540,6 +577,17 @@ async def import_bom_for_sale_order(sale_order_id: int, background_tasks: Backgr
             author="Système / Admin"
         )
         db.add(new_move)
+        
+        # Log to Chatter
+        audit_log = models.ChatterMessage(
+            model_name="variant",
+            record_id=variant.id,
+            body=f"Consommation pour Commande {sale.reference} (Nomenclature {file.filename}). Quantité réservée : {qty}",
+            author=user.get("sub", "BE / Admin"),
+            is_system_log=True
+        )
+        db.add(audit_log)
+        
         processed_count += 1
         
     sale.status = "READY_FOR_PROD"

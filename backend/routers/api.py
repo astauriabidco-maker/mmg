@@ -1,9 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from .. import database, schemas
+from ..core import security
 from ..services.production import ProductionService
 
-router = APIRouter(prefix="/production", tags=["api"])
+router = APIRouter(
+    prefix="/production",
+    tags=["api"],
+    dependencies=[Depends(security.get_current_user)],
+)
 
 # Legacy API, using database.get_db directly
 

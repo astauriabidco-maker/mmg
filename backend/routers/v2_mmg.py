@@ -8,8 +8,13 @@ import uuid
 from datetime import datetime
 from ..database import get_db
 from .. import models, schemas
+from ..core import security
 
-router = APIRouter(prefix="/v2/mmg", tags=["mmg"])
+router = APIRouter(
+    prefix="/v2/mmg",
+    tags=["mmg"],
+    dependencies=[Depends(security.get_current_user)],
+)
 
 # Helper to save base64 image
 def save_base64_image(base64_str: str, folder: str, prefix: str):
@@ -95,13 +100,41 @@ async def create_dossier(item: schemas.MMGCreate, db: Session = Depends(get_db))
         
         photos=",".join(photo_paths),
         signature=sig_path,
-        status=models.MMGStatus.SENT
+        status=models.MMGStatus.SENT,
+        sale_order_id=item.sale_order_id
     )
     
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
     
+    return db_item
+
+@router.post("/from-sale/{sale_id}", response_model=schemas.MMGResponse)
+def create_from_sale(sale_id: int, db: Session = Depends(get_db)):
+    sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_id).first()
+    if not sale:
+        raise HTTPException(404, "Devis introuvable")
+        
+    ref = generate_reference(db)
+    
+    db_item = models.MMG(
+        reference=ref,
+        client_name=sale.client_name,
+        client_contact=sale.client_contact,
+        client_address=sale.client_address,
+        client_email=sale.client_email,
+        sale_order_id=sale.id,
+        status=models.MMGStatus.SENT, # En attente de métré
+        
+        # Default empty/standard values
+        width=0, height=0, passage_height=0,
+        view_type="interior", opening_type="tirant", opening_side="gauche",
+        sash_count=1, material="ALU", product_series="Standard"
+    )
+    db.add(db_item)
+    db.commit()
+    db.refresh(db_item)
     return db_item
 
 @router.get("/", response_model=List[schemas.MMGResponse])
@@ -152,7 +185,7 @@ def get_dossier(dossier_id: int, db: Session = Depends(get_db)):
         quote_sent_at=db_item.quote_sent_at,
         photos=db_item.photos.split(",") if db_item.photos else [],
         signature=db_item.signature,
-        order_id=db_item.order_id
+        sale_order_id=db_item.sale_order_id
     )
 
 @router.patch("/{dossier_id}/status", response_model=schemas.MMGResponse)
@@ -323,8 +356,11 @@ def send_quote(dossier_id: int, db: Session = Depends(get_db)):
                 quantity=1.0,
                 unit_price=50.0
             ))
+            
+        db_item.sale_order_id = sale.id
     else:
         existing_sale.status = "SENT"
+        db_item.sale_order_id = existing_sale.id
         
     db_item.quote_sent_at = datetime.utcnow()
     db.commit()

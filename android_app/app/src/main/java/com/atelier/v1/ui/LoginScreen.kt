@@ -40,14 +40,16 @@ fun LoginScreen(onLoginSuccess: (Boolean) -> Unit) {
             scope.launch {
                 try {
                     val response = com.atelier.v1.data.NetworkModule.api.login(
-                        com.atelier.v1.data.LoginRequest(username = "admin", pin = pin)
+                        username = "admin",
+                        password = pin
                     )
                     
                     if (response.isSuccessful && response.body() != null) {
                         val body = response.body()!!
                         // Save Token & Station
                         com.atelier.v1.data.NetworkModule.authToken = body.access_token
-                        com.atelier.v1.data.NetworkModule.userStation = body.station
+                        com.atelier.v1.data.NetworkModule.userStations = body.stations
+                        com.atelier.v1.data.NetworkModule.userStation = body.stations.firstOrNull()
                         
                         // Check Role
                         if (body.role == "ADMIN") {

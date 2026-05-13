@@ -4,11 +4,12 @@ from typing import List, Dict, Any
 from pydantic import BaseModel
 from ..database import get_db
 from .. import models, schemas
+from ..core.security import get_current_user, require_roles
 
 router = APIRouter(prefix="/v2/planning", tags=["planning"])
 
 @router.get("/{station}", response_model=List[schemas.Planning])
-def get_queue(station: str, db: Session = Depends(get_db)):
+def get_queue(station: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Get pending or in_progress items for this station, ordered by priority
     queue = db.query(models.Planning).filter(
         models.Planning.station == station,
@@ -26,22 +27,32 @@ class CuttingRequest(BaseModel):
     bar_length: float = 6000.0 # Standard bar length in mm
 
 @router.post("/optimize-cutting")
-def optimize_cutting_plan(req: CuttingRequest):
+def optimize_cutting_plan(req: CuttingRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """
     Simulated "Directeur de Production IA".
     Uses a greedy approach (First Fit Decreasing) for 1D Bin Packing to optimize cuts.
-    In a real AI scenario, this might use genetic algorithms or ML for complex constraints (grain direction, etc.)
+    Now dynamically connected to the BusinessRules database!
     """
-    pieces = sorted(req.pieces, reverse=True)
+    bar_length_rule = db.query(models.BusinessRule).filter(models.BusinessRule.rule_key == 'longueur_barre_alu').first()
+    blade_thickness_rule = db.query(models.BusinessRule).filter(models.BusinessRule.rule_key == 'epaisseur_lame').first()
+    alert_threshold_rule = db.query(models.BusinessRule).filter(models.BusinessRule.rule_key == 'seuil_chute').first()
+    
+    actual_bar_length = float(bar_length_rule.value) if bar_length_rule else req.bar_length
+    blade_thickness = float(blade_thickness_rule.value) if blade_thickness_rule else 4.0
+    alert_threshold = float(alert_threshold_rule.value) if alert_threshold_rule else 15.0
+
+    # Adjust piece sizes by adding blade thickness to account for cut loss
+    adjusted_pieces = [p + blade_thickness for p in req.pieces]
+    pieces = sorted(adjusted_pieces, reverse=True)
     bars = [] # List of bars, where each bar is a list of pieces
     
     for piece in pieces:
-        if piece > req.bar_length:
-            raise HTTPException(400, f"Piece {piece}mm is longer than the bar {req.bar_length}mm")
+        if piece > actual_bar_length:
+            raise HTTPException(400, f"Piece (avec lame) {piece}mm est plus longue que la barre de {actual_bar_length}mm")
             
         placed = False
         for bar in bars:
-            if sum(bar) + piece <= req.bar_length:
+            if sum(bar) + piece <= actual_bar_length:
                 bar.append(piece)
                 placed = True
                 break
@@ -50,31 +61,35 @@ def optimize_cutting_plan(req: CuttingRequest):
             bars.append([piece])
             
     # Calculate stats
-    total_material_used = len(bars) * req.bar_length
+    total_material_used = len(bars) * actual_bar_length
     total_pieces_length = sum(pieces)
     waste_percentage = ((total_material_used - total_pieces_length) / total_material_used) * 100 if total_material_used > 0 else 0
     
     formatted_bars = []
     for idx, bar in enumerate(bars):
         used = sum(bar)
-        waste = req.bar_length - used
+        waste = actual_bar_length - used
+        # Revert blade thickness for display purposes so user sees their requested length
+        original_cuts = [c - blade_thickness for c in bar]
         formatted_bars.append({
             "bar_id": idx + 1,
-            "cuts": bar,
+            "cuts": original_cuts,
             "used": used,
             "waste": waste,
-            "utilization": (used / req.bar_length) * 100
+            "utilization": (used / actual_bar_length) * 100
         })
         
+    ai_status = "⚠️ ATTENTION" if waste_percentage > alert_threshold else "✅ OPTIMUM"
+    
     return {
         "total_bars_required": len(bars),
         "total_waste_percentage": round(waste_percentage, 2),
         "bars": formatted_bars,
-        "ai_message": f"🧠 L'IA a optimisé la découpe : {len(bars)} barres requises avec un taux de chute de seulement {round(waste_percentage, 2)}%."
+        "ai_message": f"🧠 Optimisation dynamique : Lame ({blade_thickness}mm). {len(bars)} barres ({actual_bar_length}mm) requises. Chute : {round(waste_percentage, 2)}% ({ai_status})."
     }
 
 @router.post("/", response_model=schemas.Planning)
-def add_to_planning(item: schemas.PlanningCreate, db: Session = Depends(get_db)):
+def add_to_planning(item: schemas.PlanningCreate, db: Session = Depends(get_db), role: str = Depends(require_roles("ADMIN", "MANAGER"))):
     # Find order
     order = db.query(models.Order).filter(models.Order.reference == item.order_reference).first()
     if not order:
@@ -91,10 +106,31 @@ def add_to_planning(item: schemas.PlanningCreate, db: Session = Depends(get_db))
     db.refresh(new_plan)
     return new_plan
 
-from ..core.security import get_current_user
+class PlanningUpdateRequest(BaseModel):
+    priority: int = None
+    assigned_to: str = None
+    status: str = None
+
+@router.put("/{planning_id}")
+async def update_planning(planning_id: int, req: PlanningUpdateRequest, db: Session = Depends(get_db), role: str = Depends(require_roles("ADMIN", "MANAGER"))):
+    from ..core.websocket import manager
+    task = db.query(models.Planning).filter(models.Planning.id == planning_id).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+        
+    if req.priority is not None:
+        task.priority = req.priority
+    if req.assigned_to is not None:
+        task.assigned_to = req.assigned_to
+    if req.status is not None:
+        task.status = req.status
+        
+    db.commit()
+    await manager.broadcast("refresh")
+    return {"status": "updated"}
 
 @router.post("/{planning_id}/start")
-async def start_task(planning_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+async def start_task(planning_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from ..core.websocket import manager
     from datetime import datetime
     
@@ -103,14 +139,15 @@ async def start_task(planning_id: int, db: Session = Depends(get_db), current_us
         raise HTTPException(404, "Task not found")
         
     task.status = models.PlanningStatus.IN_PROGRESS
-    task.assigned_to = current_user.username
+    operator_name = current_user.get("sub", "Operator")
+    task.assigned_to = operator_name
     
     # Create Production Log
     log = models.ProductionLog(
         order_id=task.order_id,
         station=task.station,
         material="Unknown", # Should fetch from order
-        operator_name=current_user.username,
+        operator_name=operator_name,
         start_time=datetime.utcnow()
     )
     # Fetch material from order
@@ -127,7 +164,7 @@ async def start_task(planning_id: int, db: Session = Depends(get_db), current_us
 # Logic replaced by DB-driven workflow in stop_task
 
 @router.post("/{planning_id}/pause")
-async def pause_task(planning_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+async def pause_task(planning_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from ..core.websocket import manager
     from datetime import datetime
     
@@ -156,7 +193,7 @@ async def pause_task(planning_id: int, db: Session = Depends(get_db), current_us
     return {"status": "paused"}
 
 @router.post("/{planning_id}/stop")
-async def stop_task(planning_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+async def stop_task(planning_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from ..core.websocket import manager
     from datetime import datetime
     
@@ -242,7 +279,7 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db), current_use
     return {"status": "stopped", "next_station": next_station}
 
 @router.post("/{planning_id}/issue")
-async def report_issue(planning_id: int, item: schemas.PlanningIssue, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+async def report_issue(planning_id: int, item: schemas.PlanningIssue, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from ..core.websocket import manager
     from datetime import datetime
     
