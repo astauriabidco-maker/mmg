@@ -342,7 +342,7 @@ def sign_quote(token: str, request: Request, db: Session = Depends(get_db)):
         reference=generate_invoice_reference(db),
         sale_order_id=order.id,
         client_name=order.client_name,
-        client_address=order.client_email, # using email as fallback if address not present
+        client_address=order.client_address or order.client_email,
         client_siret="", # Not in sale order currently
         due_date=current_time + timedelta(days=30), # Default 30 days
         status="UNPAID",

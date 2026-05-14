@@ -29,6 +29,22 @@ class ProductionService:
         ).first()
 
     @staticmethod
+    def get_or_create_planning(db: Session, order_id: int, station: str):
+        planning = db.query(models.Planning).filter(
+            models.Planning.order_id == order_id,
+            models.Planning.station == station
+        ).first()
+        if not planning:
+            planning = models.Planning(
+                order_id=order_id,
+                station=station,
+                priority=1,
+                status=models.PlanningStatus.PENDING
+            )
+            db.add(planning)
+        return planning
+
+    @staticmethod
     def start_production(db: Session, order_reference: str, station: str, material: str):
         order = ProductionService.create_order_if_not_exists(db, order_reference, material)
         
@@ -38,6 +54,8 @@ class ProductionService:
             return None # Or raise Error
         
         logger.info(f"Starting production: {order_reference} on {station}")
+        planning = ProductionService.get_or_create_planning(db, order.id, station)
+        planning.status = models.PlanningStatus.IN_PROGRESS
         new_log = models.ProductionLog(
             order_id=order.id,
             station=station,
@@ -63,6 +81,8 @@ class ProductionService:
         active.end_time = datetime.now()
         active.duration_seconds = int((active.end_time - active.start_time).total_seconds())
         logger.info(f"Stopped production: {order_reference} on {station} - Duration: {active.duration_seconds}s")
+        planning = ProductionService.get_or_create_planning(db, order.id, station)
+        planning.status = models.PlanningStatus.DONE
         
         db.commit()
         db.refresh(active)
