@@ -77,7 +77,7 @@ from . import schemas
 def create_order(order: schemas.OrderCreate, db: Session = Depends(database.get_db)):
     db_order = db.query(models.Order).filter(models.Order.reference == order.reference).first()
     if db_order: raise HTTPException(400, "Exists")
-    new_order = models.Order(**order.dict())
+    new_order = models.Order(**order.model_dump())
     db.add(new_order)
     db.commit()
     db.refresh(new_order)

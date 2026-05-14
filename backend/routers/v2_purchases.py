@@ -96,7 +96,11 @@ def get_purchase_orders(db: Session = Depends(get_db)):
     return result
 
 @router.post("/")
-def create_purchase_order(data: PurchaseOrderCreate, db: Session = Depends(get_db)):
+def create_purchase_order(
+    data: PurchaseOrderCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
     # Generate PO reference
     current_year = datetime.now().year
     count = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.reference.like(f"PO-{current_year}-%")).count() + 1
@@ -108,7 +112,7 @@ def create_purchase_order(data: PurchaseOrderCreate, db: Session = Depends(get_d
         expected_date=data.expected_date,
         notes=data.notes,
         status=models.PurchaseOrderStatus.DRAFT,
-        author="Admin" # TODO: get from auth
+        author=current_user.get("sub", "unknown")
     )
     db.add(po)
     db.flush()

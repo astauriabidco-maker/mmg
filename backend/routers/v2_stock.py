@@ -30,13 +30,13 @@ def create_product(product_data: schemas.ProductCreate, db: Session = Depends(ge
     existing = db.query(models.Product).filter(models.Product.reference_base == product_data.reference_base).first()
     if existing: raise HTTPException(400, "Base reference already exists")
     
-    new_product = models.Product(**product_data.dict(exclude={'variants'}))
+    new_product = models.Product(**product_data.model_dump(exclude={'variants'}))
     db.add(new_product)
     db.commit()
     db.refresh(new_product)
     
     for v_data in product_data.variants:
-        new_variant = models.ProductVariant(product_id=new_product.id, **v_data.dict())
+        new_variant = models.ProductVariant(product_id=new_product.id, **v_data.model_dump())
         db.add(new_variant)
     db.commit()
     db.refresh(new_product)
@@ -49,7 +49,7 @@ def update_product(product_id: int, product_data: schemas.ProductBase, db: Sessi
         
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product: raise HTTPException(404, "Product not found")
-    for key, value in product_data.dict().items(): setattr(product, key, value)
+    for key, value in product_data.model_dump().items(): setattr(product, key, value)
     db.commit()
     db.refresh(product)
     return product
@@ -83,7 +83,7 @@ def update_variant(variant_id: int, variant_data: schemas.ProductVariantBase, db
         
     variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == variant_id).first()
     if not variant: raise HTTPException(404, "Variant not found")
-    for key, value in variant_data.dict().items():
+    for key, value in variant_data.model_dump().items():
         if key != "quantity_in_stock": setattr(variant, key, value)
     db.commit()
     db.refresh(variant)
@@ -93,7 +93,7 @@ def update_variant(variant_id: int, variant_data: schemas.ProductVariantBase, db
 def add_variant(product_id: int, variant_data: schemas.ProductVariantCreate, db: Session = Depends(get_db), role: str = Depends(require_roles("ADMIN", "MANAGER"))):
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product: raise HTTPException(404, "Product not found")
-    new_variant = models.ProductVariant(product_id=product.id, **variant_data.dict())
+    new_variant = models.ProductVariant(product_id=product.id, **variant_data.model_dump())
     db.add(new_variant)
     db.commit()
     db.refresh(new_variant)
@@ -228,7 +228,7 @@ def create_location(loc: schemas.StockLocationCreate, db: Session = Depends(get_
         
     existing = db.query(models.StockLocation).filter(models.StockLocation.name == loc.name).first()
     if existing: raise HTTPException(400, "Location name already exists")
-    db_loc = models.StockLocation(**loc.dict())
+    db_loc = models.StockLocation(**loc.model_dump())
     db.add(db_loc)
     db.commit()
     db.refresh(db_loc)

@@ -208,7 +208,11 @@ def get_pipeline_stages(db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=schemas.SaleOrderSchema, dependencies=AUTH_DEPENDENCIES)
-def create_sale_order(order_req: schemas.SaleOrderCreate, db: Session = Depends(get_db)):
+def create_sale_order(
+    order_req: schemas.SaleOrderCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     date_str = datetime.now().strftime("%Y-%m-%d-%H%M")
     ref = f"DEV-{date_str}"
     
@@ -223,7 +227,7 @@ def create_sale_order(order_req: schemas.SaleOrderCreate, db: Session = Depends(
         currency=order_req.currency,
         notes=order_req.notes,
         status="DRAFT",
-        author="Admin" # TODO link with user
+        author=current_user.get("sub", "unknown")
     )
     db.add(order)
     db.flush()
@@ -272,7 +276,8 @@ def update_sale_status(order_id: int, status: str, background_tasks: BackgroundT
     # Generate portal link
     portal_link = None
     if order.signature_token:
-        portal_link = f"http://localhost:5173/portal/sign/{order.signature_token}"
+        frontend_base_url = os.environ.get("FRONTEND_BASE_URL", "http://localhost:5000").rstrip("/")
+        portal_link = f"{frontend_base_url}/portal/sign/{order.signature_token}"
         
     return {"message": f"Statut mis à jour : {status}", "portal_link": portal_link}
 

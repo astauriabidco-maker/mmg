@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
 from datetime import datetime
 from .models import MaterialType, StationName, UserRole, PlanningStatus
@@ -31,8 +31,7 @@ class UserUpdate(BaseModel):
 class User(UserBase):
     id: int
     is_active: bool
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class Token(BaseModel):
     access_token: str
@@ -58,8 +57,7 @@ class ClientCreate(ClientBase):
 class ClientResponse(ClientBase):
     id: int
     created_at: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class SupplierBase(BaseModel):
     name: str
@@ -76,8 +74,7 @@ class SupplierCreate(SupplierBase):
 class SupplierResponse(SupplierBase):
     id: int
     created_at: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- PLANNING ---
 
@@ -98,8 +95,7 @@ class Planning(PlanningBase):
     order: Optional['Order'] = None
     issue_notes: Optional[str] = None
     created_at: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- LOGS ---
 
@@ -114,8 +110,7 @@ class ProductionLog(ProductionLogBase):
     id: int
     order_id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- ACTIONS ---
 
@@ -149,8 +144,7 @@ class Order(OrderBase):
     id: int
     logs: List[ProductionLog] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- STATIONS ---
 
@@ -165,8 +159,7 @@ class StationCreate(StationBase):
 
 class Station(StationBase):
     id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- MMG DIGITAL ---
 
@@ -239,8 +232,7 @@ class MMGResponse(BaseModel):
     sale_order_id: Optional[int] = None
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class MMGDetail(MMGResponse):
     client_contact: str
@@ -277,8 +269,7 @@ class MMGDetail(MMGResponse):
     signature: str
     order_id: Optional[int]
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- STOCK V3 PIM ---
 from typing import List
@@ -301,8 +292,7 @@ class ProductVariantCreate(ProductVariantBase):
 class ProductVariantResponse(ProductVariantBase):
     id: int
     product_id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ProductBase(BaseModel):
     reference_base: str
@@ -322,8 +312,7 @@ class ProductCreate(ProductBase):
 class ProductResponse(ProductBase):
     id: int
     variants: List[ProductVariantResponse] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class StockLocationBase(BaseModel):
     name: str
@@ -336,8 +325,7 @@ class StockLocationCreate(StockLocationBase):
 
 class StockLocationResponse(StockLocationBase):
     id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class StockQuantBase(BaseModel):
     variant_id: int
@@ -347,8 +335,7 @@ class StockQuantBase(BaseModel):
 class StockQuantResponse(StockQuantBase):
     id: int
     location: StockLocationResponse
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class StockMoveCreate(BaseModel):
     variant_id: int
@@ -368,8 +355,7 @@ class StockMoveResponse(BaseModel):
     location_id: Optional[int] = None
     location_dest_id: Optional[int] = None
     notes: Optional[str] = None
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- REGLAGES & REFERENTIELS (CONFIG) ---
 class AppConfigBase(BaseModel):
@@ -381,8 +367,7 @@ class AppConfigCreate(AppConfigBase):
 
 class AppConfigResponse(AppConfigBase):
     id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- CHATTER (AUDIT LOG) ---
 class ChatterMessageBase(BaseModel):
@@ -398,8 +383,7 @@ class ChatterMessageResponse(ChatterMessageBase):
     id: int
     author: str
     created_at: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- RBAC ---
 
@@ -408,8 +392,7 @@ class PermissionSchema(BaseModel):
     code: str
     module: str
     description: str
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class RoleCreate(BaseModel):
     name: str
@@ -420,8 +403,7 @@ class RoleSchema(BaseModel):
     name: str
     description: str
     permissions: List[PermissionSchema] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- SALES & POS ---
 
@@ -431,8 +413,7 @@ class POSOrderLineSchema(BaseModel):
     product_name: str
     quantity: float
     unit_price: float
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class POSOrderSchema(BaseModel):
     id: int
@@ -446,8 +427,7 @@ class POSOrderSchema(BaseModel):
     amount_paid: float
     amount_return: float
     lines: List[POSOrderLineSchema] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class POSSessionSchema(BaseModel):
     id: int
@@ -459,8 +439,7 @@ class POSSessionSchema(BaseModel):
     closing_cash: Optional[float]
     status: str
     orders: List[POSOrderSchema] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class POSCartItem(BaseModel):
     variant_id: int
@@ -504,8 +483,7 @@ class SaleOrderLineSchema(BaseModel):
     unit_price: float
     discount_pct: float
     visual_config: Optional[str] = None
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class SaleOrderSchema(BaseModel):
     id: int
@@ -527,8 +505,7 @@ class SaleOrderSchema(BaseModel):
     signed_by_ip: Optional[str]
     lines: List[SaleOrderLineSchema] = []
     mmg_dossiers: List[MMGResponse] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- FACTURATION ---
 class PaymentBase(BaseModel):
@@ -542,8 +519,7 @@ class PaymentCreate(PaymentBase):
 class PaymentResponse(PaymentBase):
     id: int
     payment_date: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class InvoiceLineBase(BaseModel):
     description: str
@@ -563,8 +539,7 @@ class InvoiceCreate(InvoiceBase):
 
 class InvoiceLineResponse(InvoiceLineBase):
     id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class InvoiceResponse(InvoiceBase):
     id: int
@@ -578,8 +553,7 @@ class InvoiceResponse(InvoiceBase):
     qr_code_hash: Optional[str] = None
     lines: List[InvoiceLineResponse] = []
     payments: List[PaymentResponse] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- LOGISTIQUE & LIVRAISON ---
 class DeliveryNoteBase(BaseModel):
@@ -599,8 +573,7 @@ class DeliveryNoteResponse(DeliveryNoteBase):
     route_id: Optional[int] = None
     signed_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DeliveryRouteBase(BaseModel):
     driver_name: str
@@ -616,8 +589,7 @@ class DeliveryRouteResponse(DeliveryRouteBase):
     reference: str
     notes: List[DeliveryNoteResponse] = []
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- POINT DE VENTE (POS) ---
 class POSCashMovementRequest(BaseModel):
@@ -634,8 +606,7 @@ class POSCashMovementSchema(BaseModel):
     reason: str
     author: str
     created_at: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class POSInvoicePaymentReq(BaseModel):
     amount: float
@@ -651,8 +622,7 @@ class POSSessionSchema(BaseModel):
     starting_cash: float
     closing_cash: Optional[float] = None
     status: str
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class POSCartItem(BaseModel):
     variant_id: int
@@ -674,8 +644,7 @@ class POSOrderLineSchema(BaseModel):
     product_name: str
     quantity: float
     unit_price: float
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class POSOrderSchema(BaseModel):
     id: int
@@ -688,8 +657,7 @@ class POSOrderSchema(BaseModel):
     amount_paid: float
     amount_return: float
     lines: List[POSOrderLineSchema] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class BusinessRuleBase(BaseModel):
     category: str
@@ -706,8 +674,7 @@ class BusinessRuleUpdate(BaseModel):
 
 class BusinessRuleSchema(BusinessRuleBase):
     id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class SMTPTestRequest(BaseModel):
     host: str

@@ -22,7 +22,7 @@ def create_station(station: schemas.StationCreate, db: Session = Depends(get_db)
     if existing:
         raise HTTPException(400, "Station code already exists")
     
-    new_station = models.Station(**station.dict())
+    new_station = models.Station(**station.model_dump())
     db.add(new_station)
     db.commit()
     db.refresh(new_station)
@@ -34,7 +34,7 @@ def update_station(station_id: int, station: schemas.StationBase, db: Session = 
     if not db_station:
         raise HTTPException(404, "Station not found")
     
-    for key, value in station.dict().items():
+    for key, value in station.model_dump().items():
         setattr(db_station, key, value)
     
     db.commit()
@@ -157,7 +157,7 @@ def get_app_configs(db: Session = Depends(get_db)):
 
 @router.post("/app_configs", response_model=schemas.AppConfigResponse)
 def create_app_config(config: schemas.AppConfigCreate, db: Session = Depends(get_db), role: str = Depends(security.require_roles("ADMIN", "MANAGER"))):
-    new_config = models.AppConfig(**config.dict())
+    new_config = models.AppConfig(**config.model_dump())
     db.add(new_config)
     db.commit()
     db.refresh(new_config)
@@ -266,7 +266,7 @@ def create_business_rule(req: schemas.BusinessRuleCreate, db: Session = Depends(
     if existing:
         raise HTTPException(400, "Une règle avec cette clé existe déjà")
     
-    new_rule = models.BusinessRule(**req.dict())
+    new_rule = models.BusinessRule(**req.model_dump())
     db.add(new_rule)
     db.commit()
     db.refresh(new_rule)

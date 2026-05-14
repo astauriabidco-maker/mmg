@@ -117,7 +117,11 @@ def update_pos_item(variant_id: int, price: float = None, stock: float = None, d
     return {"message": "Article mis à jour", "price": variant.cost_price, "stock": variant.quantity_in_stock}
 
 @router.post("/sessions/open", response_model=schemas.POSSessionSchema)
-def open_session(starting_cash: float = 0.0, db: Session = Depends(get_db)):
+def open_session(
+    starting_cash: float = 0.0,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     active = db.query(models.POSSession).filter(models.POSSession.status == "OPEN").first()
     if active:
         raise HTTPException(status_code=400, detail="Une session est déjà ouverte.")
@@ -127,7 +131,7 @@ def open_session(starting_cash: float = 0.0, db: Session = Depends(get_db)):
     
     new_session = models.POSSession(
         reference=ref,
-        opened_by_user="Admin", # TODO connect to current_user
+        opened_by_user=current_user.get("sub", "unknown"),
         starting_cash=starting_cash,
         status="OPEN"
     )

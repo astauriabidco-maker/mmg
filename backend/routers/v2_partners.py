@@ -21,7 +21,7 @@ def create_client(client: schemas.ClientCreate, db: Session = Depends(get_db)):
     existing = db.query(models.Client).filter(models.Client.name == client.name).first()
     if existing:
         raise HTTPException(400, "Client name already exists")
-    db_client = models.Client(**client.dict())
+    db_client = models.Client(**client.model_dump())
     db.add(db_client)
     db.commit()
     db.refresh(db_client)
@@ -32,7 +32,7 @@ def update_client(client_id: int, client: schemas.ClientCreate, db: Session = De
     db_client = db.query(models.Client).filter(models.Client.id == client_id).first()
     if not db_client:
         raise HTTPException(404, "Client not found")
-    for k, v in client.dict().items():
+    for k, v in client.model_dump().items():
         setattr(db_client, k, v)
     db.commit()
     db.refresh(db_client)
@@ -57,7 +57,7 @@ def create_supplier(supplier: schemas.SupplierCreate, db: Session = Depends(get_
     existing = db.query(models.Supplier).filter(models.Supplier.name == supplier.name).first()
     if existing:
         raise HTTPException(400, "Supplier name already exists")
-    db_supplier = models.Supplier(**supplier.dict())
+    db_supplier = models.Supplier(**supplier.model_dump())
     db.add(db_supplier)
     db.commit()
     db.refresh(db_supplier)
@@ -68,7 +68,7 @@ def update_supplier(supplier_id: int, supplier: schemas.SupplierCreate, db: Sess
     db_supplier = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
     if not db_supplier:
         raise HTTPException(404, "Supplier not found")
-    for k, v in supplier.dict().items():
+    for k, v in supplier.model_dump().items():
         setattr(db_supplier, k, v)
     db.commit()
     db.refresh(db_supplier)

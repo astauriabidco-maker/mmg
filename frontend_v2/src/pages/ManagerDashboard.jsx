@@ -324,13 +324,13 @@ export default function ManagerDashboard() {
                                 <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 border border-white/10 flex items-center justify-between">
                                     <div className="flex items-center gap-3">
                                         <div className="p-2 bg-white/10 rounded-xl"><Activity className="w-5 h-5 text-white" /></div>
-                                        <div><p className="text-xs text-blue-200 font-bold uppercase uppercase tracking-wider">Tâches Réalisées</p><p className="text-2xl font-black leading-none">{stats.total || 142}</p></div>
+                                        <div><p className="text-xs text-blue-200 font-bold uppercase uppercase tracking-wider">Tâches Réalisées</p><p className="text-2xl font-black leading-none">{stats.total ?? 0}</p></div>
                                     </div>
                                 </div>
                                 <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 border border-white/10 flex items-center justify-between">
                                     <div className="flex items-center gap-3">
                                         <div className="p-2 bg-emerald-500/20 rounded-xl"><Clock className="w-5 h-5 text-emerald-300" /></div>
-                                        <div><p className="text-xs text-blue-200 font-bold uppercase uppercase tracking-wider">Temps Moyen</p><p className="text-xl font-black leading-none text-emerald-300">{stats.avg_time || "12 min"}</p></div>
+                                        <div><p className="text-xs text-blue-200 font-bold uppercase uppercase tracking-wider">Temps Moyen</p><p className="text-xl font-black leading-none text-emerald-300">{stats.avg_time || "0m 0s"}</p></div>
                                     </div>
                                 </div>
                             </div>
@@ -350,7 +350,7 @@ export default function ManagerDashboard() {
                                 <div className="space-y-3">
                                     <div className="p-3 bg-red-50 border border-red-100 rounded-xl flex gap-3 text-red-700">
                                         <AlertTriangle className="w-5 h-5 shrink-0" />
-                                        <p className="text-sm font-bold">Unité de Sciage ALU: Lame H.S, requête maintenance urgente (Il y a 15 min)</p>
+                                        <p className="text-sm font-bold">{stats.defects} incident{stats.defects > 1 ? 's' : ''} atelier à traiter</p>
                                     </div>
                                 </div>
                             )}
