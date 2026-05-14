@@ -7,8 +7,13 @@ from datetime import datetime, date, timedelta
 from ..database import get_db
 from .. import models
 from ..core.config import STANDARDS, ALERT_THRESHOLD_PERCENT
+from ..core import security
 
-router = APIRouter(prefix="/v2/analytics", tags=["analytics"])
+router = APIRouter(
+    prefix="/v2/analytics",
+    tags=["analytics"],
+    dependencies=[Depends(security.get_current_user)],
+)
 
 @router.get("/kpi")
 def get_dashboard_kpi(db: Session = Depends(get_db)):

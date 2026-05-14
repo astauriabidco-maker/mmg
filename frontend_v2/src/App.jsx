@@ -18,6 +18,13 @@ const ProtectedRoute = ({ children }) => {
     return children;
 };
 
+const RoleRoute = ({ children, allowedRoles }) => {
+    const { user } = useAuth();
+    if (!user) return <Navigate to="/login" replace />;
+    if (!allowedRoles.includes(user.role)) return <Navigate to="/dashboard" replace />;
+    return children;
+};
+
 const queryClient = new QueryClient();
 
 export default function App() {
@@ -45,25 +52,25 @@ export default function App() {
                     <Route
                         path="/manager"
                         element={
-                            <ProtectedRoute>
+                            <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
                                 <ManagerDashboard />
-                            </ProtectedRoute>
+                            </RoleRoute>
                         }
                     />
                     <Route
                         path="/mmg"
                         element={
-                            <ProtectedRoute>
+                            <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
                                 <MMGDossiers />
-                            </ProtectedRoute>
+                            </RoleRoute>
                         }
                     />
                     <Route
                         path="/upload"
                         element={
-                            <ProtectedRoute>
+                            <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
                                 <ManualUpload />
-                            </ProtectedRoute>
+                            </RoleRoute>
                         }
                     />
                     <Route

@@ -11,6 +11,7 @@ from .v2_accounting import generate_invoice_reference, compute_qr_seal
 router = APIRouter(
     prefix="/v2/pos",
     tags=["pos_v2"],
+    dependencies=[Depends(get_current_user)],
     responses={404: {"description": "Non trouvé"}}
 )
 

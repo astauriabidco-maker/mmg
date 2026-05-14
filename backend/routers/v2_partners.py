@@ -3,8 +3,13 @@ from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
 from .. import models, schemas
+from ..core import security
 
-router = APIRouter(prefix="/v2/partners", tags=["partners"])
+router = APIRouter(
+    prefix="/v2/partners",
+    tags=["partners"],
+    dependencies=[Depends(security.get_current_user)],
+)
 
 # --- CLIENTS ---
 @router.get("/clients", response_model=List[schemas.ClientResponse])

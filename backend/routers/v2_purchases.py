@@ -7,8 +7,13 @@ import uuid
 
 from backend.database import get_db
 from backend import models
+from backend.core import security
 
-router = APIRouter(prefix="/v2/purchases", tags=["V2 Purchases"])
+router = APIRouter(
+    prefix="/v2/purchases",
+    tags=["V2 Purchases"],
+    dependencies=[Depends(security.get_current_user)],
+)
 
 class PurchaseOrderLineInput(BaseModel):
     variant_id: int

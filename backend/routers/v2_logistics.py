@@ -7,7 +7,11 @@ from ..database import get_db
 from .. import models, schemas
 from ..core import security
 
-router = APIRouter(prefix="/v2/logistics", tags=["logistics"])
+router = APIRouter(
+    prefix="/v2/logistics",
+    tags=["logistics"],
+    dependencies=[Depends(security.get_current_user)],
+)
 
 def generate_route_ref(db: Session):
     year = datetime.utcnow().year

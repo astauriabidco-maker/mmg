@@ -10,9 +10,10 @@ export const AuthProvider = ({ children }) => {
     useEffect(() => {
         const token = localStorage.getItem('token');
         if (token) {
+            const username = localStorage.getItem('username') || 'Operator';
             const role = localStorage.getItem('role');
             const stations = JSON.parse(localStorage.getItem('stations') || '[]');
-            setUser({ username: 'Operator', role, stations });
+            setUser({ username, role, stations });
             api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         }
         setLoading(false);
@@ -29,6 +30,7 @@ export const AuthProvider = ({ children }) => {
             const { access_token, role, stations } = res.data;
             if (access_token) {
                 localStorage.setItem('token', access_token);
+                localStorage.setItem('username', username);
                 localStorage.setItem('role', role);
                 localStorage.setItem('stations', JSON.stringify(stations || []));
 
@@ -44,6 +46,9 @@ export const AuthProvider = ({ children }) => {
 
     const logout = () => {
         localStorage.removeItem('token');
+        localStorage.removeItem('username');
+        localStorage.removeItem('role');
+        localStorage.removeItem('stations');
         delete api.defaults.headers.common['Authorization'];
         setUser(null);
     };

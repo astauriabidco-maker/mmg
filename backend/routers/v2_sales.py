@@ -17,7 +17,9 @@ router = APIRouter(
     responses={404: {"description": "Non trouvé"}}
 )
 
-@router.get("/", response_model=List[schemas.SaleOrderSchema])
+AUTH_DEPENDENCIES = [Depends(get_current_user)]
+
+@router.get("/", response_model=List[schemas.SaleOrderSchema], dependencies=AUTH_DEPENDENCIES)
 def list_sales(db: Session = Depends(get_db)):
     return db.query(models.SaleOrder).order_by(models.SaleOrder.created_at.desc()).all()
 
@@ -28,7 +30,7 @@ import urllib.request
 import json
 import os
 
-@router.post("/ai-quote")
+@router.post("/ai-quote", dependencies=AUTH_DEPENDENCIES)
 def generate_ai_quote(req: AIQuoteRequest, db: Session = Depends(get_db)):
     """
     Copilote Commercial (IA). Zero UI Approach.
@@ -189,7 +191,7 @@ Tu DOIS multiplier ces prix de base par le coefficient de {margin} pour le unit_
         }
     }
 
-@router.get("/stages")
+@router.get("/stages", dependencies=AUTH_DEPENDENCIES)
 def get_pipeline_stages(db: Session = Depends(get_db)):
     config = db.query(models.AppConfig).filter(models.AppConfig.category == "PIPELINE_STAGES").first()
     import json
@@ -205,7 +207,7 @@ def get_pipeline_stages(db: Session = Depends(get_db)):
     ]
 
 
-@router.post("/", response_model=schemas.SaleOrderSchema)
+@router.post("/", response_model=schemas.SaleOrderSchema, dependencies=AUTH_DEPENDENCIES)
 def create_sale_order(order_req: schemas.SaleOrderCreate, db: Session = Depends(get_db)):
     date_str = datetime.now().strftime("%Y-%m-%d-%H%M")
     ref = f"DEV-{date_str}"
@@ -242,14 +244,14 @@ def create_sale_order(order_req: schemas.SaleOrderCreate, db: Session = Depends(
     db.refresh(order)
     return order
 
-@router.get("/{order_id}", response_model=schemas.SaleOrderSchema)
+@router.get("/{order_id}", response_model=schemas.SaleOrderSchema, dependencies=AUTH_DEPENDENCIES)
 def get_sale_order(order_id: int, db: Session = Depends(get_db)):
     order = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
     return order
 
-@router.put("/{order_id}/status")
+@router.put("/{order_id}/status", dependencies=AUTH_DEPENDENCIES)
 def update_sale_status(order_id: int, status: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     from ..core.events import EventBus
     order = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
@@ -362,7 +364,7 @@ def sign_quote(token: str, request: Request, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Devis signé avec succès et Facture d'acompte/définitive générée !"}
 
-@router.post("/{order_id}/launch-production")
+@router.post("/{order_id}/launch-production", dependencies=AUTH_DEPENDENCIES)
 def launch_production(order_id: int, db: Session = Depends(get_db)):
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:

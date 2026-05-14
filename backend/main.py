@@ -10,14 +10,20 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Initialize DB
 models.Base.metadata.create_all(bind=database.engine)
+models.ensure_schema_compatibility(database.engine)
 get_db = database.get_db
+from .seed_stations import ensure_default_stations
+ensure_default_stations()
 
 app = FastAPI(title="Atelier Menuiserie V1 Pro")
 
 # Configure CORS
 allowed_origins = [
     origin.strip()
-    for origin in os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://localhost:7000").split(",")
+    for origin in os.environ.get(
+        "CORS_ORIGINS",
+        "http://localhost:5000,http://127.0.0.1:5000,http://localhost:5173,http://127.0.0.1:5173,http://localhost:7000",
+    ).split(",")
     if origin.strip()
 ]
 app.add_middleware(

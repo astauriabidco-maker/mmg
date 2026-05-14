@@ -11,7 +11,11 @@ from ..database import get_db
 from .. import models, schemas
 from ..core import security
 
-router = APIRouter(prefix="/v2/accounting", tags=["accounting"])
+router = APIRouter(
+    prefix="/v2/accounting",
+    tags=["accounting"],
+    dependencies=[Depends(security.get_current_user)],
+)
 
 # --- FACTURATION ---
 

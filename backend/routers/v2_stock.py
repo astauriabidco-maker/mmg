@@ -12,7 +12,11 @@ from openpyxl.styles import Font, PatternFill
 from sqlalchemy import or_
 from ..services.bom_parser import parse_bom_file
 
-router = APIRouter(prefix="/v2/stock", tags=["stock"])
+router = APIRouter(
+    prefix="/v2/stock",
+    tags=["stock"],
+    dependencies=[Depends(get_current_user)],
+)
 
 @router.get("/products", response_model=List[schemas.ProductResponse])
 def get_products(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):

@@ -1,8 +1,35 @@
-from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text
+from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text, inspect, text
 from sqlalchemy.orm import relationship
 from .database import Base
 import enum
 from datetime import datetime
+
+
+def ensure_schema_compatibility(engine):
+    """Patch legacy SQLite schemas that predate the Alembic drift fixes."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+
+        if inspector.has_table("products"):
+            product_columns = {column["name"] for column in inspector.get_columns("products")}
+            if "technical_doc_url" not in product_columns:
+                connection.execute(text("ALTER TABLE products ADD COLUMN technical_doc_url VARCHAR"))
+            if "compatible_series" not in product_columns:
+                connection.execute(text("ALTER TABLE products ADD COLUMN compatible_series VARCHAR"))
+
+        if inspector.has_table("delivery_notes"):
+            delivery_columns = {column["name"] for column in inspector.get_columns("delivery_notes")}
+            if "delivery_notes" not in delivery_columns:
+                connection.execute(text("ALTER TABLE delivery_notes ADD COLUMN delivery_notes TEXT"))
+                delivery_columns.add("delivery_notes")
+            if "notes" in delivery_columns:
+                connection.execute(
+                    text(
+                        "UPDATE delivery_notes "
+                        "SET delivery_notes = notes "
+                        "WHERE delivery_notes IS NULL AND notes IS NOT NULL"
+                    )
+                )
 
 class MaterialType(str, enum.Enum):
     PVC = "PVC"

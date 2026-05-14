@@ -5,8 +5,13 @@ from typing import List, Optional
 
 from backend.database import get_db
 from backend import models
+from backend.core import security
 
-router = APIRouter(prefix="/v2/suppliers", tags=["V2 Suppliers"])
+router = APIRouter(
+    prefix="/v2/suppliers",
+    tags=["V2 Suppliers"],
+    dependencies=[Depends(security.get_current_user)],
+)
 
 class SupplierBase(BaseModel):
     name: str
