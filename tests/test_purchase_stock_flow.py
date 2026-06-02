@@ -127,7 +127,7 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
             variant = db.query(models.ProductVariant).filter_by(id=variant_id).one()
             move = db.query(models.StockMove).filter_by(variant_id=variant_id).one()
 
-        assert variant.quantity_in_stock == 0
+        assert variant.quantity_in_stock == 7.0
         assert move.location_dest_id == target_location_id
         assert move.quantity == 7.0
         assert move.state == "done"

@@ -209,6 +209,8 @@ def receive_purchase_order(po_id: int, data: PurchaseOrderReceiveInput, db: Sess
                 quant = models.StockQuant(variant_id=line.variant_id, location_id=data.target_location_id, quantity=0)
                 db.add(quant)
             quant.quantity += remaining
+            if line.variant:
+                line.variant.quantity_in_stock = (line.variant.quantity_in_stock or 0) + remaining
             
             line.quantity_received = line.quantity
             
