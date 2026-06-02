@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend_v2/package-lock.json
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: python -m pytest
+
+      - name: Install frontend dependencies
+        working-directory: frontend_v2
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend_v2
+        run: npm run build
+
+      - name: Prepare audit database
+        run: DATABASE_URL=sqlite:///./ci_audit.db python init_db.py
+
+      - name: Start backend
+        run: |
+          DATABASE_URL=sqlite:///./ci_audit.db \
+          FRONTEND_BASE_URL=http://127.0.0.1:5000 \
+          python -m uvicorn backend.main:app --host 127.0.0.1 --port 7000 > backend.log 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:7000/docs > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat backend.log
+          exit 1
+
+      - name: Start frontend
+        working-directory: frontend_v2
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 5000 > frontend.log 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:5000/login > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat frontend.log
+          exit 1
+
+      - name: Functional audit
+        run: |
+          DATABASE_URL=sqlite:///./ci_audit.db \
+          python scripts/functional_audit.py \
+            --api http://127.0.0.1:7000 \
+            --frontend http://127.0.0.1:5000 \
+            --database-url sqlite:///./ci_audit.db

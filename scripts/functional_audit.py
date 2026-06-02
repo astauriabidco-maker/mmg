@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sqlite3
 import sys
 import time
 import urllib.error
@@ -102,10 +104,19 @@ class AuditClient:
 
 
 class FunctionalAudit:
-    def __init__(self, client: AuditClient, project_root: Path, mutate: bool):
+    def __init__(
+        self,
+        client: AuditClient,
+        project_root: Path,
+        mutate: bool,
+        cleanup: bool,
+        database_url: str,
+    ):
         self.client = client
         self.project_root = project_root
         self.mutate = mutate
+        self.cleanup = cleanup
+        self.database_url = database_url
         self.findings: list[Finding] = []
         self.run_id = f"AUDIT-{time.time_ns()}"
 
@@ -145,6 +156,8 @@ class FunctionalAudit:
                     "Relancer sans --no-mutate pour tester devis, atelier et achats.",
                 )
         self.check_source_inconsistencies()
+        if self.cleanup:
+            self.cleanup_audit_data()
         self.print_report()
         return 1 if any(f.severity == "FAIL" for f in self.findings) else 0
 
@@ -409,6 +422,87 @@ class FunctionalAudit:
             else:
                 self.add("OK", "Code source", label)
 
+    def cleanup_audit_data(self) -> None:
+        if not self.mutate:
+            self.add("INFO", "Nettoyage", "Aucune donnée mutative à nettoyer en mode --no-mutate")
+            return
+
+        db_path = self._sqlite_db_path()
+        if not db_path:
+            self.add(
+                "WARN",
+                "Nettoyage",
+                "Nettoyage automatique ignoré",
+                "Seules les bases sqlite:/// sont prises en charge par --cleanup.",
+            )
+            return
+        if not db_path.exists():
+            self.add("WARN", "Nettoyage", "Base SQLite introuvable", str(db_path))
+            return
+
+        with sqlite3.connect(db_path) as connection:
+            connection.execute("PRAGMA foreign_keys = OFF")
+            sale_ids = self._select_ids(
+                connection,
+                "SELECT id FROM sale_orders WHERE client_name LIKE ? OR notes LIKE ?",
+                (f"{self.run_id}%", f"%{self.run_id}%"),
+            )
+            invoice_ids = self._select_ids(
+                connection,
+                "SELECT id FROM invoices WHERE client_name LIKE ? OR sale_order_id IN ({})",
+                (f"{self.run_id}%",),
+                sale_ids,
+            )
+            order_ids = self._select_ids(
+                connection,
+                "SELECT id FROM orders WHERE reference = ? OR client_name LIKE ?",
+                (f"{self.run_id}-ORDER", f"{self.run_id}%"),
+            )
+            product_ids = self._select_ids(
+                connection,
+                "SELECT id FROM products WHERE reference_base LIKE ? OR name LIKE ?",
+                (f"{self.run_id}%", f"{self.run_id}%"),
+            )
+            variant_ids = self._select_ids(
+                connection,
+                "SELECT id FROM product_variants WHERE reference LIKE ? OR product_id IN ({})",
+                (f"{self.run_id}%",),
+                product_ids,
+            )
+            location_ids = self._select_ids(
+                connection,
+                "SELECT id FROM stock_locations WHERE name = ?",
+                (f"WH/{self.run_id}",),
+            )
+            purchase_ids = self._select_ids(
+                connection,
+                "SELECT id FROM purchase_orders WHERE notes = ?",
+                (self.run_id,),
+            )
+
+            deleted = 0
+            deleted += self._delete_ids(connection, "invoice_lines", "invoice_id", invoice_ids)
+            deleted += self._delete_ids(connection, "payments", "invoice_id", invoice_ids)
+            deleted += self._delete_ids(connection, "invoices", "id", invoice_ids)
+            deleted += self._delete_ids(connection, "sale_order_lines", "order_id", sale_ids)
+            deleted += self._delete_ids(connection, "sale_orders", "id", sale_ids)
+            deleted += self._delete_ids(connection, "production_logs", "order_id", order_ids)
+            deleted += self._delete_ids(connection, "planning", "order_id", order_ids)
+            deleted += self._delete_ids(connection, "orders", "id", order_ids)
+            deleted += self._delete_ids(connection, "purchase_order_lines", "order_id", purchase_ids)
+            deleted += self._delete_ids(connection, "purchase_orders", "id", purchase_ids)
+            deleted += self._delete_ids(connection, "stock_moves", "variant_id", variant_ids)
+            deleted += self._delete_ids(connection, "stock_moves", "location_id", location_ids)
+            deleted += self._delete_ids(connection, "stock_moves", "location_dest_id", location_ids)
+            deleted += self._delete_ids(connection, "stock_quants", "variant_id", variant_ids)
+            deleted += self._delete_ids(connection, "stock_quants", "location_id", location_ids)
+            deleted += self._delete_ids(connection, "product_variants", "id", variant_ids)
+            deleted += self._delete_ids(connection, "products", "id", product_ids)
+            deleted += self._delete_ids(connection, "stock_locations", "id", location_ids)
+            connection.commit()
+
+        self.add("OK", "Nettoyage", "Données AUDIT du run supprimées", f"{deleted} lignes supprimées")
+
     def print_report(self) -> None:
         grouped: dict[str, list[Finding]] = {}
         for finding in self.findings:
@@ -434,6 +528,45 @@ class FunctionalAudit:
                 return item
         return None
 
+    def _sqlite_db_path(self) -> Path | None:
+        if not self.database_url.startswith("sqlite:///"):
+            return None
+        raw_path = self.database_url.replace("sqlite:///", "", 1)
+        if raw_path == ":memory:":
+            return None
+        path = Path(raw_path)
+        return path if path.is_absolute() else self.project_root / path
+
+    @staticmethod
+    def _select_ids(
+        connection: sqlite3.Connection,
+        sql: str,
+        params: tuple[Any, ...],
+        in_ids: list[int] | None = None,
+    ) -> list[int]:
+        if in_ids is not None:
+            placeholders = ",".join("?" for _ in in_ids) if in_ids else "NULL"
+            sql = sql.format(placeholders)
+            params = (*params, *in_ids) if in_ids else params
+        rows = connection.execute(sql, params).fetchall()
+        return [int(row[0]) for row in rows]
+
+    @staticmethod
+    def _delete_ids(
+        connection: sqlite3.Connection,
+        table: str,
+        column: str,
+        ids: list[int],
+    ) -> int:
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        cursor = connection.execute(
+            f"DELETE FROM {table} WHERE {column} IN ({placeholders})",
+            ids,
+        )
+        return cursor.rowcount if cursor.rowcount >= 0 else 0
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run MMG local functional audit.")
@@ -446,11 +579,27 @@ def main() -> int:
         action="store_true",
         help="Skip E2E scenarios that create AUDIT records in the local database.",
     )
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Delete records created by this audit run after checks complete. SQLite only.",
+    )
+    parser.add_argument(
+        "--database-url",
+        default=os.environ.get("DATABASE_URL", "sqlite:///./atelier.db"),
+        help="Database URL used only by --cleanup. Defaults to DATABASE_URL or sqlite:///./atelier.db.",
+    )
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parents[1]
     client = AuditClient(args.api, args.frontend, args.username, args.password)
-    return FunctionalAudit(client, project_root, mutate=not args.no_mutate).run()
+    return FunctionalAudit(
+        client,
+        project_root,
+        mutate=not args.no_mutate,
+        cleanup=args.cleanup,
+        database_url=args.database_url,
+    ).run()
 
 
 if __name__ == "__main__":
