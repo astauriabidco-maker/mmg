@@ -17,3 +17,5 @@ pdfplumber
 PyMuPDF
 openpyxl
 pytest
+alembic
+psycopg2-binary

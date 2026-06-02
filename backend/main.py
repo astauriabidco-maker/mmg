@@ -1,12 +1,18 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import os
+import time
+import uuid
 from . import models, database
 from .routers import api, v2_planning, v2_analytics, v2_printer, v2_ingest, v2_config, v2_mmg, v2_stock, v2_sales, v2_pos, v2_purchases, v2_suppliers, v2_pdf, v2_accounting, v2_logistics, v2_webhook
 from .core.websocket import manager
+from .core.logger import logger
 from fastapi import WebSocket, WebSocketDisconnect
 
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 # Initialize DB
 models.Base.metadata.create_all(bind=database.engine)
@@ -17,21 +23,54 @@ ensure_default_stations()
 
 app = FastAPI(title="Atelier Menuiserie V1 Pro")
 
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    started = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - started) * 1000
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
+        request_id,
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    return response
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    logger.exception("request_id=%s unhandled_error path=%s", request_id, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "request_id": request_id},
+        headers={"X-Request-ID": request_id},
+    )
+
 # Configure CORS
+default_cors_origins = (
+    "http://localhost:5000,http://127.0.0.1:5000,"
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:7000"
+)
+raw_cors_origins = os.environ.get("CORS_ORIGINS", default_cors_origins)
+app_env = os.environ.get("APP_ENV", "development").lower()
+if app_env == "production" and raw_cors_origins == default_cors_origins:
+    raise RuntimeError("CORS_ORIGINS must be explicitly set when APP_ENV=production")
+
 allowed_origins = [
     origin.strip()
-    for origin in os.environ.get(
-        "CORS_ORIGINS",
-        "http://localhost:5000,http://127.0.0.1:5000,http://localhost:5173,http://127.0.0.1:5173,http://localhost:7000",
-    ).split(",")
+    for origin in raw_cors_origins.split(",")
     if origin.strip()
 ]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] if app_env == "production" else ["*"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"] if app_env == "production" else ["*"],
 )
 
 # Mount Uploads (Zero UI, API ONLY)
@@ -58,6 +97,15 @@ app.include_router(v2_webhook.router)
 from .routers import v2_partners
 app.include_router(v2_partners.router)
 
+@app.get("/health", tags=["health"])
+def health_check():
+    return {"status": "ok", "service": "mmg-api"}
+
+@app.get("/health/ready", tags=["health"])
+def readiness_check(db: Session = Depends(database.get_db)):
+    db.execute(text("SELECT 1"))
+    return {"status": "ready", "database": "ok"}
+
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: int):
     await manager.connect(websocket)
@@ -69,9 +117,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-# Legacy Orders Endpoint for Tests (Optional, keeping for robustness)
-from fastapi import Depends, HTTPException
-from sqlalchemy.orm import Session
 from . import schemas
 @app.post("/orders/", response_model=schemas.Order)
 def create_order(order: schemas.OrderCreate, db: Session = Depends(database.get_db)):

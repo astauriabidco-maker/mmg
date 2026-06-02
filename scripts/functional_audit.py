@@ -416,10 +416,14 @@ class FunctionalAudit:
             ("Achats endpoint stock obsolète", "frontend_v2/src/pages/PurchasesDashboard.jsx", "api.get('/v2/stock/')"),
             ("Achats relance IA non câblée", "frontend_v2/src/pages/PurchasesDashboard.jsx", "onClick={fetchAiRecommendations"),
             ("Fausse recommandation achat générique", "backend/routers/v2_purchases.py", "Profilé ALU Noir"),
+            ("Frontend ancien port API", "frontend_v2/src", "localhost:8000"),
         ]
         for label, relative_path, needle in checks:
             path = self.project_root / relative_path
-            content = path.read_text("utf-8") if path.exists() else ""
+            if path.is_dir():
+                content = "\n".join(p.read_text("utf-8") for p in path.rglob("*") if p.is_file())
+            else:
+                content = path.read_text("utf-8") if path.exists() else ""
             if needle in content:
                 self.add("WARN", "Code source", label, f"{relative_path} contient {needle!r}")
             else:
@@ -429,6 +433,10 @@ class FunctionalAudit:
             ("Manager vues deep-linkables", "frontend_v2/src/pages/ManagerDashboard.jsx", "useSearchParams"),
             ("Titre facturation manager explicite", "frontend_v2/src/pages/ManagerDashboard.jsx", "activeView === 'accounting' ? 'Facturation (NF525)'"),
             ("Sidebar liens internes par vue", "frontend_v2/src/components/Sidebar.jsx", "?view=${item.id}"),
+            ("CI readiness backend", ".github/workflows/ci.yml", "/health/ready"),
+            ("Exemple env prod", ".env.example", "APP_ENV=production"),
+            ("Compose prod", "docker-compose.yml", "postgres:16-alpine"),
+            ("Docker backend", "Dockerfile.backend", "uvicorn"),
         ]
         for label, relative_path, needle in required_checks:
             path = self.project_root / relative_path

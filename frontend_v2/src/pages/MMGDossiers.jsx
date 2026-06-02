@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import api from '../services/api';
+import api, { API_BASE_URL } from '../services/api';
 import {
     Search,
     FileText,
@@ -90,8 +89,6 @@ const MMGDossiers = ({ isEmbedded = false }) => {
         signature: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" // Mock signature for agency
     });
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
     useEffect(() => {
         fetchDossiers();
         fetchClients();
@@ -108,7 +105,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
 
     const fetchDossiers = async () => {
         try {
-            const res = await axios.get(`${API_URL}/mmg/list`);
+            const res = await api.get('/mmg/list');
             setDossiers(res.data);
         } catch (err) {
             console.error("Error fetching dossiers", err);
@@ -120,7 +117,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
     const handleImport = async (id) => {
         setImportingId(id);
         try {
-            await axios.post(`${API_URL}/mmg/${id}/update-status`, { status: 'VALIDATED' });
+            await api.post(`/mmg/${id}/update-status`, { status: 'VALIDATED' });
             fetchDossiers();
         } catch (err) {
             alert("Erreur lors de l'import");
@@ -132,7 +129,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
     const handleFormSubmit = async () => {
         setLoading(true);
         try {
-            await axios.post(`${API_URL}/mmg/submit`, formData);
+            await api.post('/mmg/submit', formData);
             setIsEntryFormOpen(false);
             fetchDossiers();
             alert("Dossier créé avec succès !");
@@ -245,7 +242,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
 
     const viewDetails = async (id) => {
         try {
-            const res = await axios.get(`${API_URL}/mmg/${id}`);
+            const res = await api.get(`/mmg/${id}`);
             setSelectedDossier(res.data);
             setActiveTab('tech'); // Reset to tech tab on view
         } catch (err) {
@@ -256,7 +253,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
     const handleSendQuote = async (id) => {
         setSendingQuote(true);
         try {
-            await axios.post(`${API_URL}/mmg/${id}/send-quote`);
+            await api.post(`/mmg/${id}/send-quote`);
             alert("Devis envoyé au client avec succès !");
             fetchDossiers();
             viewDetails(id); // Refresh details
@@ -638,14 +635,14 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                     <div className="grid grid-cols-2 gap-4">
                                         {(selectedDossier.photos || []).map((p, idx) => (
                                             <div key={idx} className="aspect-video bg-slate-100 rounded-2xl overflow-hidden border border-slate-200">
-                                                <img src={`${API_URL}/static/mmg_uploads/${p}`} alt="Photo Chantier" className="w-full h-full object-cover" />
+                                                <img src={`${API_BASE_URL}/static/mmg_uploads/${p}`} alt="Photo Chantier" className="w-full h-full object-cover" />
                                             </div>
                                         ))}
                                     </div>
                                     <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100">
                                         <p className="text-[10px] text-slate-400 font-bold uppercase mb-4">Signature Client</p>
                                         {selectedDossier.signature ? (
-                                            <img src={`${API_URL}/static/mmg_uploads/${selectedDossier.signature}`} alt="Signature" className="max-h-32 mx-auto" />
+                                            <img src={`${API_BASE_URL}/static/mmg_uploads/${selectedDossier.signature}`} alt="Signature" className="max-h-32 mx-auto" />
                                         ) : (
                                             <p className="text-slate-400 italic text-center">Aucune signature</p>
                                         )}

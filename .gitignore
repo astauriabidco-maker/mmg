@@ -12,6 +12,12 @@ nohup.out
 # Database
 *.db
 *.sqlite3
+backups/
+
+# Environment files
+.env
+.env.*
+!.env.example
 
 # Node
 node_modules/

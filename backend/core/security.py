@@ -5,10 +5,13 @@ from passlib.context import CryptContext
 
 import os
 
-# Secret key (Use environment variable in production)
-SECRET_KEY = os.environ.get("SECRET_KEY", "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7")
+DEFAULT_SECRET_KEY = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
+APP_ENV = os.environ.get("APP_ENV", "development").lower()
+SECRET_KEY = os.environ.get("SECRET_KEY", DEFAULT_SECRET_KEY)
+if APP_ENV == "production" and (SECRET_KEY == DEFAULT_SECRET_KEY or SECRET_KEY.startswith("CHANGE_ME")):
+    raise RuntimeError("SECRET_KEY must be set to a unique value when APP_ENV=production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 3000 # 50 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "3000"))
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 

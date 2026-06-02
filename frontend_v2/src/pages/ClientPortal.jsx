@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import axios from 'axios';
 import { CheckCircle2, FileText, AlertTriangle, Fingerprint, Lock, Check } from 'lucide-react';
 import WindowVisualizer from '../components/WindowVisualizer';
+import api, { API_BASE_URL } from '../services/api';
 
 export default function ClientPortal() {
     const { token } = useParams();
@@ -13,12 +13,10 @@ export default function ClientPortal() {
     const [signSuccess, setSignSuccess] = useState(false);
     const [consent, setConsent] = useState(false);
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
     useEffect(() => {
         const fetchQuote = async () => {
             try {
-                const res = await axios.get(`${API_URL}/v2/sales/portal/${token}`);
+                const res = await api.get(`/v2/sales/portal/${token}`);
                 setQuote(res.data);
                 if (res.data.status === 'VALIDATED') {
                     setSignSuccess(true);
@@ -36,7 +34,7 @@ export default function ClientPortal() {
         if (!consent) return;
         setIsSigning(true);
         try {
-            await axios.post(`${API_URL}/v2/sales/portal/${token}/sign`);
+            await api.post(`/v2/sales/portal/${token}/sign`);
             setSignSuccess(true);
         } catch (err) {
             alert("Une erreur est survenue lors de la signature.");
@@ -100,7 +98,7 @@ export default function ClientPortal() {
                             <p className="text-sm text-slate-500 font-medium mt-1">Veuillez consulter le devis détaillé avant de signer.</p>
                         </div>
                         <a 
-                            href={`${API_URL}/v2/pdf/quote/${quote.id}`}
+                            href={`${API_BASE_URL}/v2/pdf/quote/${quote.id}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="bg-white text-blue-700 border border-blue-200 px-6 py-3 rounded-xl font-bold shadow-sm hover:shadow-md transition-all flex items-center gap-2"
