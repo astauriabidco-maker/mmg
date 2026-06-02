@@ -1,0 +1,82 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?}
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?} -d ${POSTGRES_DB:?}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      APP_ENV: ${APP_ENV:?production}
+      SECRET_KEY: ${SECRET_KEY:?}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-720}
+      DATABASE_URL: ${DATABASE_URL:?}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:?}
+      CORS_ORIGINS: ${CORS_ORIGINS:?}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_PHONE_ID: ${WHATSAPP_PHONE_ID:-}
+      MANAGER_PHONE: ${MANAGER_PHONE:-}
+      LABEL_OUTPUT_DIR: ${LABEL_OUTPUT_DIR:-/data/output/labels}
+      WATCH_DIR: ${WATCH_DIR:-/data/exports_proges_valides}
+      OUTPUT_QR_DIR: ${OUTPUT_QR_DIR:-/data/output/qr}
+      API_URL: ${API_URL:-http://backend:7000}
+      PRINTER_NAME: ${PRINTER_NAME:-}
+      SMTP_SERVER: ${SMTP_SERVER:-localhost}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - mmg_uploads:/app/uploads
+    expose:
+      - "7000"
+    command: >
+      sh -c "alembic -c backend/alembic.ini upgrade head
+      && python init_db.py
+      && python -m uvicorn backend.main:app --host 0.0.0.0 --port 7000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7000/health/ready', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend_v2
+      args:
+        VITE_API_URL: ${VITE_API_URL:?}
+    depends_on:
+      backend:
+        condition: service_healthy
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  mmg_uploads:
