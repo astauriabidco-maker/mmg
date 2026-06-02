@@ -413,6 +413,9 @@ class FunctionalAudit:
             ("Lien portail ancien port Vite", "backend/routers/v2_sales.py", "localhost:5173/portal"),
             ("Auteur Admin hardcodé ventes", "backend/routers/v2_sales.py", 'author="Admin"'),
             ("Auteur Admin hardcodé POS", "backend/routers/v2_pos.py", 'opened_by_user="Admin"'),
+            ("Achats endpoint stock obsolète", "frontend_v2/src/pages/PurchasesDashboard.jsx", "api.get('/v2/stock/')"),
+            ("Achats relance IA non câblée", "frontend_v2/src/pages/PurchasesDashboard.jsx", "onClick={fetchAiRecommendations"),
+            ("Fausse recommandation achat générique", "backend/routers/v2_purchases.py", "Profilé ALU Noir"),
         ]
         for label, relative_path, needle in checks:
             path = self.project_root / relative_path
@@ -421,6 +424,19 @@ class FunctionalAudit:
                 self.add("WARN", "Code source", label, f"{relative_path} contient {needle!r}")
             else:
                 self.add("OK", "Code source", label)
+
+        required_checks = [
+            ("Manager vues deep-linkables", "frontend_v2/src/pages/ManagerDashboard.jsx", "useSearchParams"),
+            ("Titre facturation manager explicite", "frontend_v2/src/pages/ManagerDashboard.jsx", "activeView === 'accounting' ? 'Facturation (NF525)'"),
+            ("Sidebar liens internes par vue", "frontend_v2/src/components/Sidebar.jsx", "?view=${item.id}"),
+        ]
+        for label, relative_path, needle in required_checks:
+            path = self.project_root / relative_path
+            content = path.read_text("utf-8") if path.exists() else ""
+            if needle in content:
+                self.add("OK", "Code source", label)
+            else:
+                self.add("WARN", "Code source", label, f"{relative_path} ne contient pas {needle!r}")
 
     def cleanup_audit_data(self) -> None:
         if not self.mutate:

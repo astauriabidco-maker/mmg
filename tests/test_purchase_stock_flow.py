@@ -134,3 +134,74 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)
+
+
+def test_purchase_recommendations_use_real_stock_thresholds_without_fake_fallback():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "purchase-tester", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+
+        empty_response = client.get("/v2/purchases/ai-recommendations", headers=headers)
+        assert empty_response.status_code == 200, empty_response.text
+        assert empty_response.json() == []
+
+        product_response = client.post(
+            "/v2/stock/products",
+            headers=headers,
+            json={
+                "reference_base": "TEST-RECO",
+                "name": "Article recommandation",
+                "material_type": "PVC",
+                "unit": "pce",
+                "supplier": "Fournisseur test",
+                "variants": [
+                    {
+                        "reference": "TEST-RECO-LOW",
+                        "color": "Bas",
+                        "cost_price": 10,
+                        "quantity_in_stock": 2,
+                        "min_threshold": 5,
+                    },
+                    {
+                        "reference": "TEST-RECO-OK",
+                        "color": "OK",
+                        "cost_price": 10,
+                        "quantity_in_stock": 12,
+                        "min_threshold": 5,
+                    },
+                ],
+            },
+        )
+        assert product_response.status_code == 200, product_response.text
+        low_variant_id = product_response.json()["variants"][0]["id"]
+
+        recommendations_response = client.get("/v2/purchases/ai-recommendations", headers=headers)
+        assert recommendations_response.status_code == 200, recommendations_response.text
+        recommendations = recommendations_response.json()
+        assert len(recommendations) == 1
+        assert recommendations[0]["variant_id"] == low_variant_id
+        assert recommendations[0]["reference"] == "TEST-RECO-LOW"
+        assert recommendations[0]["current_stock"] == 2.0
+        assert recommendations[0]["suggested_quantity"] == 8.0
+        assert "seuil configuré" in recommendations[0]["reason"]
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)

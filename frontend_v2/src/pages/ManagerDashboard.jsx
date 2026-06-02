@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
 import { TrendingUp, AlertTriangle, Clock, Activity, LogOut, Upload, Menu, Search, Filter, ArrowUpRight, ArrowDownRight, ChevronRight, ChevronLeft, Users, Settings, Box, Banknote, CheckCircle2, Factory, Package, BarChart3, Sparkles, X, Scissors, Download, FileText, FileSpreadsheet, ArrowUpDown } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import StationManager from '../components/StationManager';
 import OperatorManager from '../components/OperatorManager';
 import Sidebar from '../components/Sidebar';
@@ -21,8 +21,10 @@ import PlatformSettings from '../components/PlatformSettings';
 
 export default function ManagerDashboard() {
     const { logout } = useAuth();
+    const location = useLocation();
+    const [searchParams, setSearchParams] = useSearchParams();
 
-    const [activeView, setActiveView] = useState('dashboard'); // 'dashboard', 'live', 'orders', 'stock', 'config'
+    const [activeView, setActiveView] = useState(() => location.state?.view || searchParams.get('view') || 'dashboard'); // 'dashboard', 'live', 'orders', 'stock', 'config'
     const [configTab, setConfigTab] = useState('stations');
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -35,15 +37,17 @@ export default function ManagerDashboard() {
     const [sortConfig, setSortConfig] = useState({ key: 'id', direction: 'desc' });
     const [currentPage, setCurrentPage] = useState(1);
     const ITEMS_PER_PAGE = 10;
-    const location = useLocation();
+    const handleViewChange = (view) => {
+        setActiveView(view);
+        setSearchParams(view === 'dashboard' ? {} : { view });
+    };
 
     useEffect(() => {
-        if (location.state && location.state.view) {
-            setActiveView(location.state.view);
-            // Replace state to avoid loop on reload
-            window.history.replaceState({}, document.title)
+        const requestedView = location.state?.view || searchParams.get('view');
+        if (requestedView && requestedView !== activeView) {
+            setActiveView(requestedView);
         }
-    }, [location.state]);
+    }, [activeView, location.state, searchParams]);
 
     const { data: stats = { total: 0, avg_time: "...", delay_rate: 0, active: 0, defects: 0 } } = useQuery({
         queryKey: ['manager-stats'],
@@ -118,7 +122,7 @@ export default function ManagerDashboard() {
             {/* Sidebar Component */}
             <Sidebar
                 activeView={activeView}
-                setActiveView={setActiveView}
+                setActiveView={handleViewChange}
                 isOpen={isSidebarOpen}
                 setIsOpen={setIsSidebarOpen}
             />
@@ -141,6 +145,7 @@ export default function ManagerDashboard() {
                                         activeView === 'stock' ? 'Gestion de Stock' : 
                                             activeView === 'purchases' ? 'Achats & Appro' :
                                                 activeView === 'sales' ? 'CRM & Devis (Ventes)' : 
+                                                    activeView === 'accounting' ? 'Facturation (NF525)' :
                                                         activeView === 'logistics' ? 'Logistique & Expéditions' : 
                                                             activeView === 'analytics_atelier' ? 'Performance Atelier' :
                                                                 activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration'}
@@ -221,6 +226,7 @@ export default function ManagerDashboard() {
         };
         const moneyUnit = (v) => v >= 1000 ? 'K €' : '€';
         const caUp = kpi.ca_delta_pct >= 0;
+        const defectCount = Number(stats.defects || 0);
 
         return (
             <div className="space-y-6 max-w-7xl mx-auto font-sans animate-fade-in pb-12">
@@ -341,7 +347,7 @@ export default function ManagerDashboard() {
                             <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
                                 <AlertTriangle className="w-5 h-5 text-amber-500" /> Aléas & Alertes
                             </h3>
-                            {stats.defects === 0 ? (
+                            {defectCount === 0 ? (
                                 <div className="flex flex-col items-center justify-center py-8 text-slate-400">
                                     <CheckCircle2 className="w-12 h-12 text-emerald-400 opacity-50 mb-2" />
                                     <p className="font-bold">Zéro incident remonté</p>
@@ -350,7 +356,7 @@ export default function ManagerDashboard() {
                                 <div className="space-y-3">
                                     <div className="p-3 bg-red-50 border border-red-100 rounded-xl flex gap-3 text-red-700">
                                         <AlertTriangle className="w-5 h-5 shrink-0" />
-                                        <p className="text-sm font-bold">{stats.defects} incident{stats.defects > 1 ? 's' : ''} atelier à traiter</p>
+                                        <p className="text-sm font-bold">{defectCount} incident{defectCount > 1 ? 's' : ''} atelier à traiter</p>
                                     </div>
                                 </div>
                             )}

@@ -1,12 +1,10 @@
 import React from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart, Truck, Users, Sparkles, FileText, BarChart3 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }) {
     const { logout } = useAuth();
-    const navigate = useNavigate();
-    const location = useLocation();
 
     const menuCategories = [
         {
@@ -111,20 +109,18 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                         }
 
                                         return (
-                                            <button
+                                            <Link
                                                 key={item.id}
+                                                to={`/manager${item.id === 'dashboard' ? '' : `?view=${item.id}`}`}
+                                                state={{ view: item.id }}
                                                 onClick={() => {
-                                                    if (location.pathname !== '/manager') {
-                                                        navigate('/manager', { state: { view: item.id } });
-                                                    } else if (setActiveView) {
-                                                        setActiveView(item.id);
-                                                    }
+                                                    if (setActiveView) setActiveView(item.id);
                                                     if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
                                                 }}
                                                 className={className}
                                             >
                                                 {content}
-                                            </button>
+                                            </Link>
                                         );
                                     })}
                                 </nav>

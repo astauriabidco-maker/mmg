@@ -31,51 +31,24 @@ class PurchaseOrderReceiveInput(BaseModel):
 
 @router.get("/ai-recommendations")
 def get_ai_recommendations(db: Session = Depends(get_db)):
-    """
-    Simulated AI Predictive SCM Engine.
-    Analyzes current stock levels vs typical consumption and pipeline.
-    """
-    # Find products with low stock (mocking prediction algorithm)
     variants = db.query(models.ProductVariant).all()
     recommendations = []
     
     for v in variants:
-        # Simplistic AI logic: if stock is below a certain random/calculated threshold
-        # In reality, this would query an ML model
-        # Let's mock a few specific ones to make it look real.
-        if v.quantity_in_stock < 100 and "PVC" in (v.reference or "").upper():
+        current_stock = float(v.quantity_in_stock or 0)
+        threshold = float(v.min_threshold or 0)
+        if threshold > 0 and current_stock <= threshold:
+            suggested_quantity = max(threshold * 2 - current_stock, threshold)
             recommendations.append({
                 "variant_id": v.id,
                 "reference": v.reference,
-                "product_name": v.product.name if v.product else "Profilé PVC",
-                "current_stock": v.quantity_in_stock,
-                "suggested_quantity": 500,
-                "reason": "⚠️ Rupture prévue dans 4 jours due à 3 nouvelles commandes de baies coulissantes.",
-                "confidence": 94
-            })
-        elif v.quantity_in_stock < 50 and "SILICONE" in (v.reference or "").upper():
-            recommendations.append({
-                "variant_id": v.id,
-                "reference": v.reference,
-                "product_name": v.product.name if v.product else "Cartouche Silicone",
-                "current_stock": v.quantity_in_stock,
-                "suggested_quantity": 200,
-                "reason": "📉 Consommation anormalement haute en Atelier (Poste Vitrage). Réassort urgent.",
-                "confidence": 88
+                "product_name": v.product.name if v.product else "Article stock",
+                "current_stock": current_stock,
+                "suggested_quantity": suggested_quantity,
+                "reason": f"Stock actuel ({current_stock:g}) inférieur ou égal au seuil configuré ({threshold:g}).",
+                "confidence": 80
             })
             
-    # Always return at least a generic one if empty
-    if not recommendations:
-        recommendations.append({
-            "variant_id": 1,
-            "reference": "ALU-NOIR-70",
-            "product_name": "Profilé ALU Noir",
-            "current_stock": 20,
-            "suggested_quantity": 300,
-            "reason": "🔮 L'IA a détecté une tendance haussière sur l'ALU noir via le pipeline de devis non-signés.",
-            "confidence": 76
-        })
-        
     return recommendations
 
 @router.get("/")

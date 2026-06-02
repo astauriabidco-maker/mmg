@@ -58,7 +58,7 @@ export default function PurchasesDashboard() {
     const { data: variantsData = [] } = useQuery({
         queryKey: ['variants'],
         queryFn: async () => {
-            const stockRes = await api.get('/v2/stock/');
+            const stockRes = await api.get('/v2/stock/products');
             const flatVariants = [];
             stockRes.data.forEach(p => {
                 p.variants.forEach(v => {
@@ -77,7 +77,7 @@ export default function PurchasesDashboard() {
         }
     });
 
-    const { data: aiRecommendations = [], isLoading: loadingAi } = useQuery({
+    const { data: aiRecommendations = [], isLoading: loadingAi, refetch: refetchAiRecommendations } = useQuery({
         queryKey: ['ai-recs'],
         queryFn: async () => {
             const res = await api.get('/v2/purchases/ai-recommendations');
@@ -203,7 +203,7 @@ export default function PurchasesDashboard() {
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input 
                             type="text" 
-                            placeholder={currentTab === 'orders' ? "Rechercher Bon de Commande..." : "Rechercher Fournisseur..."} 
+                            placeholder={currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : "Rechercher une recommandation..."} 
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
@@ -220,7 +220,7 @@ export default function PurchasesDashboard() {
                         </button>
                     )}
                     {currentTab === 'ai' && (
-                        <button onClick={fetchAiRecommendations} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
+                        <button onClick={() => refetchAiRecommendations()} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
                             <BrainCircuit className="w-5 h-5"/> Relancer l'Analyse
                         </button>
                     )}
