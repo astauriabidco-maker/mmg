@@ -45,7 +45,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES=720
 POSTGRES_DB=mmg
 POSTGRES_USER=mmg
 POSTGRES_PASSWORD=CHANGE_ME_STRONG_DATABASE_PASSWORD
-DATABASE_URL=postgresql://mmg:CHANGE_ME_STRONG_DATABASE_PASSWORD@db:5432/mmg
 
 FRONTEND_BASE_URL=https://mmg.example.com
 CORS_ORIGINS=https://mmg.example.com
@@ -76,6 +75,10 @@ openssl rand -hex 32
 ```
 
 Ne jamais garder `ADMIN_PASSWORD=1234` en production.
+
+Ne pas créer de variable `DATABASE_URL` dans Coolify pour ce Compose.
+`docker-compose.coolify.yml` la construit automatiquement avec le host interne `db`.
+Si une ancienne variable `DATABASE_URL` existe et pointe vers un host généré par Coolify, la supprimer ou l'ignorer.
 
 Si les logs affichent `Can't load plugin: sqlalchemy.dialects:postgres`, la variable `DATABASE_URL` commence par `postgres://`.
 Remplacer par `postgresql://` :
@@ -146,7 +149,7 @@ curl -fsS https://mmg.example.com/health
 ## 8. Points de vigilance
 
 - `VITE_API_URL` est une variable de build frontend : si elle change, redéployer/rebuilder le frontend.
-- `DATABASE_URL` doit utiliser le host Docker `db`, pas `localhost`.
+- `DATABASE_URL` est générée par le Compose avec le host Docker `db`, pas `localhost` ni un identifiant Coolify.
 - Ne pas exposer PostgreSQL avec un domaine ou un port public.
 - Garder `CORS_ORIGINS` limité au domaine frontend réel.
 - Si Coolify affiche "No available server" sur l'API, vérifier que le domaine backend cible bien `:7000`.
