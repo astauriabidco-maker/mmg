@@ -150,3 +150,5 @@ curl -fsS https://mmg.example.com/health
 - Ne pas exposer PostgreSQL avec un domaine ou un port public.
 - Garder `CORS_ORIGINS` limité au domaine frontend réel.
 - Si Coolify affiche "No available server" sur l'API, vérifier que le domaine backend cible bien `:7000`.
+- Si le déploiement échoue avec `backend is unhealthy`, ouvrir les logs du service `backend`.
+  Le backend exécute les migrations et `init_db.py` avant de lancer l'API ; le premier démarrage peut prendre plus longtemps qu'un redéploiement classique.
