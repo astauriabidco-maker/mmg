@@ -77,6 +77,13 @@ openssl rand -hex 32
 
 Ne jamais garder `ADMIN_PASSWORD=1234` en production.
 
+Si les logs affichent `Can't load plugin: sqlalchemy.dialects:postgres`, la variable `DATABASE_URL` commence par `postgres://`.
+Remplacer par `postgresql://` :
+
+```env
+DATABASE_URL=postgresql://mmg:CHANGE_ME_STRONG_DATABASE_PASSWORD@db:5432/mmg
+```
+
 ## 5. Déployer
 
 1. Lancer le déploiement dans Coolify.

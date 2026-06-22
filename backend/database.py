@@ -3,7 +3,9 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 import os
 
-SQLALCHEMY_DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./atelier.db")
+from .database_url import normalize_database_url
+
+SQLALCHEMY_DATABASE_URL = normalize_database_url(os.environ.get("DATABASE_URL", "sqlite:///./atelier.db"))
 
 connect_args = {"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
 
