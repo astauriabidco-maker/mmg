@@ -2,7 +2,7 @@
 
 Ce guide utilise `docker-compose.coolify.yml`, prévu pour Coolify :
 
-- pas de mapping `ports:` direct sur le serveur ;
+- seuls les ports applicatifs `backend:7000` et `frontend:80` sont déclarés pour le proxy Coolify ;
 - PostgreSQL reste privé ;
 - Coolify expose `frontend` et `backend` via son proxy ;
 - les variables critiques sont marquées obligatoires avec la syntaxe Compose `${VAR:?}`.
@@ -32,6 +32,7 @@ Dans la liste des services détectés :
 - service `db` : ne pas assigner de domaine
 
 Le `:7000` du domaine backend indique à Coolify le port interne du conteneur backend. Le proxy publie quand même le service en HTTPS standard.
+Le frontend utilise le port interne `80`.
 
 ## 4. Variables d'environnement
 
