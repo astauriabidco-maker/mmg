@@ -266,6 +266,66 @@ async def preview_workshop_debits(
         production_order_id=production_order_id,
     )
 
+@router.get("/workshop-debits/contexts")
+def list_workshop_debit_contexts(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    sales = (
+        db.query(models.SaleOrder)
+        .filter(models.SaleOrder.status.in_(["VALIDATED", "READY_FOR_PROD", "IN_PRODUCTION"]))
+        .order_by(models.SaleOrder.updated_at.desc())
+        .limit(100)
+        .all()
+    )
+    active_plans = (
+        db.query(models.Planning)
+        .options(joinedload(models.Planning.order))
+        .filter(
+            models.Planning.status.in_([
+                models.PlanningStatus.PENDING,
+                models.PlanningStatus.IN_PROGRESS,
+                models.PlanningStatus.PAUSED,
+                models.PlanningStatus.ISSUE,
+            ])
+        )
+        .order_by(models.Planning.created_at.desc())
+        .limit(100)
+        .all()
+    )
+
+    production_orders = []
+    seen_order_ids = set()
+    for plan in active_plans:
+        if not plan.order or plan.order_id in seen_order_ids:
+            continue
+        seen_order_ids.add(plan.order_id)
+        material = plan.order.material.value if hasattr(plan.order.material, "value") else plan.order.material
+        production_orders.append(
+            {
+                "type": "production_order",
+                "id": plan.order.id,
+                "reference": plan.order.reference,
+                "client_name": plan.order.client_name,
+                "status": plan.status.value if hasattr(plan.status, "value") else plan.status,
+                "material": material,
+                "station": plan.station,
+                "label": f"{plan.order.reference} - {plan.order.client_name or 'Atelier'} ({material})",
+            }
+        )
+
+    return {
+        "sales": [
+            {
+                "type": "sale_order",
+                "id": sale.id,
+                "reference": sale.reference,
+                "client_name": sale.client_name,
+                "status": sale.status,
+                "label": f"{sale.reference} - {sale.client_name}",
+            }
+            for sale in sales
+        ],
+        "production_orders": production_orders,
+    }
+
 @router.post("/workshop-debits/reservations", response_model=schemas.StockReservationResponse)
 async def reserve_workshop_debits(
     files: List[UploadFile] = File(...),

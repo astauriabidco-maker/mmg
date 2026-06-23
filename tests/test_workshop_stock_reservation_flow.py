@@ -189,3 +189,68 @@ def test_workshop_reservation_requires_validated_and_coherent_sale_order():
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)
+
+
+def test_workshop_debit_contexts_include_active_production_orders_without_sales():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        with TestingSessionLocal() as db:
+            order = models.Order(
+                reference="CMD-ATELIER-1",
+                width=1200,
+                height=900,
+                material=models.MaterialType.ALU,
+                client_name="Client atelier",
+                quantity=1,
+            )
+            db.add(order)
+            db.flush()
+            db.add(
+                models.Planning(
+                    order_id=order.id,
+                    station="ALU_DEBIT",
+                    status=models.PlanningStatus.PENDING,
+                )
+            )
+            db.commit()
+
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = client.get("/v2/stock/workshop-debits/contexts", headers=headers)
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["sales"] == []
+        assert payload["production_orders"] == [
+            {
+                "type": "production_order",
+                "id": 1,
+                "reference": "CMD-ATELIER-1",
+                "client_name": "Client atelier",
+                "status": "PENDING",
+                "material": "ALU",
+                "station": "ALU_DEBIT",
+                "label": "CMD-ATELIER-1 - Client atelier (ALU)",
+            }
+        ]
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)

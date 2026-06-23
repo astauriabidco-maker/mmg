@@ -22,7 +22,7 @@ export default function StockDashboard() {
     const { data: quants = [], isLoading: loadingQuants } = useQuery({ queryKey: ['quants'], queryFn: async () => { const res = await api.get('/v2/stock/quants'); return res.data; }});
     const { data: transactions = [], isLoading: loadingTransactions } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const res = await api.get('/v2/stock/transactions'); return res.data; }});
     const { data: reservations = [] } = useQuery({ queryKey: ['workshop-reservations'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/reservations?status=reserved'); return res.data; }});
-    const { data: sales = [] } = useQuery({ queryKey: ['sales-for-workshop-reservations'], queryFn: async () => { const res = await api.get('/v2/sales/'); return res.data; }});
+    const { data: workshopContexts = { sales: [], production_orders: [] } } = useQuery({ queryKey: ['workshop-debit-contexts'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/contexts'); return res.data; }});
     
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
@@ -46,7 +46,7 @@ export default function StockDashboard() {
     const [showImportModal, setShowImportModal] = useState(false);
     const [showWorkshopDebitModal, setShowWorkshopDebitModal] = useState(false);
     const [workshopFiles, setWorkshopFiles] = useState([]);
-    const [workshopSaleOrderId, setWorkshopSaleOrderId] = useState('');
+    const [workshopContextValue, setWorkshopContextValue] = useState('');
     const [workshopPreview, setWorkshopPreview] = useState(null);
     const [workshopLoading, setWorkshopLoading] = useState(false);
     const [newProductForm, setNewProductForm] = useState({
@@ -344,12 +344,17 @@ export default function StockDashboard() {
         const formData = new FormData();
         workshopFiles.forEach(file => formData.append("files", file));
         formData.append("source_location", "WH/Stock");
-        if (workshopSaleOrderId) formData.append("sale_order_id", workshopSaleOrderId);
+        if (workshopContextValue.startsWith("sale:")) {
+            formData.append("sale_order_id", workshopContextValue.split(":")[1]);
+        }
+        if (workshopContextValue.startsWith("production:")) {
+            formData.append("production_order_id", workshopContextValue.split(":")[1]);
+        }
         return formData;
     };
 
     const submitWorkshopPreview = async () => {
-        if (!workshopSaleOrderId) return alert("Sélectionnez un devis validé.");
+        if (!workshopContextValue) return alert("Sélectionnez un devis validé ou un ordre atelier.");
         if (!workshopFiles.length) return alert("Ajoutez au moins un fichier de débit atelier.");
         setWorkshopLoading(true);
         try {
@@ -380,7 +385,7 @@ export default function StockDashboard() {
             });
             setShowWorkshopDebitModal(false);
             setWorkshopFiles([]);
-            setWorkshopSaleOrderId('');
+            setWorkshopContextValue('');
             setWorkshopPreview(null);
             queryClient.invalidateQueries({ queryKey: ['workshop-reservations'] });
             queryClient.invalidateQueries({ queryKey: ['products'] });
@@ -1388,24 +1393,32 @@ export default function StockDashboard() {
 
                         <div className="grid grid-cols-3 gap-4 mb-5">
                             <div>
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Devis validé</label>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Devis / ordre atelier</label>
                                 <select
-                                    value={workshopSaleOrderId}
+                                    value={workshopContextValue}
                                     onChange={e => {
-                                        setWorkshopSaleOrderId(e.target.value);
+                                        setWorkshopContextValue(e.target.value);
                                         setWorkshopPreview(null);
                                     }}
                                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700"
                                 >
                                     <option value="">Sélectionner...</option>
-                                    {sales
-                                        .filter(s => ['VALIDATED', 'READY_FOR_PROD', 'IN_PRODUCTION'].includes(s.status))
-                                        .map(s => (
-                                            <option key={s.id} value={s.id}>
-                                                {s.reference} - {s.client_name}
-                                            </option>
-                                        ))}
+                                    {(workshopContexts.sales || []).map(s => (
+                                        <option key={`sale-${s.id}`} value={`sale:${s.id}`}>
+                                            Devis - {s.label}
+                                        </option>
+                                    ))}
+                                    {(workshopContexts.production_orders || []).map(o => (
+                                        <option key={`production-${o.id}`} value={`production:${o.id}`}>
+                                            Atelier - {o.label}
+                                        </option>
+                                    ))}
                                 </select>
+                                {(workshopContexts.sales || []).length === 0 && (workshopContexts.production_orders || []).length === 0 && (
+                                    <p className="text-xs font-bold text-amber-600 mt-2">
+                                        Aucun devis validé ou ordre atelier actif.
+                                    </p>
+                                )}
                             </div>
                             <div className="col-span-2">
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Fichiers atelier</label>
