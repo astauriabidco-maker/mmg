@@ -27,6 +27,7 @@ export default function StockDashboard() {
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
     const [currentMenu, setCurrentMenu] = useState('inventory'); // 'inventory' | 'audit' | 'settings'
+    const [inventoryFocus, setInventoryFocus] = useState('catalog'); // 'catalog' | 'stock' | 'drafts'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
     const [showDraftOnly, setShowDraftOnly] = useState(false);
@@ -504,7 +505,12 @@ export default function StockDashboard() {
                 <div 
                     className={`group flex items-center justify-between py-2.5 px-3 cursor-pointer rounded-xl transition-all border-l-4 mb-1 ${isActive ? 'bg-blue-600/20 border-blue-500 text-white shadow-inner' : 'border-transparent hover:bg-white/5 text-slate-400 hover:text-slate-200'}`}
                     style={{ paddingLeft: `${depth * 16 + 12}px` }}
-                    onClick={() => setActiveLocationId(parentLoc.id)}
+                    onClick={() => {
+                        setActiveLocationId(parentLoc.id);
+                        setInventoryFocus('stock');
+                        setShowDraftOnly(false);
+                        setSearchTerm('');
+                    }}
                 >
                     <div className="flex items-center gap-3">
                         {isInternal ? <FolderOpen className={`w-4 h-4 ${isActive ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'}`} /> : <Truck className="w-4 h-4 text-emerald-500" />}
@@ -566,6 +572,31 @@ export default function StockDashboard() {
         const text = `${product.name || ''} ${product.compatible_series || ''}`.toLowerCase();
         return text.includes('[brouillon]') || text.includes('créé depuis prévisualisation débit atelier');
     };
+
+    const selectInventoryFocus = (focus) => {
+        setCurrentMenu('inventory');
+        setInventoryFocus(focus);
+        setSearchTerm('');
+        setShowLowStockOnly(false);
+        setShowDraftOnly(focus === 'drafts');
+        if (focus === 'catalog' || focus === 'drafts') {
+            setActiveLocationId('global');
+        }
+    };
+
+    const inventoryTitle = showDraftOnly
+        ? "Brouillons catalogue"
+        : inventoryFocus === 'stock'
+            ? (activeLocationId === 'global' ? "Stock réel global" : `Stock réel : ${locations.find(l => l.id === activeLocationId)?.name}`)
+            : "Catalogue articles";
+
+    const inventorySubtitle = showDraftOnly
+        ? "Références à qualifier avant entrée de stock réelle."
+        : inventoryFocus === 'stock'
+            ? (activeLocationId === 'global'
+                ? "Vue globale en lecture : choisissez un emplacement pour ajuster le stock physique."
+                : "Ajustement rapide : cliquez sur une quantité pour la modifier.")
+            : "Référentiel produits, variantes, fournisseurs et fiches techniques.";
 
     // Calculate Grid Data grouped by Product
     let groupedData = [];
@@ -659,10 +690,10 @@ export default function StockDashboard() {
                     <div>
                         <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-2">Vues Principales</div>
                         <button 
-                            onClick={() => setCurrentMenu('inventory')}
+                            onClick={() => selectInventoryFocus('catalog')}
                             className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold transition-all text-sm ${currentMenu === 'inventory' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
                         >
-                            <LayoutGrid className="w-4 h-4"/> Articles & Stocks
+                            <LayoutGrid className="w-4 h-4"/> Catalogue & Stock
                         </button>
                         <button 
                             onClick={() => setCurrentMenu('audit')}
@@ -721,7 +752,10 @@ export default function StockDashboard() {
                         </div>
 
                         <div 
-                            onClick={() => setActiveLocationId('global')}
+                            onClick={() => {
+                                setActiveLocationId('global');
+                                setInventoryFocus('catalog');
+                            }}
                             className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border ${activeLocationId === 'global' ? 'bg-blue-900/40 border-blue-500/50 text-blue-400 shadow-inner' : 'border-transparent text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
                         >
                             <MapPin className={`w-5 h-5 ${activeLocationId === 'global' ? 'text-blue-400' : 'text-slate-500'}`} />
@@ -759,14 +793,32 @@ export default function StockDashboard() {
                 <div className="h-20 bg-white/60 backdrop-blur-xl border-b border-slate-200/60 flex items-center justify-between px-8 shrink-0 z-10">
                     <div className="flex items-center gap-3">
                         {currentMenu === 'inventory' && (
-                        <div className="flex items-center bg-slate-100/80 rounded-xl p-1 border border-slate-200/50 shadow-inner">
-                            <button onClick={() => setViewMode('list')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'list' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
-                                <List className="w-4 h-4"/>
-                            </button>
-                            <button onClick={() => setViewMode('kanban')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'kanban' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
-                                <LayoutGrid className="w-4 h-4"/>
-                            </button>
-                        </div>
+                            <>
+                                <div className="flex items-center bg-slate-100/80 rounded-xl p-1 border border-slate-200/50 shadow-inner">
+                                    <button onClick={() => setViewMode('list')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'list' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
+                                        <List className="w-4 h-4"/>
+                                    </button>
+                                    <button onClick={() => setViewMode('kanban')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'kanban' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
+                                        <LayoutGrid className="w-4 h-4"/>
+                                    </button>
+                                </div>
+                                <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm">
+                                    <button onClick={() => selectInventoryFocus('catalog')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${inventoryFocus === 'catalog' && !showDraftOnly ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                        <Package className="w-4 h-4"/> Catalogue
+                                    </button>
+                                    <button onClick={() => selectInventoryFocus('stock')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${inventoryFocus === 'stock' && !showDraftOnly ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                        <MapPin className="w-4 h-4"/> Stock réel
+                                    </button>
+                                    <button onClick={() => selectInventoryFocus('drafts')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${showDraftOnly ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                        <FileEdit className="w-4 h-4"/> Brouillons
+                                    </button>
+                                    {isManager && (
+                                        <button onClick={() => setShowWorkshopDebitModal(true)} className="px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black text-amber-700 hover:bg-amber-50 transition-all">
+                                            <ArrowRight className="w-4 h-4"/> Débit atelier
+                                        </button>
+                                    )}
+                                </div>
+                            </>
                         )}
                     </div>
 
@@ -791,12 +843,10 @@ export default function StockDashboard() {
                 <div className="px-8 py-6 bg-white/40 border-b border-slate-200/60 shrink-0 flex justify-between items-start">
                     <div>
                         <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
-                            {activeLocationId === 'global' ? "Inventaire Global Unifié" : `Emplacement : ${locations.find(l => l.id === activeLocationId)?.name}`}
+                            {inventoryTitle}
                         </h2>
                         <p className="text-sm font-bold text-slate-500 mt-1">
-                            {activeLocationId === 'global' 
-                                ? "⚠️ VUE GLOBALE : Les quantités ne sont PAS modifiables ici."
-                                : "✅ Ajustement Rapide : Double-cliquez sur la quantité d'une variante pour la modifier."}
+                            {inventorySubtitle}
                         </p>
                     </div>
 
@@ -824,6 +874,7 @@ export default function StockDashboard() {
                             onClick={() => {
                                 setShowLowStockOnly(prev => !prev);
                                 setShowDraftOnly(false);
+                                setInventoryFocus('stock');
                                 setSearchTerm('');
                             }}
                             className={`px-5 py-3 rounded-2xl border flex flex-col justify-center transition-all ${showLowStockOnly ? 'bg-red-600 border-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-500/20' : totalLowStockCount > 0 ? 'bg-white border-red-200 hover:bg-red-50 text-red-600 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500 shadow-sm'}`}
@@ -833,9 +884,12 @@ export default function StockDashboard() {
                         </button>
                         <button 
                             onClick={() => {
-                                setShowDraftOnly(prev => !prev);
+                                const nextDraftState = !showDraftOnly;
+                                setShowDraftOnly(nextDraftState);
+                                setInventoryFocus(nextDraftState ? 'drafts' : 'catalog');
                                 setShowLowStockOnly(false);
                                 setSearchTerm('');
+                                if (nextDraftState) setActiveLocationId('global');
                             }}
                             className={`px-5 py-3 rounded-2xl border flex flex-col justify-center transition-all ${showDraftOnly ? 'bg-amber-500 border-amber-500 hover:bg-amber-400 text-white shadow-lg shadow-amber-500/20' : totalDraftCount > 0 ? 'bg-white border-amber-200 hover:bg-amber-50 text-amber-700 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500 shadow-sm'}`}
                         >
