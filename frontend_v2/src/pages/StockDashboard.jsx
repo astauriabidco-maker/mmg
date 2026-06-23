@@ -808,18 +808,38 @@ export default function StockDashboard() {
                                 <span className="text-2xl font-black tracking-tight">{totalValuation.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
                             </div>
                         )}
+                        {(showLowStockOnly || showDraftOnly) && (
+                            <button
+                                onClick={() => {
+                                    setShowLowStockOnly(false);
+                                    setShowDraftOnly(false);
+                                    setSearchTerm('');
+                                }}
+                                className="px-4 py-3 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 font-black text-xs uppercase tracking-widest shadow-sm"
+                            >
+                                Tous
+                            </button>
+                        )}
                         <button 
-                            onClick={() => setShowLowStockOnly(!showLowStockOnly)}
-                            className={`px-5 py-3 rounded-2xl border flex flex-col justify-center transition-all ${showLowStockOnly || totalLowStockCount > 0 ? 'bg-red-50 border-red-200 hover:bg-red-100 text-red-600 shadow-lg shadow-red-500/10' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500 shadow-sm'}`}
+                            onClick={() => {
+                                setShowLowStockOnly(prev => !prev);
+                                setShowDraftOnly(false);
+                                setSearchTerm('');
+                            }}
+                            className={`px-5 py-3 rounded-2xl border flex flex-col justify-center transition-all ${showLowStockOnly ? 'bg-red-600 border-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-500/20' : totalLowStockCount > 0 ? 'bg-white border-red-200 hover:bg-red-50 text-red-600 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500 shadow-sm'}`}
                         >
-                            <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Alertes Rupture</span>
+                            <span className="text-[10px] uppercase font-black tracking-widest opacity-70">{showLowStockOnly ? 'Filtre actif' : 'Alertes Rupture'}</span>
                             <span className="text-xl font-black tracking-tight">{totalLowStockCount} variante(s)</span>
                         </button>
                         <button 
-                            onClick={() => setShowDraftOnly(!showDraftOnly)}
-                            className={`px-5 py-3 rounded-2xl border flex flex-col justify-center transition-all ${showDraftOnly || totalDraftCount > 0 ? 'bg-amber-50 border-amber-200 hover:bg-amber-100 text-amber-700 shadow-lg shadow-amber-500/10' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500 shadow-sm'}`}
+                            onClick={() => {
+                                setShowDraftOnly(prev => !prev);
+                                setShowLowStockOnly(false);
+                                setSearchTerm('');
+                            }}
+                            className={`px-5 py-3 rounded-2xl border flex flex-col justify-center transition-all ${showDraftOnly ? 'bg-amber-500 border-amber-500 hover:bg-amber-400 text-white shadow-lg shadow-amber-500/20' : totalDraftCount > 0 ? 'bg-white border-amber-200 hover:bg-amber-50 text-amber-700 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500 shadow-sm'}`}
                         >
-                            <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Brouillons catalogue</span>
+                            <span className="text-[10px] uppercase font-black tracking-widest opacity-70">{showDraftOnly ? 'Filtre actif' : 'Brouillons catalogue'}</span>
                             <span className="text-xl font-black tracking-tight">{totalDraftCount} article(s)</span>
                         </button>
                     </div>
@@ -831,7 +851,7 @@ export default function StockDashboard() {
                         <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-200 rounded-3xl m-6">
                             <Box className="w-12 h-12 text-slate-300 mb-4" />
                             <p className="text-center text-slate-400 font-bold">
-                                Aucun produit trouvé ou vide dans cet emplacement. <br/> <span className="text-sm font-medium italic">Faites une recherche pour le faire apparaître ici et ajuster son stock.</span>
+                                Aucun produit trouvé avec le filtre actuel. <br/> <span className="text-sm font-medium italic">Réinitialisez les filtres ou changez d'emplacement.</span>
                             </p>
                         </div>
                     )}
