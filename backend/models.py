@@ -224,6 +224,8 @@ class StockReservation(Base):
     __tablename__ = "stock_reservations"
     id = Column(Integer, primary_key=True, index=True)
     reference = Column(String, unique=True, index=True)
+    sale_order_id = Column(Integer, ForeignKey("sale_orders.id"), nullable=True, index=True)
+    production_order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
     order_reference = Column(String, index=True, nullable=True)
     project_reference = Column(String, index=True, nullable=True)
     source_label = Column(String, nullable=True)
@@ -234,6 +236,8 @@ class StockReservation(Base):
     consumed_at = Column(DateTime, nullable=True)
 
     lines = relationship("StockReservationLine", back_populates="reservation", cascade="all, delete-orphan")
+    sale_order = relationship("SaleOrder")
+    production_order = relationship("Order")
 
 class StockReservationLine(Base):
     __tablename__ = "stock_reservation_lines"

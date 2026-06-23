@@ -376,6 +376,8 @@ class StockReservationLineResponse(BaseModel):
 class StockReservationResponse(BaseModel):
     id: int
     reference: str
+    sale_order_id: Optional[int] = None
+    production_order_id: Optional[int] = None
     order_reference: Optional[str] = None
     project_reference: Optional[str] = None
     source_label: Optional[str] = None

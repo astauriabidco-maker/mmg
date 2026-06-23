@@ -22,6 +22,7 @@ export default function StockDashboard() {
     const { data: quants = [], isLoading: loadingQuants } = useQuery({ queryKey: ['quants'], queryFn: async () => { const res = await api.get('/v2/stock/quants'); return res.data; }});
     const { data: transactions = [], isLoading: loadingTransactions } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const res = await api.get('/v2/stock/transactions'); return res.data; }});
     const { data: reservations = [] } = useQuery({ queryKey: ['workshop-reservations'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/reservations?status=reserved'); return res.data; }});
+    const { data: sales = [] } = useQuery({ queryKey: ['sales-for-workshop-reservations'], queryFn: async () => { const res = await api.get('/v2/sales/'); return res.data; }});
     
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
@@ -45,7 +46,7 @@ export default function StockDashboard() {
     const [showImportModal, setShowImportModal] = useState(false);
     const [showWorkshopDebitModal, setShowWorkshopDebitModal] = useState(false);
     const [workshopFiles, setWorkshopFiles] = useState([]);
-    const [workshopOrderRef, setWorkshopOrderRef] = useState('');
+    const [workshopSaleOrderId, setWorkshopSaleOrderId] = useState('');
     const [workshopPreview, setWorkshopPreview] = useState(null);
     const [workshopLoading, setWorkshopLoading] = useState(false);
     const [newProductForm, setNewProductForm] = useState({
@@ -343,11 +344,12 @@ export default function StockDashboard() {
         const formData = new FormData();
         workshopFiles.forEach(file => formData.append("files", file));
         formData.append("source_location", "WH/Stock");
-        if (workshopOrderRef.trim()) formData.append("order_reference", workshopOrderRef.trim());
+        if (workshopSaleOrderId) formData.append("sale_order_id", workshopSaleOrderId);
         return formData;
     };
 
     const submitWorkshopPreview = async () => {
+        if (!workshopSaleOrderId) return alert("Sélectionnez un devis validé.");
         if (!workshopFiles.length) return alert("Ajoutez au moins un fichier de débit atelier.");
         setWorkshopLoading(true);
         try {
@@ -365,6 +367,9 @@ export default function StockDashboard() {
     const submitWorkshopReservation = async () => {
         if (!workshopPreview) return;
         const status = workshopPreview.summary?.stock_match_status || {};
+        if (workshopPreview.issues?.some(issue => issue.severity === 'error')) {
+            return alert("Réservation bloquée : corrigez les alertes workflow.");
+        }
         if ((status.not_found || 0) > 0 || (status.shortage || 0) > 0) {
             return alert("Réservation bloquée : références inconnues ou stock insuffisant.");
         }
@@ -375,7 +380,7 @@ export default function StockDashboard() {
             });
             setShowWorkshopDebitModal(false);
             setWorkshopFiles([]);
-            setWorkshopOrderRef('');
+            setWorkshopSaleOrderId('');
             setWorkshopPreview(null);
             queryClient.invalidateQueries({ queryKey: ['workshop-reservations'] });
             queryClient.invalidateQueries({ queryKey: ['products'] });
@@ -1382,6 +1387,26 @@ export default function StockDashboard() {
                         </div>
 
                         <div className="grid grid-cols-3 gap-4 mb-5">
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Devis validé</label>
+                                <select
+                                    value={workshopSaleOrderId}
+                                    onChange={e => {
+                                        setWorkshopSaleOrderId(e.target.value);
+                                        setWorkshopPreview(null);
+                                    }}
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700"
+                                >
+                                    <option value="">Sélectionner...</option>
+                                    {sales
+                                        .filter(s => ['VALIDATED', 'READY_FOR_PROD', 'IN_PRODUCTION'].includes(s.status))
+                                        .map(s => (
+                                            <option key={s.id} value={s.id}>
+                                                {s.reference} - {s.client_name}
+                                            </option>
+                                        ))}
+                                </select>
+                            </div>
                             <div className="col-span-2">
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Fichiers atelier</label>
                                 <input
@@ -1393,15 +1418,6 @@ export default function StockDashboard() {
                                         setWorkshopPreview(null);
                                     }}
                                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700"
-                                />
-                            </div>
-                            <div>
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Commande liée</label>
-                                <input
-                                    value={workshopOrderRef}
-                                    onChange={e => setWorkshopOrderRef(e.target.value)}
-                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold"
-                                    placeholder="CMD-..."
                                 />
                             </div>
                         </div>
@@ -1425,6 +1441,18 @@ export default function StockDashboard() {
 
                         {workshopPreview && (
                             <div className="grid grid-cols-4 gap-3">
+                                {workshopPreview.issues?.length > 0 && (
+                                    <div className="col-span-4 bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                                        <p className="text-xs font-black text-amber-700 uppercase mb-2">Contrôles workflow</p>
+                                        <div className="space-y-1">
+                                            {workshopPreview.issues.map((issue, idx) => (
+                                                <p key={idx} className={`text-sm font-bold ${issue.severity === 'error' ? 'text-red-700' : 'text-amber-700'}`}>
+                                                    {issue.message || issue.code}
+                                                </p>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
                                     <span className="text-[10px] font-black text-slate-400 uppercase">Lignes</span>
                                     <p className="text-2xl font-black text-slate-900">{workshopPreview.summary.debit_lines || 0}</p>

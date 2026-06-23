@@ -251,16 +251,27 @@ def get_recent_transactions(db: Session = Depends(get_db)):
 async def preview_workshop_debits(
     files: List[UploadFile] = File(...),
     source_location: str = Form("WH/Stock"),
+    sale_order_id: Optional[int] = Form(None),
+    production_order_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     records, issues, _source_names = await _parse_workshop_uploads(files)
-    return build_preview_payload(db, records, issues, source_location)
+    return build_preview_payload(
+        db,
+        records,
+        issues,
+        source_location,
+        sale_order_id=sale_order_id,
+        production_order_id=production_order_id,
+    )
 
 @router.post("/workshop-debits/reservations", response_model=schemas.StockReservationResponse)
 async def reserve_workshop_debits(
     files: List[UploadFile] = File(...),
     source_location: str = Form("WH/Stock"),
+    sale_order_id: Optional[int] = Form(None),
+    production_order_id: Optional[int] = Form(None),
     order_reference: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
     allow_missing: bool = Form(False),
@@ -270,6 +281,8 @@ async def reserve_workshop_debits(
 ):
     if user.get("role") not in ["ADMIN", "MANAGER"]:
         raise HTTPException(status_code=403, detail="Seul un manager peut réserver un débit atelier.")
+    if (allow_missing or allow_shortage) and user.get("role") != "ADMIN":
+        raise HTTPException(status_code=403, detail="Seul un administrateur peut forcer une réservation incomplète.")
     records, issues, source_names = await _parse_workshop_uploads(files)
     blocking_errors = [issue for issue in issues if issue.severity == "error"]
     if blocking_errors:
@@ -282,6 +295,8 @@ async def reserve_workshop_debits(
             created_by=user.get("sub", "Admin"),
             source_location=source_location,
             order_reference=order_reference,
+            sale_order_id=sale_order_id,
+            production_order_id=production_order_id,
             notes=notes,
             allow_missing=allow_missing,
             allow_shortage=allow_shortage,

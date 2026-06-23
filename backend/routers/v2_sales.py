@@ -378,6 +378,7 @@ def launch_production(order_id: int, db: Session = Depends(get_db)):
     if sale.status != "READY_FOR_PROD":
         raise HTTPException(status_code=400, detail="Seul un dossier dont le BOM a été importé (READY_FOR_PROD) peut être lancé en production.")
         
+    first_prod_order = None
     # Create production orders based on sale lines
     for i, line in enumerate(sale.lines):
         # We need to extract material from description or assume ALU if not specified
@@ -398,6 +399,8 @@ def launch_production(order_id: int, db: Session = Depends(get_db)):
         )
         db.add(prod_order)
         db.flush()
+        if first_prod_order is None:
+            first_prod_order = prod_order
         
         # Dynamic First Station Logic
         # We only create the very first planning step (lowest order_index for this material).
@@ -422,6 +425,16 @@ def launch_production(order_id: int, db: Session = Depends(get_db)):
             )
             db.add(plan)
             
+    if first_prod_order:
+        active_reservations = db.query(models.StockReservation).filter(
+            models.StockReservation.sale_order_id == sale.id,
+            models.StockReservation.status == "reserved",
+            models.StockReservation.production_order_id.is_(None),
+        ).all()
+        for reservation in active_reservations:
+            reservation.production_order_id = first_prod_order.id
+            reservation.order_reference = first_prod_order.reference
+
     sale.status = "IN_PRODUCTION"
     db.commit()
     return {"message": "Dossier lancé en production avec succès !"}

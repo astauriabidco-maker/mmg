@@ -35,10 +35,19 @@ Le stock est débité définitivement quand l'étape réelle `Débit PVC` ou `D�
 
 Dans `Inventaire & Stock`, utiliser `Débit Atelier` :
 
-1. Ajouter le TXT Progers et/ou le PDF `Débit optimisé` Orgadata.
-2. Lancer la prévisualisation.
-3. Corriger les références inconnues ou le stock insuffisant.
-4. Réserver le stock.
+1. Sélectionner un devis validé (`VALIDATED`, `READY_FOR_PROD` ou `IN_PRODUCTION`).
+2. Ajouter le TXT Progers et/ou le PDF `Débit optimisé` Orgadata.
+3. Lancer la prévisualisation.
+4. Corriger les références inconnues, le stock insuffisant ou une incohérence matière.
+5. Réserver le stock.
+
+Contrôles obligatoires :
+
+- une réservation doit être liée à un devis validé ou à un ordre de production ;
+- un devis brouillon/envoyé non signé est refusé ;
+- une réservation active existe au maximum une fois par devis ;
+- la matière détectée dans les fichiers (`ALU`, `PVC`) doit être cohérente avec le devis/ordre quand MMG peut l'inférer ;
+- les forçages `--allow-missing` et `--allow-shortage` sont réservés aux administrateurs.
 
 ## Appliquer en base via CLI
 

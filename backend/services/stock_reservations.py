@@ -13,6 +13,90 @@ from scripts.import_workshop_debits import DebitRecord, StockMatch, build_summar
 
 
 ACTIVE_RESERVATION_STATUS = "reserved"
+RESERVABLE_SALE_STATUSES = {"VALIDATED", "READY_FOR_PROD", "IN_PRODUCTION"}
+ALU_SUPPLIERS = {"CORTIZO", "SEPALUMIC", "TECHNAL/HYDRO", "TECHNAL", "HYDRO"}
+PVC_SUPPLIERS = {"VEKA", "KOMMERLING", "KÖMMERLING", "REHAU", "DECEUNINCK"}
+
+
+def infer_material_from_records(records: Iterable[DebitRecord]) -> str | None:
+    records = list(records)
+    values = " ".join(
+        " ".join([record.supplier, record.reference, record.designation, record.color or "", record.source])
+        for record in records
+    ).upper()
+    suppliers = {record.supplier.upper() for record in records}
+    if suppliers.intersection(ALU_SUPPLIERS) or any(token in values for token in [" ALU", "ALUMINIUM", "CORTIZO", "SEPALUMIC"]):
+        return "ALU"
+    if suppliers.intersection(PVC_SUPPLIERS) or any(token in values for token in [" PVC", "KOMMERLING", "KÖMMERLING", "REHAU"]):
+        return "PVC"
+    return None
+
+
+def infer_material_from_sale(sale: models.SaleOrder) -> str | None:
+    text = " ".join(line.description or "" for line in sale.lines).upper()
+    if any(token in text for token in [" PVC", "PVC ", "KOMMERLING", "KÖMMERLING", "REHAU"]):
+        return "PVC"
+    if any(token in text for token in [" ALU", "ALUMINIUM", "CORTIZO", "SEPALUMIC", "TECHNAL"]):
+        return "ALU"
+    return None
+
+
+def validate_workflow_context(
+    db: Session,
+    records: list[DebitRecord],
+    sale_order_id: int | None = None,
+    production_order_id: int | None = None,
+) -> tuple[models.SaleOrder | None, models.Order | None, list[dict]]:
+    issues: list[dict] = []
+    sale = None
+    production_order = None
+
+    if sale_order_id:
+        sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_order_id).first()
+        if not sale:
+            raise ValueError("Devis introuvable.")
+        if sale.status not in RESERVABLE_SALE_STATUSES:
+            raise ValueError(
+                f"Devis {sale.reference} au statut {sale.status}; réservation autorisée seulement après validation."
+            )
+        duplicate = (
+            db.query(models.StockReservation)
+            .filter(
+                models.StockReservation.sale_order_id == sale.id,
+                models.StockReservation.status == ACTIVE_RESERVATION_STATUS,
+            )
+            .first()
+        )
+        if duplicate:
+            raise ValueError(f"Une réservation active existe déjà pour {sale.reference}: {duplicate.reference}.")
+
+    if production_order_id:
+        production_order = db.query(models.Order).filter(models.Order.id == production_order_id).first()
+        if not production_order:
+            raise ValueError("Ordre de production introuvable.")
+
+    if not sale and not production_order:
+        raise ValueError("La réservation doit être liée à un devis validé ou à un ordre de production.")
+
+    file_material = infer_material_from_records(records)
+    expected_material = None
+    if production_order:
+        expected_material = production_order.material.value if hasattr(production_order.material, "value") else production_order.material
+    elif sale:
+        expected_material = infer_material_from_sale(sale)
+
+    if file_material and expected_material and file_material != expected_material:
+        raise ValueError(f"Incohérence matière: fichier {file_material}, dossier {expected_material}.")
+    if file_material and not expected_material:
+        issues.append(
+            {
+                "severity": "warning",
+                "code": "material_not_confirmed",
+                "message": f"Matière détectée {file_material}, mais le devis ne permet pas de confirmer la matière.",
+            }
+        )
+
+    return sale, production_order, issues
 
 
 def get_or_create_location(db: Session, name: str, usage: str) -> models.StockLocation:
@@ -97,13 +181,39 @@ def preview_records(db: Session, records: Iterable[DebitRecord], source_location
     return matches
 
 
-def build_preview_payload(db: Session, records: list[DebitRecord], issues: list, source_location: str = "WH/Stock") -> dict:
+def build_preview_payload(
+    db: Session,
+    records: list[DebitRecord],
+    issues: list,
+    source_location: str = "WH/Stock",
+    sale_order_id: int | None = None,
+    production_order_id: int | None = None,
+) -> dict:
     matches = preview_records(db, records, source_location) if records else []
     summary = build_summary(records, issues)
     summary["stock_match_status"] = dict(sorted(Counter(match.status for match in matches).items()))
+    workflow_issues = []
+    if records and (sale_order_id or production_order_id):
+        try:
+            _sale, _production_order, workflow_issues = validate_workflow_context(
+                db,
+                records,
+                sale_order_id=sale_order_id,
+                production_order_id=production_order_id,
+            )
+        except ValueError as exc:
+            workflow_issues = [{"severity": "error", "code": "workflow_context", "message": str(exc)}]
+    elif records:
+        workflow_issues = [
+            {
+                "severity": "error",
+                "code": "missing_workflow_context",
+                "message": "Sélectionner un devis validé ou un ordre de production avant de réserver.",
+            }
+        ]
     return {
         "summary": summary,
-        "issues": [asdict(issue) for issue in issues],
+        "issues": [asdict(issue) for issue in issues] + workflow_issues,
         "records": [asdict(record) for record in consolidate_records(records)],
         "stock_matches": [match.__dict__ for match in matches],
     }
@@ -116,12 +226,20 @@ def create_reservation(
     created_by: str,
     source_location: str = "WH/Stock",
     order_reference: str | None = None,
+    sale_order_id: int | None = None,
+    production_order_id: int | None = None,
     notes: str | None = None,
     allow_missing: bool = False,
     allow_shortage: bool = False,
 ) -> models.StockReservation:
     source = get_or_create_location(db, source_location, "internal")
     consolidated = consolidate_records(records)
+    sale, production_order, _workflow_issues = validate_workflow_context(
+        db,
+        consolidated,
+        sale_order_id=sale_order_id,
+        production_order_id=production_order_id,
+    )
     matches = preview_records(db, consolidated, source_location)
     missing = [match for match in matches if match.status == "not_found"]
     shortages = [match for match in matches if match.status == "shortage"]
@@ -132,9 +250,17 @@ def create_reservation(
 
     project_reference = next((record.project_reference for record in consolidated if record.project_reference), None)
     reference = f"RSV-ATELIER-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+    resolved_order_reference = (
+        order_reference
+        or (production_order.reference if production_order else None)
+        or (sale.reference if sale else None)
+        or project_reference
+    )
     reservation = models.StockReservation(
         reference=reference,
-        order_reference=order_reference or project_reference,
+        sale_order_id=sale.id if sale else None,
+        production_order_id=production_order.id if production_order else None,
+        order_reference=resolved_order_reference,
         project_reference=project_reference,
         source_label=source_label,
         status=ACTIVE_RESERVATION_STATUS,
@@ -238,12 +364,14 @@ def consume_reservations_for_order(db: Session, order_reference: str, station_co
     if "DEBIT" not in station_code.upper():
         return {"created_moves": 0, "consumed_lines": 0, "reservations": 0}
 
+    order = db.query(models.Order).filter(models.Order.reference == order_reference).first()
     reservations = (
         db.query(models.StockReservation)
         .options(joinedload(models.StockReservation.lines).joinedload(models.StockReservationLine.variant))
         .filter(
             models.StockReservation.status == ACTIVE_RESERVATION_STATUS,
             or_(
+                models.StockReservation.production_order_id == (order.id if order else None),
                 models.StockReservation.order_reference == order_reference,
                 models.StockReservation.project_reference == order_reference,
             ),
