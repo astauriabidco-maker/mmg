@@ -254,3 +254,42 @@ def test_workshop_debit_contexts_include_active_production_orders_without_sales(
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)
+
+
+def test_workshop_debit_preview_is_allowed_without_context_but_flags_workflow():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+        content = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
+
+        response = client.post(
+            "/v2/stock/workshop-debits/preview",
+            headers=headers,
+            files=[("files", ("SEPVER.TXT", content, "text/plain"))],
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["summary"]["debit_lines"] == 1
+        assert any(issue["code"] == "missing_workflow_context" for issue in payload["issues"])
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)

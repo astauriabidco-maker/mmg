@@ -270,7 +270,7 @@ async def preview_workshop_debits(
 def list_workshop_debit_contexts(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     sales = (
         db.query(models.SaleOrder)
-        .filter(models.SaleOrder.status.in_(["VALIDATED", "READY_FOR_PROD", "IN_PRODUCTION"]))
+        .filter(models.SaleOrder.status.in_(["SENT", "VALIDATED", "IN_DESIGN", "READY_FOR_PROD", "IN_PRODUCTION"]))
         .order_by(models.SaleOrder.updated_at.desc())
         .limit(100)
         .all()
@@ -319,6 +319,7 @@ def list_workshop_debit_contexts(db: Session = Depends(get_db), user: dict = Dep
                 "reference": sale.reference,
                 "client_name": sale.client_name,
                 "status": sale.status,
+                "is_reservable": sale.status in ["VALIDATED", "READY_FOR_PROD", "IN_PRODUCTION"],
                 "label": f"{sale.reference} - {sale.client_name}",
             }
             for sale in sales

@@ -354,7 +354,6 @@ export default function StockDashboard() {
     };
 
     const submitWorkshopPreview = async () => {
-        if (!workshopContextValue) return alert("Sélectionnez un devis validé ou un ordre atelier.");
         if (!workshopFiles.length) return alert("Ajoutez au moins un fichier de débit atelier.");
         setWorkshopLoading(true);
         try {
@@ -371,6 +370,9 @@ export default function StockDashboard() {
 
     const submitWorkshopReservation = async () => {
         if (!workshopPreview) return;
+        if (!workshopContextValue) {
+            return alert("Sélectionnez un devis validé ou un ordre atelier avant de réserver le stock.");
+        }
         const status = workshopPreview.summary?.stock_match_status || {};
         if (workshopPreview.issues?.some(issue => issue.severity === 'error')) {
             return alert("Réservation bloquée : corrigez les alertes workflow.");
@@ -1393,7 +1395,7 @@ export default function StockDashboard() {
 
                         <div className="grid grid-cols-3 gap-4 mb-5">
                             <div>
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Devis / ordre atelier</label>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Contexte workflow</label>
                                 <select
                                     value={workshopContextValue}
                                     onChange={e => {
@@ -1405,7 +1407,7 @@ export default function StockDashboard() {
                                     <option value="">Sélectionner...</option>
                                     {(workshopContexts.sales || []).map(s => (
                                         <option key={`sale-${s.id}`} value={`sale:${s.id}`}>
-                                            Devis - {s.label}
+                                            Devis - {s.label}{s.is_reservable ? "" : " (prévisualisation)"}
                                         </option>
                                     ))}
                                     {(workshopContexts.production_orders || []).map(o => (
@@ -1416,7 +1418,7 @@ export default function StockDashboard() {
                                 </select>
                                 {(workshopContexts.sales || []).length === 0 && (workshopContexts.production_orders || []).length === 0 && (
                                     <p className="text-xs font-bold text-amber-600 mt-2">
-                                        Aucun devis validé ou ordre atelier actif.
+                                        Aucun contexte trouvé. La prévisualisation reste possible sans réservation.
                                     </p>
                                 )}
                             </div>
@@ -1445,7 +1447,7 @@ export default function StockDashboard() {
                             </button>
                             <button
                                 onClick={submitWorkshopReservation}
-                                disabled={workshopLoading || !workshopPreview}
+                                disabled={workshopLoading || !workshopPreview || !workshopContextValue}
                                 className="px-5 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-white rounded-xl font-black shadow-lg"
                             >
                                 Réserver le stock
