@@ -293,3 +293,64 @@ def test_workshop_debit_preview_is_allowed_without_context_but_flags_workflow():
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)
+
+
+def test_workshop_unknown_lines_can_create_zero_stock_draft_products():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+        content = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
+
+        create_response = client.post(
+            "/v2/stock/workshop-debits/draft-products",
+            headers=headers,
+            files=[("files", ("SEPVER.TXT", content, "text/plain"))],
+        )
+
+        assert create_response.status_code == 200, create_response.text
+        assert create_response.json()["created"] == 1
+        assert create_response.json()["references"] == ["SEPALUMIC:7007"]
+
+        preview_response = client.post(
+            "/v2/stock/workshop-debits/preview",
+            headers=headers,
+            files=[("files", ("SEPVER.TXT", content, "text/plain"))],
+        )
+
+        assert preview_response.status_code == 200, preview_response.text
+        payload = preview_response.json()
+        assert payload["summary"]["stock_match_status"] == {"shortage": 1}
+
+        with TestingSessionLocal() as db:
+            product = db.query(models.Product).one()
+            variant = db.query(models.ProductVariant).one()
+            quant = db.query(models.StockQuant).one()
+
+        assert product.name.startswith("[BROUILLON]")
+        assert product.supplier == "SEPALUMIC"
+        assert product.material_type == "ALU"
+        assert variant.reference == "SEPALUMIC:7007"
+        assert variant.supplier_reference == "7007"
+        assert variant.quantity_in_stock == 0
+        assert quant.quantity == 0
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)

@@ -266,6 +266,79 @@ async def preview_workshop_debits(
         production_order_id=production_order_id,
     )
 
+@router.post("/workshop-debits/draft-products")
+async def create_draft_products_from_workshop_debits(
+    files: List[UploadFile] = File(...),
+    source_location: str = Form("WH/Stock"),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    if user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut créer des brouillons catalogue.")
+
+    records, issues, _source_names = await _parse_workshop_uploads(files)
+    if any(issue.severity == "error" for issue in issues):
+        raise HTTPException(status_code=400, detail="Fichier de débit non exploitable.")
+
+    preview = build_preview_payload(db, records, issues, source_location)
+    unknown_lines = [line for line in preview["stock_matches"] if line["status"] == "not_found"]
+    location = db.query(models.StockLocation).filter_by(name=source_location, usage="internal").first()
+    if not location:
+        location = models.StockLocation(name=source_location, usage="internal", is_active=True)
+        db.add(location)
+        db.flush()
+
+    created = 0
+    skipped = 0
+    refs = []
+    for line in unknown_lines:
+        supplier = (line["supplier"] or "FOURNISSEUR").strip().upper()
+        reference = (line["reference"] or "").strip()
+        if not reference:
+            skipped += 1
+            continue
+        variant_ref = f"{supplier}:{reference}"
+        existing = db.query(models.ProductVariant).filter(models.ProductVariant.reference == variant_ref).first()
+        if existing:
+            skipped += 1
+            continue
+
+        unit = line["unit"] or "unité"
+        material_type = "ALU" if supplier in {"SEPALUMIC", "CORTIZO", "TECHNAL/HYDRO", "TECHNAL", "HYDRO"} else "UNKNOWN"
+        product = models.Product(
+            reference_base=variant_ref,
+            name=f"[BROUILLON] {supplier} {reference} - à compléter",
+            material_type=material_type,
+            unit=unit,
+            supplier=supplier,
+            product_type="stockable",
+            available_in_pos=False,
+            compatible_series="Créé depuis prévisualisation débit atelier; stock réel à renseigner.",
+        )
+        db.add(product)
+        db.flush()
+        variant = models.ProductVariant(
+            product_id=product.id,
+            reference=variant_ref,
+            supplier_reference=reference,
+            quantity_in_stock=0,
+            min_threshold=0,
+            location=source_location,
+        )
+        db.add(variant)
+        db.flush()
+        db.add(models.StockQuant(variant_id=variant.id, location_id=location.id, quantity=0))
+        created += 1
+        refs.append(variant_ref)
+
+    db.commit()
+    return {
+        "created": created,
+        "skipped": skipped,
+        "references": refs[:50],
+        "message": f"{created} brouillon(s) catalogue créé(s), {skipped} ignoré(s).",
+    }
+
 @router.get("/workshop-debits/contexts")
 def list_workshop_debit_contexts(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     sales = (

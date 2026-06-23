@@ -399,6 +399,28 @@ export default function StockDashboard() {
         }
     };
 
+    const createWorkshopDraftProducts = async () => {
+        if (!workshopPreview || (workshopPreview.summary.stock_match_status?.not_found || 0) === 0) return;
+        if (!window.confirm("Créer les références inconnues en brouillons catalogue avec quantité zéro ?")) return;
+        setWorkshopLoading(true);
+        try {
+            const res = await api.post('/v2/stock/workshop-debits/draft-products', buildWorkshopFormData(), {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            alert(res.data.message || "Brouillons catalogue créés.");
+            const preview = await api.post('/v2/stock/workshop-debits/preview', buildWorkshopFormData(), {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            setWorkshopPreview(preview.data);
+            queryClient.invalidateQueries({ queryKey: ['products'] });
+            queryClient.invalidateQueries({ queryKey: ['quants'] });
+        } catch (error) {
+            alert(error.response?.data?.detail || "Création des brouillons impossible.");
+        } finally {
+            setWorkshopLoading(false);
+        }
+    };
+
     const openAddVariant = (e, product) => {
         e.stopPropagation();
         setAddVariantForm({
@@ -1452,6 +1474,15 @@ export default function StockDashboard() {
                             >
                                 Réserver le stock
                             </button>
+                            {workshopPreview && (workshopPreview.summary.stock_match_status?.not_found || 0) > 0 && (
+                                <button
+                                    onClick={createWorkshopDraftProducts}
+                                    disabled={workshopLoading}
+                                    className="px-5 py-3 bg-red-50 hover:bg-red-100 disabled:opacity-40 text-red-700 border border-red-200 rounded-xl font-black"
+                                >
+                                    Créer brouillons catalogue
+                                </button>
+                            )}
                         </div>
 
                         {workshopPreview && (
