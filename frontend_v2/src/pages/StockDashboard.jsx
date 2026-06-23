@@ -29,6 +29,7 @@ export default function StockDashboard() {
     const [currentMenu, setCurrentMenu] = useState('inventory'); // 'inventory' | 'audit' | 'settings'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
+    const [showDraftOnly, setShowDraftOnly] = useState(false);
     const [expandedProducts, setExpandedProducts] = useState({});
     
     // Inline edit states
@@ -294,8 +295,10 @@ export default function StockDashboard() {
             reference: variant.reference,
             barcode: variant.barcode || '',
             color: variant.color || '',
-            cost_price: variant.cost_price || '',
-            min_threshold: variant.min_threshold || 10,
+            length_per_unit: variant.length_per_unit ?? '',
+            supplier_reference: variant.supplier_reference || '',
+            cost_price: variant.cost_price ?? '',
+            min_threshold: variant.min_threshold ?? 10,
             image_url: variant.image_url || '',
             location: variant.location || ''
         });
@@ -308,8 +311,10 @@ export default function StockDashboard() {
                 reference: editVariantForm.reference,
                 barcode: editVariantForm.barcode || null,
                 color: editVariantForm.color,
-                cost_price: parseFloat(editVariantForm.cost_price) || 0,
-                min_threshold: parseFloat(editVariantForm.min_threshold) || 10,
+                length_per_unit: editVariantForm.length_per_unit ? parseFloat(editVariantForm.length_per_unit) : null,
+                supplier_reference: editVariantForm.supplier_reference || null,
+                cost_price: editVariantForm.cost_price === '' ? 0 : parseFloat(editVariantForm.cost_price),
+                min_threshold: editVariantForm.min_threshold === '' ? 0 : parseFloat(editVariantForm.min_threshold),
                 image_url: editVariantForm.image_url || null,
                 location: editVariantForm.location || null
             });
@@ -557,12 +562,20 @@ export default function StockDashboard() {
         return parent ? `${getFullLocationName(parent)} > ${loc.name}` : loc.name;
     };
 
+    const isDraftProduct = (product) => {
+        const text = `${product.name || ''} ${product.compatible_series || ''}`.toLowerCase();
+        return text.includes('[brouillon]') || text.includes('créé depuis prévisualisation débit atelier');
+    };
+
     // Calculate Grid Data grouped by Product
     let groupedData = [];
     let totalValuation = 0;
     let totalLowStockCount = 0;
+    const totalDraftCount = products.filter(isDraftProduct).length;
 
     products.forEach(p => {
+        const draftProduct = isDraftProduct(p);
+        if (showDraftOnly && !draftProduct) return;
         let hasVisibleVariant = false;
         const variantsData = [];
 
@@ -802,6 +815,13 @@ export default function StockDashboard() {
                             <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Alertes Rupture</span>
                             <span className="text-xl font-black tracking-tight">{totalLowStockCount} variante(s)</span>
                         </button>
+                        <button 
+                            onClick={() => setShowDraftOnly(!showDraftOnly)}
+                            className={`px-5 py-3 rounded-2xl border flex flex-col justify-center transition-all ${showDraftOnly || totalDraftCount > 0 ? 'bg-amber-50 border-amber-200 hover:bg-amber-100 text-amber-700 shadow-lg shadow-amber-500/10' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500 shadow-sm'}`}
+                        >
+                            <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Brouillons catalogue</span>
+                            <span className="text-xl font-black tracking-tight">{totalDraftCount} article(s)</span>
+                        </button>
                     </div>
                 </div>
 
@@ -830,6 +850,7 @@ export default function StockDashboard() {
                                 <tbody className="divide-y divide-slate-100">
                                     {groupedData.map(({ product, variants }) => {
                                         const isExpanded = expandedProducts[product.id];
+                                        const draftProduct = isDraftProduct(product);
                                         return (
                                             <React.Fragment key={product.id}>
                                                 <tr className="group hover:bg-slate-50 transition-colors cursor-pointer border-l-4 border-l-transparent hover:border-l-blue-400" onClick={() => toggleExpand(product.id)}>
@@ -844,7 +865,12 @@ export default function StockDashboard() {
                                                             }
                                                         </div>
                                                         <div>
-                                                            <p className="font-bold text-slate-800 text-lg group-hover:text-blue-700 transition-colors">{product.name}</p>
+                                                            <div className="flex items-center gap-2">
+                                                                <p className="font-bold text-slate-800 text-lg group-hover:text-blue-700 transition-colors">{product.name}</p>
+                                                                {draftProduct && (
+                                                                    <span className="text-[9px] uppercase font-black bg-amber-100 text-amber-700 px-2 py-1 rounded-md border border-amber-200">Brouillon</span>
+                                                                )}
+                                                            </div>
                                                             <div className="flex items-center gap-2 mt-0.5">
                                                                 <p className="text-xs font-bold text-slate-400">Réf : {product.reference_base}</p>
                                                                 {product.technical_doc_url && (
@@ -958,6 +984,7 @@ export default function StockDashboard() {
                             {groupedData.map(({ product, variants }) => {
                                 const totalStock = variants.reduce((acc, v) => acc + (v.stockToDisplay || 0), 0);
                                 const isLowStock = false; // Add logic if needed
+                                const draftProduct = isDraftProduct(product);
 
                                 return (
                                     <div key={product.id} className="bg-white rounded-3xl border border-slate-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group cursor-pointer" onClick={() => toggleExpand(product.id)}>
@@ -973,6 +1000,11 @@ export default function StockDashboard() {
                                             <div className="absolute top-3 left-3 px-2.5 py-1 bg-white/90 backdrop-blur border border-white/50 rounded-lg shadow-sm text-[10px] font-black tracking-wider text-slate-700 uppercase">
                                                 {product.material_type}
                                             </div>
+                                            {draftProduct && (
+                                                <div className="absolute top-3 right-3 px-2.5 py-1 bg-amber-100 text-amber-700 border border-amber-200 rounded-lg shadow-sm text-[10px] font-black tracking-wider uppercase">
+                                                    Brouillon
+                                                </div>
+                                            )}
                                         </div>
                                         <div className="p-5 flex-1 flex flex-col">
                                             <p className="text-xs font-bold text-slate-400 mb-1">{product.reference_base}</p>
@@ -1154,6 +1186,10 @@ export default function StockDashboard() {
                                     <input value={editProductForm.material_type} onChange={e=>setEditProductForm({...editProductForm, material_type: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
                                 </div>
                                 <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Unité</label>
+                                    <input value={editProductForm.unit} onChange={e=>setEditProductForm({...editProductForm, unit: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
+                                </div>
+                                <div>
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Fournisseur</label>
                                     <input value={editProductForm.supplier} onChange={e=>setEditProductForm({...editProductForm, supplier: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
                                 </div>
@@ -1212,6 +1248,16 @@ export default function StockDashboard() {
                                 <label className="text-xs font-black text-blue-500 mb-1 block">Code Barre / EAN13</label>
                                 <input value={editVariantForm.barcode} onChange={e=>setEditVariantForm({...editVariantForm, barcode: e.target.value})} className="w-full p-3 bg-blue-50 text-blue-700 font-mono border border-blue-200 rounded-xl" placeholder="Scanner..." />
                             </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Réf fournisseur</label>
+                                    <input value={editVariantForm.supplier_reference} onChange={e=>setEditVariantForm({...editVariantForm, supplier_reference: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Longueur / unité</label>
+                                    <input type="number" value={editVariantForm.length_per_unit} onChange={e=>setEditVariantForm({...editVariantForm, length_per_unit: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" placeholder="6500" />
+                                </div>
+                            </div>
                             <div>
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Spécificités (Couleur, Sens, Finition...)</label>
                                 <input list="specs-list" value={editVariantForm.color} onChange={e=>setEditVariantForm({...editVariantForm, color: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" />
@@ -1225,6 +1271,10 @@ export default function StockDashboard() {
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Seuil d'alerte (Qté)</label>
                                     <input type="number" value={editVariantForm.min_threshold} onChange={e=>setEditVariantForm({...editVariantForm, min_threshold: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
                                 </div>
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Emplacement cible</label>
+                                <input value={editVariantForm.location} onChange={e=>setEditVariantForm({...editVariantForm, location: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="Ex: Rack ALU A1" />
                             </div>
                             <div>
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Image Spécifique Variante (Optionnel)</label>
