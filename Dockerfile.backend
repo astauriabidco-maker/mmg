@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY backend ./backend
+COPY scripts ./scripts
 COPY init_db.py ./init_db.py
 
 RUN mkdir -p /data /app/uploads
