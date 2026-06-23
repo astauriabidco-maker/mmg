@@ -1,22 +1,54 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-from typing import List
+from sqlalchemy.orm import Session, joinedload
+from typing import List, Optional
 from ..database import get_db
 from .. import models, schemas
 from ..core.security import get_current_user, get_current_user_role, require_roles
 import time
 import io
+import tempfile
+from pathlib import Path
 import openpyxl
 from openpyxl.styles import Font, PatternFill
 from sqlalchemy import or_
 from ..services.bom_parser import parse_bom_file
+from ..services.stock_reservations import (
+    build_preview_payload,
+    consume_reservation,
+    create_reservation,
+)
+from scripts.import_workshop_debits import parse_file
 
 router = APIRouter(
     prefix="/v2/stock",
     tags=["stock"],
     dependencies=[Depends(get_current_user)],
 )
+
+
+async def _parse_workshop_uploads(files: List[UploadFile]):
+    records = []
+    issues = []
+    source_names = []
+    for file in files:
+        suffix = Path(file.filename or "").suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(await file.read())
+            tmp_path = Path(tmp.name)
+        try:
+            parsed_records, parsed_issues = parse_file(tmp_path)
+            source_name = file.filename or tmp_path.name
+            for record in parsed_records:
+                object.__setattr__(record, "source", source_name)
+            for issue in parsed_issues:
+                object.__setattr__(issue, "source", source_name)
+            records.extend(parsed_records)
+            issues.extend(parsed_issues)
+            source_names.append(source_name)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    return records, issues, source_names
 
 @router.get("/products", response_model=List[schemas.ProductResponse])
 def get_products(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -194,7 +226,6 @@ def create_transaction(tx: schemas.StockMoveCreate, background_tasks: Background
 
 @router.get("/transactions")
 def get_recent_transactions(db: Session = Depends(get_db)):
-    from sqlalchemy.orm import joinedload
     moves = db.query(models.StockMove).options(joinedload(models.StockMove.variant).joinedload(models.ProductVariant.product)).order_by(models.StockMove.date.desc()).limit(100).all()
     result = []
     for m in moves:
@@ -215,6 +246,89 @@ def get_recent_transactions(db: Session = Depends(get_db)):
             "notes": m.notes
         })
     return result
+
+@router.post("/workshop-debits/preview", response_model=schemas.WorkshopDebitPreviewResponse)
+async def preview_workshop_debits(
+    files: List[UploadFile] = File(...),
+    source_location: str = Form("WH/Stock"),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    records, issues, _source_names = await _parse_workshop_uploads(files)
+    return build_preview_payload(db, records, issues, source_location)
+
+@router.post("/workshop-debits/reservations", response_model=schemas.StockReservationResponse)
+async def reserve_workshop_debits(
+    files: List[UploadFile] = File(...),
+    source_location: str = Form("WH/Stock"),
+    order_reference: Optional[str] = Form(None),
+    notes: Optional[str] = Form(None),
+    allow_missing: bool = Form(False),
+    allow_shortage: bool = Form(False),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    if user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut réserver un débit atelier.")
+    records, issues, source_names = await _parse_workshop_uploads(files)
+    blocking_errors = [issue for issue in issues if issue.severity == "error"]
+    if blocking_errors:
+        raise HTTPException(status_code=400, detail="Fichier de débit non exploitable.")
+    try:
+        reservation = create_reservation(
+            db,
+            records,
+            source_label=", ".join(source_names),
+            created_by=user.get("sub", "Admin"),
+            source_location=source_location,
+            order_reference=order_reference,
+            notes=notes,
+            allow_missing=allow_missing,
+            allow_shortage=allow_shortage,
+        )
+        db.commit()
+        db.refresh(reservation)
+        return reservation
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+
+@router.get("/workshop-debits/reservations", response_model=List[schemas.StockReservationResponse])
+def list_workshop_reservations(
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    query = db.query(models.StockReservation).options(
+        joinedload(models.StockReservation.lines).joinedload(models.StockReservationLine.variant)
+    ).order_by(models.StockReservation.created_at.desc())
+    if status:
+        query = query.filter(models.StockReservation.status == status)
+    return query.limit(50).all()
+
+@router.post("/workshop-debits/reservations/{reservation_id}/consume")
+def consume_workshop_reservation(
+    reservation_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    if user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut consommer une réservation atelier.")
+    reservation = (
+        db.query(models.StockReservation)
+        .options(joinedload(models.StockReservation.lines).joinedload(models.StockReservationLine.variant))
+        .filter(models.StockReservation.id == reservation_id)
+        .first()
+    )
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Réservation introuvable.")
+    try:
+        stats = consume_reservation(db, reservation, author=user.get("sub", "Admin"))
+        db.commit()
+        return {"status": "success", **stats}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
 
 @router.get("/locations", response_model=List[schemas.StockLocationResponse])
 def get_locations(db: Session = Depends(get_db)):

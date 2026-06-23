@@ -271,12 +271,20 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db), current_use
 
     # --- STOCK AUTO-DEDUCTION ---
     from ..services.stock_service import StockService
-    StockService.deduct_stock_for_order(db, task.order_id, task.station)
+    try:
+        stock_result = StockService.deduct_stock_for_order(
+            db,
+            task.order_id,
+            task.station,
+            author=current_user.get("sub", "Atelier"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     db.commit()
     
     await manager.broadcast("refresh")
-    return {"status": "stopped", "next_station": next_station}
+    return {"status": "stopped", "next_station": next_station, "stock": stock_result}
 
 @router.post("/{planning_id}/issue")
 async def report_issue(planning_id: int, item: schemas.PlanningIssue, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

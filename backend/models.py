@@ -220,6 +220,40 @@ class StockMove(Base):
     source_location = relationship("StockLocation", foreign_keys=[location_id])
     dest_location = relationship("StockLocation", foreign_keys=[location_dest_id])
 
+class StockReservation(Base):
+    __tablename__ = "stock_reservations"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True)
+    order_reference = Column(String, index=True, nullable=True)
+    project_reference = Column(String, index=True, nullable=True)
+    source_label = Column(String, nullable=True)
+    status = Column(String, default="reserved", index=True) # reserved, consumed, cancelled
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, default="Système")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    consumed_at = Column(DateTime, nullable=True)
+
+    lines = relationship("StockReservationLine", back_populates="reservation", cascade="all, delete-orphan")
+
+class StockReservationLine(Base):
+    __tablename__ = "stock_reservation_lines"
+    id = Column(Integer, primary_key=True, index=True)
+    reservation_id = Column(Integer, ForeignKey("stock_reservations.id"))
+    variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=True)
+    supplier = Column(String, nullable=True)
+    supplier_reference = Column(String, nullable=True)
+    designation = Column(String, nullable=True)
+    unit = Column(String, nullable=True)
+    requested_quantity = Column(Float, default=0.0)
+    reserved_quantity = Column(Float, default=0.0)
+    consumed_quantity = Column(Float, default=0.0)
+    available_at_reservation = Column(Float, default=0.0)
+    status = Column(String, default="reserved", index=True) # reserved, not_found, shortage, consumed, cancelled
+    source = Column(String, nullable=True)
+
+    reservation = relationship("StockReservation", back_populates="lines")
+    variant = relationship("ProductVariant")
+
 class MMGStatus(str, enum.Enum):
     SENT = "SENT"
     IN_STUDY = "IN_STUDY"

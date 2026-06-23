@@ -21,6 +21,7 @@ export default function StockDashboard() {
     const { data: locations = [], isLoading: loadingLocations } = useQuery({ queryKey: ['locations'], queryFn: async () => { const res = await api.get('/v2/stock/locations'); return res.data; }});
     const { data: quants = [], isLoading: loadingQuants } = useQuery({ queryKey: ['quants'], queryFn: async () => { const res = await api.get('/v2/stock/quants'); return res.data; }});
     const { data: transactions = [], isLoading: loadingTransactions } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const res = await api.get('/v2/stock/transactions'); return res.data; }});
+    const { data: reservations = [] } = useQuery({ queryKey: ['workshop-reservations'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/reservations?status=reserved'); return res.data; }});
     
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
@@ -42,6 +43,11 @@ export default function StockDashboard() {
     
     const [showNewProductModal, setShowNewProductModal] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
+    const [showWorkshopDebitModal, setShowWorkshopDebitModal] = useState(false);
+    const [workshopFiles, setWorkshopFiles] = useState([]);
+    const [workshopOrderRef, setWorkshopOrderRef] = useState('');
+    const [workshopPreview, setWorkshopPreview] = useState(null);
+    const [workshopLoading, setWorkshopLoading] = useState(false);
     const [newProductForm, setNewProductForm] = useState({
         reference_base: '', name: '', material_type: 'PVC', unit: 'pce', supplier: '', product_type: 'stockable', available_in_pos: false, image_url: '', technical_doc_url: '', compatible_series: '',
         variant_ref: '', barcode: '', color: '', length_per_unit: '', supplier_reference: '', cost_price: '', min_threshold: 10, location: ''
@@ -333,6 +339,54 @@ export default function StockDashboard() {
         }
     };
 
+    const buildWorkshopFormData = () => {
+        const formData = new FormData();
+        workshopFiles.forEach(file => formData.append("files", file));
+        formData.append("source_location", "WH/Stock");
+        if (workshopOrderRef.trim()) formData.append("order_reference", workshopOrderRef.trim());
+        return formData;
+    };
+
+    const submitWorkshopPreview = async () => {
+        if (!workshopFiles.length) return alert("Ajoutez au moins un fichier de débit atelier.");
+        setWorkshopLoading(true);
+        try {
+            const res = await api.post('/v2/stock/workshop-debits/preview', buildWorkshopFormData(), {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            setWorkshopPreview(res.data);
+        } catch (error) {
+            alert(error.response?.data?.detail || "Prévisualisation impossible.");
+        } finally {
+            setWorkshopLoading(false);
+        }
+    };
+
+    const submitWorkshopReservation = async () => {
+        if (!workshopPreview) return;
+        const status = workshopPreview.summary?.stock_match_status || {};
+        if ((status.not_found || 0) > 0 || (status.shortage || 0) > 0) {
+            return alert("Réservation bloquée : références inconnues ou stock insuffisant.");
+        }
+        setWorkshopLoading(true);
+        try {
+            await api.post('/v2/stock/workshop-debits/reservations', buildWorkshopFormData(), {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            setShowWorkshopDebitModal(false);
+            setWorkshopFiles([]);
+            setWorkshopOrderRef('');
+            setWorkshopPreview(null);
+            queryClient.invalidateQueries({ queryKey: ['workshop-reservations'] });
+            queryClient.invalidateQueries({ queryKey: ['products'] });
+            queryClient.invalidateQueries({ queryKey: ['quants'] });
+        } catch (error) {
+            alert(error.response?.data?.detail || "Réservation impossible.");
+        } finally {
+            setWorkshopLoading(false);
+        }
+    };
+
     const openAddVariant = (e, product) => {
         e.stopPropagation();
         setAddVariantForm({
@@ -596,6 +650,11 @@ export default function StockDashboard() {
                                     <button onClick={() => setShowImportModal(true)} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
                                         <FileText className="w-5 h-5 text-indigo-400"/>
                                         <span className="text-[10px] font-bold">Import</span>
+                                    </button>
+                                    <button onClick={() => setShowWorkshopDebitModal(true)} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
+                                        <ArrowRight className="w-5 h-5 text-amber-400"/>
+                                        <span className="text-[10px] font-bold">Débit Atelier</span>
+                                        {reservations.length > 0 && <span className="text-[9px] font-black text-amber-300">{reservations.length} réservée(s)</span>}
                                     </button>
                                 </>
                             )}
@@ -1303,6 +1362,116 @@ export default function StockDashboard() {
                             </div>
                         </div>
                         <button onClick={handleQuickCreateProduct} className="w-full mt-6 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-lg shadow-lg">Enregistrer et Continuer</button>
+                    </div>
+                </div>
+            )}
+
+            {/* -------- WORKSHOP DEBIT RESERVATION MODAL -------- */}
+            {showWorkshopDebitModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-4xl w-full border border-slate-100">
+                        <div className="flex justify-between items-start mb-6">
+                            <div>
+                                <h3 className="font-black text-2xl flex items-center gap-2">
+                                    <ArrowRight className="w-6 h-6 text-amber-500" />
+                                    Réservation débit atelier
+                                </h3>
+                                <p className="text-sm font-bold text-slate-500 mt-1">Progers TXT, Orgadata Débit optimisé PDF</p>
+                            </div>
+                            <button onClick={()=>setShowWorkshopDebitModal(false)} className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-4 mb-5">
+                            <div className="col-span-2">
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Fichiers atelier</label>
+                                <input
+                                    type="file"
+                                    multiple
+                                    accept=".txt,.pdf"
+                                    onChange={e => {
+                                        setWorkshopFiles(Array.from(e.target.files || []));
+                                        setWorkshopPreview(null);
+                                    }}
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Commande liée</label>
+                                <input
+                                    value={workshopOrderRef}
+                                    onChange={e => setWorkshopOrderRef(e.target.value)}
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold"
+                                    placeholder="CMD-..."
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 mb-6">
+                            <button
+                                onClick={submitWorkshopPreview}
+                                disabled={workshopLoading || workshopFiles.length === 0}
+                                className="px-5 py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white rounded-xl font-black shadow-lg"
+                            >
+                                {workshopLoading ? "Analyse..." : "Prévisualiser"}
+                            </button>
+                            <button
+                                onClick={submitWorkshopReservation}
+                                disabled={workshopLoading || !workshopPreview}
+                                className="px-5 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-white rounded-xl font-black shadow-lg"
+                            >
+                                Réserver le stock
+                            </button>
+                        </div>
+
+                        {workshopPreview && (
+                            <div className="grid grid-cols-4 gap-3">
+                                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                                    <span className="text-[10px] font-black text-slate-400 uppercase">Lignes</span>
+                                    <p className="text-2xl font-black text-slate-900">{workshopPreview.summary.debit_lines || 0}</p>
+                                </div>
+                                <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
+                                    <span className="text-[10px] font-black text-emerald-600 uppercase">OK</span>
+                                    <p className="text-2xl font-black text-emerald-700">{workshopPreview.summary.stock_match_status?.ok || 0}</p>
+                                </div>
+                                <div className="bg-red-50 border border-red-100 rounded-2xl p-4">
+                                    <span className="text-[10px] font-black text-red-600 uppercase">Inconnues</span>
+                                    <p className="text-2xl font-black text-red-700">{workshopPreview.summary.stock_match_status?.not_found || 0}</p>
+                                </div>
+                                <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4">
+                                    <span className="text-[10px] font-black text-orange-600 uppercase">Manques</span>
+                                    <p className="text-2xl font-black text-orange-700">{workshopPreview.summary.stock_match_status?.shortage || 0}</p>
+                                </div>
+
+                                <div className="col-span-4 border border-slate-200 rounded-2xl overflow-hidden max-h-80 overflow-y-auto">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-slate-50 sticky top-0">
+                                            <tr>
+                                                <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase">Référence</th>
+                                                <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase">Produit</th>
+                                                <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase text-right">Demandé</th>
+                                                <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase text-right">Disponible</th>
+                                                <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase text-center">Statut</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {workshopPreview.stock_matches?.map((line, idx) => (
+                                                <tr key={`${line.reference}-${idx}`} className="hover:bg-slate-50">
+                                                    <td className="px-4 py-3 font-mono font-black text-sm">{line.supplier}/{line.reference}</td>
+                                                    <td className="px-4 py-3 text-sm font-bold text-slate-700">{line.product_name || "Non trouvé"}</td>
+                                                    <td className="px-4 py-3 text-sm font-black text-right">{line.requested_quantity} {line.unit}</td>
+                                                    <td className="px-4 py-3 text-sm font-black text-right">{line.available_quantity}</td>
+                                                    <td className="px-4 py-3 text-center">
+                                                        <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase ${line.status === 'ok' ? 'bg-emerald-100 text-emerald-700' : line.status === 'shortage' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
+                                                            {line.status}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

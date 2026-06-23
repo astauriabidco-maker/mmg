@@ -357,6 +357,42 @@ class StockMoveResponse(BaseModel):
     notes: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
+class StockReservationLineResponse(BaseModel):
+    id: int
+    variant_id: Optional[int] = None
+    supplier: Optional[str] = None
+    supplier_reference: Optional[str] = None
+    designation: Optional[str] = None
+    unit: Optional[str] = None
+    requested_quantity: float
+    reserved_quantity: float
+    consumed_quantity: float
+    available_at_reservation: float
+    status: str
+    source: Optional[str] = None
+    variant: Optional[ProductVariantResponse] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class StockReservationResponse(BaseModel):
+    id: int
+    reference: str
+    order_reference: Optional[str] = None
+    project_reference: Optional[str] = None
+    source_label: Optional[str] = None
+    status: str
+    notes: Optional[str] = None
+    created_by: str
+    created_at: datetime
+    consumed_at: Optional[datetime] = None
+    lines: List[StockReservationLineResponse] = []
+    model_config = ConfigDict(from_attributes=True)
+
+class WorkshopDebitPreviewResponse(BaseModel):
+    summary: dict
+    issues: list
+    records: list
+    stock_matches: list
+
 # --- REGLAGES & REFERENTIELS (CONFIG) ---
 class AppConfigBase(BaseModel):
     category: str
