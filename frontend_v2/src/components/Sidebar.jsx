@@ -19,7 +19,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
         {
             title: 'Commerce & Ventes',
             items: [
-                { id: 'sales', label: 'CRM & Devis', icon: Users, type: 'internal' },
+                { id: 'sales', label: 'Ventes & Devis', icon: Users, type: 'internal' },
                 { id: 'pos', label: 'Point de Vente (POS)', icon: ShoppingCart, type: 'external', path: '/pos' },
                 { id: 'accounting', label: 'Facturation (NF525)', icon: FileText, type: 'internal' },
             ]

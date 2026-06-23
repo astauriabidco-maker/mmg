@@ -330,7 +330,7 @@ export default function SalesDashboard() {
                 <div className="bg-white border-b border-slate-200 p-4 flex items-center justify-between shrink-0 z-20">
                     <div className="flex items-center gap-4">
                         <h3 className="font-black text-slate-900 flex items-center gap-2 tracking-tight text-lg">
-                            <Users className="text-blue-600 w-5 h-5"/> CRM & Devis
+                            <Users className="text-blue-600 w-5 h-5"/> Ventes & Devis
                         </h3>
                         <div className="h-6 w-px bg-slate-200"></div>
                         <div className="flex bg-slate-100 p-1 rounded-xl">
