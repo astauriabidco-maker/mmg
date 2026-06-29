@@ -73,7 +73,7 @@ def test_legacy_stock_and_delivery_schema_is_patched(tmp_path):
     product_columns = {column["name"] for column in inspector.get_columns("products")}
     delivery_columns = {column["name"] for column in inspector.get_columns("delivery_notes")}
 
-    assert {"technical_doc_url", "compatible_series"}.issubset(product_columns)
+    assert {"technical_doc_url", "compatible_series", "catalog_status"}.issubset(product_columns)
     assert "delivery_notes" in delivery_columns
 
     Session = sessionmaker(bind=engine)
@@ -83,4 +83,5 @@ def test_legacy_stock_and_delivery_schema_is_patched(tmp_path):
 
     assert product.technical_doc_url is None
     assert product.compatible_series is None
+    assert product.catalog_status == "ACTIVE"
     assert note.delivery_notes == "Ancienne note"

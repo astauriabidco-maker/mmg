@@ -16,6 +16,10 @@ def ensure_schema_compatibility(engine):
                 connection.execute(text("ALTER TABLE products ADD COLUMN technical_doc_url VARCHAR"))
             if "compatible_series" not in product_columns:
                 connection.execute(text("ALTER TABLE products ADD COLUMN compatible_series VARCHAR"))
+            if "catalog_status" not in product_columns:
+                connection.execute(text("ALTER TABLE products ADD COLUMN catalog_status VARCHAR DEFAULT 'ACTIVE'"))
+                product_columns.add("catalog_status")
+            connection.execute(text("UPDATE products SET catalog_status = 'ACTIVE' WHERE catalog_status IS NULL"))
 
         if inspector.has_table("delivery_notes"):
             delivery_columns = {column["name"] for column in inspector.get_columns("delivery_notes")}
@@ -158,6 +162,7 @@ class Product(Base):
     image_url = Column(String, nullable=True)
     technical_doc_url = Column(String, nullable=True) # Fiche technique PDF
     compatible_series = Column(String, nullable=True) # Ex: "COR 60, COR 70"
+    catalog_status = Column(String, default="ACTIVE", index=True) # ACTIVE, DRAFT
     
     variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")
 

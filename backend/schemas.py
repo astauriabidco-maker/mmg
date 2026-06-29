@@ -305,6 +305,7 @@ class ProductBase(BaseModel):
     image_url: Optional[str] = None
     technical_doc_url: Optional[str] = None
     compatible_series: Optional[str] = None
+    catalog_status: str = "ACTIVE"
 
 class ProductCreate(ProductBase):
     variants: List[ProductVariantCreate] = []

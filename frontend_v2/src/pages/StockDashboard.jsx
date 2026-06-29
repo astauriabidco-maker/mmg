@@ -265,7 +265,8 @@ export default function StockDashboard() {
             available_in_pos: product.available_in_pos || false,
             image_url: product.image_url || '',
             technical_doc_url: product.technical_doc_url || '',
-            compatible_series: product.compatible_series || ''
+            compatible_series: product.compatible_series || '',
+            catalog_status: product.catalog_status || 'ACTIVE'
         });
         setShowEditProductModal(true);
     };
@@ -282,7 +283,8 @@ export default function StockDashboard() {
                 available_in_pos: editProductForm.available_in_pos,
                 image_url: editProductForm.image_url,
                 technical_doc_url: editProductForm.technical_doc_url,
-                compatible_series: editProductForm.compatible_series
+                compatible_series: editProductForm.compatible_series,
+                catalog_status: editProductForm.catalog_status || 'ACTIVE'
             });
             setShowEditProductModal(false);
             queryClient.invalidateQueries();
@@ -570,7 +572,7 @@ export default function StockDashboard() {
 
     const isDraftProduct = (product) => {
         const text = `${product.name || ''} ${product.compatible_series || ''}`.toLowerCase();
-        return text.includes('[brouillon]') || text.includes('créé depuis prévisualisation débit atelier');
+        return product.catalog_status === 'DRAFT' || text.includes('[brouillon]') || text.includes('créé depuis prévisualisation débit atelier');
     };
 
     const selectInventoryFocus = (focus) => {
@@ -1271,6 +1273,13 @@ export default function StockDashboard() {
                             <div>
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Gammes Compatibles (Séparées par virgule)</label>
                                 <input value={editProductForm.compatible_series} onChange={e=>setEditProductForm({...editProductForm, compatible_series: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Statut catalogue</label>
+                                <select value={editProductForm.catalog_status} onChange={e=>setEditProductForm({...editProductForm, catalog_status: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700">
+                                    <option value="DRAFT">Brouillon à qualifier</option>
+                                    <option value="ACTIVE">Actif</option>
+                                </select>
                             </div>
                             <div className="col-span-2 border-t border-slate-100 my-2 pt-4 flex gap-4">
                                 <div className="flex-1">

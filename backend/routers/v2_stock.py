@@ -314,6 +314,7 @@ async def create_draft_products_from_workshop_debits(
             product_type="stockable",
             available_in_pos=False,
             compatible_series="Créé depuis prévisualisation débit atelier; stock réel à renseigner.",
+            catalog_status="DRAFT",
         )
         db.add(product)
         db.flush()

@@ -347,6 +347,7 @@ def test_workshop_unknown_lines_can_create_zero_stock_draft_products():
         assert product.name.startswith("[BROUILLON]")
         assert product.supplier == "SEPALUMIC"
         assert product.material_type == "ALU"
+        assert product.catalog_status == "DRAFT"
         assert variant.reference == "SEPALUMIC:7007"
         assert variant.supplier_reference == "7007"
         assert variant.quantity_in_stock == 0
