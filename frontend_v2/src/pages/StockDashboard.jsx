@@ -231,16 +231,12 @@ export default function StockDashboard() {
         if (!receptionData.variant || !receptionData.targetLocId || !receptionData.qty || isNaN(receptionData.qty) || receptionData.qty <= 0) return;
         
         const supplierLoc = locations.find(l => l.usage === 'supplier');
-        if (!supplierLoc) {
-            alert("Erreur: Aucun lieu 'Fournisseur' trouvé dans la hiérarchie !");
-            return;
-        }
 
         try {
             await api.post('/v2/stock/transaction', {
                 variant_id: receptionData.variant.id,
                 quantity: parseFloat(receptionData.qty),
-                location_id: supplierLoc.id,               // Source: Virtual Supplier
+                location_id: supplierLoc?.id || null,       // Source: supplier virtual location, or external if missing
                 location_dest_id: parseInt(receptionData.targetLocId), // Dest: Chosen Internal Shelf
                 notes: "Réception Achat Direct"
             });
