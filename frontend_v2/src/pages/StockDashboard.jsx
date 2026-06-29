@@ -344,6 +344,42 @@ export default function StockDashboard() {
         }
     };
 
+    const submitDraftCatalogImport = async (e) => {
+        e.preventDefault();
+        const fileInput = document.getElementById('draft-catalog-import-input');
+        if (!fileInput || !fileInput.files.length) return;
+
+        const formData = new FormData();
+        formData.append("file", fileInput.files[0]);
+
+        try {
+            const res = await api.post('/v2/stock/catalog/drafts/import', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            alert(res.data.message);
+            fileInput.value = '';
+            queryClient.invalidateQueries({ queryKey: ['products'] });
+        } catch (error) {
+            alert(error.response?.data?.detail || "Import des brouillons impossible.");
+        }
+    };
+
+    const downloadDraftCatalogExport = async () => {
+        try {
+            const res = await api.get('/v2/stock/catalog/drafts/export', { responseType: 'blob' });
+            const url = window.URL.createObjectURL(new Blob([res.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', 'MMG_Brouillons_Catalogue.xlsx');
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (error) {
+            alert(error.response?.data?.detail || "Export des brouillons impossible.");
+        }
+    };
+
     const buildWorkshopFormData = () => {
         const formData = new FormData();
         workshopFiles.forEach(file => formData.append("files", file));
@@ -1698,6 +1734,23 @@ export default function StockDashboard() {
                             <a href={`${api.defaults.baseURL}/v2/stock/import/template`} className="w-full inline-flex font-bold justify-center items-center gap-2 py-3 bg-white border border-slate-300 shadow-sm hover:bg-slate-50 rounded-xl text-slate-700 transition-colors">
                                 Télécharger le Template (.xlsx)
                             </a>
+                        </div>
+
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 mb-8 w-full">
+                            <p className="text-sm font-bold text-amber-800 mb-3">
+                                Exporter les brouillons catalogue, les compléter, puis réimporter le fichier sans toucher aux quantités.
+                            </p>
+                            <button type="button" onClick={downloadDraftCatalogExport} className="w-full inline-flex font-bold justify-center items-center gap-2 py-3 bg-white border border-amber-200 shadow-sm hover:bg-amber-100 rounded-xl text-amber-800 transition-colors">
+                                Télécharger les brouillons (.xlsx)
+                            </button>
+                            <form onSubmit={submitDraftCatalogImport} className="mt-4 space-y-3">
+                                <label className="border-2 border-dashed border-amber-300 bg-white hover:bg-amber-50 transition-colors rounded-2xl flex flex-col items-center justify-center py-6 cursor-pointer group">
+                                    <FileText className="w-8 h-8 text-amber-500 mb-2" />
+                                    <span className="font-bold text-amber-800">Réimporter les brouillons complétés</span>
+                                    <input type="file" id="draft-catalog-import-input" accept=".xlsx" className="hidden" />
+                                </label>
+                                <button type="submit" className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-white rounded-xl font-black shadow-lg">Mettre à jour les brouillons</button>
+                            </form>
                         </div>
 
                         <form onSubmit={submitImportFile} className="w-full space-y-4 text-center">

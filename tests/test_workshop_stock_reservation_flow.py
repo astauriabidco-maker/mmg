@@ -1,4 +1,7 @@
+import io
+
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -352,6 +355,75 @@ def test_workshop_unknown_lines_can_create_zero_stock_draft_products():
         assert variant.supplier_reference == "7007"
         assert variant.quantity_in_stock == 0
         assert quant.quantity == 0
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_draft_catalog_can_be_exported_and_reimported():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+        content = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
+
+        create_response = client.post(
+            "/v2/stock/workshop-debits/draft-products",
+            headers=headers,
+            files=[("files", ("SEPVER.TXT", content, "text/plain"))],
+        )
+        assert create_response.status_code == 200, create_response.text
+
+        export_response = client.get("/v2/stock/catalog/drafts/export", headers=headers)
+        assert export_response.status_code == 200, export_response.text
+
+        workbook = load_workbook(io.BytesIO(export_response.content))
+        sheet = workbook.active
+        headers_row = [cell.value for cell in sheet[1]]
+        values = {header: index + 1 for index, header in enumerate(headers_row)}
+        sheet.cell(row=2, column=values["Nom_Famille"]).value = "Profil SEPALUMIC 7007 - Bavette de faitage"
+        sheet.cell(row=2, column=values["Longueur_Unite"]).value = 6500
+        sheet.cell(row=2, column=values["Emplacement"]).value = "Rack ALU A1"
+        sheet.cell(row=2, column=values["Statut_Catalogue"]).value = "ACTIVE"
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        buffer.seek(0)
+
+        import_response = client.post(
+            "/v2/stock/catalog/drafts/import",
+            headers=headers,
+            files=[("file", ("drafts.xlsx", buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))],
+        )
+        assert import_response.status_code == 200, import_response.text
+        assert import_response.json()["updated_products"] == 1
+        assert import_response.json()["updated_variants"] == 1
+
+        with TestingSessionLocal() as db:
+            product = db.query(models.Product).one()
+            variant = db.query(models.ProductVariant).one()
+
+        assert product.name == "Profil SEPALUMIC 7007 - Bavette de faitage"
+        assert product.catalog_status == "ACTIVE"
+        assert variant.length_per_unit == 6500
+        assert variant.location == "Rack ALU A1"
+        assert variant.quantity_in_stock == 0
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)

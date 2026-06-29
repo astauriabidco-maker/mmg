@@ -763,6 +763,157 @@ def export_inventory_xlsx(db: Session = Depends(get_db)):
     response.headers["Content-Disposition"] = "attachment; filename=MMG_Inventaire_Actuel.xlsx"
     return response
 
+@router.get("/catalog/drafts/export")
+def export_draft_catalog_xlsx(db: Session = Depends(get_db)):
+    drafts = (
+        db.query(models.Product)
+        .options(joinedload(models.Product.variants))
+        .filter(models.Product.catalog_status == "DRAFT")
+        .order_by(models.Product.supplier.asc(), models.Product.reference_base.asc())
+        .all()
+    )
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Brouillons_Catalogue"
+    headers = [
+        "Reference_Parent",
+        "Reference_Variante",
+        "Fournisseur",
+        "Nom_Famille",
+        "Matiere",
+        "Unite",
+        "Ref_Fournisseur",
+        "Longueur_Unite",
+        "Emplacement",
+        "Gammes_Compatibles",
+        "Statut_Catalogue",
+        "Commentaire",
+    ]
+    ws.append(headers)
+    for col in range(1, len(headers) + 1):
+        ws.cell(row=1, column=col).font = Font(bold=True, color="FFFFFF")
+        ws.cell(row=1, column=col).fill = PatternFill(start_color="D97706", fill_type="solid")
+
+    for product in drafts:
+        variants = product.variants or [None]
+        for variant in variants:
+            ws.append(
+                [
+                    product.reference_base,
+                    variant.reference if variant else "",
+                    product.supplier or "",
+                    product.name,
+                    product.material_type,
+                    product.unit,
+                    variant.supplier_reference if variant else "",
+                    variant.length_per_unit if variant else "",
+                    variant.location if variant else "",
+                    product.compatible_series or "",
+                    product.catalog_status or "DRAFT",
+                    "",
+                ]
+            )
+
+    for column_cells in ws.columns:
+        max_length = max(len(str(cell.value or "")) for cell in column_cells)
+        ws.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, 14), 45)
+
+    stream = io.BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = StreamingResponse(iter([stream.getvalue()]), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response.headers["Content-Disposition"] = "attachment; filename=MMG_Brouillons_Catalogue.xlsx"
+    return response
+
+@router.post("/catalog/drafts/import")
+async def import_draft_catalog_updates(file: UploadFile = File(...), db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
+    if role not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Import brouillons réservé aux managers.")
+    if not file.filename or not file.filename.endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Le fichier doit être un .xlsx")
+
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(await file.read()), data_only=True)
+        ws = wb.active
+    except Exception:
+        raise HTTPException(status_code=400, detail="Impossible de lire le fichier Excel.")
+
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        raise HTTPException(status_code=400, detail="Le fichier est vide.")
+
+    headers = [str(h).strip() if h else "" for h in rows[0]]
+    required = {"Reference_Parent", "Reference_Variante"}
+    if not required.issubset(set(headers)):
+        raise HTTPException(status_code=400, detail=f"Colonnes manquantes. Requis : {', '.join(sorted(required))}")
+
+    updated_products = 0
+    updated_variants = 0
+    skipped = 0
+    active_values = {"ACTIVE", "ACTIF", "1", "TRUE", "OUI", "YES"}
+
+    for values in rows[1:]:
+        if not any(values):
+            continue
+        row = dict(zip(headers, values))
+        ref_parent = str(row.get("Reference_Parent") or "").strip()
+        ref_variant = str(row.get("Reference_Variante") or "").strip()
+        if not ref_parent and not ref_variant:
+            skipped += 1
+            continue
+
+        product = db.query(models.Product).filter(models.Product.reference_base == ref_parent).first() if ref_parent else None
+        variant = db.query(models.ProductVariant).filter(models.ProductVariant.reference == ref_variant).first() if ref_variant else None
+        if not product and variant:
+            product = variant.product
+        if not product:
+            skipped += 1
+            continue
+
+        def text_value(key: str):
+            value = row.get(key)
+            return str(value).strip() if value is not None else None
+
+        for key, attr in [
+            ("Nom_Famille", "name"),
+            ("Matiere", "material_type"),
+            ("Unite", "unit"),
+            ("Fournisseur", "supplier"),
+            ("Gammes_Compatibles", "compatible_series"),
+        ]:
+            value = text_value(key)
+            if value:
+                setattr(product, attr, value)
+
+        status = text_value("Statut_Catalogue")
+        if status:
+            product.catalog_status = "ACTIVE" if status.upper() in active_values else "DRAFT"
+        updated_products += 1
+
+        if variant:
+            supplier_ref = text_value("Ref_Fournisseur")
+            location = text_value("Emplacement")
+            if supplier_ref:
+                variant.supplier_reference = supplier_ref
+            if location:
+                variant.location = location
+            length = row.get("Longueur_Unite")
+            if length not in (None, ""):
+                try:
+                    variant.length_per_unit = float(length)
+                except (TypeError, ValueError):
+                    pass
+            updated_variants += 1
+
+    db.commit()
+    return {
+        "message": f"Mise à jour brouillons : {updated_products} famille(s), {updated_variants} variante(s), {skipped} ligne(s) ignorée(s).",
+        "updated_products": updated_products,
+        "updated_variants": updated_variants,
+        "skipped": skipped,
+    }
+
 @router.post("/import-bom/{sale_order_id}")
 async def import_bom_for_sale_order(sale_order_id: int, background_tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     from ..core.events import EventBus
