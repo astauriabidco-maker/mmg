@@ -46,6 +46,9 @@ export default function StockDashboard() {
     
     const [showNewProductModal, setShowNewProductModal] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
+    const [massImportFile, setMassImportFile] = useState(null);
+    const [draftCatalogFile, setDraftCatalogFile] = useState(null);
+    const [draftCatalogImporting, setDraftCatalogImporting] = useState(false);
     const [showWorkshopDebitModal, setShowWorkshopDebitModal] = useState(false);
     const [workshopFiles, setWorkshopFiles] = useState([]);
     const [workshopContextValue, setWorkshopContextValue] = useState('');
@@ -325,18 +328,17 @@ export default function StockDashboard() {
     // -------- IMPORT CSV --------
     const submitImportFile = async (e) => {
         e.preventDefault();
-        const fileInput = document.getElementById('import-file-input');
-        if (!fileInput || !fileInput.files.length) return;
+        if (!massImportFile) return;
         
-        const file = fileInput.files[0];
         const formData = new FormData();
-        formData.append("file", file);
+        formData.append("file", massImportFile);
 
         try {
             const res = await api.post('/v2/stock/import/upload', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
             alert(res.data.message);
+            setMassImportFile(null);
             setShowImportModal(false);
             queryClient.invalidateQueries();
         } catch (error) {
@@ -346,21 +348,23 @@ export default function StockDashboard() {
 
     const submitDraftCatalogImport = async (e) => {
         e.preventDefault();
-        const fileInput = document.getElementById('draft-catalog-import-input');
-        if (!fileInput || !fileInput.files.length) return;
+        if (!draftCatalogFile || draftCatalogImporting) return;
 
         const formData = new FormData();
-        formData.append("file", fileInput.files[0]);
+        formData.append("file", draftCatalogFile);
 
         try {
+            setDraftCatalogImporting(true);
             const res = await api.post('/v2/stock/catalog/drafts/import', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
             alert(res.data.message);
-            fileInput.value = '';
+            setDraftCatalogFile(null);
             queryClient.invalidateQueries({ queryKey: ['products'] });
         } catch (error) {
             alert(error.response?.data?.detail || "Import des brouillons impossible.");
+        } finally {
+            setDraftCatalogImporting(false);
         }
     };
 
@@ -1746,22 +1750,25 @@ export default function StockDashboard() {
                             <form onSubmit={submitDraftCatalogImport} className="mt-4 space-y-3">
                                 <label className="border-2 border-dashed border-amber-300 bg-white hover:bg-amber-50 transition-colors rounded-2xl flex flex-col items-center justify-center py-6 cursor-pointer group">
                                     <FileText className="w-8 h-8 text-amber-500 mb-2" />
-                                    <span className="font-bold text-amber-800">Réimporter les brouillons complétés</span>
-                                    <input type="file" id="draft-catalog-import-input" accept=".xlsx" className="hidden" />
+                                    <span className="font-bold text-amber-800">{draftCatalogFile ? draftCatalogFile.name : "Sélectionner le fichier brouillons complété"}</span>
+                                    <span className="text-xs text-amber-700/70 font-medium mt-1">MMG_Brouillons_Catalogue.xlsx</span>
+                                    <input type="file" accept=".xlsx" className="hidden" onChange={(event) => setDraftCatalogFile(event.target.files?.[0] || null)} />
                                 </label>
-                                <button type="submit" className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-white rounded-xl font-black shadow-lg">Mettre à jour les brouillons</button>
+                                <button type="submit" disabled={!draftCatalogFile || draftCatalogImporting} className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-xl font-black shadow-lg">
+                                    {draftCatalogImporting ? "Import des brouillons..." : "Mettre à jour les brouillons"}
+                                </button>
                             </form>
                         </div>
 
                         <form onSubmit={submitImportFile} className="w-full space-y-4 text-center">
                             <label className="border-2 border-dashed border-blue-300 bg-blue-50 hover:bg-blue-100 transition-colors rounded-2xl flex flex-col items-center justify-center py-10 cursor-pointer group">
                                 <FileText className="w-10 h-10 text-blue-400 group-hover:text-blue-500 mb-3 transition-colors" />
-                                <span className="font-bold text-blue-700">Cliquez ou glissez un fichier Excel ici</span>
+                                <span className="font-bold text-blue-700">{massImportFile ? massImportFile.name : "Sélectionner un fichier PIM"}</span>
                                 <span className="text-xs text-blue-500/70 font-medium mt-1">Format natif .xlsx</span>
-                                <input type="file" id="import-file-input" accept=".xlsx" className="hidden" />
+                                <input type="file" accept=".xlsx" className="hidden" onChange={(event) => setMassImportFile(event.target.files?.[0] || null)} />
                             </label>
 
-                            <button type="submit" className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black text-lg shadow-lg">Lancer l'Importation</button>
+                            <button type="submit" disabled={!massImportFile} className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-xl font-black text-lg shadow-lg">Importer le template PIM</button>
                         </form>
                     </div>
                 </div>
