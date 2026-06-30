@@ -1,12 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List
+import tempfile
+from pathlib import Path
 
 from ..database import get_db
 from .. import models, schemas
 from ..core.security import get_current_user
+from ..services.stock_reservations import build_preview_payload, create_reservation
+from scripts.import_workshop_debits import parse_file
 
 import io
 from .v2_accounting import generate_invoice_reference, compute_qr_seal
@@ -18,6 +22,29 @@ router = APIRouter(
 )
 
 AUTH_DEPENDENCIES = [Depends(get_current_user)]
+
+async def _parse_workshop_uploads(files: List[UploadFile]):
+    records = []
+    issues = []
+    source_names = []
+    for file in files:
+        suffix = Path(file.filename or "").suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(await file.read())
+            tmp_path = Path(tmp.name)
+        try:
+            parsed_records, parsed_issues = parse_file(tmp_path)
+            source_name = file.filename or tmp_path.name
+            for record in parsed_records:
+                object.__setattr__(record, "source", source_name)
+            for issue in parsed_issues:
+                object.__setattr__(issue, "source", source_name)
+            records.extend(parsed_records)
+            issues.extend(parsed_issues)
+            source_names.append(source_name)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    return records, issues, source_names
 
 @router.get("/", response_model=List[schemas.SaleOrderSchema], dependencies=AUTH_DEPENDENCIES)
 def list_sales(db: Session = Depends(get_db)):
@@ -254,6 +281,70 @@ def get_sale_order(order_id: int, db: Session = Depends(get_db)):
     if not order:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
     return order
+
+@router.post("/{order_id}/prepare-workshop/preview", dependencies=AUTH_DEPENDENCIES)
+async def preview_sale_workshop_preparation(
+    order_id: int,
+    files: List[UploadFile] = File(...),
+    source_location: str = Form("WH/Stock"),
+    db: Session = Depends(get_db),
+):
+    sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Devis introuvable.")
+    records, issues, _source_names = await _parse_workshop_uploads(files)
+    return build_preview_payload(
+        db,
+        records,
+        issues,
+        source_location,
+        sale_order_id=sale.id,
+    )
+
+@router.post("/{order_id}/prepare-workshop/reserve", dependencies=AUTH_DEPENDENCIES)
+async def reserve_sale_workshop_preparation(
+    order_id: int,
+    files: List[UploadFile] = File(...),
+    source_location: str = Form("WH/Stock"),
+    notes: str = Form(None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut préparer un débit atelier depuis un devis.")
+    sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Devis introuvable.")
+    if sale.status not in ["VALIDATED", "IN_DESIGN", "READY_FOR_PROD"]:
+        raise HTTPException(status_code=400, detail="Préparation atelier possible uniquement après validation du devis.")
+
+    records, issues, source_names = await _parse_workshop_uploads(files)
+    blocking_errors = [issue for issue in issues if issue.severity == "error"]
+    if blocking_errors:
+        raise HTTPException(status_code=400, detail="Fichier de débit non exploitable.")
+    try:
+        reservation = create_reservation(
+            db,
+            records,
+            source_label=", ".join(source_names),
+            created_by=current_user.get("sub", "Admin"),
+            source_location=source_location,
+            sale_order_id=sale.id,
+            notes=notes or f"Préparation atelier depuis devis {sale.reference}",
+        )
+        sale.status = "READY_FOR_PROD"
+        db.commit()
+        db.refresh(reservation)
+        return {
+            "message": f"Préparation atelier réservée pour {sale.reference}.",
+            "reservation_id": reservation.id,
+            "reservation_reference": reservation.reference,
+            "status": sale.status,
+            "reserved_lines": len([line for line in reservation.lines if line.status == "reserved"]),
+        }
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
 
 @router.put("/{order_id}/status", dependencies=AUTH_DEPENDENCIES)
 def update_sale_status(order_id: int, status: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):

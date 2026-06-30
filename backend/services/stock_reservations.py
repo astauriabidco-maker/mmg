@@ -13,7 +13,7 @@ from scripts.import_workshop_debits import DebitRecord, StockMatch, build_summar
 
 
 ACTIVE_RESERVATION_STATUS = "reserved"
-RESERVABLE_SALE_STATUSES = {"VALIDATED", "READY_FOR_PROD", "IN_PRODUCTION"}
+RESERVABLE_SALE_STATUSES = {"VALIDATED", "IN_DESIGN", "READY_FOR_PROD", "IN_PRODUCTION"}
 ALU_SUPPLIERS = {"CORTIZO", "SEPALUMIC", "TECHNAL/HYDRO", "TECHNAL", "HYDRO"}
 PVC_SUPPLIERS = {"VEKA", "KOMMERLING", "KÖMMERLING", "REHAU", "DECEUNINCK"}
 
@@ -234,6 +234,8 @@ def create_reservation(
 ) -> models.StockReservation:
     source = get_or_create_location(db, source_location, "internal")
     consolidated = consolidate_records(records)
+    if not consolidated:
+        raise ValueError("Aucune ligne atelier exploitable dans les fichiers fournis.")
     sale, production_order, _workflow_issues = validate_workflow_context(
         db,
         consolidated,

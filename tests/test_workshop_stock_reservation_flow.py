@@ -55,7 +55,7 @@ def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
             sale = models.SaleOrder(
                 reference="DEV-ATELIER-1",
                 client_name="Client atelier",
-                status="VALIDATED",
+                status="IN_DESIGN",
                 tax_rate=20,
             )
             db.add(sale)
@@ -229,6 +229,106 @@ def test_workshop_debit_reservation_can_be_cancelled_without_stock_move():
         assert variant.quantity_in_stock == 5
         assert reservation_db.status == "cancelled"
         assert line.status == "cancelled"
+        assert moves == 0
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_sale_workshop_preparation_reserves_stock_without_physical_debit():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        with TestingSessionLocal() as db:
+            product = models.Product(
+                reference_base="CORTIZO:2000",
+                name="Profil Cortizo 2000",
+                material_type="ALU",
+                unit="barre",
+                supplier="CORTIZO",
+                product_type="stockable",
+            )
+            db.add(product)
+            db.flush()
+            variant = models.ProductVariant(
+                product_id=product.id,
+                reference="CORTIZO:2000",
+                supplier_reference="2000",
+                quantity_in_stock=5,
+                min_threshold=0,
+            )
+            location = models.StockLocation(name="WH/Stock", usage="internal", is_active=True)
+            db.add_all([variant, location])
+            db.flush()
+            db.add(models.StockQuant(variant_id=variant.id, location_id=location.id, quantity=5))
+            sale = models.SaleOrder(
+                reference="DEV-PREP-ATELIER",
+                client_name="Client préparation",
+                status="VALIDATED",
+                tax_rate=20,
+            )
+            db.add(sale)
+            db.flush()
+            db.add(
+                models.SaleOrderLine(
+                    order_id=sale.id,
+                    description="Menuiserie ALU Cortizo",
+                    quantity=1,
+                    unit_price=1000,
+                )
+            )
+            db.commit()
+            sale_id = sale.id
+
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+        content = b"CORTIZO GAMME BASE\r\nVER TEST\r\nRAL;2000;PROFIL;4;barre  6,50\r\n"
+
+        preview_response = client.post(
+            f"/v2/sales/{sale_id}/prepare-workshop/preview",
+            headers=headers,
+            files=[("files", ("SEPVER.TXT", content, "text/plain"))],
+        )
+        assert preview_response.status_code == 200, preview_response.text
+        assert preview_response.json()["summary"]["stock_match_status"] == {"ok": 1}
+
+        reserve_response = client.post(
+            f"/v2/sales/{sale_id}/prepare-workshop/reserve",
+            headers=headers,
+            files=[("files", ("SEPVER.TXT", content, "text/plain"))],
+        )
+        assert reserve_response.status_code == 200, reserve_response.text
+        assert reserve_response.json()["status"] == "READY_FOR_PROD"
+        assert reserve_response.json()["reserved_lines"] == 1
+
+        with TestingSessionLocal() as db:
+            sale_db = db.query(models.SaleOrder).one()
+            reservation = db.query(models.StockReservation).one()
+            quant = db.query(models.StockQuant).one()
+            variant = db.query(models.ProductVariant).one()
+            moves = db.query(models.StockMove).count()
+
+        assert sale_db.status == "READY_FOR_PROD"
+        assert reservation.sale_order_id == sale_id
+        assert reservation.status == "reserved"
+        assert quant.quantity == 5
+        assert variant.quantity_in_stock == 5
         assert moves == 0
     finally:
         app.dependency_overrides.pop(database.get_db, None)

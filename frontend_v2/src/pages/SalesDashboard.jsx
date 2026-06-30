@@ -15,6 +15,9 @@ export default function SalesDashboard() {
     const [selectedSale, setSelectedSale] = useState(null);
     const [isStatusUpdating, setIsStatusUpdating] = useState(false);
     const [isUploadingBOM, setIsUploadingBOM] = useState(false);
+    const [workshopPrepFiles, setWorkshopPrepFiles] = useState([]);
+    const [workshopPrepPreview, setWorkshopPrepPreview] = useState(null);
+    const [isWorkshopPreparing, setIsWorkshopPreparing] = useState(false);
 
     // AI Copilot State
     const [showAIModal, setShowAIModal] = useState(false);
@@ -78,6 +81,8 @@ export default function SalesDashboard() {
         try {
             const res = await api.get(`/v2/sales/${sale_id}`);
             setSelectedSale(res.data);
+            setWorkshopPrepFiles([]);
+            setWorkshopPrepPreview(null);
         } catch (err) {
             console.error(err);
         }
@@ -180,6 +185,59 @@ export default function SalesDashboard() {
         }
     };
 
+    const buildWorkshopPrepFormData = () => {
+        const formData = new FormData();
+        workshopPrepFiles.forEach(file => formData.append("files", file));
+        formData.append("source_location", "WH/Stock");
+        return formData;
+    };
+
+    const previewWorkshopPreparation = async () => {
+        if (!selectedSale || workshopPrepFiles.length === 0) {
+            return alert("Ajoutez au moins un fichier atelier.");
+        }
+        setIsWorkshopPreparing(true);
+        try {
+            const res = await api.post(`/v2/sales/${selectedSale.id}/prepare-workshop/preview`, buildWorkshopPrepFormData(), {
+                headers: { "Content-Type": "multipart/form-data" }
+            });
+            setWorkshopPrepPreview(res.data);
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Prévisualisation atelier impossible.");
+        } finally {
+            setIsWorkshopPreparing(false);
+        }
+    };
+
+    const reserveWorkshopPreparation = async () => {
+        if (!selectedSale || !workshopPrepPreview) return;
+        const status = workshopPrepPreview.summary?.stock_match_status || {};
+        if (workshopPrepPreview.issues?.some(issue => issue.severity === 'error')) {
+            return alert("Réservation bloquée : corrigez les alertes workflow.");
+        }
+        if ((status.not_found || 0) > 0 || (status.shortage || 0) > 0) {
+            return alert("Réservation bloquée : références inconnues ou stock insuffisant.");
+        }
+        if (!window.confirm(`Réserver le stock atelier pour ${selectedSale.reference} ?`)) return;
+        setIsWorkshopPreparing(true);
+        try {
+            const res = await api.post(`/v2/sales/${selectedSale.id}/prepare-workshop/reserve`, buildWorkshopPrepFormData(), {
+                headers: { "Content-Type": "multipart/form-data" }
+            });
+            alert(res.data.message || "Stock réservé pour atelier.");
+            setWorkshopPrepFiles([]);
+            setWorkshopPrepPreview(null);
+            queryClient.invalidateQueries(['sales']);
+            openSaleDetails(selectedSale.id);
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Réservation atelier impossible.");
+        } finally {
+            setIsWorkshopPreparing(false);
+        }
+    };
+
     const launchProduction = async () => {
         if(!selectedSale) return;
         setIsStatusUpdating(true);
@@ -265,7 +323,7 @@ export default function SalesDashboard() {
             case 'SENT': return 'Envoyé au Client';
             case 'VALIDATED': return 'Validé (Signé)';
             case 'IN_DESIGN': return 'Bureau d\'Études';
-            case 'READY_FOR_PROD': return 'Nomenclature (BOM)';
+            case 'READY_FOR_PROD': return 'Préparation atelier';
             case 'IN_PRODUCTION': return 'En Production';
             case 'CANCELLED': return 'Refusé / Annulé';
             case 'DELIVERED': return 'Livré & Facturé';
@@ -708,6 +766,116 @@ export default function SalesDashboard() {
                             </div>
                         )}
 
+                        {['VALIDATED', 'IN_DESIGN'].includes(selectedSale.status) && (
+                            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm mb-8">
+                                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-5">
+                                    <div>
+                                        <h3 className="font-black text-xl text-slate-900 mb-1 flex items-center gap-2">
+                                            <UploadCloud className="w-5 h-5 text-amber-500" />
+                                            Préparer atelier
+                                        </h3>
+                                        <p className="text-sm font-medium text-slate-500">
+                                            Chargez les fichiers Proges/Orgadata pour prévisualiser puis réserver le stock sans le débiter.
+                                        </p>
+                                    </div>
+                                    <label className="bg-amber-50 text-amber-700 border border-amber-200 px-4 py-3 rounded-xl font-black text-sm shadow-sm cursor-pointer hover:bg-amber-100 transition-colors flex items-center justify-center gap-2 min-w-[220px]">
+                                        {workshopPrepFiles.length ? `${workshopPrepFiles.length} fichier(s)` : "Choisir fichiers atelier"}
+                                        <UploadCloud className="w-4 h-4"/>
+                                        <input
+                                            type="file"
+                                            multiple
+                                            accept=".txt,.pdf"
+                                            className="hidden"
+                                            onChange={(event) => {
+                                                setWorkshopPrepFiles(Array.from(event.target.files || []));
+                                                setWorkshopPrepPreview(null);
+                                            }}
+                                        />
+                                    </label>
+                                </div>
+
+                                <div className="flex flex-wrap gap-3 mt-5">
+                                    <button
+                                        onClick={previewWorkshopPreparation}
+                                        disabled={isWorkshopPreparing || workshopPrepFiles.length === 0}
+                                        className="px-5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black transition-colors"
+                                    >
+                                        {isWorkshopPreparing ? "Analyse..." : "Prévisualiser"}
+                                    </button>
+                                    <button
+                                        onClick={reserveWorkshopPreparation}
+                                        disabled={isWorkshopPreparing || !workshopPrepPreview}
+                                        className="px-5 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black transition-colors"
+                                    >
+                                        Réserver pour atelier
+                                    </button>
+                                </div>
+
+                                {workshopPrepPreview && (
+                                    <div className="mt-5 space-y-4">
+                                        {workshopPrepPreview.issues?.length > 0 && (
+                                            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                                                <p className="text-xs font-black text-amber-700 uppercase mb-2">Contrôles workflow</p>
+                                                <div className="space-y-1">
+                                                    {workshopPrepPreview.issues.map((issue, idx) => (
+                                                        <p key={idx} className={`text-sm font-bold ${issue.severity === 'error' ? 'text-red-700' : 'text-amber-700'}`}>
+                                                            {issue.message || issue.code}
+                                                        </p>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                        <div className="grid grid-cols-4 gap-3">
+                                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                                                <span className="text-[10px] font-black text-slate-400 uppercase">Lignes</span>
+                                                <p className="text-2xl font-black text-slate-900">{workshopPrepPreview.summary?.debit_lines || 0}</p>
+                                            </div>
+                                            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
+                                                <span className="text-[10px] font-black text-emerald-600 uppercase">OK</span>
+                                                <p className="text-2xl font-black text-emerald-700">{workshopPrepPreview.summary?.stock_match_status?.ok || 0}</p>
+                                            </div>
+                                            <div className="bg-red-50 border border-red-100 rounded-2xl p-4">
+                                                <span className="text-[10px] font-black text-red-600 uppercase">Inconnues</span>
+                                                <p className="text-2xl font-black text-red-700">{workshopPrepPreview.summary?.stock_match_status?.not_found || 0}</p>
+                                            </div>
+                                            <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4">
+                                                <span className="text-[10px] font-black text-orange-600 uppercase">Manques</span>
+                                                <p className="text-2xl font-black text-orange-700">{workshopPrepPreview.summary?.stock_match_status?.shortage || 0}</p>
+                                            </div>
+                                        </div>
+                                        <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-64 overflow-y-auto">
+                                            <table className="w-full text-left">
+                                                <thead className="bg-slate-50 sticky top-0">
+                                                    <tr>
+                                                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase">Référence</th>
+                                                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase">Produit</th>
+                                                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase text-right">Demandé</th>
+                                                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase text-right">Disponible</th>
+                                                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase text-center">Statut</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100">
+                                                    {workshopPrepPreview.stock_matches?.map((line, idx) => (
+                                                        <tr key={`${line.reference}-${idx}`} className="hover:bg-slate-50">
+                                                            <td className="px-4 py-3 font-mono font-black text-sm">{line.supplier}/{line.reference}</td>
+                                                            <td className="px-4 py-3 text-sm font-bold text-slate-700">{line.product_name || "Non trouvé"}</td>
+                                                            <td className="px-4 py-3 text-sm font-black text-right">{line.requested_quantity} {line.unit}</td>
+                                                            <td className="px-4 py-3 text-sm font-black text-right">{line.available_quantity}</td>
+                                                            <td className="px-4 py-3 text-center">
+                                                                <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase ${line.status === 'ok' ? 'bg-emerald-100 text-emerald-700' : line.status === 'shortage' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
+                                                                    {line.status}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         {/* IN_DESIGN ACTION */}
                         {selectedSale.status === 'IN_DESIGN' && (
                             <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg shadow-purple-500/20 mb-8">
@@ -723,14 +891,12 @@ export default function SalesDashboard() {
                                 </div>
                                 <div className="bg-white/10 rounded-xl p-4 border border-white/20 flex flex-col sm:flex-row items-center justify-between gap-4">
                                     <div>
-                                        <h4 className="font-bold text-sm mb-1 text-white">Nomenclature Orgadata/Proges</h4>
-                                        <p className="text-xs text-purple-100">Importez le fichier BOM pour débiter les stocks et débloquer la production.</p>
+                                        <h4 className="font-bold text-sm mb-1 text-white">Fichiers atelier Proges/Orgadata</h4>
+                                        <p className="text-xs text-purple-100">Utilisez la carte Préparer atelier ci-dessus pour prévisualiser et réserver le stock sans débit immédiat.</p>
                                     </div>
-                                    <label className="bg-white text-purple-600 px-4 py-2 rounded-lg font-black text-sm shadow-md cursor-pointer hover:scale-105 transition-transform flex items-center justify-center gap-2 w-full sm:w-auto shrink-0">
-                                        {isUploadingBOM ? "Chargement..." : "Importer BOM"}
-                                        <UploadCloud className="w-4 h-4"/>
-                                        <input type="file" accept=".xml,.csv" className="hidden" onChange={handleFileUpload} disabled={isUploadingBOM} />
-                                    </label>
+                                    <span className="bg-white/15 text-white px-4 py-2 rounded-lg font-black text-sm border border-white/20 w-full sm:w-auto text-center shrink-0">
+                                        Réservation sécurisée
+                                    </span>
                                 </div>
                             </div>
                         )}
@@ -739,8 +905,8 @@ export default function SalesDashboard() {
                         {selectedSale.status === 'READY_FOR_PROD' && (
                             <div className="bg-gradient-to-r from-amber-500 to-yellow-500 rounded-2xl p-6 text-white flex flex-col md:flex-row justify-between items-center gap-4 shadow-lg shadow-amber-500/20 mb-8">
                                 <div>
-                                    <h3 className="font-black text-xl mb-1">Dossier Prêt & Stock Débité</h3>
-                                    <p className="text-amber-100 text-sm font-medium">La nomenclature a été validée. Transmettez à l'Atelier Live.</p>
+                                    <h3 className="font-black text-xl mb-1">Dossier Prêt & Stock Réservé</h3>
+                                    <p className="text-amber-100 text-sm font-medium">La préparation atelier est validée sans débit réel. Transmettez à l'Atelier Live.</p>
                                 </div>
                                 <button 
                                     onClick={launchProduction}
