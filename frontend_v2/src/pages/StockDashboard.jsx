@@ -1712,7 +1712,7 @@ export default function StockDashboard() {
                             </button>
                             <button
                                 onClick={submitWorkshopReservation}
-                                disabled={workshopLoading || !workshopPreview || !workshopContextValue}
+                                disabled={workshopLoading || !workshopPreview}
                                 className="px-5 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-white rounded-xl font-black shadow-lg"
                             >
                                 Réserver le stock
