@@ -42,6 +42,13 @@ def ensure_schema_compatibility(engine):
             if "sale_order_line_id" not in order_columns:
                 connection.execute(text("ALTER TABLE orders ADD COLUMN sale_order_line_id INTEGER"))
 
+        if inspector.has_table("sale_orders"):
+            sale_columns = {column["name"] for column in inspector.get_columns("sale_orders")}
+            if "workflow_type" not in sale_columns:
+                connection.execute(text("ALTER TABLE sale_orders ADD COLUMN workflow_type VARCHAR DEFAULT 'FREE_SALE'"))
+                sale_columns.add("workflow_type")
+            connection.execute(text("UPDATE sale_orders SET workflow_type = 'FREE_SALE' WHERE workflow_type IS NULL"))
+
 class MaterialType(str, enum.Enum):
     PVC = "PVC"
     ALU = "ALU"
@@ -389,6 +396,7 @@ class SaleOrder(Base):
     client_email = Column(String, nullable=True)
     client_address = Column(String, nullable=True)
     status = Column(String, default="DRAFT") # DRAFT, SENT, VALIDATED, CANCELLED, DELIVERED
+    workflow_type = Column(String, default="FREE_SALE", index=True) # FREE_SALE, FABRICATION_ESTIMATE, FABRICATION_FROM_MEASURE
     validity_days = Column(Integer, default=30)
     tax_rate = Column(Float, default=18.0) # percentage
     currency = Column(String, default="EUR")

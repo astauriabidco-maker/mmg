@@ -510,6 +510,7 @@ class SaleOrderCreate(BaseModel):
     client_contact: Optional[str] = None
     client_email: Optional[str] = None
     client_address: Optional[str] = None
+    workflow_type: str = "FREE_SALE"
     validity_days: int = 30
     tax_rate: float = 18.0
     currency: str = "EUR"
@@ -534,6 +535,7 @@ class SaleOrderSchema(BaseModel):
     client_email: Optional[str]
     client_address: Optional[str]
     status: str
+    workflow_type: str = "FREE_SALE"
     validity_days: int
     tax_rate: float
     currency: str

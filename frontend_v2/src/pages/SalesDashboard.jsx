@@ -36,6 +36,7 @@ export default function SalesDashboard() {
         validity_days: 30,
         tax_rate: 20,
         currency: "EUR",
+        workflow_type: "FREE_SALE",
         lines: [
             { description: "", quantity: 1, unit_price: 0, discount_pct: 0 }
         ]
@@ -66,6 +67,50 @@ export default function SalesDashboard() {
     });
 
     const [pipelineStages, setPipelineStages] = useState([]);
+
+    const getWorkflowLabel = (workflowType) => {
+        switch (workflowType) {
+            case 'FABRICATION_FROM_MEASURE':
+                return 'Fabrication depuis métré';
+            case 'FABRICATION_ESTIMATE':
+                return 'Pré-devis fabrication';
+            case 'FREE_SALE':
+            default:
+                return 'Devis libre pièces/prestations';
+        }
+    };
+
+    const getWorkflowBadgeClass = (workflowType) => {
+        switch (workflowType) {
+            case 'FABRICATION_FROM_MEASURE':
+                return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+            case 'FABRICATION_ESTIMATE':
+                return 'bg-amber-100 text-amber-700 border-amber-200';
+            case 'FREE_SALE':
+            default:
+                return 'bg-slate-100 text-slate-600 border-slate-200';
+        }
+    };
+
+    const hasMeasureContext = (sale) => (sale?.mmg_dossiers || []).length > 0;
+
+    const canPrepareWorkshop = (sale) => {
+        if (!sale || !['VALIDATED', 'IN_DESIGN'].includes(sale.status)) return false;
+        if ((sale.workflow_type || 'FREE_SALE') === 'FREE_SALE') return false;
+        if (sale.workflow_type === 'FABRICATION_ESTIMATE' && !hasMeasureContext(sale)) return false;
+        return true;
+    };
+
+    const getWorkshopBlockedMessage = (sale) => {
+        if (!sale || !['VALIDATED', 'IN_DESIGN'].includes(sale.status)) return null;
+        if ((sale.workflow_type || 'FREE_SALE') === 'FREE_SALE') {
+            return "Ce devis libre est réservé aux pièces, accessoires, prestations ou SAV. Pour une fabrication, créez un métré.";
+        }
+        if (sale.workflow_type === 'FABRICATION_ESTIMATE' && !hasMeasureContext(sale)) {
+            return "Ce pré-devis fabrication doit être rattaché à un métré avant préparation atelier.";
+        }
+        return null;
+    };
     
     // Sync local state with server state
     React.useEffect(() => {
@@ -180,6 +225,7 @@ export default function SalesDashboard() {
                 alert(res.data.message);
             } else {
                 const quoteDraft = res.data.quote || res.data;
+                quoteDraft.workflow_type = quoteDraft.workflow_type || "FABRICATION_ESTIMATE";
                 const createRes = await api.post('/v2/sales/', quoteDraft);
                 
                 setShowAIModal(false);
@@ -206,6 +252,7 @@ export default function SalesDashboard() {
             validity_days: 30,
             tax_rate: 20,
             currency: "EUR",
+            workflow_type: "FREE_SALE",
             lines: [
                 { description: "", quantity: 1, unit_price: 0, discount_pct: 0 }
             ]
@@ -401,7 +448,7 @@ export default function SalesDashboard() {
             alert("✅ Dossier lancé en production avec succès ! Les fiches de suivi ont été générées.");
         } catch (err) {
             console.error(err);
-            alert("Erreur lors du lancement en production");
+            alert(err.response?.data?.detail || "Erreur lors du lancement en production");
         } finally {
             setIsStatusUpdating(false);
         }
@@ -575,7 +622,13 @@ export default function SalesDashboard() {
                             onClick={() => setShowManualQuoteModal(true)} 
                             className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black shadow-md shadow-slate-900/10 flex items-center gap-2 transition-all"
                         >
-                            <Plus className="w-4 h-4"/> Nouveau Devis
+                            <Plus className="w-4 h-4"/> Devis libre
+                        </button>
+                        <button
+                            onClick={() => setMainTab('dossiers')}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black shadow-md shadow-emerald-500/20 flex items-center gap-2 transition-all"
+                        >
+                            <ListTodo className="w-4 h-4"/> Métré fabrication
                         </button>
                         <button 
                             onClick={() => setShowAIModal(true)} 
@@ -641,6 +694,9 @@ export default function SalesDashboard() {
                                                             <span className="font-bold text-slate-400 text-[10px] uppercase tracking-wider">{sale.reference}</span>
                                                             <span className="font-black text-slate-700 text-sm">{total.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
                                                         </div>
+                                                        <span className={`inline-block mt-3 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getWorkflowBadgeClass(sale.workflow_type)}`}>
+                                                            {getWorkflowLabel(sale.workflow_type)}
+                                                        </span>
                                                     </div>
                                                 )
                                             })}
@@ -681,6 +737,9 @@ export default function SalesDashboard() {
                                                 <span className="font-bold text-slate-400 text-xs">{sale.reference}</span>
                                                 <span className="font-black text-slate-800">{total.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
                                             </div>
+                                            <span className={`inline-block mt-3 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getWorkflowBadgeClass(sale.workflow_type)}`}>
+                                                {getWorkflowLabel(sale.workflow_type)}
+                                            </span>
                                         </div>
                                     );
                                 })}
@@ -711,6 +770,9 @@ export default function SalesDashboard() {
                                         <div className="flex items-center gap-3 mb-3">
                                             <h2 className="text-3xl font-black tracking-tight">{selectedSale.client_name}</h2>
                                             <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getStatusColor(selectedSale.status)}`}>{getStatusLabel(selectedSale.status)}</span>
+                                            <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getWorkflowBadgeClass(selectedSale.workflow_type)}`}>
+                                                {getWorkflowLabel(selectedSale.workflow_type)}
+                                            </span>
                                         </div>
                                         <div className="flex gap-6 text-slate-400 text-sm font-medium">
                                             <p>Réf: <span className="text-white font-bold">{selectedSale.reference}</span></p>
@@ -775,9 +837,27 @@ export default function SalesDashboard() {
                                         <p className="text-sm font-bold text-slate-700"><span className="text-slate-400 font-normal w-24 inline-block">Validité:</span> {selectedSale.validity_days} jours</p>
                                         <p className="text-sm font-bold text-slate-700"><span className="text-slate-400 font-normal w-24 inline-block">TVA:</span> {selectedSale.tax_rate} %</p>
                                         <p className="text-sm font-bold text-slate-700"><span className="text-slate-400 font-normal w-24 inline-block">Devise:</span> {selectedSale.currency}</p>
+                                        <p className="text-sm font-bold text-slate-700"><span className="text-slate-400 font-normal w-24 inline-block">Workflow:</span> {getWorkflowLabel(selectedSale.workflow_type)}</p>
                                     </div>
                                 </div>
                             </div>
+
+                            {getWorkshopBlockedMessage(selectedSale) && (
+                                <div className="px-8 pb-6">
+                                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                        <div>
+                                            <p className="text-xs font-black text-amber-700 uppercase tracking-widest mb-1">Atelier non disponible</p>
+                                            <p className="text-sm font-bold text-amber-900">{getWorkshopBlockedMessage(selectedSale)}</p>
+                                        </div>
+                                        <button
+                                            onClick={() => setMainTab('dossiers')}
+                                            className="px-4 py-3 bg-white text-amber-700 border border-amber-200 rounded-xl font-black text-sm hover:bg-amber-100 transition-colors flex items-center justify-center gap-2"
+                                        >
+                                            <ListTodo className="w-4 h-4" /> Aller aux métrés
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
 
                             {/* METRES ASSOCIES */}
                             {selectedSale.mmg_dossiers && selectedSale.mmg_dossiers.length > 0 && (
@@ -925,7 +1005,7 @@ export default function SalesDashboard() {
                             </div>
                         )}
 
-                        {['VALIDATED', 'IN_DESIGN'].includes(selectedSale.status) && (
+                        {canPrepareWorkshop(selectedSale) && (
                             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm mb-8">
                                 <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-5">
                                     <div>
@@ -1164,9 +1244,9 @@ export default function SalesDashboard() {
                             <div>
                                 <h2 className="text-2xl font-black flex items-center gap-3">
                                     <FileText className="w-6 h-6 text-blue-200" />
-                                    Nouveau devis manuel
+                                    Nouveau devis libre
                                 </h2>
-                                <p className="text-slate-300 text-sm mt-1">Créer un brouillon sans IA ni métré, avec des lignes libres.</p>
+                                <p className="text-slate-300 text-sm mt-1">Pièces, accessoires, prestations ou SAV. Pour une fabrication, démarrez par un métré.</p>
                             </div>
                             <button onClick={() => setShowManualQuoteModal(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-300 hover:text-white">
                                 <X className="w-6 h-6" />
@@ -1174,6 +1254,23 @@ export default function SalesDashboard() {
                         </div>
 
                         <div className="p-6 overflow-y-auto space-y-6">
+                            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                <div>
+                                    <p className="text-xs font-black text-amber-700 uppercase tracking-widest mb-1">Règle métier</p>
+                                    <p className="text-sm font-bold text-amber-900">
+                                        Ce devis libre ne pourra pas partir en préparation atelier fabrication. Utilisez un métré pour les menuiseries sur mesure.
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        setShowManualQuoteModal(false);
+                                        setMainTab('dossiers');
+                                    }}
+                                    className="px-4 py-3 bg-white text-amber-700 border border-amber-200 rounded-xl font-black text-sm hover:bg-amber-100 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <ListTodo className="w-4 h-4" /> Créer un métré
+                                </button>
+                            </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="md:col-span-2 relative z-50">
                                     <label className="block text-xs font-black text-slate-400 uppercase mb-2">Rechercher un client</label>
@@ -1326,7 +1423,7 @@ export default function SalesDashboard() {
                                                 <input
                                                     value={line.description}
                                                     onChange={e => updateManualLine(index, 'description', e.target.value)}
-                                                    placeholder="Ex: Châssis ALU, pose, accessoire..."
+                                                    placeholder="Ex: poignée, serrure, pose, SAV..."
                                                     className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
                                                 />
                                             </div>

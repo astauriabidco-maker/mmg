@@ -281,6 +281,7 @@ def test_sale_workshop_preparation_reserves_stock_without_physical_debit():
                 reference="DEV-PREP-ATELIER",
                 client_name="Client préparation",
                 status="VALIDATED",
+                workflow_type="FABRICATION_FROM_MEASURE",
                 tax_rate=20,
             )
             db.add(sale)
@@ -360,6 +361,7 @@ def test_launch_production_is_idempotent_and_links_reservation_to_order():
                 reference="DEV-LAUNCH-ATELIER",
                 client_name="Client lancement",
                 status="READY_FOR_PROD",
+                workflow_type="FABRICATION_FROM_MEASURE",
                 tax_rate=20,
             )
             db.add(sale)
@@ -422,6 +424,150 @@ def test_launch_production_is_idempotent_and_links_reservation_to_order():
         assert len(plans) == 1
         assert reservation_db.production_order_id == order.id
         assert reservation_db.order_reference == order.reference
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_sale_workshop_preparation_rejects_free_sale_quote():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        with TestingSessionLocal() as db:
+            sale = models.SaleOrder(
+                reference="DEV-LIBRE",
+                client_name="Client pièces",
+                status="VALIDATED",
+                workflow_type="FREE_SALE",
+                tax_rate=20,
+            )
+            db.add(sale)
+            db.commit()
+            sale_id = sale.id
+
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+        content = b"CORTIZO GAMME BASE\r\nVER TEST\r\nRAL;2000;PROFIL;4;barre  6,50\r\n"
+
+        response = client.post(
+            f"/v2/sales/{sale_id}/prepare-workshop/preview",
+            headers=headers,
+            files=[("files", ("SEPVER.TXT", content, "text/plain"))],
+        )
+        assert response.status_code == 400
+        assert "devis libre" in response.text
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_sale_workshop_preparation_requires_measure_for_fabrication_estimate():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        with TestingSessionLocal() as db:
+            sale = models.SaleOrder(
+                reference="DEV-PRE-FAB",
+                client_name="Client fabrication",
+                status="VALIDATED",
+                workflow_type="FABRICATION_ESTIMATE",
+                tax_rate=20,
+            )
+            db.add(sale)
+            db.commit()
+            sale_id = sale.id
+
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+        content = b"CORTIZO GAMME BASE\r\nVER TEST\r\nRAL;2000;PROFIL;4;barre  6,50\r\n"
+
+        response = client.post(
+            f"/v2/sales/{sale_id}/prepare-workshop/preview",
+            headers=headers,
+            files=[("files", ("SEPVER.TXT", content, "text/plain"))],
+        )
+        assert response.status_code == 400
+        assert "métré" in response.text
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_create_measure_from_free_sale_marks_it_as_fabrication_estimate():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        with TestingSessionLocal() as db:
+            sale = models.SaleOrder(
+                reference="DEV-LIBRE-A-CONVERTIR",
+                client_name="Client conversion",
+                status="VALIDATED",
+                workflow_type="FREE_SALE",
+                tax_rate=20,
+            )
+            db.add(sale)
+            db.commit()
+            sale_id = sale.id
+
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+        response = client.post(f"/v2/mmg/from-sale/{sale_id}", headers=headers)
+        assert response.status_code == 200, response.text
+
+        with TestingSessionLocal() as db:
+            sale_db = db.query(models.SaleOrder).one()
+            dossier = db.query(models.MMG).one()
+
+        assert sale_db.workflow_type == "FABRICATION_ESTIMATE"
+        assert dossier.sale_order_id == sale_id
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)

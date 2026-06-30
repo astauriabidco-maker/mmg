@@ -117,6 +117,7 @@ def create_from_sale(sale_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Devis introuvable")
         
     ref = generate_reference(db)
+    sale.workflow_type = "FABRICATION_ESTIMATE"
     
     db_item = models.MMG(
         reference=ref,
@@ -236,6 +237,7 @@ def send_quote(dossier_id: int, db: Session = Depends(get_db)):
             client_contact=db_item.client_contact,
             client_email=db_item.client_email,
             client_address=db_item.client_address,
+            workflow_type="FABRICATION_FROM_MEASURE",
             status="SENT",
             notes=f"Devis généré automatiquement depuis le dossier technique {db_item.reference}.",
             author="Système (Auto)"
@@ -360,6 +362,7 @@ def send_quote(dossier_id: int, db: Session = Depends(get_db)):
         db_item.sale_order_id = sale.id
     else:
         existing_sale.status = "SENT"
+        existing_sale.workflow_type = "FABRICATION_FROM_MEASURE"
         db_item.sale_order_id = existing_sale.id
         
     db_item.quote_sent_at = datetime.utcnow()

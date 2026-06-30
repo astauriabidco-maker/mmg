@@ -23,6 +23,32 @@ router = APIRouter(
 )
 
 AUTH_DEPENDENCIES = [Depends(get_current_user)]
+SALE_WORKFLOW_TYPES = {"FREE_SALE", "FABRICATION_ESTIMATE", "FABRICATION_FROM_MEASURE"}
+
+
+def _normalise_sale_workflow_type(value: Optional[str]) -> str:
+    workflow_type = (value or "FREE_SALE").upper()
+    if workflow_type not in SALE_WORKFLOW_TYPES:
+        raise HTTPException(status_code=400, detail="Type de devis invalide.")
+    return workflow_type
+
+
+def _sale_has_measure_context(sale: models.SaleOrder) -> bool:
+    return bool(sale.mmg_dossiers)
+
+
+def _ensure_sale_can_prepare_workshop(sale: models.SaleOrder) -> None:
+    workflow_type = _normalise_sale_workflow_type(getattr(sale, "workflow_type", None))
+    if workflow_type == "FREE_SALE":
+        raise HTTPException(
+            status_code=400,
+            detail="Un devis libre pièces/prestations ne peut pas être préparé pour l'atelier fabrication.",
+        )
+    if workflow_type == "FABRICATION_ESTIMATE" and not _sale_has_measure_context(sale):
+        raise HTTPException(
+            status_code=400,
+            detail="Un pré-devis fabrication doit être rattaché à un métré avant préparation atelier.",
+        )
 
 def _material_from_text(value: Optional[str]) -> Optional[str]:
     text = (value or "").upper()
@@ -314,6 +340,7 @@ Tu DOIS multiplier ces prix de base par le coefficient de {margin} pour le unit_
             "validity_days": 15,
             "tax_rate": 20.0,
             "currency": "EUR",
+            "workflow_type": "FABRICATION_ESTIMATE",
             "notes": f"Devis généré par IA Copilot basé sur : '{req.prompt}'",
             "lines": final_lines
         }
@@ -343,6 +370,7 @@ def create_sale_order(
 ):
     date_str = datetime.now().strftime("%Y-%m-%d-%H%M")
     ref = f"DEV-{date_str}"
+    workflow_type = _normalise_sale_workflow_type(order_req.workflow_type)
     
     order = models.SaleOrder(
         reference=ref,
@@ -355,6 +383,7 @@ def create_sale_order(
         currency=order_req.currency,
         notes=order_req.notes,
         status="DRAFT",
+        workflow_type=workflow_type,
         author=current_user.get("sub", "unknown")
     )
     db.add(order)
@@ -393,6 +422,7 @@ async def preview_sale_workshop_preparation(
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
+    _ensure_sale_can_prepare_workshop(sale)
     records, issues, _source_names = await _parse_workshop_uploads(files)
     return build_preview_payload(
         db,
@@ -416,6 +446,7 @@ async def reserve_sale_workshop_preparation(
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
+    _ensure_sale_can_prepare_workshop(sale)
     if sale.status not in ["VALIDATED", "IN_DESIGN", "READY_FOR_PROD"]:
         raise HTTPException(status_code=400, detail="Préparation atelier possible uniquement après validation du devis.")
 
@@ -566,6 +597,7 @@ def launch_production(order_id: int, db: Session = Depends(get_db)):
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
+    _ensure_sale_can_prepare_workshop(sale)
 
     if sale.status not in ["READY_FOR_PROD", "IN_PRODUCTION"]:
         raise HTTPException(
