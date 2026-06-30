@@ -244,6 +244,7 @@ def get_recent_transactions(db: Session = Depends(get_db)):
         result.append({
             "id": m.id,
             "reference": m.reference,
+            "variant_id": m.variant_id,
             "item_name": item_name,
             "quantity_change": m.quantity,
             "transaction_type": "Débit atelier réel" if is_workshop_debit else f"{src_name} ➔ {dest_name}",

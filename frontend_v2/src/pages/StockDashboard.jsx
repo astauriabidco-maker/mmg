@@ -658,6 +658,13 @@ export default function StockDashboard() {
         }
     };
 
+    const getVariantTransactions = (variantId) => {
+        return transactions
+            .filter(tx => tx.variant_id === variantId)
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(0, 5);
+    };
+
     const inventoryTitle = showDraftOnly
         ? "Brouillons catalogue"
         : inventoryFocus === 'stock'
@@ -1104,53 +1111,91 @@ export default function StockDashboard() {
                                                 {isExpanded && variants.map((v) => {
                                                     const isEditing = editingQuant?.variantId === v.variantId && editingQuant?.locId === v.locId;
                                                     const canEditInline = activeLocationId !== 'global';
+                                                    const variantTransactions = getVariantTransactions(v.variantId);
                                                     return (
                                                         <tr key={v.variantId} className="bg-slate-50/40 transition-colors border-l-4 border-l-blue-400">
                                                             <td colSpan="4" className="py-0 px-0">
-                                                                <div className="pl-24 pr-6 py-4 flex items-center justify-between border-b border-slate-100/50 hover:bg-white transition-colors group/var">
-                                                                    <div className="flex flex-col">
-                                                                        <span className="font-bold text-slate-900 text-[15px] group-hover/var:text-blue-600 transition-colors">{v.variantLabel}</span>
-                                                                        <div className="flex items-center gap-2">
-                                                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{v.variantRef}</span>
-                                                                            {v.fullVariant.location && (
-                                                                                <div className="text-[10px] font-black bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded-md flex items-center gap-1 border border-orange-100 mt-0.5" title="Chemin de Rangement (Allée/Rayon)">
-                                                                                    <MapPin className="w-2.5 h-2.5"/> {v.fullVariant.location}
-                                                                                </div>
-                                                                            )}
+                                                                <div className="pl-24 pr-6 py-4 border-b border-slate-100/50 hover:bg-white transition-colors group/var">
+                                                                    <div className="flex items-center justify-between">
+                                                                        <div className="flex flex-col">
+                                                                            <span className="font-bold text-slate-900 text-[15px] group-hover/var:text-blue-600 transition-colors">{v.variantLabel}</span>
+                                                                            <div className="flex items-center gap-2">
+                                                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{v.variantRef}</span>
+                                                                                {v.fullVariant.location && (
+                                                                                    <div className="text-[10px] font-black bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded-md flex items-center gap-1 border border-orange-100 mt-0.5" title="Chemin de Rangement (Allée/Rayon)">
+                                                                                        <MapPin className="w-2.5 h-2.5"/> {v.fullVariant.location}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                        <div className="flex items-center gap-6">
+                                                                            {/* QUANTITY : INLINE EDIT */}
+                                                                            <div className="text-right flex items-center gap-3 bg-white border border-slate-200 shadow-sm rounded-xl pr-1 overflow-hidden">
+                                                                                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest pl-3 bg-slate-50 h-full py-2 border-r border-slate-100">STOCK</span>
+                                                                                {isEditing ? (
+                                                                                    <input 
+                                                                                        autoFocus type="number" value={quantInputValue} onChange={(e) => setQuantInputValue(e.target.value)} onKeyDown={handleQuantInputKeyDown} onBlur={submitQuantEdit} className="w-20 text-center py-1 border-none text-lg font-black bg-blue-50 text-blue-700 outline-none focus:ring-0"
+                                                                                    />
+                                                                                ) : (
+                                                                                    <div 
+                                                                                        className={`inline-block px-3 py-1 min-w-[3.5rem] text-center border-2 border-transparent hover:border-blue-200 hover:bg-blue-50 transition-colors font-black text-lg rounded-lg mx-1 ${v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${!canEditInline || !isManager ? 'cursor-not-allowed opacity-50' : 'cursor-text'}`}
+                                                                                        onClick={() => (canEditInline && isManager) && startEditingQuant(v.variantId, v.locId, v.stockToDisplay)}
+                                                                                        title={(canEditInline && isManager) ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible (Vue globale ou permissions insuffisantes)"}
+                                                                                    >
+                                                                                        {Math.round(v.stockToDisplay*100)/100}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                            {/* ROW ACTIONS */}
+                                                                            <div className="w-auto flex items-center gap-2 justify-end opacity-0 group-hover/var:opacity-100 transition-opacity">
+                                                                                <button onClick={(e) => { e.stopPropagation(); handlePrintBarcode(v.variantId); }} className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 hover:border-slate-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Imprimer Code-barre"><Hash className="w-3.5 h-3.5"/></button>
+                                                                                {isManager && (
+                                                                                    <>
+                                                                                        <button onClick={(e) => openEditVariant(e, v.fullVariant)} className="text-slate-400 hover:text-blue-600 bg-white border border-slate-200 hover:border-blue-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Modifier Variante"><FileEdit className="w-3.5 h-3.5"/></button>
+                                                                                        {activeLocationId !== 'global' && (
+                                                                                            <button onClick={() => openTransferModal(v.fullVariant, activeLocationId)} className="bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 shadow-md">
+                                                                                                Trsf <ArrowRight className="w-3.5 h-3.5"/>
+                                                                                            </button>
+                                                                                        )}
+                                                                                    </>
+                                                                                )}
+                                                                            </div>
                                                                         </div>
                                                                     </div>
-                                                                    <div className="flex items-center gap-6">
-                                                                        {/* QUANTITY : INLINE EDIT */}
-                                                                        <div className="text-right flex items-center gap-3 bg-white border border-slate-200 shadow-sm rounded-xl pr-1 overflow-hidden">
-                                                                            <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest pl-3 bg-slate-50 h-full py-2 border-r border-slate-100">STOCK</span>
-                                                                            {isEditing ? (
-                                                                                <input 
-                                                                                    autoFocus type="number" value={quantInputValue} onChange={(e) => setQuantInputValue(e.target.value)} onKeyDown={handleQuantInputKeyDown} onBlur={submitQuantEdit} className="w-20 text-center py-1 border-none text-lg font-black bg-blue-50 text-blue-700 outline-none focus:ring-0"
-                                                                                />
-                                                                            ) : (
-                                                                                <div 
-                                                                                    className={`inline-block px-3 py-1 min-w-[3.5rem] text-center border-2 border-transparent hover:border-blue-200 hover:bg-blue-50 transition-colors font-black text-lg rounded-lg mx-1 ${v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${!canEditInline || !isManager ? 'cursor-not-allowed opacity-50' : 'cursor-text'}`}
-                                                                                    onClick={() => (canEditInline && isManager) && startEditingQuant(v.variantId, v.locId, v.stockToDisplay)}
-                                                                                    title={(canEditInline && isManager) ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible (Vue globale ou permissions insuffisantes)"}
-                                                                                >
-                                                                                    {Math.round(v.stockToDisplay*100)/100}
-                                                                                </div>
-                                                                            )}
+                                                                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                                                        <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                                                                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Historique mouvements</span>
+                                                                            <span className="text-[10px] font-bold text-slate-400">{variantTransactions.length ? `${variantTransactions.length} récent(s)` : 'Aucun mouvement'}</span>
                                                                         </div>
-                                                                        {/* ROW ACTIONS */}
-                                                                        <div className="w-auto flex items-center gap-2 justify-end opacity-0 group-hover/var:opacity-100 transition-opacity">
-                                                                            <button onClick={(e) => { e.stopPropagation(); handlePrintBarcode(v.variantId); }} className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 hover:border-slate-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Imprimer Code-barre"><Hash className="w-3.5 h-3.5"/></button>
-                                                                            {isManager && (
-                                                                                <>
-                                                                                    <button onClick={(e) => openEditVariant(e, v.fullVariant)} className="text-slate-400 hover:text-blue-600 bg-white border border-slate-200 hover:border-blue-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Modifier Variante"><FileEdit className="w-3.5 h-3.5"/></button>
-                                                                                    {activeLocationId !== 'global' && (
-                                                                                        <button onClick={() => openTransferModal(v.fullVariant, activeLocationId)} className="bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 shadow-md">
-                                                                                            Trsf <ArrowRight className="w-3.5 h-3.5"/>
-                                                                                        </button>
-                                                                                    )}
-                                                                                </>
-                                                                            )}
-                                                                        </div>
+                                                                        {variantTransactions.length > 0 ? (
+                                                                            <div className="divide-y divide-slate-100">
+                                                                                {variantTransactions.map(tx => {
+                                                                                    const isWorkshopDebit = tx.movement_kind === 'workshop_debit' || tx.reference?.startsWith('DEBIT-ATELIER');
+                                                                                    return (
+                                                                                        <div key={tx.id} className="grid grid-cols-[150px_1fr_90px] gap-3 px-4 py-3 items-center">
+                                                                                            <div>
+                                                                                                <p className="text-[11px] font-black text-slate-600">{new Date(tx.created_at).toLocaleDateString('fr-FR')}</p>
+                                                                                                <p className="text-[10px] text-slate-400 font-mono">{new Date(tx.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
+                                                                                            </div>
+                                                                                            <div className="min-w-0">
+                                                                                                <div className="flex items-center gap-2">
+                                                                                                    <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-md ${isWorkshopDebit ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                                                                                                        {isWorkshopDebit ? 'Débit atelier réel' : tx.transaction_type}
+                                                                                                    </span>
+                                                                                                    <span className="text-[10px] font-mono text-slate-400 truncate">{tx.reference}</span>
+                                                                                                </div>
+                                                                                                {tx.notes && <p className="text-[11px] text-slate-500 mt-1 truncate">{tx.notes}</p>}
+                                                                                            </div>
+                                                                                            <div className={`text-right text-sm font-black ${isWorkshopDebit ? 'text-orange-600' : tx.quantity_change > 0 ? 'text-emerald-600' : 'text-blue-600'}`}>
+                                                                                                {isWorkshopDebit ? '-' : tx.quantity_change > 0 ? '+' : ''}{tx.quantity_change}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    );
+                                                                                })}
+                                                                            </div>
+                                                                        ) : (
+                                                                            <p className="px-4 py-3 text-xs font-bold text-slate-400">Aucun mouvement enregistré pour cette référence.</p>
+                                                                        )}
                                                                     </div>
                                                                 </div>
                                                             </td>
