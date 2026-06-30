@@ -127,6 +127,9 @@ def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
         assert dest_quant.quantity == 3
         assert variant.quantity_in_stock == 2
         assert move.quantity == 3
+        assert move.reference.startswith("DEBIT-ATELIER-")
+        assert "Débit atelier réel" in move.notes
+        assert "DEV-ATELIER-1" in move.notes
         assert reservation_db.status == "consumed"
     finally:
         app.dependency_overrides.pop(database.get_db, None)

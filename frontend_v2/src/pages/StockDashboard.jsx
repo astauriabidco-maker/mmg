@@ -1853,6 +1853,11 @@ export default function StockDashboard() {
 
 // Composant AuditLogs
 function AuditLogs({ transactions }) {
+    const [movementFilter, setMovementFilter] = useState('all');
+    const filteredTransactions = movementFilter === 'workshop_debit'
+        ? transactions.filter(tx => tx.movement_kind === 'workshop_debit' || tx.reference?.startsWith('DEBIT-ATELIER'))
+        : transactions;
+
     return (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden w-full max-w-5xl mx-auto mt-4">
             <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
@@ -1862,6 +1867,20 @@ function AuditLogs({ transactions }) {
                         Journal d'Audit des Mouvements
                     </h3>
                     <p className="text-xs font-medium text-slate-500 mt-1">Traçabilité complète des entrées, sorties et transferts (100 derniers mouvements).</p>
+                </div>
+                <div className="flex bg-white border border-slate-200 rounded-xl p-1 shadow-sm">
+                    <button
+                        onClick={() => setMovementFilter('all')}
+                        className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${movementFilter === 'all' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-800'}`}
+                    >
+                        Tous
+                    </button>
+                    <button
+                        onClick={() => setMovementFilter('workshop_debit')}
+                        className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${movementFilter === 'workshop_debit' ? 'bg-amber-500 text-white' : 'text-slate-500 hover:text-slate-800'}`}
+                    >
+                        Débits atelier
+                    </button>
                 </div>
             </div>
             
@@ -1877,30 +1896,33 @@ function AuditLogs({ transactions }) {
                         </tr>
                     </thead>
                     <tbody>
-                        {transactions.map(tx => (
-                            <tr key={tx.id} className="hover:bg-slate-50 border-b border-slate-50 transition-colors">
-                                <td className="px-6 py-4 text-sm text-slate-600 font-medium">
-                                    {new Date(tx.created_at).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })}
-                                    <div className="text-[10px] text-slate-400 font-mono mt-1">{tx.author}</div>
-                                </td>
-                                <td className="px-6 py-4 text-sm font-mono text-slate-500 font-bold">{tx.reference || `TX-#${tx.id}`}</td>
-                                <td className="px-6 py-4">
-                                    <span className="font-bold text-slate-800 text-[13px] block">{tx.item_name}</span>
-                                    {tx.notes && <span className="text-[10px] italic text-slate-400 line-clamp-1">{tx.notes}</span>}
-                                </td>
-                                <td className="px-6 py-4 text-center">
-                                    <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-bold uppercase whitespace-nowrap">
-                                        {tx.transaction_type}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4 text-center">
-                                    <span className={`font-black ${tx.quantity_change > 0 ? 'text-emerald-500' : 'text-blue-500'}`}>
-                                        {tx.quantity_change > 0 ? '+' : ''}{tx.quantity_change}
-                                    </span>
-                                </td>
-                            </tr>
-                        ))}
-                        {transactions.length === 0 && (
+                        {filteredTransactions.map(tx => {
+                            const isWorkshopDebit = tx.movement_kind === 'workshop_debit' || tx.reference?.startsWith('DEBIT-ATELIER');
+                            return (
+                                <tr key={tx.id} className="hover:bg-slate-50 border-b border-slate-50 transition-colors">
+                                    <td className="px-6 py-4 text-sm text-slate-600 font-medium">
+                                        {new Date(tx.created_at).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })}
+                                        <div className="text-[10px] text-slate-400 font-mono mt-1">{tx.author}</div>
+                                    </td>
+                                    <td className="px-6 py-4 text-sm font-mono text-slate-500 font-bold">{tx.reference || `TX-#${tx.id}`}</td>
+                                    <td className="px-6 py-4">
+                                        <span className="font-bold text-slate-800 text-[13px] block">{tx.item_name}</span>
+                                        {tx.notes && <span className="text-[10px] italic text-slate-400 line-clamp-1">{tx.notes}</span>}
+                                    </td>
+                                    <td className="px-6 py-4 text-center">
+                                        <span className={`${isWorkshopDebit ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-slate-100 text-slate-600'} px-3 py-1 rounded-full text-xs font-bold uppercase whitespace-nowrap`}>
+                                            {isWorkshopDebit ? 'Débit atelier réel' : tx.transaction_type}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4 text-center">
+                                        <span className={`font-black ${isWorkshopDebit ? 'text-orange-600' : tx.quantity_change > 0 ? 'text-emerald-500' : 'text-blue-500'}`}>
+                                            {isWorkshopDebit ? '-' : tx.quantity_change > 0 ? '+' : ''}{tx.quantity_change}
+                                        </span>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                        {filteredTransactions.length === 0 && (
                             <tr>
                                 <td colSpan="5" className="text-center py-12 text-slate-400 font-bold">Aucun mouvement enregistré.</td>
                             </tr>

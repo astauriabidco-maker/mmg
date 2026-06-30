@@ -235,13 +235,19 @@ def get_recent_transactions(db: Session = Depends(get_db)):
         # Resolve names for display
         src_name = m.source_location.name if m.source_location else "Fournisseur / Externe"
         dest_name = m.dest_location.name if m.dest_location else "Client / Perte"
+        is_workshop_debit = bool(
+            (m.reference or "").startswith("DEBIT-ATELIER")
+            or "Débit atelier réel" in (m.notes or "")
+            or "Consommation réservation" in (m.notes or "")
+        )
         
         result.append({
             "id": m.id,
             "reference": m.reference,
             "item_name": item_name,
             "quantity_change": m.quantity,
-            "transaction_type": f"{src_name} ➔ {dest_name}",
+            "transaction_type": "Débit atelier réel" if is_workshop_debit else f"{src_name} ➔ {dest_name}",
+            "movement_kind": "workshop_debit" if is_workshop_debit else "stock_move",
             "created_at": m.date,
             "author": m.author or "Admin",
             "notes": m.notes

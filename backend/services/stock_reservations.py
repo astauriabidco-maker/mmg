@@ -339,6 +339,7 @@ def consume_reservation(
         if line.variant:
             line.variant.quantity_in_stock = (line.variant.quantity_in_stock or 0) - line.reserved_quantity
 
+        context_reference = reservation.order_reference or reservation.project_reference or "sans contexte"
         db.add(
             models.StockMove(
                 reference=f"DEBIT-ATELIER-{now_ref}",
@@ -347,7 +348,7 @@ def consume_reservation(
                 location_dest_id=dest.id,
                 quantity=line.reserved_quantity,
                 state="done",
-                notes=f"Consommation réservation {reservation.reference}",
+                notes=f"Débit atelier réel | Réservation {reservation.reference} | Contexte {context_reference}",
                 author=author,
             )
         )
