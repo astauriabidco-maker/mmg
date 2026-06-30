@@ -23,6 +23,21 @@ export default function SalesDashboard() {
     const [showAIModal, setShowAIModal] = useState(false);
     const [aiPrompt, setAiPrompt] = useState('');
     const [isGenerating, setIsGenerating] = useState(false);
+    const [showManualQuoteModal, setShowManualQuoteModal] = useState(false);
+    const [isCreatingManualQuote, setIsCreatingManualQuote] = useState(false);
+    const [manualQuote, setManualQuote] = useState({
+        client_name: "",
+        client_contact: "",
+        client_email: "",
+        client_address: "",
+        notes: "",
+        validity_days: 30,
+        tax_rate: 20,
+        currency: "EUR",
+        lines: [
+            { description: "", quantity: 1, unit_price: 0, discount_pct: 0 }
+        ]
+    });
 
     const { data: sales = [], isLoading: isLoadingSales } = useQuery({
         queryKey: ['sales'],
@@ -170,6 +185,92 @@ export default function SalesDashboard() {
             setIsGenerating(false);
         }
     };
+
+    const resetManualQuote = () => {
+        setManualQuote({
+            client_name: "",
+            client_contact: "",
+            client_email: "",
+            client_address: "",
+            notes: "",
+            validity_days: 30,
+            tax_rate: 20,
+            currency: "EUR",
+            lines: [
+                { description: "", quantity: 1, unit_price: 0, discount_pct: 0 }
+            ]
+        });
+    };
+
+    const updateManualQuoteField = (field, value) => {
+        setManualQuote(prev => ({ ...prev, [field]: value }));
+    };
+
+    const updateManualLine = (index, field, value) => {
+        setManualQuote(prev => ({
+            ...prev,
+            lines: prev.lines.map((line, idx) => idx === index ? { ...line, [field]: value } : line)
+        }));
+    };
+
+    const addManualLine = () => {
+        setManualQuote(prev => ({
+            ...prev,
+            lines: [...prev.lines, { description: "", quantity: 1, unit_price: 0, discount_pct: 0 }]
+        }));
+    };
+
+    const removeManualLine = (index) => {
+        setManualQuote(prev => ({
+            ...prev,
+            lines: prev.lines.length > 1 ? prev.lines.filter((_, idx) => idx !== index) : prev.lines
+        }));
+    };
+
+    const createManualQuote = async () => {
+        const validLines = manualQuote.lines
+            .map(line => ({
+                description: line.description.trim(),
+                quantity: Number(line.quantity || 0),
+                unit_price: Number(line.unit_price || 0),
+                discount_pct: Number(line.discount_pct || 0)
+            }))
+            .filter(line => line.description && line.quantity > 0);
+
+        if (!manualQuote.client_name.trim()) {
+            return alert("Renseignez le nom du client.");
+        }
+        if (validLines.length === 0) {
+            return alert("Ajoutez au moins une ligne de devis avec une désignation et une quantité.");
+        }
+
+        setIsCreatingManualQuote(true);
+        try {
+            const payload = {
+                ...manualQuote,
+                client_name: manualQuote.client_name.trim(),
+                client_contact: manualQuote.client_contact.trim() || null,
+                client_email: manualQuote.client_email.trim() || null,
+                client_address: manualQuote.client_address.trim() || null,
+                notes: manualQuote.notes.trim() || null,
+                validity_days: Number(manualQuote.validity_days || 30),
+                tax_rate: Number(manualQuote.tax_rate || 0),
+                lines: validLines
+            };
+            const res = await api.post('/v2/sales/', payload);
+            setShowManualQuoteModal(false);
+            resetManualQuote();
+            queryClient.invalidateQueries(['sales']);
+            openSaleDetails(res.data.id);
+            alert("Devis manuel créé en brouillon.");
+        } catch (err) {
+            console.error("Manual quote error:", err);
+            alert(err.response?.data?.detail || "Erreur lors de la création du devis manuel.");
+        } finally {
+            setIsCreatingManualQuote(false);
+        }
+    };
+
     const sendToDesign = async () => {
         if(!selectedSale) return;
         setIsStatusUpdating(true);
@@ -418,6 +519,12 @@ export default function SalesDashboard() {
                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
                             />
                         </div>
+                        <button 
+                            onClick={() => setShowManualQuoteModal(true)} 
+                            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black shadow-md shadow-slate-900/10 flex items-center gap-2 transition-all"
+                        >
+                            <Plus className="w-4 h-4"/> Nouveau Devis
+                        </button>
                         <button 
                             onClick={() => setShowAIModal(true)} 
                             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black shadow-md shadow-indigo-500/20 flex items-center gap-2 transition-all"
@@ -992,6 +1099,184 @@ export default function SalesDashboard() {
                                     {isGenerating ? "Analyse en cours..." : "Générer le Devis"}
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MANUAL QUOTE MODAL */}
+            {showManualQuoteModal && (
+                <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-hidden animate-fade-in flex flex-col">
+                        <div className="bg-slate-900 p-6 flex justify-between items-center text-white shrink-0">
+                            <div>
+                                <h2 className="text-2xl font-black flex items-center gap-3">
+                                    <FileText className="w-6 h-6 text-blue-200" />
+                                    Nouveau devis manuel
+                                </h2>
+                                <p className="text-slate-300 text-sm mt-1">Créer un brouillon sans IA ni métré, avec des lignes libres.</p>
+                            </div>
+                            <button onClick={() => setShowManualQuoteModal(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-300 hover:text-white">
+                                <X className="w-6 h-6" />
+                            </button>
+                        </div>
+
+                        <div className="p-6 overflow-y-auto space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Client *</label>
+                                    <input
+                                        value={manualQuote.client_name}
+                                        onChange={e => updateManualQuoteField('client_name', e.target.value)}
+                                        placeholder="Nom du client"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Contact</label>
+                                    <input
+                                        value={manualQuote.client_contact}
+                                        onChange={e => updateManualQuoteField('client_contact', e.target.value)}
+                                        placeholder="Téléphone ou contact"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Email</label>
+                                    <input
+                                        type="email"
+                                        value={manualQuote.client_email}
+                                        onChange={e => updateManualQuoteField('client_email', e.target.value)}
+                                        placeholder="client@email.fr"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase mb-2">Validité</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            value={manualQuote.validity_days}
+                                            onChange={e => updateManualQuoteField('validity_days', e.target.value)}
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase mb-2">TVA %</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.1"
+                                            value={manualQuote.tax_rate}
+                                            onChange={e => updateManualQuoteField('tax_rate', e.target.value)}
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Adresse</label>
+                                    <input
+                                        value={manualQuote.client_address}
+                                        onChange={e => updateManualQuoteField('client_address', e.target.value)}
+                                        placeholder="Adresse du chantier ou du client"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                                <div className="bg-slate-50 px-4 py-3 flex items-center justify-between border-b border-slate-200">
+                                    <h3 className="font-black text-slate-800">Lignes du devis</h3>
+                                    <button onClick={addManualLine} className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-black text-xs flex items-center gap-2">
+                                        <Plus className="w-4 h-4" /> Ajouter ligne
+                                    </button>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {manualQuote.lines.map((line, index) => (
+                                        <div key={index} className="grid grid-cols-12 gap-3 p-4 items-end">
+                                            <div className="col-span-12 md:col-span-5">
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Désignation *</label>
+                                                <input
+                                                    value={line.description}
+                                                    onChange={e => updateManualLine(index, 'description', e.target.value)}
+                                                    placeholder="Ex: Châssis ALU, pose, accessoire..."
+                                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                                />
+                                            </div>
+                                            <div className="col-span-4 md:col-span-2">
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Qté</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    value={line.quantity}
+                                                    onChange={e => updateManualLine(index, 'quantity', e.target.value)}
+                                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                                />
+                                            </div>
+                                            <div className="col-span-4 md:col-span-2">
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Prix HT</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    value={line.unit_price}
+                                                    onChange={e => updateManualLine(index, 'unit_price', e.target.value)}
+                                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                                />
+                                            </div>
+                                            <div className="col-span-3 md:col-span-2">
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Remise %</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    max="100"
+                                                    step="0.1"
+                                                    value={line.discount_pct}
+                                                    onChange={e => updateManualLine(index, 'discount_pct', e.target.value)}
+                                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                                />
+                                            </div>
+                                            <button
+                                                onClick={() => removeManualLine(index)}
+                                                disabled={manualQuote.lines.length === 1}
+                                                className="col-span-1 h-10 rounded-xl border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200 disabled:opacity-30 disabled:hover:text-slate-400 disabled:hover:border-slate-200 flex items-center justify-center"
+                                                title="Supprimer la ligne"
+                                            >
+                                                <X className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase mb-2">Notes</label>
+                                <textarea
+                                    value={manualQuote.notes}
+                                    onChange={e => updateManualQuoteField('notes', e.target.value)}
+                                    placeholder="Conditions, remarques commerciales, contraintes chantier..."
+                                    className="w-full h-24 bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm font-medium text-slate-800 outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="p-6 border-t border-slate-200 flex flex-col sm:flex-row justify-end gap-3 shrink-0">
+                            <button 
+                                onClick={() => setShowManualQuoteModal(false)}
+                                className="px-6 py-3 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl font-bold transition-all"
+                            >
+                                Annuler
+                            </button>
+                            <button 
+                                onClick={createManualQuote}
+                                disabled={isCreatingManualQuote}
+                                className="px-6 py-3 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white rounded-xl font-black shadow-lg shadow-slate-900/20 flex items-center justify-center gap-2 transition-all active:scale-95"
+                            >
+                                {isCreatingManualQuote ? <Clock className="w-5 h-5 animate-pulse" /> : <Send className="w-5 h-5" />}
+                                {isCreatingManualQuote ? "Création..." : "Créer le brouillon"}
+                            </button>
                         </div>
                     </div>
                 </div>
