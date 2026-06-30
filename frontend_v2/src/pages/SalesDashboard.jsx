@@ -25,6 +25,8 @@ export default function SalesDashboard() {
     const [isGenerating, setIsGenerating] = useState(false);
     const [showManualQuoteModal, setShowManualQuoteModal] = useState(false);
     const [isCreatingManualQuote, setIsCreatingManualQuote] = useState(false);
+    const [manualClientSearch, setManualClientSearch] = useState('');
+    const [isManualNewClient, setIsManualNewClient] = useState(false);
     const [manualQuote, setManualQuote] = useState({
         client_name: "",
         client_contact: "",
@@ -43,6 +45,14 @@ export default function SalesDashboard() {
         queryKey: ['sales'],
         queryFn: async () => {
             const res = await api.get('/v2/sales/');
+            return res.data;
+        }
+    });
+
+    const { data: clients = [] } = useQuery({
+        queryKey: ['partners', 'clients'],
+        queryFn: async () => {
+            const res = await api.get('/v2/partners/clients');
             return res.data;
         }
     });
@@ -200,6 +210,8 @@ export default function SalesDashboard() {
                 { description: "", quantity: 1, unit_price: 0, discount_pct: 0 }
             ]
         });
+        setManualClientSearch('');
+        setIsManualNewClient(false);
     };
 
     const updateManualQuoteField = (field, value) => {
@@ -227,6 +239,30 @@ export default function SalesDashboard() {
         }));
     };
 
+    const selectManualClient = (client) => {
+        setManualQuote(prev => ({
+            ...prev,
+            client_name: client.name || "",
+            client_contact: client.phone || "",
+            client_email: client.email || "",
+            client_address: client.address || ""
+        }));
+        setManualClientSearch('');
+        setIsManualNewClient(false);
+    };
+
+    const startManualNewClient = () => {
+        setManualQuote(prev => ({
+            ...prev,
+            client_name: manualClientSearch.trim(),
+            client_contact: "",
+            client_email: "",
+            client_address: ""
+        }));
+        setManualClientSearch('');
+        setIsManualNewClient(true);
+    };
+
     const createManualQuote = async () => {
         const validLines = manualQuote.lines
             .map(line => ({
@@ -246,6 +282,22 @@ export default function SalesDashboard() {
 
         setIsCreatingManualQuote(true);
         try {
+            if (isManualNewClient) {
+                try {
+                    await api.post('/v2/partners/clients', {
+                        name: manualQuote.client_name.trim(),
+                        phone: manualQuote.client_contact.trim() || null,
+                        email: manualQuote.client_email.trim() || null,
+                        address: manualQuote.client_address.trim() || null,
+                        customer_type: "B2C",
+                        is_active: true
+                    });
+                    queryClient.invalidateQueries(['partners', 'clients']);
+                } catch (clientErr) {
+                    if (clientErr.response?.status !== 400) throw clientErr;
+                }
+            }
+
             const payload = {
                 ...manualQuote,
                 client_name: manualQuote.client_name.trim(),
@@ -529,7 +581,7 @@ export default function SalesDashboard() {
                             onClick={() => setShowAIModal(true)} 
                             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black shadow-md shadow-indigo-500/20 flex items-center gap-2 transition-all"
                         >
-                            <Sparkles className="w-4 h-4"/> Nouveau Devis IA
+                            <Sparkles className="w-4 h-4"/> Assistant devis IA
                         </button>
                     </div>
                 </div>
@@ -1062,9 +1114,9 @@ export default function SalesDashboard() {
                             <div>
                                 <h2 className="text-2xl font-black flex items-center gap-3">
                                     <BrainCircuit className="w-6 h-6 text-indigo-200" />
-                                    Copilote Commercial IA
+                                    Assistant devis IA
                                 </h2>
-                                <p className="text-indigo-100 text-sm mt-1">Parlez-moi naturellement pour générer un devis instantanément.</p>
+                                <p className="text-indigo-100 text-sm mt-1">Transformez une demande client en brouillon de devis à vérifier.</p>
                             </div>
                             <button onClick={() => setShowAIModal(false)} className="p-2 hover:bg-indigo-500 rounded-full transition-colors text-indigo-100 hover:text-white">
                                 <X className="w-6 h-6" />
@@ -1096,7 +1148,7 @@ export default function SalesDashboard() {
                                     className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-300 text-white rounded-xl font-black shadow-lg shadow-indigo-500/30 flex items-center gap-2 transition-all active:scale-95"
                                 >
                                     {isGenerating ? <BrainCircuit className="w-5 h-5 animate-pulse" /> : <Send className="w-5 h-5" />}
-                                    {isGenerating ? "Analyse en cours..." : "Générer le Devis"}
+                                    {isGenerating ? "Analyse en cours..." : "Créer le brouillon IA"}
                                 </button>
                             </div>
                         </div>
@@ -1123,34 +1175,108 @@ export default function SalesDashboard() {
 
                         <div className="p-6 overflow-y-auto space-y-6">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Client *</label>
-                                    <input
-                                        value={manualQuote.client_name}
-                                        onChange={e => updateManualQuoteField('client_name', e.target.value)}
-                                        placeholder="Nom du client"
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                    />
+                                <div className="md:col-span-2 relative z-50">
+                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Rechercher un client</label>
+                                    <div className="relative">
+                                        <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input
+                                            type="text"
+                                            value={manualClientSearch}
+                                            onChange={e => {
+                                                setManualClientSearch(e.target.value);
+                                                setIsManualNewClient(false);
+                                            }}
+                                            placeholder="Tapez un nom ou téléphone..."
+                                            className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 transition-all font-bold text-slate-900 outline-none"
+                                        />
+                                    </div>
+
+                                    {manualClientSearch && !manualQuote.client_name && !isManualNewClient && (
+                                        <div className="absolute top-full mt-2 left-0 right-0 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden">
+                                            {clients
+                                                .filter(c => c.name.toLowerCase().includes(manualClientSearch.toLowerCase()) || (c.phone && c.phone.includes(manualClientSearch)))
+                                                .slice(0, 8)
+                                                .map(client => (
+                                                    <button
+                                                        key={client.id}
+                                                        className="w-full text-left px-6 py-4 hover:bg-slate-50 border-b border-slate-100 last:border-0 transition-colors flex items-center justify-between"
+                                                        onClick={() => selectManualClient(client)}
+                                                    >
+                                                        <div>
+                                                            <p className="font-bold text-slate-900">{client.name}</p>
+                                                            <p className="text-xs text-slate-500">{client.phone || "Sans téléphone"} • {client.email || "Sans email"}</p>
+                                                        </div>
+                                                        <ArrowRight className="w-4 h-4 text-slate-300" />
+                                                    </button>
+                                                ))}
+                                            <button
+                                                className="w-full text-left px-6 py-4 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold transition-colors flex items-center gap-2"
+                                                onClick={startManualNewClient}
+                                            >
+                                                <Plus className="w-5 h-5"/> Créer le nouveau client "{manualClientSearch}"
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
-                                <div>
-                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Contact</label>
-                                    <input
-                                        value={manualQuote.client_contact}
-                                        onChange={e => updateManualQuoteField('client_contact', e.target.value)}
-                                        placeholder="Téléphone ou contact"
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Email</label>
-                                    <input
-                                        type="email"
-                                        value={manualQuote.client_email}
-                                        onChange={e => updateManualQuoteField('client_email', e.target.value)}
-                                        placeholder="client@email.fr"
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                    />
-                                </div>
+
+                                {manualQuote.client_name && (
+                                    <div className="md:col-span-2 bg-gradient-to-r from-blue-50 to-indigo-50/30 p-5 rounded-2xl border border-blue-100 flex items-center justify-between shadow-sm">
+                                        <div>
+                                            <div className="flex items-center gap-3 mb-1">
+                                                <h4 className="font-black text-xl text-blue-900">{manualQuote.client_name}</h4>
+                                                <span className="text-[10px] font-black text-blue-600 bg-blue-200/50 px-2 py-1 rounded-md uppercase tracking-widest">
+                                                    {isManualNewClient ? "Nouveau client" : "Annuaire"}
+                                                </span>
+                                            </div>
+                                            <p className="text-sm font-bold text-blue-700/80">
+                                                {[manualQuote.client_contact, manualQuote.client_email].filter(Boolean).join(" • ") || "Coordonnées à compléter"}
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                updateManualQuoteField('client_name', '');
+                                                updateManualQuoteField('client_contact', '');
+                                                updateManualQuoteField('client_email', '');
+                                                updateManualQuoteField('client_address', '');
+                                                setIsManualNewClient(false);
+                                            }}
+                                            className="bg-white/70 hover:bg-white text-blue-600 p-2 rounded-xl transition-all shadow-sm"
+                                        >
+                                            <X className="w-5 h-5"/>
+                                        </button>
+                                    </div>
+                                )}
+
+                                {isManualNewClient && manualQuote.client_name && (
+                                    <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                                        <div className="md:col-span-2">
+                                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Nom / Raison sociale</label>
+                                            <input
+                                                value={manualQuote.client_name}
+                                                onChange={e => updateManualQuoteField('client_name', e.target.value)}
+                                                className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Téléphone</label>
+                                            <input
+                                                value={manualQuote.client_contact}
+                                                onChange={e => updateManualQuoteField('client_contact', e.target.value)}
+                                                className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Email</label>
+                                            <input
+                                                type="email"
+                                                value={manualQuote.client_email}
+                                                onChange={e => updateManualQuoteField('client_email', e.target.value)}
+                                                className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
                                         <label className="block text-xs font-black text-slate-400 uppercase mb-2">Validité</label>
