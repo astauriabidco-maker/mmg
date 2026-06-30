@@ -15,6 +15,7 @@ from sqlalchemy import or_
 from ..services.bom_parser import parse_bom_file
 from ..services.stock_reservations import (
     build_preview_payload,
+    cancel_reservation,
     consume_reservation,
     create_reservation,
 )
@@ -479,6 +480,26 @@ def consume_workshop_reservation(
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
+
+@router.post("/workshop-debits/reservations/{reservation_id}/cancel")
+def cancel_workshop_reservation(
+    reservation_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    if user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut annuler une réservation atelier.")
+    reservation = (
+        db.query(models.StockReservation)
+        .options(joinedload(models.StockReservation.lines))
+        .filter(models.StockReservation.id == reservation_id)
+        .first()
+    )
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Réservation introuvable.")
+    stats = cancel_reservation(db, reservation)
+    db.commit()
+    return {"status": "success", **stats}
 
 @router.get("/locations", response_model=List[schemas.StockLocationResponse])
 def get_locations(db: Session = Depends(get_db)):

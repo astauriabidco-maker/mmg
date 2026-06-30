@@ -360,6 +360,25 @@ def consume_reservation(
     return stats
 
 
+def cancel_reservation(
+    db: Session,
+    reservation: models.StockReservation,
+) -> dict[str, int]:
+    if reservation.status != ACTIVE_RESERVATION_STATUS:
+        return {"cancelled_lines": 0, "released_quantity": 0}
+
+    stats = {"cancelled_lines": 0, "released_quantity": 0}
+    for line in reservation.lines:
+        if line.status != ACTIVE_RESERVATION_STATUS:
+            continue
+        stats["released_quantity"] += line.reserved_quantity or 0
+        line.status = "cancelled"
+        stats["cancelled_lines"] += 1
+
+    reservation.status = "cancelled"
+    return stats
+
+
 def consume_reservations_for_order(db: Session, order_reference: str, station_code: str, author: str = "Système") -> dict[str, int]:
     if "DEBIT" not in station_code.upper():
         return {"created_moves": 0, "consumed_lines": 0, "reservations": 0}

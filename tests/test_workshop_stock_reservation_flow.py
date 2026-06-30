@@ -133,6 +133,105 @@ def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
         models.Base.metadata.drop_all(bind=engine)
 
 
+def test_workshop_debit_reservation_can_be_cancelled_without_stock_move():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        with TestingSessionLocal() as db:
+            product = models.Product(
+                reference_base="SEPALUMIC:7007",
+                name="Bavette de faitage",
+                material_type="ALU",
+                unit="barre",
+                supplier="SEPALUMIC",
+                product_type="stockable",
+            )
+            db.add(product)
+            db.flush()
+            variant = models.ProductVariant(
+                product_id=product.id,
+                reference="SEPALUMIC:7007",
+                supplier_reference="7007",
+                quantity_in_stock=5,
+                min_threshold=0,
+            )
+            location = models.StockLocation(name="WH/Stock", usage="internal", is_active=True)
+            db.add_all([variant, location])
+            db.flush()
+            db.add(models.StockQuant(variant_id=variant.id, location_id=location.id, quantity=5))
+            sale = models.SaleOrder(
+                reference="DEV-ATELIER-CANCEL",
+                client_name="Client atelier",
+                status="VALIDATED",
+                tax_rate=20,
+            )
+            db.add(sale)
+            db.flush()
+            db.add(
+                models.SaleOrderLine(
+                    order_id=sale.id,
+                    description="Menuiserie ALU Sepalumic",
+                    quantity=1,
+                    unit_price=1000,
+                )
+            )
+            db.commit()
+            sale_id = sale.id
+
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+        content = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
+
+        reserve_response = client.post(
+            "/v2/stock/workshop-debits/reservations",
+            headers=headers,
+            data={"sale_order_id": str(sale_id)},
+            files=[("files", ("SEPVER.TXT", content, "text/plain"))],
+        )
+        assert reserve_response.status_code == 200, reserve_response.text
+        reservation = reserve_response.json()
+
+        cancel_response = client.post(
+            f"/v2/stock/workshop-debits/reservations/{reservation['id']}/cancel",
+            headers=headers,
+        )
+        assert cancel_response.status_code == 200, cancel_response.text
+        assert cancel_response.json()["cancelled_lines"] == 1
+        assert cancel_response.json()["released_quantity"] == 3
+
+        with TestingSessionLocal() as db:
+            quant = db.query(models.StockQuant).one()
+            variant = db.query(models.ProductVariant).one()
+            reservation_db = db.query(models.StockReservation).one()
+            line = db.query(models.StockReservationLine).one()
+            moves = db.query(models.StockMove).count()
+
+        assert quant.quantity == 5
+        assert variant.quantity_in_stock == 5
+        assert reservation_db.status == "cancelled"
+        assert line.status == "cancelled"
+        assert moves == 0
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
 def test_workshop_reservation_requires_validated_and_coherent_sale_order():
     engine = create_engine(
         "sqlite:///:memory:",

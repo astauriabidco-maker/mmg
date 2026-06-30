@@ -54,6 +54,7 @@ export default function StockDashboard() {
     const [workshopContextValue, setWorkshopContextValue] = useState('');
     const [workshopPreview, setWorkshopPreview] = useState(null);
     const [workshopLoading, setWorkshopLoading] = useState(false);
+    const [reservationActionId, setReservationActionId] = useState(null);
     const [newProductForm, setNewProductForm] = useState({
         reference_base: '', name: '', material_type: 'PVC', unit: 'pce', supplier: '', product_type: 'stockable', available_in_pos: false, image_url: '', technical_doc_url: '', compatible_series: '',
         variant_ref: '', barcode: '', color: '', length_per_unit: '', supplier_reference: '', cost_price: '', min_threshold: 10, location: ''
@@ -465,6 +466,41 @@ export default function StockDashboard() {
         }
     };
 
+    const refreshWorkshopReservationState = async () => {
+        await queryClient.invalidateQueries({ queryKey: ['workshop-reservations'] });
+        await queryClient.invalidateQueries({ queryKey: ['products'] });
+        await queryClient.invalidateQueries({ queryKey: ['quants'] });
+        await queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    };
+
+    const consumeWorkshopReservation = async (reservation) => {
+        if (!window.confirm(`Confirmer le débit réel atelier pour ${reservation.reference} ? Le stock physique sera décrémenté.`)) return;
+        setReservationActionId(reservation.id);
+        try {
+            const res = await api.post(`/v2/stock/workshop-debits/reservations/${reservation.id}/consume`);
+            alert(`${res.data.consumed_lines || 0} ligne(s) débitée(s), ${res.data.created_moves || 0} mouvement(s) créé(s).`);
+            await refreshWorkshopReservationState();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Débit réel impossible.");
+        } finally {
+            setReservationActionId(null);
+        }
+    };
+
+    const cancelWorkshopReservation = async (reservation) => {
+        if (!window.confirm(`Annuler la réservation ${reservation.reference} ? Le stock physique ne sera pas modifié.`)) return;
+        setReservationActionId(reservation.id);
+        try {
+            const res = await api.post(`/v2/stock/workshop-debits/reservations/${reservation.id}/cancel`);
+            alert(`${res.data.cancelled_lines || 0} ligne(s) annulée(s), ${res.data.released_quantity || 0} unité(s) libérée(s).`);
+            await refreshWorkshopReservationState();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Annulation impossible.");
+        } finally {
+            setReservationActionId(null);
+        }
+    };
+
     const openAddVariant = (e, product) => {
         e.stopPropagation();
         setAddVariantForm({
@@ -780,6 +816,44 @@ export default function StockDashboard() {
                             </button>
                         </div>
                     </div>
+
+                    {isManager && reservations.length > 0 && (
+                        <div>
+                            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-2">Réservations Atelier</div>
+                            <div className="space-y-2">
+                                {reservations.map(reservation => {
+                                    const totalReserved = reservation.lines?.reduce((sum, line) => sum + (line.reserved_quantity || 0), 0) || 0;
+                                    return (
+                                        <div key={reservation.id} className="rounded-xl bg-amber-500/10 border border-amber-400/20 p-3">
+                                            <div className="flex items-start justify-between gap-2">
+                                                <div className="min-w-0">
+                                                    <p className="text-xs font-black text-amber-100 truncate">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
+                                                    <p className="text-[10px] font-bold text-amber-300/80">{reservation.lines?.length || 0} ligne(s) - {totalReserved.toLocaleString('fr-FR')} réservé</p>
+                                                </div>
+                                                <span className="text-[9px] font-black uppercase text-amber-200 bg-amber-400/10 border border-amber-300/20 rounded-lg px-2 py-1">réservé</span>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2 mt-3">
+                                                <button
+                                                    onClick={() => consumeWorkshopReservation(reservation)}
+                                                    disabled={reservationActionId === reservation.id}
+                                                    className="py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 text-white text-[10px] font-black"
+                                                >
+                                                    Débit réel
+                                                </button>
+                                                <button
+                                                    onClick={() => cancelWorkshopReservation(reservation)}
+                                                    disabled={reservationActionId === reservation.id}
+                                                    className="py-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:bg-slate-700 text-slate-200 text-[10px] font-black border border-slate-700"
+                                                >
+                                                    Annuler
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
 
                     {/* EMPLACEMENTS */}
                     {currentMenu === 'inventory' && (
