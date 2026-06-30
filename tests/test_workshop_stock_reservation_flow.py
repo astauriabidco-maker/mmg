@@ -1,4 +1,5 @@
 import io
+import json
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
@@ -330,6 +331,97 @@ def test_sale_workshop_preparation_reserves_stock_without_physical_debit():
         assert quant.quantity == 5
         assert variant.quantity_in_stock == 5
         assert moves == 0
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_launch_production_is_idempotent_and_links_reservation_to_order():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        with TestingSessionLocal() as db:
+            sale = models.SaleOrder(
+                reference="DEV-LAUNCH-ATELIER",
+                client_name="Client lancement",
+                status="READY_FOR_PROD",
+                tax_rate=20,
+            )
+            db.add(sale)
+            db.flush()
+            line = models.SaleOrderLine(
+                order_id=sale.id,
+                description="Chassis ALU Cortizo",
+                quantity=2,
+                unit_price=1000,
+                visual_config=json.dumps(
+                    {
+                        "type": "Coulissant 2 vantaux",
+                        "width": 1800,
+                        "height": 2150,
+                        "material": "ALU",
+                        "color": "RAL 7016",
+                    }
+                ),
+            )
+            db.add(line)
+            reservation = models.StockReservation(
+                reference="RSV-LAUNCH-1",
+                sale_order_id=sale.id,
+                status="reserved",
+                source_label="SEPVER.TXT",
+                created_by="test",
+            )
+            db.add(reservation)
+            db.commit()
+            sale_id = sale.id
+            line_id = line.id
+
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+
+        first_response = client.post(f"/v2/sales/{sale_id}/launch-production", headers=headers)
+        assert first_response.status_code == 200, first_response.text
+        assert first_response.json()["created_orders"] == 1
+        assert first_response.json()["linked_reservations"] == 1
+
+        second_response = client.post(f"/v2/sales/{sale_id}/launch-production", headers=headers)
+        assert second_response.status_code == 200, second_response.text
+        assert second_response.json()["created_orders"] == 0
+        assert second_response.json()["existing_orders"] == 1
+
+        with TestingSessionLocal() as db:
+            sale_db = db.query(models.SaleOrder).one()
+            order = db.query(models.Order).one()
+            plans = db.query(models.Planning).all()
+            reservation_db = db.query(models.StockReservation).one()
+
+        assert sale_db.status == "IN_PRODUCTION"
+        assert order.sale_order_id == sale_id
+        assert order.sale_order_line_id == line_id
+        assert order.width == 1800
+        assert order.height == 2150
+        assert order.quantity == 2
+        assert order.reference.startswith("PROD-LAUNCH-ATELIER-L")
+        assert len(plans) == 1
+        assert reservation_db.production_order_id == order.id
+        assert reservation_db.order_reference == order.reference
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)

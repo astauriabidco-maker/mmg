@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFi
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional, Dict
 import tempfile
 from pathlib import Path
+import json
 
 from ..database import get_db
 from .. import models, schemas
@@ -22,6 +23,106 @@ router = APIRouter(
 )
 
 AUTH_DEPENDENCIES = [Depends(get_current_user)]
+
+def _material_from_text(value: Optional[str]) -> Optional[str]:
+    text = (value or "").upper()
+    if "PVC" in text:
+        return "PVC"
+    if any(token in text for token in ["ALU", "ALUMINIUM", "CORTIZO", "SEPALUMIC", "TECHNAL"]):
+        return "ALU"
+    return None
+
+def _material_from_value(value) -> Optional[str]:
+    if value is None:
+        return None
+    raw = value.value if hasattr(value, "value") else str(value)
+    return raw if raw in {"ALU", "PVC"} else None
+
+def _line_visual_spec(line: models.SaleOrderLine) -> Optional[Dict]:
+    if not line.visual_config:
+        return None
+    try:
+        config = json.loads(line.visual_config)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    width = config.get("width") or config.get("width_mm")
+    height = config.get("height") or config.get("height_mm")
+    try:
+        width = float(width)
+        height = float(height)
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    material = _material_from_value(config.get("material")) or _material_from_text(line.description) or "ALU"
+    return {
+        "source": "sale_line",
+        "sale_order_line_id": line.id,
+        "reference_suffix": f"L{line.id}",
+        "width": width,
+        "height": height,
+        "material": material,
+        "quantity": max(int(line.quantity or 1), 1),
+        "system_type": config.get("type") or config.get("opening_type") or line.description,
+        "color": config.get("color") or config.get("color_ral"),
+    }
+
+def _mmg_spec(dossier: models.MMG) -> Optional[Dict]:
+    if not dossier.width or not dossier.height:
+        return None
+    material = _material_from_value(dossier.material) or _material_from_text(dossier.material) or "ALU"
+    return {
+        "source": "mmg_dossier",
+        "sale_order_line_id": None,
+        "reference_suffix": dossier.reference.replace("/", "-"),
+        "width": float(dossier.width),
+        "height": float(dossier.height),
+        "material": material,
+        "quantity": 1,
+        "system_type": dossier.opening_type or dossier.product_series or "Menuiserie",
+        "color": dossier.color_ral,
+    }
+
+def _fabricable_specs_from_sale(sale: models.SaleOrder) -> List[Dict]:
+    specs = []
+    for dossier in sale.mmg_dossiers or []:
+        spec = _mmg_spec(dossier)
+        if spec:
+            specs.append(spec)
+    if specs:
+        return specs
+    for line in sale.lines:
+        spec = _line_visual_spec(line)
+        if spec:
+            specs.append(spec)
+    return specs
+
+def _ensure_first_planning_step(db: Session, order: models.Order) -> None:
+    existing_plan = db.query(models.Planning).filter(models.Planning.order_id == order.id).first()
+    if existing_plan:
+        return
+    material = order.material.value if hasattr(order.material, "value") else order.material
+    first_station = db.query(models.Station).filter(
+        models.Station.material == material
+    ).order_by(models.Station.order_index.asc()).first()
+    db.add(
+        models.Planning(
+            order_id=order.id,
+            station=first_station.code if first_station else f"{material}_DEBIT",
+            priority=10,
+        )
+    )
+
+def _link_active_reservations_to_order(db: Session, sale_id: int, order: models.Order) -> int:
+    reservations = db.query(models.StockReservation).filter(
+        models.StockReservation.sale_order_id == sale_id,
+        models.StockReservation.status == "reserved",
+        models.StockReservation.production_order_id.is_(None),
+    ).all()
+    for reservation in reservations:
+        reservation.production_order_id = order.id
+        reservation.order_reference = order.reference
+    return len(reservations)
 
 async def _parse_workshop_uploads(files: List[UploadFile]):
     records = []
@@ -465,67 +566,73 @@ def launch_production(order_id: int, db: Session = Depends(get_db)):
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
-        
-    if sale.status != "READY_FOR_PROD":
-        raise HTTPException(status_code=400, detail="Seul un dossier dont le BOM a été importé (READY_FOR_PROD) peut être lancé en production.")
-        
-    first_prod_order = None
-    # Create production orders based on sale lines
-    for i, line in enumerate(sale.lines):
-        # We need to extract material from description or assume ALU if not specified
-        material = "ALU"
-        if "PVC" in line.description.upper():
-            material = "PVC"
-            
-        prod_ref = f"PROD-{sale.reference.replace('DEV-', '')}-{i+1}"
-        
+
+    if sale.status not in ["READY_FOR_PROD", "IN_PRODUCTION"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Transmettre à l'atelier nécessite une préparation atelier avec stock réservé.",
+        )
+
+    existing_orders = (
+        db.query(models.Order)
+        .filter(models.Order.sale_order_id == sale.id)
+        .order_by(models.Order.id.asc())
+        .all()
+    )
+    if existing_orders:
+        for order in existing_orders:
+            _ensure_first_planning_step(db, order)
+        linked_reservations = _link_active_reservations_to_order(db, sale.id, existing_orders[0])
+        sale.status = "IN_PRODUCTION"
+        db.commit()
+        return {
+            "message": "Dossier déjà transmis à l'atelier.",
+            "created_orders": 0,
+            "existing_orders": len(existing_orders),
+            "linked_reservations": linked_reservations,
+        }
+
+    specs = _fabricable_specs_from_sale(sale)
+    if not specs:
+        raise HTTPException(
+            status_code=400,
+            detail="Aucune ligne fabricable avec dimensions réelles. Créez ou rattachez un métré avant transmission atelier.",
+        )
+
+    created_orders = []
+    sale_ref = sale.reference.replace("DEV-", "").replace("/", "-")
+    for index, spec in enumerate(specs, start=1):
+        prod_ref = f"PROD-{sale_ref}-{spec['reference_suffix'] or index}"
+        existing = db.query(models.Order).filter(models.Order.reference == prod_ref).first()
+        if existing:
+            created_orders.append(existing)
+            continue
         prod_order = models.Order(
             reference=prod_ref,
-            width=1000, # Mock sizes, in reality we should link SaleOrderLine to MMG specs
-            height=1000,
-            material=material,
+            sale_order_id=sale.id,
+            sale_order_line_id=spec.get("sale_order_line_id"),
+            width=spec["width"],
+            height=spec["height"],
+            material=spec["material"],
             client_name=sale.client_name,
-            quantity=int(line.quantity),
-            system_type="Ouvrant à la Française"
+            color=spec.get("color"),
+            quantity=spec["quantity"],
+            system_type=spec.get("system_type"),
         )
         db.add(prod_order)
         db.flush()
-        if first_prod_order is None:
-            first_prod_order = prod_order
-        
-        # Dynamic First Station Logic
-        # We only create the very first planning step (lowest order_index for this material).
-        # When this step is DONE, v2_planning.py will automatically create the next step in the sequence.
-        first_station = db.query(models.Station).filter(
-            models.Station.material == material
-        ).order_by(models.Station.order_index.asc()).first()
-        
-        if first_station:
-            plan = models.Planning(
-                order_id=prod_order.id,
-                station=first_station.code,
-                priority=10
-            )
-            db.add(plan)
-        else:
-            # Fallback if no stations configured
-            plan = models.Planning(
-                order_id=prod_order.id,
-                station=f"{material}_DEBIT",
-                priority=10
-            )
-            db.add(plan)
-            
-    if first_prod_order:
-        active_reservations = db.query(models.StockReservation).filter(
-            models.StockReservation.sale_order_id == sale.id,
-            models.StockReservation.status == "reserved",
-            models.StockReservation.production_order_id.is_(None),
-        ).all()
-        for reservation in active_reservations:
-            reservation.production_order_id = first_prod_order.id
-            reservation.order_reference = first_prod_order.reference
+        _ensure_first_planning_step(db, prod_order)
+        created_orders.append(prod_order)
+
+    linked_reservations = 0
+    if created_orders:
+        linked_reservations = _link_active_reservations_to_order(db, sale.id, created_orders[0])
 
     sale.status = "IN_PRODUCTION"
     db.commit()
-    return {"message": "Dossier lancé en production avec succès !"}
+    return {
+        "message": "Dossier lancé en production avec succès.",
+        "created_orders": len(created_orders),
+        "existing_orders": 0,
+        "linked_reservations": linked_reservations,
+    }

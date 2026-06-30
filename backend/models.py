@@ -35,6 +35,13 @@ def ensure_schema_compatibility(engine):
                     )
                 )
 
+        if inspector.has_table("orders"):
+            order_columns = {column["name"] for column in inspector.get_columns("orders")}
+            if "sale_order_id" not in order_columns:
+                connection.execute(text("ALTER TABLE orders ADD COLUMN sale_order_id INTEGER"))
+            if "sale_order_line_id" not in order_columns:
+                connection.execute(text("ALTER TABLE orders ADD COLUMN sale_order_line_id INTEGER"))
+
 class MaterialType(str, enum.Enum):
     PVC = "PVC"
     ALU = "ALU"
@@ -111,6 +118,8 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     reference = Column(String, unique=True, index=True) # Ex: CMD-XXXX
+    sale_order_id = Column(Integer, ForeignKey("sale_orders.id"), nullable=True, index=True)
+    sale_order_line_id = Column(Integer, ForeignKey("sale_order_lines.id"), nullable=True, index=True)
     width = Column(Float)
     height = Column(Float)
     material = Column(SAEnum(MaterialType))
@@ -122,6 +131,8 @@ class Order(Base):
     system_type = Column(String, nullable=True)
     
     logs = relationship("ProductionLog", back_populates="order")
+    sale_order = relationship("SaleOrder")
+    sale_order_line = relationship("SaleOrderLine")
 
 class ProductionLog(Base):
     __tablename__ = "production_logs"

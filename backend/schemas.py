@@ -132,6 +132,8 @@ class OrderBase(BaseModel):
     width: float
     height: float
     material: MaterialType
+    sale_order_id: Optional[int] = None
+    sale_order_line_id: Optional[int] = None
     client_name: Optional[str] = None
     color: Optional[str] = None
     quantity: int = 1
