@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, FileText, Search, ArrowRight, CheckCircle, X, DollarSign, Send, Clock, AlertTriangle, FileCheck, Plus, ListTodo, UploadCloud, Copy, Sparkles, BrainCircuit, Package, Wrench, Tag } from 'lucide-react';
+import { Users, FileText, Search, ArrowRight, CheckCircle, X, DollarSign, Send, Clock, AlertTriangle, FileCheck, Plus, ListTodo, UploadCloud, Copy, Sparkles, BrainCircuit, Package, Wrench, Tag, RefreshCw } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import MMGDossiers from './MMGDossiers';
@@ -58,9 +58,16 @@ export default function SalesDashboard() {
         }
     });
 
-    const { data: stockProducts = [], isLoading: isLoadingStockProducts, isError: hasStockProductsError } = useQuery({
-        queryKey: ['stock-products-for-sales'],
+    const {
+        data: stockProducts = [],
+        isLoading: isLoadingStockProducts,
+        isError: hasStockProductsError,
+        error: stockProductsError,
+        refetch: refetchStockProducts
+    } = useQuery({
+        queryKey: ['products'],
         enabled: showManualQuoteModal,
+        retry: 1,
         queryFn: async () => {
             const res = await api.get('/v2/stock/products');
             return res.data;
@@ -68,7 +75,7 @@ export default function SalesDashboard() {
     });
 
     const { data: stockQuants = [] } = useQuery({
-        queryKey: ['stock-quants-for-sales'],
+        queryKey: ['quants'],
         enabled: showManualQuoteModal,
         queryFn: async () => {
             const res = await api.get('/v2/stock/quants');
@@ -77,7 +84,7 @@ export default function SalesDashboard() {
     });
 
     const { data: stockLocations = [] } = useQuery({
-        queryKey: ['stock-locations-for-sales'],
+        queryKey: ['locations'],
         enabled: showManualQuoteModal,
         queryFn: async () => {
             const res = await api.get('/v2/stock/locations');
@@ -335,6 +342,8 @@ export default function SalesDashboard() {
     };
 
     const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+    const stockProductsErrorStatus = stockProductsError?.response?.status;
+    const stockProductsErrorDetail = stockProductsError?.response?.data?.detail || stockProductsError?.message || "Erreur inconnue";
 
     const catalogItems = stockProducts.flatMap(product => (product.variants || []).map(variant => {
         const unitPrice = Number(variant.sale_price ?? variant.price ?? variant.unit_price ?? variant.list_price ?? variant.cost_price ?? 0);
@@ -1554,8 +1563,26 @@ export default function SalesDashboard() {
                                             </div>
 
                                             {hasStockProductsError && (
-                                                <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-sm font-bold text-red-700">
-                                                    Catalogue indisponible. Le devis peut contenir des prestations, mais les articles stock doivent attendre la disponibilité API stock.
+                                                <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-sm font-bold text-red-700 space-y-3">
+                                                    <div className="flex items-start gap-2">
+                                                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                                                        <div>
+                                                            <p>Catalogue stock indisponible.</p>
+                                                            <p className="text-xs font-semibold text-red-600 mt-1">
+                                                                {stockProductsErrorStatus ? `HTTP ${stockProductsErrorStatus} - ` : ''}{stockProductsErrorDetail}
+                                                            </p>
+                                                            <p className="text-xs font-semibold text-red-600 mt-1">
+                                                                Le devis peut contenir des prestations, mais les articles stock doivent attendre le catalogue.
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => refetchStockProducts()}
+                                                        className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-red-200 rounded-lg text-xs font-black text-red-700 hover:bg-red-100"
+                                                    >
+                                                        <RefreshCw className="w-3.5 h-3.5" /> Réessayer
+                                                    </button>
                                                 </div>
                                             )}
 
@@ -1563,7 +1590,7 @@ export default function SalesDashboard() {
                                                 {isLoadingStockProducts && (
                                                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm font-bold text-slate-500">Chargement du catalogue...</div>
                                                 )}
-                                                {!isLoadingStockProducts && filteredCatalogItems.length === 0 && (
+                                                {!hasStockProductsError && !isLoadingStockProducts && filteredCatalogItems.length === 0 && (
                                                     <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 text-sm font-bold text-amber-800">
                                                         Aucun article stock ne correspond à cette recherche. Créez une prestation si la vente ne concerne pas une référence catalogue.
                                                     </div>
