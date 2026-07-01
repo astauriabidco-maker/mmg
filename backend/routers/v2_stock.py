@@ -14,6 +14,7 @@ from openpyxl.styles import Font, PatternFill
 from sqlalchemy import or_
 from ..services.bom_parser import parse_bom_file
 from ..services.stock_reservations import (
+    annotate_variant_availability,
     build_preview_payload,
     cancel_reservation,
     consume_reservation,
@@ -53,7 +54,11 @@ async def _parse_workshop_uploads(files: List[UploadFile]):
 
 @router.get("/products", response_model=List[schemas.ProductResponse])
 def get_products(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    return db.query(models.Product).all()
+    products = db.query(models.Product).options(joinedload(models.Product.variants)).all()
+    for product in products:
+        for variant in product.variants:
+            annotate_variant_availability(db, variant)
+    return products
 
 @router.post("/products", response_model=schemas.ProductResponse)
 def create_product(product_data: schemas.ProductCreate, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
@@ -120,6 +125,7 @@ def update_variant(variant_id: int, variant_data: schemas.ProductVariantBase, db
         if key != "quantity_in_stock": setattr(variant, key, value)
     db.commit()
     db.refresh(variant)
+    annotate_variant_availability(db, variant)
     return variant
 
 @router.post("/products/{product_id}/variants", response_model=schemas.ProductVariantResponse)
@@ -130,6 +136,7 @@ def add_variant(product_id: int, variant_data: schemas.ProductVariantCreate, db:
     db.add(new_variant)
     db.commit()
     db.refresh(new_variant)
+    annotate_variant_availability(db, new_variant)
     return new_variant
 
 from fastapi import BackgroundTasks

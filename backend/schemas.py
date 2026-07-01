@@ -294,6 +294,8 @@ class ProductVariantCreate(ProductVariantBase):
 class ProductVariantResponse(ProductVariantBase):
     id: int
     product_id: int
+    reserved_quantity: float = 0.0
+    available_quantity: float = 0.0
     model_config = ConfigDict(from_attributes=True)
 
 class ProductBase(BaseModel):
@@ -498,6 +500,7 @@ class POSCheckoutRequest(BaseModel):
 # B2B CRM
 
 class SaleOrderLineCreate(BaseModel):
+    line_type: Optional[str] = None
     variant_id: Optional[int] = None
     description: str
     quantity: float
@@ -519,12 +522,16 @@ class SaleOrderCreate(BaseModel):
 
 class SaleOrderLineSchema(BaseModel):
     id: int
+    line_type: str = "SERVICE"
     variant_id: Optional[int]
     description: str
     quantity: float
     unit_price: float
     discount_pct: float
     visual_config: Optional[str] = None
+    variant: Optional[ProductVariantResponse] = None
+    reserved_quantity: float = 0.0
+    available_quantity: float = 0.0
     model_config = ConfigDict(from_attributes=True)
 
 class SaleOrderSchema(BaseModel):

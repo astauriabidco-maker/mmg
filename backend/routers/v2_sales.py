@@ -1,16 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 import tempfile
 from pathlib import Path
 import json
+import os
 
 from ..database import get_db
 from .. import models, schemas
 from ..core.security import get_current_user
-from ..services.stock_reservations import build_preview_payload, create_reservation
+from ..services.stock_reservations import (
+    annotate_sale_availability,
+    build_preview_payload,
+    cancel_reservation,
+    create_commercial_reservation_for_sale,
+    create_reservation,
+)
 from scripts.import_workshop_debits import parse_file
 
 import io
@@ -24,6 +31,7 @@ router = APIRouter(
 
 AUTH_DEPENDENCIES = [Depends(get_current_user)]
 SALE_WORKFLOW_TYPES = {"FREE_SALE", "FABRICATION_ESTIMATE", "FABRICATION_FROM_MEASURE"}
+SALE_LINE_TYPES = {"STOCK_ITEM", "SERVICE"}
 
 
 def _normalise_sale_workflow_type(value: Optional[str]) -> str:
@@ -31,6 +39,119 @@ def _normalise_sale_workflow_type(value: Optional[str]) -> str:
     if workflow_type not in SALE_WORKFLOW_TYPES:
         raise HTTPException(status_code=400, detail="Type de devis invalide.")
     return workflow_type
+
+
+def _normalise_sale_line_type(value: Optional[str], variant_id: Optional[int]) -> str:
+    line_type = (value or ("STOCK_ITEM" if variant_id else "SERVICE")).upper()
+    aliases = {
+        "STOCK": "STOCK_ITEM",
+        "ARTICLE": "STOCK_ITEM",
+        "PRODUCT": "STOCK_ITEM",
+        "PRESTATION": "SERVICE",
+        "CUSTOM": "SERVICE",
+        "FREE_TEXT": "SERVICE",
+    }
+    line_type = aliases.get(line_type, line_type)
+    if line_type not in SALE_LINE_TYPES:
+        raise HTTPException(status_code=400, detail="Type de ligne de devis invalide.")
+    return line_type
+
+
+def _catalog_value_is_inactive(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value is False
+    return str(value).upper() in {"DRAFT", "INACTIVE", "ARCHIVED", "DISABLED", "FALSE", "0"}
+
+
+def _ensure_catalog_variant_usable(variant: models.ProductVariant, line_type: str) -> None:
+    product = variant.product
+    if not product:
+        raise HTTPException(status_code=400, detail="Variante catalogue sans produit parent.")
+
+    if _catalog_value_is_inactive(getattr(product, "catalog_status", None)):
+        raise HTTPException(status_code=400, detail=f"Produit catalogue non actif: {product.reference_base}.")
+    for record in (product, variant):
+        if hasattr(record, "is_active") and _catalog_value_is_inactive(getattr(record, "is_active")):
+            raise HTTPException(status_code=400, detail="Produit catalogue inactif.")
+
+    product_type = (product.product_type or "").lower()
+    if line_type == "STOCK_ITEM" and product_type == "service":
+        raise HTTPException(status_code=400, detail="Une ligne STOCK_ITEM doit pointer vers un article stockable.")
+    if line_type == "SERVICE" and product_type in {"stockable", "consumable"}:
+        raise HTTPException(status_code=400, detail="Une prestation SERVICE ne doit pas pointer vers un article stockable.")
+
+
+def _resolve_sale_line(db: Session, line_req: schemas.SaleOrderLineCreate) -> Tuple[str, Optional[models.ProductVariant]]:
+    line_type = _normalise_sale_line_type(line_req.line_type, line_req.variant_id)
+    if line_req.quantity <= 0:
+        raise HTTPException(status_code=400, detail="La quantité d'une ligne de devis doit être positive.")
+    if line_req.discount_pct < 0 or line_req.discount_pct > 100:
+        raise HTTPException(status_code=400, detail="La remise d'une ligne doit être comprise entre 0 et 100%.")
+
+    variant = None
+    if line_type == "STOCK_ITEM" and not line_req.variant_id:
+        raise HTTPException(status_code=400, detail="Une ligne STOCK_ITEM doit référencer une variante de stock.")
+    if line_req.variant_id:
+        variant = (
+            db.query(models.ProductVariant)
+            .options(joinedload(models.ProductVariant.product))
+            .filter(models.ProductVariant.id == line_req.variant_id)
+            .first()
+        )
+        if not variant:
+            raise HTTPException(status_code=400, detail=f"Variante introuvable: {line_req.variant_id}.")
+        _ensure_catalog_variant_usable(variant, line_type)
+    return line_type, variant
+
+
+def _sale_total_amount(sale: models.SaleOrder) -> float:
+    return float(
+        sum(
+            (line.quantity or 0) * (line.unit_price or 0) * (1 - (line.discount_pct or 0) / 100)
+            for line in sale.lines
+        )
+    )
+
+
+def _load_sale(db: Session, order_id: int) -> Optional[models.SaleOrder]:
+    return (
+        db.query(models.SaleOrder)
+        .options(
+            joinedload(models.SaleOrder.lines)
+            .joinedload(models.SaleOrderLine.variant)
+            .joinedload(models.ProductVariant.product),
+            joinedload(models.SaleOrder.mmg_dossiers),
+        )
+        .filter(models.SaleOrder.id == order_id)
+        .first()
+    )
+
+
+def _create_commercial_reservation_if_validated(
+    db: Session,
+    sale: models.SaleOrder,
+    actor: str = "Système",
+) -> Optional[models.StockReservation]:
+    if sale.workflow_type != "FREE_SALE" or sale.status not in {"VALIDATED", "ACCEPTED"}:
+        return None
+    return create_commercial_reservation_for_sale(db, sale, created_by=actor)
+
+
+def _cancel_commercial_reservations_for_sale(db: Session, sale: models.SaleOrder) -> int:
+    reservations = (
+        db.query(models.StockReservation)
+        .filter(
+            models.StockReservation.sale_order_id == sale.id,
+            models.StockReservation.status == "reserved",
+            models.StockReservation.source_label.in_(["devis libre", "devis_libre"]),
+        )
+        .all()
+    )
+    for reservation in reservations:
+        cancel_reservation(db, reservation)
+    return len(reservations)
 
 
 def _sale_has_measure_context(sale: models.SaleOrder) -> bool:
@@ -175,14 +296,20 @@ async def _parse_workshop_uploads(files: List[UploadFile]):
 
 @router.get("/", response_model=List[schemas.SaleOrderSchema], dependencies=AUTH_DEPENDENCIES)
 def list_sales(db: Session = Depends(get_db)):
-    return db.query(models.SaleOrder).order_by(models.SaleOrder.created_at.desc()).all()
+    sales = (
+        db.query(models.SaleOrder)
+        .options(joinedload(models.SaleOrder.lines).joinedload(models.SaleOrderLine.variant).joinedload(models.ProductVariant.product))
+        .order_by(models.SaleOrder.created_at.desc())
+        .all()
+    )
+    for sale in sales:
+        annotate_sale_availability(db, sale)
+    return sales
 
 class AIQuoteRequest(BaseModel):
     prompt: str
 
 import urllib.request
-import json
-import os
 
 @router.post("/ai-quote", dependencies=AUTH_DEPENDENCIES)
 def generate_ai_quote(req: AIQuoteRequest, db: Session = Depends(get_db)):
@@ -390,8 +517,10 @@ def create_sale_order(
     db.flush()
     
     for l in order_req.lines:
+        line_type, _variant = _resolve_sale_line(db, l)
         line = models.SaleOrderLine(
             order_id=order.id,
+            line_type=line_type,
             variant_id=l.variant_id,
             description=l.description,
             quantity=l.quantity,
@@ -402,14 +531,16 @@ def create_sale_order(
         db.add(line)
         
     db.commit()
-    db.refresh(order)
+    order = _load_sale(db, order.id)
+    annotate_sale_availability(db, order)
     return order
 
 @router.get("/{order_id}", response_model=schemas.SaleOrderSchema, dependencies=AUTH_DEPENDENCIES)
 def get_sale_order(order_id: int, db: Session = Depends(get_db)):
-    order = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
+    order = _load_sale(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
+    annotate_sale_availability(db, order)
     return order
 
 @router.post("/{order_id}/prepare-workshop/preview", dependencies=AUTH_DEPENDENCIES)
@@ -481,7 +612,7 @@ async def reserve_sale_workshop_preparation(
 @router.put("/{order_id}/status", dependencies=AUTH_DEPENDENCIES)
 def update_sale_status(order_id: int, status: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     from ..core.events import EventBus
-    order = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
+    order = _load_sale(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
         
@@ -490,11 +621,21 @@ def update_sale_status(order_id: int, status: str, background_tasks: BackgroundT
         order.signature_token = str(uuid.uuid4())
         
     order.status = status
+    reservation = None
+    cancelled_reservations = 0
+    if status == "CANCELLED":
+        cancelled_reservations = _cancel_commercial_reservations_for_sale(db, order)
+    else:
+        try:
+            reservation = _create_commercial_reservation_if_validated(db, order)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(exc))
     db.commit()
     
     # --- INTERNAL AUTOMATION TRIGGER ---
     if status == "ACCEPTED":
-        EventBus.on_quote_accepted(order.id, order.client_name, float(order.total_amount), background_tasks)
+        EventBus.on_quote_accepted(order.id, order.client_name, _sale_total_amount(order), background_tasks)
     
     # Generate portal link
     portal_link = None
@@ -502,7 +643,12 @@ def update_sale_status(order_id: int, status: str, background_tasks: BackgroundT
         frontend_base_url = os.environ.get("FRONTEND_BASE_URL", "http://localhost:5000").rstrip("/")
         portal_link = f"{frontend_base_url}/portal/sign/{order.signature_token}"
         
-    return {"message": f"Statut mis à jour : {status}", "portal_link": portal_link}
+    return {
+        "message": f"Statut mis à jour : {status}",
+        "portal_link": portal_link,
+        "commercial_reservation_id": reservation.id if reservation else None,
+        "cancelled_commercial_reservations": cancelled_reservations,
+    }
 
 @router.get("/portal/{token}")
 def get_quote_by_token(token: str, db: Session = Depends(get_db)):
@@ -526,6 +672,8 @@ def get_quote_by_token(token: str, db: Session = Depends(get_db)):
         "lines": [
             {
                 "description": l.description,
+                "line_type": l.line_type,
+                "variant_id": l.variant_id,
                 "quantity": l.quantity,
                 "unit_price": l.unit_price,
                 "discount_pct": l.discount_pct,
@@ -588,9 +736,17 @@ def sign_quote(token: str, request: Request, db: Session = Depends(get_db)):
         db.add(db_inv_line)
         
     new_invoice.qr_code_hash = compute_qr_seal(new_invoice)
+    try:
+        reservation = _create_commercial_reservation_if_validated(db, order, actor="Portail client")
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     
     db.commit()
-    return {"message": "Devis signé avec succès et Facture d'acompte/définitive générée !"}
+    return {
+        "message": "Devis signé avec succès et Facture d'acompte/définitive générée !",
+        "commercial_reservation_id": reservation.id if reservation else None,
+    }
 
 @router.post("/{order_id}/launch-production", dependencies=AUTH_DEPENDENCIES)
 def launch_production(order_id: int, db: Session = Depends(get_db)):

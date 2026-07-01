@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, FileText, Search, ArrowRight, CheckCircle, X, DollarSign, Send, Clock, AlertTriangle, FileCheck, Plus, ListTodo, UploadCloud, Copy, Sparkles, BrainCircuit } from 'lucide-react';
+import { Users, FileText, Search, ArrowRight, CheckCircle, X, DollarSign, Send, Clock, AlertTriangle, FileCheck, Plus, ListTodo, UploadCloud, Copy, Sparkles, BrainCircuit, Package, Wrench, Tag } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import MMGDossiers from './MMGDossiers';
@@ -26,6 +26,8 @@ export default function SalesDashboard() {
     const [showManualQuoteModal, setShowManualQuoteModal] = useState(false);
     const [isCreatingManualQuote, setIsCreatingManualQuote] = useState(false);
     const [manualClientSearch, setManualClientSearch] = useState('');
+    const [manualCatalogSearch, setManualCatalogSearch] = useState('');
+    const [manualQuoteLineMode, setManualQuoteLineMode] = useState('stock');
     const [isManualNewClient, setIsManualNewClient] = useState(false);
     const [manualQuote, setManualQuote] = useState({
         client_name: "",
@@ -37,9 +39,7 @@ export default function SalesDashboard() {
         tax_rate: 20,
         currency: "EUR",
         workflow_type: "FREE_SALE",
-        lines: [
-            { description: "", quantity: 1, unit_price: 0, discount_pct: 0 }
-        ]
+        lines: []
     });
 
     const { data: sales = [], isLoading: isLoadingSales } = useQuery({
@@ -54,6 +54,33 @@ export default function SalesDashboard() {
         queryKey: ['partners', 'clients'],
         queryFn: async () => {
             const res = await api.get('/v2/partners/clients');
+            return res.data;
+        }
+    });
+
+    const { data: stockProducts = [], isLoading: isLoadingStockProducts, isError: hasStockProductsError } = useQuery({
+        queryKey: ['stock-products-for-sales'],
+        enabled: showManualQuoteModal,
+        queryFn: async () => {
+            const res = await api.get('/v2/stock/products');
+            return res.data;
+        }
+    });
+
+    const { data: stockQuants = [] } = useQuery({
+        queryKey: ['stock-quants-for-sales'],
+        enabled: showManualQuoteModal,
+        queryFn: async () => {
+            const res = await api.get('/v2/stock/quants');
+            return res.data;
+        }
+    });
+
+    const { data: stockLocations = [] } = useQuery({
+        queryKey: ['stock-locations-for-sales'],
+        enabled: showManualQuoteModal,
+        queryFn: async () => {
+            const res = await api.get('/v2/stock/locations');
             return res.data;
         }
     });
@@ -253,11 +280,11 @@ export default function SalesDashboard() {
             tax_rate: 20,
             currency: "EUR",
             workflow_type: "FREE_SALE",
-            lines: [
-                { description: "", quantity: 1, unit_price: 0, discount_pct: 0 }
-            ]
+            lines: []
         });
         setManualClientSearch('');
+        setManualCatalogSearch('');
+        setManualQuoteLineMode('stock');
         setIsManualNewClient(false);
     };
 
@@ -272,18 +299,88 @@ export default function SalesDashboard() {
         }));
     };
 
-    const addManualLine = () => {
+    const addServiceLine = () => {
         setManualQuote(prev => ({
             ...prev,
-            lines: [...prev.lines, { description: "", quantity: 1, unit_price: 0, discount_pct: 0 }]
+            lines: [...prev.lines, { line_type: "service", description: "", quantity: 1, unit_price: 0, discount_pct: 0 }]
         }));
     };
 
     const removeManualLine = (index) => {
         setManualQuote(prev => ({
             ...prev,
-            lines: prev.lines.length > 1 ? prev.lines.filter((_, idx) => idx !== index) : prev.lines
+            lines: prev.lines.filter((_, idx) => idx !== index)
         }));
+    };
+
+    const getProductStatusLabel = (status) => {
+        if (status === 'DRAFT') return 'Brouillon';
+        if (status === 'ARCHIVED') return 'Archivé';
+        return 'Actif';
+    };
+
+    const getProductStatusClass = (status) => {
+        if (status === 'DRAFT') return 'bg-amber-100 text-amber-700 border-amber-200';
+        if (status === 'ARCHIVED') return 'bg-slate-100 text-slate-500 border-slate-200';
+        return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+    };
+
+    const getInternalStockForVariant = (variantId) => {
+        const internalLocationIds = stockLocations
+            .filter(location => location.usage === 'internal')
+            .map(location => location.id);
+        return stockQuants
+            .filter(quant => quant.variant_id === variantId && internalLocationIds.includes(quant.location_id))
+            .reduce((sum, quant) => sum + Number(quant.quantity || 0), 0);
+    };
+
+    const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+
+    const catalogItems = stockProducts.flatMap(product => (product.variants || []).map(variant => {
+        const unitPrice = Number(variant.sale_price ?? variant.price ?? variant.unit_price ?? variant.list_price ?? variant.cost_price ?? 0);
+        const availableStock = Number(variant.available_quantity ?? getInternalStockForVariant(variant.id));
+        const status = product.catalog_status || 'ACTIVE';
+        const reference = variant.reference || product.reference_base;
+        return {
+            product,
+            variant,
+            variant_id: variant.id,
+            reference,
+            label: `${product.name}${variant.color ? ` - ${variant.color}` : ''}`,
+            supplierReference: variant.supplier_reference || '',
+            unit: product.unit || 'u',
+            unitPrice,
+            availableStock,
+            status,
+            isDraft: status === 'DRAFT',
+            searchable: `${product.name} ${product.reference_base || ''} ${reference || ''} ${variant.supplier_reference || ''} ${product.supplier || ''}`.toLowerCase()
+        };
+    }));
+
+    const filteredCatalogItems = catalogItems
+        .filter(item => !manualCatalogSearch.trim() || item.searchable.includes(manualCatalogSearch.trim().toLowerCase()))
+        .slice(0, 12);
+
+    const addStockLineFromCatalog = (item) => {
+        if (item.isDraft) {
+            return alert("Article brouillon: qualifiez-le dans le catalogue avant de le vendre.");
+        }
+        setManualQuote(prev => ({
+            ...prev,
+            lines: [...prev.lines, {
+                line_type: "stock",
+                variant_id: item.variant_id,
+                description: `${item.label} (${item.reference})`,
+                quantity: 1,
+                unit_price: item.unitPrice,
+                discount_pct: 0,
+                catalog_reference: item.reference,
+                catalog_status: item.status,
+                available_stock: item.availableStock,
+                unit: item.unit
+            }]
+        }));
+        setManualCatalogSearch('');
     };
 
     const selectManualClient = (client) => {
@@ -313,6 +410,8 @@ export default function SalesDashboard() {
     const createManualQuote = async () => {
         const validLines = manualQuote.lines
             .map(line => ({
+                line_type: line.line_type || (line.variant_id ? "stock" : "service"),
+                variant_id: line.variant_id || null,
                 description: line.description.trim(),
                 quantity: Number(line.quantity || 0),
                 unit_price: Number(line.unit_price || 0),
@@ -361,7 +460,7 @@ export default function SalesDashboard() {
             resetManualQuote();
             queryClient.invalidateQueries(['sales']);
             openSaleDetails(res.data.id);
-            alert("Devis manuel créé en brouillon.");
+            alert("Devis libre créé en brouillon.");
         } catch (err) {
             console.error("Manual quote error:", err);
             alert(err.response?.data?.detail || "Erreur lors de la création du devis manuel.");
@@ -1239,7 +1338,7 @@ export default function SalesDashboard() {
             {/* MANUAL QUOTE MODAL */}
             {showManualQuoteModal && (
                 <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-hidden animate-fade-in flex flex-col">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl max-h-[92vh] overflow-hidden animate-fade-in flex flex-col">
                         <div className="bg-slate-900 p-6 flex justify-between items-center text-white shrink-0">
                             <div>
                                 <h2 className="text-2xl font-black flex items-center gap-3">
@@ -1408,69 +1507,225 @@ export default function SalesDashboard() {
                                 </div>
                             </div>
 
-                            <div className="border border-slate-200 rounded-2xl overflow-hidden">
-                                <div className="bg-slate-50 px-4 py-3 flex items-center justify-between border-b border-slate-200">
-                                    <h3 className="font-black text-slate-800">Lignes du devis</h3>
-                                    <button onClick={addManualLine} className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-black text-xs flex items-center gap-2">
-                                        <Plus className="w-4 h-4" /> Ajouter ligne
-                                    </button>
-                                </div>
-                                <div className="divide-y divide-slate-100">
-                                    {manualQuote.lines.map((line, index) => (
-                                        <div key={index} className="grid grid-cols-12 gap-3 p-4 items-end">
-                                            <div className="col-span-12 md:col-span-5">
-                                                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Désignation *</label>
-                                                <input
-                                                    value={line.description}
-                                                    onChange={e => updateManualLine(index, 'description', e.target.value)}
-                                                    placeholder="Ex: poignée, serrure, pose, SAV..."
-                                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                                />
+                            <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-5 items-start">
+                                <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
+                                    <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <h3 className="font-black text-slate-800 flex items-center gap-2">
+                                                <Package className="w-4 h-4 text-blue-600" /> Catalogue stock
+                                            </h3>
+                                            <div className="flex bg-white border border-slate-200 p-1 rounded-xl">
+                                                <button
+                                                    onClick={() => setManualQuoteLineMode('stock')}
+                                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${manualQuoteLineMode === 'stock' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                                                >
+                                                    Stock
+                                                </button>
+                                                <button
+                                                    onClick={() => setManualQuoteLineMode('service')}
+                                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${manualQuoteLineMode === 'service' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                                                >
+                                                    Prestation
+                                                </button>
                                             </div>
-                                            <div className="col-span-4 md:col-span-2">
-                                                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Qté</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.01"
-                                                    value={line.quantity}
-                                                    onChange={e => updateManualLine(index, 'quantity', e.target.value)}
-                                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                                />
-                                            </div>
-                                            <div className="col-span-4 md:col-span-2">
-                                                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Prix HT</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.01"
-                                                    value={line.unit_price}
-                                                    onChange={e => updateManualLine(index, 'unit_price', e.target.value)}
-                                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                                />
-                                            </div>
-                                            <div className="col-span-3 md:col-span-2">
-                                                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Remise %</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    max="100"
-                                                    step="0.1"
-                                                    value={line.discount_pct}
-                                                    onChange={e => updateManualLine(index, 'discount_pct', e.target.value)}
-                                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                                />
-                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {manualQuoteLineMode === 'stock' ? (
+                                        <div className="p-4 space-y-4">
                                             <button
-                                                onClick={() => removeManualLine(index)}
-                                                disabled={manualQuote.lines.length === 1}
-                                                className="col-span-1 h-10 rounded-xl border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200 disabled:opacity-30 disabled:hover:text-slate-400 disabled:hover:border-slate-200 flex items-center justify-center"
-                                                title="Supprimer la ligne"
+                                                type="button"
+                                                onClick={() => setManualQuoteLineMode('stock')}
+                                                className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-500/20"
                                             >
-                                                <X className="w-4 h-4" />
+                                                <Package className="w-4 h-4" /> Ajouter article stock
+                                            </button>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Recherche catalogue</label>
+                                                <div className="relative">
+                                                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                    <input
+                                                        value={manualCatalogSearch}
+                                                        onChange={e => setManualCatalogSearch(e.target.value)}
+                                                        placeholder="Référence, produit, fournisseur..."
+                                                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {hasStockProductsError && (
+                                                <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-sm font-bold text-red-700">
+                                                    Catalogue indisponible. Le devis peut contenir des prestations, mais les articles stock doivent attendre la disponibilité API stock.
+                                                </div>
+                                            )}
+
+                                            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                                                {isLoadingStockProducts && (
+                                                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm font-bold text-slate-500">Chargement du catalogue...</div>
+                                                )}
+                                                {!isLoadingStockProducts && filteredCatalogItems.length === 0 && (
+                                                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 text-sm font-bold text-amber-800">
+                                                        Aucun article stock ne correspond à cette recherche. Créez une prestation si la vente ne concerne pas une référence catalogue.
+                                                    </div>
+                                                )}
+                                                {filteredCatalogItems.map(item => (
+                                                    <button
+                                                        key={item.variant_id}
+                                                        type="button"
+                                                        onClick={() => addStockLineFromCatalog(item)}
+                                                        disabled={item.isDraft}
+                                                        className={`w-full text-left border rounded-xl p-3 transition-all ${item.isDraft ? 'border-amber-200 bg-amber-50/60 cursor-not-allowed opacity-75' : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/40'}`}
+                                                    >
+                                                        <div className="flex items-start justify-between gap-3">
+                                                            <div className="min-w-0">
+                                                                <p className="font-black text-slate-900 text-sm truncate">{item.label}</p>
+                                                                <p className="text-[10px] font-mono font-black text-slate-400 uppercase mt-1">{item.reference}</p>
+                                                            </div>
+                                                            <span className={`shrink-0 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getProductStatusClass(item.status)}`}>
+                                                                {getProductStatusLabel(item.status)}
+                                                            </span>
+                                                        </div>
+                                                        <div className="grid grid-cols-3 gap-2 mt-3">
+                                                            <div className="bg-white border border-slate-100 rounded-lg px-2 py-1.5">
+                                                                <p className="text-[9px] font-black text-slate-400 uppercase">Stock</p>
+                                                                <p className={`text-sm font-black ${item.availableStock > 0 ? 'text-emerald-600' : 'text-red-600'}`}>{Math.round(item.availableStock * 100) / 100} {item.unit}</p>
+                                                            </div>
+                                                            <div className="bg-white border border-slate-100 rounded-lg px-2 py-1.5">
+                                                                <p className="text-[9px] font-black text-slate-400 uppercase">Prix HT</p>
+                                                                <p className="text-sm font-black text-slate-800">{formatMoney(item.unitPrice)}</p>
+                                                            </div>
+                                                            <div className="bg-white border border-slate-100 rounded-lg px-2 py-1.5">
+                                                                <p className="text-[9px] font-black text-slate-400 uppercase">Unité</p>
+                                                                <p className="text-sm font-black text-slate-800">{item.unit}</p>
+                                                            </div>
+                                                        </div>
+                                                        {item.unitPrice <= 0 && (
+                                                            <p className="mt-2 text-[11px] font-bold text-amber-700">Prix catalogue absent: renseignez le prix HT sur la ligne.</p>
+                                                        )}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="p-4 space-y-4">
+                                            <button
+                                                type="button"
+                                                onClick={addServiceLine}
+                                                className="w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20"
+                                            >
+                                                <Wrench className="w-4 h-4" /> Ajouter prestation
+                                            </button>
+                                            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
+                                                <p className="text-xs font-black text-emerald-700 uppercase tracking-widest mb-1">Ligne hors stock</p>
+                                                <p className="text-sm font-bold text-emerald-900">
+                                                    À utiliser pour pose, déplacement, SAV ou main-d'oeuvre. Aucun stock ne sera réservé ni débité pour ces lignes.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
+                                    <div className="bg-slate-50 px-4 py-3 flex items-center justify-between border-b border-slate-200">
+                                        <h3 className="font-black text-slate-800">Lignes du devis libre</h3>
+                                        <div className="flex items-center gap-2">
+                                            <button onClick={() => setManualQuoteLineMode('stock')} className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-black text-xs flex items-center gap-2">
+                                                <Package className="w-4 h-4" /> Ajouter article stock
+                                            </button>
+                                            <button onClick={addServiceLine} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs flex items-center gap-2">
+                                                <Wrench className="w-4 h-4" /> Ajouter prestation
                                             </button>
                                         </div>
-                                    ))}
+                                    </div>
+                                    <div className="divide-y divide-slate-100">
+                                        {manualQuote.lines.length === 0 && (
+                                            <div className="p-8 text-center">
+                                                <Package className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                                                <p className="font-black text-slate-700">Ajoutez un article stock ou une prestation.</p>
+                                                <p className="text-sm font-medium text-slate-500 mt-1">Le devis libre doit rester composé de références catalogue disponibles ou de prestations clairement identifiées.</p>
+                                            </div>
+                                        )}
+                                        {manualQuote.lines.map((line, index) => {
+                                            const lineTotal = Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100);
+                                            const requestedQty = Number(line.quantity || 0);
+                                            const stockShortage = line.line_type === 'stock' && Number(line.available_stock || 0) < requestedQty;
+                                            return (
+                                                <div key={index} className="grid grid-cols-12 gap-3 p-4 items-end">
+                                                    <div className="col-span-12 flex items-center justify-between gap-3">
+                                                        <div className="flex items-center gap-2 min-w-0">
+                                                            <span className={`shrink-0 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${line.line_type === 'stock' ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
+                                                                {line.line_type === 'stock' ? 'Article stock' : 'Prestation'}
+                                                            </span>
+                                                            {line.catalog_reference && <span className="text-[10px] font-mono font-black text-slate-400 truncate">{line.catalog_reference}</span>}
+                                                            {line.catalog_status && (
+                                                                <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getProductStatusClass(line.catalog_status)}`}>
+                                                                    {getProductStatusLabel(line.catalog_status)}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-sm font-black text-slate-900">{formatMoney(lineTotal)}</p>
+                                                    </div>
+                                                    <div className="col-span-12 md:col-span-5">
+                                                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Désignation *</label>
+                                                        <input
+                                                            value={line.description}
+                                                            onChange={e => updateManualLine(index, 'description', e.target.value)}
+                                                            placeholder={line.line_type === 'stock' ? "Article du catalogue" : "Ex: pose, déplacement, SAV..."}
+                                                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                                        />
+                                                    </div>
+                                                    <div className="col-span-4 md:col-span-2">
+                                                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Qté</label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            value={line.quantity}
+                                                            onChange={e => updateManualLine(index, 'quantity', e.target.value)}
+                                                            className={`w-full bg-white border rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500 ${stockShortage ? 'border-red-300 bg-red-50' : 'border-slate-200'}`}
+                                                        />
+                                                    </div>
+                                                    <div className="col-span-4 md:col-span-2">
+                                                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Prix HT</label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            value={line.unit_price}
+                                                            onChange={e => updateManualLine(index, 'unit_price', e.target.value)}
+                                                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                                        />
+                                                    </div>
+                                                    <div className="col-span-3 md:col-span-2">
+                                                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Remise %</label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            max="100"
+                                                            step="0.1"
+                                                            value={line.discount_pct}
+                                                            onChange={e => updateManualLine(index, 'discount_pct', e.target.value)}
+                                                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        onClick={() => removeManualLine(index)}
+                                                        className="col-span-1 h-10 rounded-xl border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200 flex items-center justify-center"
+                                                        title="Supprimer la ligne"
+                                                    >
+                                                        <X className="w-4 h-4" />
+                                                    </button>
+                                                    {line.line_type === 'stock' && (
+                                                        <div className={`col-span-12 rounded-xl px-3 py-2 text-xs font-bold flex items-center gap-2 ${stockShortage ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-slate-50 text-slate-600 border border-slate-100'}`}>
+                                                            <Tag className="w-4 h-4 shrink-0" />
+                                                            Stock disponible: {Math.round(Number(line.available_stock || 0) * 100) / 100} {line.unit || 'u'}.
+                                                            {stockShortage ? " Quantité demandée supérieure au stock connu: vérifiez avant envoi." : " Référence catalogue conservée sur la ligne de devis."}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             </div>
 

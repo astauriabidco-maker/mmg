@@ -14,6 +14,7 @@ from scripts.import_workshop_debits import DebitRecord, StockMatch, build_summar
 
 ACTIVE_RESERVATION_STATUS = "reserved"
 RESERVABLE_SALE_STATUSES = {"VALIDATED", "IN_DESIGN", "READY_FOR_PROD", "IN_PRODUCTION"}
+COMMERCIAL_RESERVATION_PREFIX = "RSV-COM"
 ALU_SUPPLIERS = {"CORTIZO", "SEPALUMIC", "TECHNAL/HYDRO", "TECHNAL", "HYDRO"}
 PVC_SUPPLIERS = {"VEKA", "KOMMERLING", "KÖMMERLING", "REHAU", "DECEUNINCK"}
 
@@ -139,6 +140,52 @@ def active_reserved_quantity(db: Session, variant_id: int) -> float:
         .all()
     )
     return float(sum(line.reserved_quantity or 0 for line in lines))
+
+
+def physical_quantity_all_internal(db: Session, variant: models.ProductVariant) -> float:
+    quantity = (
+        db.query(models.StockQuant)
+        .join(models.StockLocation, models.StockQuant.location_id == models.StockLocation.id)
+        .filter(
+            models.StockQuant.variant_id == variant.id,
+            models.StockLocation.usage == "internal",
+            models.StockLocation.is_active == True,
+        )
+        .with_entities(models.StockQuant.quantity)
+        .all()
+    )
+    total = float(sum(row[0] or 0 for row in quantity))
+    if total == 0 and (variant.quantity_in_stock or 0) > 0:
+        return float(variant.quantity_in_stock or 0)
+    return total
+
+
+def available_quantity_for_variant(db: Session, variant: models.ProductVariant) -> tuple[float, float, float]:
+    physical = physical_quantity_all_internal(db, variant)
+    reserved = active_reserved_quantity(db, variant.id)
+    return physical, reserved, max(physical - reserved, 0.0)
+
+
+def annotate_variant_availability(db: Session, variant: models.ProductVariant | None) -> None:
+    if not variant:
+        return
+    physical, reserved, available = available_quantity_for_variant(db, variant)
+    variant.quantity_in_stock = physical
+    variant.reserved_quantity = reserved
+    variant.available_quantity = available
+
+
+def annotate_sale_availability(db: Session, sale: models.SaleOrder) -> None:
+    for line in sale.lines or []:
+        if not line.line_type:
+            line.line_type = "STOCK_ITEM" if line.variant_id else "SERVICE"
+        if line.variant:
+            annotate_variant_availability(db, line.variant)
+            line.reserved_quantity = line.variant.reserved_quantity
+            line.available_quantity = line.variant.available_quantity
+        else:
+            line.reserved_quantity = 0.0
+            line.available_quantity = 0.0
 
 
 def physical_quantity(db: Session, variant_id: int, source_location_id: int) -> float:
@@ -292,6 +339,82 @@ def create_reservation(
                 available_at_reservation=match.available_quantity,
                 status=ACTIVE_RESERVATION_STATUS if reserved_quantity > 0 else status,
                 source=record.source,
+            )
+        )
+
+    db.flush()
+    return reservation
+
+
+def create_commercial_reservation_for_sale(
+    db: Session,
+    sale: models.SaleOrder,
+    created_by: str = "Système",
+) -> models.StockReservation | None:
+    duplicate = (
+        db.query(models.StockReservation)
+        .filter(
+            models.StockReservation.sale_order_id == sale.id,
+            models.StockReservation.status == ACTIVE_RESERVATION_STATUS,
+            models.StockReservation.source_label.in_(["devis libre", "devis_libre"]),
+        )
+        .first()
+    )
+    if duplicate:
+        return duplicate
+
+    stock_lines = [
+        line
+        for line in sale.lines
+        if (line.line_type or "").upper() == "STOCK_ITEM" and line.variant_id and (line.quantity or 0) > 0
+    ]
+    if not stock_lines:
+        return None
+
+    shortages = []
+    for line in stock_lines:
+        variant = line.variant
+        if not variant:
+            continue
+        _physical, _already_reserved, available = available_quantity_for_variant(db, variant)
+        requested = float(line.quantity or 0)
+        if available < requested:
+            shortages.append(f"{variant.reference}: {available:g} disponible < {requested:g} demandé")
+    if shortages:
+        raise ValueError("Stock insuffisant pour le devis libre: " + ", ".join(shortages[:10]))
+
+    reservation = models.StockReservation(
+        reference=f"{COMMERCIAL_RESERVATION_PREFIX}-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}",
+        sale_order_id=sale.id,
+        order_reference=sale.reference,
+        source_label="devis libre",
+        status=ACTIVE_RESERVATION_STATUS,
+        notes=f"Réservation commerciale automatique à validation du devis {sale.reference}.",
+        created_by=created_by,
+    )
+    db.add(reservation)
+    db.flush()
+
+    for line in stock_lines:
+        variant = line.variant
+        if not variant:
+            continue
+        _physical, _already_reserved, available = available_quantity_for_variant(db, variant)
+        requested = float(line.quantity or 0)
+        db.add(
+            models.StockReservationLine(
+                reservation_id=reservation.id,
+                variant_id=variant.id,
+                supplier=variant.product.supplier if variant.product else None,
+                supplier_reference=variant.supplier_reference or variant.reference,
+                designation=line.description,
+                unit=variant.product.unit if variant.product else None,
+                requested_quantity=requested,
+                reserved_quantity=requested,
+                consumed_quantity=0.0,
+                available_at_reservation=available,
+                status=ACTIVE_RESERVATION_STATUS,
+                source=f"sale_order_line:{line.id}",
             )
         )
 

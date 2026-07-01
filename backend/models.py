@@ -49,6 +49,19 @@ def ensure_schema_compatibility(engine):
                 sale_columns.add("workflow_type")
             connection.execute(text("UPDATE sale_orders SET workflow_type = 'FREE_SALE' WHERE workflow_type IS NULL"))
 
+        if inspector.has_table("sale_order_lines"):
+            sale_line_columns = {column["name"] for column in inspector.get_columns("sale_order_lines")}
+            if "line_type" not in sale_line_columns:
+                connection.execute(text("ALTER TABLE sale_order_lines ADD COLUMN line_type VARCHAR DEFAULT 'SERVICE'"))
+                sale_line_columns.add("line_type")
+            connection.execute(
+                text(
+                    "UPDATE sale_order_lines "
+                    "SET line_type = CASE WHEN variant_id IS NOT NULL THEN 'STOCK_ITEM' ELSE 'SERVICE' END "
+                    "WHERE line_type IS NULL OR line_type = ''"
+                )
+            )
+
 class MaterialType(str, enum.Enum):
     PVC = "PVC"
     ALU = "ALU"
@@ -203,6 +216,9 @@ class ProductVariant(Base):
     product = relationship("Product", back_populates="variants")
     quants = relationship("StockQuant", back_populates="variant", cascade="all, delete-orphan")
     moves = relationship("StockMove", back_populates="variant", cascade="all, delete-orphan")
+
+    reserved_quantity = 0.0
+    available_quantity = 0.0
 
 # --- ODOO INVENTORY ENGINE ---
 class StockLocation(Base):
@@ -417,6 +433,7 @@ class SaleOrderLine(Base):
     __tablename__ = "sale_order_lines"
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("sale_orders.id"))
+    line_type = Column(String, default="SERVICE", index=True) # STOCK_ITEM, SERVICE
     variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=True) # None if custom line
     description = Column(String) # Derived from variant or custom input
     quantity = Column(Float, default=1.0)
