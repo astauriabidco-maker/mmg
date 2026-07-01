@@ -14,5 +14,22 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        const status = error?.response?.status;
+        const url = error?.config?.url || '';
+        if (status === 401 && !url.endsWith('/token')) {
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            localStorage.removeItem('role');
+            localStorage.removeItem('stations');
+            delete api.defaults.headers.common['Authorization'];
+            window.dispatchEvent(new Event('mmg-auth-expired'));
+        }
+        return Promise.reject(error);
+    }
+);
+
 export { API_BASE_URL };
 export default api;

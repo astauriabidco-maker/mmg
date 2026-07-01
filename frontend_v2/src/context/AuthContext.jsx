@@ -19,6 +19,14 @@ export const AuthProvider = ({ children }) => {
         setLoading(false);
     }, []);
 
+    useEffect(() => {
+        const handleAuthExpired = () => {
+            setUser(null);
+        };
+        window.addEventListener('mmg-auth-expired', handleAuthExpired);
+        return () => window.removeEventListener('mmg-auth-expired', handleAuthExpired);
+    }, []);
+
     const login = async (username, pin) => {
         try {
             const formData = new FormData();
