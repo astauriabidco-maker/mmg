@@ -1094,33 +1094,33 @@ export default function SalesDashboard() {
         ];
 
         return (
-            <div className="space-y-6 mb-8 mt-4">
-                <section className="bg-white border border-slate-200 rounded-3xl shadow-xl overflow-hidden">
-                    <div className="bg-slate-900 text-white px-6 py-6">
-                        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+            <div className="mb-8 mt-4">
+                <section className="bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden">
+                    <div className="bg-slate-900 text-white px-6 py-5">
+                        <div className="flex items-start justify-between gap-5">
                             <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2 mb-3">
                                     <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getSaleDisplayClass(sale)}`}>{getSaleDisplayLabel(sale)}</span>
                                     <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getWorkflowBadgeClass(sale.workflow_type)}`}>{getWorkflowLabel(sale.workflow_type)}</span>
                                 </div>
-                                <h2 className="text-3xl font-black tracking-tight truncate">{sale.client_name}</h2>
+                                <h2 className="text-2xl font-black tracking-tight truncate">{sale.client_name}</h2>
                                 <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm font-bold text-slate-300">
                                     <span>{sale.reference}</span>
                                     <span>{formatDate(sale.created_at)}</span>
                                     <span>{sale.lines?.length || 0} ligne(s)</span>
                                 </div>
                             </div>
-                            <div className="lg:text-right">
+                            <div className="text-right shrink-0">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total HT</p>
-                                <p className="text-4xl font-black tracking-tight">{formatMoney(saleTotal)}</p>
+                                <p className="text-3xl font-black tracking-tight">{formatMoney(saleTotal)}</p>
                                 <p className="text-xs font-bold text-slate-400">TVA {sale.tax_rate || 0}% · {sale.currency || 'EUR'}</p>
                             </div>
                         </div>
                     </div>
 
-                    <div className="px-6 py-5 border-b border-slate-100 bg-slate-50">
-                        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
-                            <div>
+                    <div className="px-6 py-4 border-b border-slate-100 bg-slate-50">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="min-w-0">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Prochaine action</p>
                                 <p className="text-sm font-bold text-slate-700">
                                     {sale.status === 'DRAFT' && "Envoyer le devis au client."}
@@ -1131,13 +1131,13 @@ export default function SalesDashboard() {
                                     {!['DRAFT', 'SENT'].includes(sale.status) && !canDeliverFreeSale && !trace.isDelivered && !canCreateCreditNote && "Le devis est à jour. Consultez la timeline et les documents liés."}
                                 </p>
                             </div>
-                            <div className="flex flex-wrap gap-3">
+                            <div className="flex flex-wrap gap-2 justify-end shrink-0">
                                 {renderPrimaryAction()}
-                                <a href={`${api.defaults.baseURL}/v2/pdf/quote/${sale.id}`} target="_blank" rel="noopener noreferrer" className="px-5 py-3 rounded-xl bg-white border border-slate-200 text-slate-800 hover:bg-slate-100 font-black text-sm flex items-center justify-center gap-2">
+                                <a href={`${api.defaults.baseURL}/v2/pdf/quote/${sale.id}`} target="_blank" rel="noopener noreferrer" className="px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-800 hover:bg-slate-100 font-black text-sm flex items-center justify-center gap-2">
                                     <FileText className="w-4 h-4" /> PDF devis
                                 </a>
                                 {!['CANCELLED', 'DELIVERED'].includes(sale.status) && (
-                                    <button onClick={() => updateStatus('CANCELLED')} className="px-5 py-3 rounded-xl bg-white border border-red-200 text-red-600 hover:bg-red-50 font-black text-sm flex items-center justify-center gap-2">
+                                    <button onClick={() => updateStatus('CANCELLED')} className="px-4 py-3 rounded-xl bg-white border border-red-200 text-red-600 hover:bg-red-50 font-black text-sm flex items-center justify-center gap-2">
                                         <X className="w-4 h-4" /> Refuser
                                     </button>
                                 )}
@@ -1145,54 +1145,50 @@ export default function SalesDashboard() {
                         </div>
                     </div>
 
-                    <div className="p-6 grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-6">
-                        <aside className="space-y-4">
-                            <div className="border border-slate-200 rounded-2xl p-4 bg-white">
-                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Client</p>
-                                <div className="space-y-2 text-sm font-bold text-slate-700">
-                                    {sale.client_contact && <p>{sale.client_contact}</p>}
-                                    {sale.client_email && <p className="break-all">{sale.client_email}</p>}
-                                    {sale.client_address && <p>{sale.client_address}</p>}
-                                    {!sale.client_contact && !sale.client_email && !sale.client_address && <p className="text-slate-400">Coordonnées non renseignées</p>}
-                                </div>
+                    <div className="p-5 space-y-5">
+                        <div className="grid grid-cols-3 gap-3">
+                            <div className="border border-slate-200 rounded-xl p-3 bg-white min-w-0">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Client</p>
+                                <p className="text-sm font-black text-slate-900 truncate">{sale.client_contact || 'Contact non renseigné'}</p>
+                                <p className="text-xs font-bold text-slate-500 truncate">{sale.client_email || 'Email non renseigné'}</p>
                             </div>
-                            <div className="border border-slate-200 rounded-2xl p-4 bg-white">
-                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Conditions</p>
-                                <div className="space-y-2 text-sm font-bold text-slate-700">
-                                    <p>Validité: {sale.validity_days} jours</p>
-                                    <p>Workflow: {getWorkflowLabel(sale.workflow_type)}</p>
-                                </div>
+                            <div className="border border-slate-200 rounded-xl p-3 bg-white min-w-0">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Conditions</p>
+                                <p className="text-sm font-black text-slate-900">Validité {sale.validity_days} jours</p>
+                                <p className="text-xs font-bold text-slate-500 truncate">{getWorkflowLabel(sale.workflow_type)}</p>
                             </div>
-                            {getWorkshopBlockedMessage(sale) && (
-                                <div className="border border-amber-200 rounded-2xl p-4 bg-amber-50">
-                                    <p className="text-[10px] font-black uppercase tracking-widest text-amber-700 mb-2">Règle métier</p>
-                                    <p className="text-sm font-bold text-amber-900">{getWorkshopBlockedMessage(sale)}</p>
-                                </div>
-                            )}
-                        </aside>
+                            <div className="border border-slate-200 rounded-xl p-3 bg-white min-w-0">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Adresse</p>
+                                <p className="text-sm font-black text-slate-900 line-clamp-2">{sale.client_address || 'Adresse non renseignée'}</p>
+                            </div>
+                        </div>
 
-                        <div className="space-y-6 min-w-0">
-                            <div>
-                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Timeline métier</p>
-                                <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
-                                    {timeline.map((step, index) => (
-                                        <div key={step.label} className="flex gap-3 p-4 border-b border-slate-100 last:border-b-0">
-                                            <div className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${step.done ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                                                {step.done ? <CheckCircle className="w-4 h-4" /> : <span className="text-xs font-black">{index + 1}</span>}
-                                            </div>
-                                            <div className="min-w-0">
-                                                <p className="font-black text-slate-900">{step.label}</p>
-                                                <p className="text-sm font-bold text-slate-500">{step.detail}</p>
-                                            </div>
+                        {getWorkshopBlockedMessage(sale) && (
+                            <div className="border border-amber-200 rounded-xl p-4 bg-amber-50">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-amber-700 mb-1">Règle métier</p>
+                                <p className="text-sm font-bold text-amber-900">{getWorkshopBlockedMessage(sale)}</p>
+                            </div>
+                        )}
+
+                        <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Cycle métier</p>
+                            <div className="grid grid-cols-7 gap-2">
+                                {timeline.map((step, index) => (
+                                    <div key={step.label} className={`rounded-xl border p-3 min-w-0 ${step.done ? 'bg-emerald-50 border-emerald-100' : 'bg-slate-50 border-slate-200'}`}>
+                                        <div className={`w-7 h-7 rounded-full flex items-center justify-center mb-2 ${step.done ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                                            {step.done ? <CheckCircle className="w-4 h-4" /> : <span className="text-xs font-black">{index + 1}</span>}
                                         </div>
-                                    ))}
-                                </div>
+                                        <p className="font-black text-slate-900 text-sm truncate">{step.label}</p>
+                                        <p className="text-[11px] font-bold text-slate-500 truncate">{step.detail}</p>
+                                    </div>
+                                ))}
                             </div>
+                        </div>
 
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                <div className="border border-slate-200 rounded-2xl p-4 bg-white">
-                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Documents</p>
-                                    <div className="space-y-2">
+                        <div className="grid grid-cols-[1.2fr_0.8fr] gap-4 items-start">
+                            <div className="border border-slate-200 rounded-xl p-4 bg-white">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Documents</p>
+                                <div className="space-y-2">
                                         <a href={`${api.defaults.baseURL}/v2/pdf/quote/${sale.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm font-black text-slate-800 hover:bg-slate-100">
                                             <span>Devis PDF</span><FileText className="w-4 h-4" />
                                         </a>
@@ -1223,72 +1219,69 @@ export default function SalesDashboard() {
                                                 <span>{note.reference} · {note.status}</span><Truck className="w-4 h-4" />
                                             </a>
                                         ))}
-                                    </div>
                                 </div>
+                            </div>
 
-                                <div className="border border-slate-200 rounded-2xl p-4 bg-white">
-                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Stock & réservations</p>
-                                    {sale.reservations?.length > 0 ? (
-                                        <div className="space-y-3">
-                                            {sale.reservations.map(reservation => {
-                                                const totalReserved = reservation.lines?.reduce((sum, line) => sum + Number(line.reserved_quantity || 0), 0) || 0;
-                                                return (
-                                                    <div key={reservation.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                                                        <div className="flex items-start justify-between gap-3">
-                                                            <div>
-                                                                <p className="text-sm font-black text-slate-900">{reservation.reference}</p>
-                                                                <p className="text-xs font-bold text-slate-500">{formatDate(reservation.created_at)}</p>
-                                                            </div>
-                                                            <span className={`px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${getReservationStatusClass(reservation.status)}`}>
-                                                                {getReservationStatusLabel(reservation.status)}
-                                                            </span>
+                            <div className="border border-slate-200 rounded-xl p-4 bg-white">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Stock & réservations</p>
+                                {sale.reservations?.length > 0 ? (
+                                    <div className="space-y-3">
+                                        {sale.reservations.map(reservation => {
+                                            const totalReserved = reservation.lines?.reduce((sum, line) => sum + Number(line.reserved_quantity || 0), 0) || 0;
+                                            return (
+                                                <div key={reservation.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="min-w-0">
+                                                            <p className="text-sm font-black text-slate-900 break-all">{reservation.reference}</p>
+                                                            <p className="text-xs font-bold text-slate-500">{formatDate(reservation.created_at)}</p>
                                                         </div>
-                                                        <p className="mt-2 text-xs font-black uppercase tracking-widest text-slate-500">{totalReserved.toLocaleString('fr-FR')} unité(s)</p>
+                                                        <span className={`shrink-0 px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${getReservationStatusClass(reservation.status)}`}>
+                                                            {getReservationStatusLabel(reservation.status)}
+                                                        </span>
                                                     </div>
-                                                );
-                                            })}
-                                        </div>
-                                    ) : (
-                                        <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-400">Aucune réservation rattachée.</p>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
-                                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Lignes du devis</p>
-                                    <span className="text-xs font-black text-slate-500">{sale.lines?.length || 0} ligne(s)</span>
-                                </div>
-                                <div className="divide-y divide-slate-100">
-                                    {(sale.lines || []).map((line, idx) => {
-                                        const lineTotal = Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100);
-                                        return (
-                                            <div key={line.id || idx} className="grid grid-cols-12 gap-3 p-4 items-center">
-                                                <div className="col-span-12 lg:col-span-6 min-w-0">
-                                                    <p className="font-black text-slate-900 leading-tight">{line.description}</p>
-                                                    {line.variant?.reference && <p className="mt-1 text-xs font-mono font-black text-slate-400">{line.variant.reference}</p>}
+                                                    <p className="mt-2 text-xs font-black uppercase tracking-widest text-slate-500">{totalReserved.toLocaleString('fr-FR')} unité(s)</p>
                                                 </div>
-                                                <div className="col-span-6 lg:col-span-2">
-                                                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${getLineTypeClass(line.line_type)}`}>
-                                                        {line.line_type === 'STOCK_ITEM' ? <Package className="w-3 h-3" /> : <Wrench className="w-3 h-3" />}
-                                                        {getLineTypeLabel(line.line_type)}
-                                                    </span>
-                                                </div>
-                                                <p className="col-span-2 lg:col-span-1 text-center font-black text-blue-700">{line.quantity}</p>
-                                                <p className="col-span-4 lg:col-span-3 text-right font-black text-slate-900">{formatMoney(lineTotal)}</p>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-400">Aucune réservation rattachée.</p>
+                                )}
                             </div>
-
-                            {sale.notes && (
-                                <div className="bg-yellow-50/70 border border-yellow-100 rounded-2xl p-4 flex gap-3">
-                                    <FileCheck className="w-5 h-5 text-yellow-600 shrink-0" />
-                                    <p className="text-sm font-bold text-yellow-900">{sale.notes}</p>
-                                </div>
-                            )}
                         </div>
+
+                        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                            <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Lignes du devis</p>
+                                <span className="text-xs font-black text-slate-500">{sale.lines?.length || 0} ligne(s)</span>
+                            </div>
+                            <div className="divide-y divide-slate-100">
+                                {(sale.lines || []).map((line, idx) => {
+                                    const lineTotal = Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100);
+                                    return (
+                                        <div key={line.id || idx} className="grid grid-cols-[1fr_120px_60px_110px] gap-3 p-4 items-center">
+                                            <div className="min-w-0">
+                                                <p className="font-black text-slate-900 leading-tight">{line.description}</p>
+                                                {line.variant?.reference && <p className="mt-1 text-xs font-mono font-black text-slate-400">{line.variant.reference}</p>}
+                                            </div>
+                                            <span className={`inline-flex items-center justify-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${getLineTypeClass(line.line_type)}`}>
+                                                {line.line_type === 'STOCK_ITEM' ? <Package className="w-3 h-3" /> : <Wrench className="w-3 h-3" />}
+                                                {getLineTypeLabel(line.line_type)}
+                                            </span>
+                                            <p className="text-center font-black text-blue-700">{line.quantity}</p>
+                                            <p className="text-right font-black text-slate-900">{formatMoney(lineTotal)}</p>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {sale.notes && (
+                            <div className="bg-yellow-50/70 border border-yellow-100 rounded-xl p-4 flex gap-3">
+                                <FileCheck className="w-5 h-5 text-yellow-600 shrink-0" />
+                                <p className="text-sm font-bold text-yellow-900">{sale.notes}</p>
+                            </div>
+                        )}
                     </div>
                 </section>
             </div>
