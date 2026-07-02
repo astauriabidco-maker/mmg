@@ -27,7 +27,7 @@ export default function StockDashboard() {
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
     const [currentMenu, setCurrentMenu] = useState('inventory'); // 'inventory' | 'audit' | 'settings'
-    const [inventoryFocus, setInventoryFocus] = useState('catalog'); // 'catalog' | 'stock' | 'drafts'
+    const [inventoryFocus, setInventoryFocus] = useState('catalog'); // 'catalog' | 'stock' | 'drafts' | 'services'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
     const [showDraftOnly, setShowDraftOnly] = useState(false);
@@ -105,7 +105,34 @@ export default function StockDashboard() {
         }
     };
 
+    const defaultNewProductForm = (type = 'stockable') => ({
+        reference_base: '',
+        name: '',
+        material_type: type === 'service' ? 'SERVICE' : 'PVC',
+        unit: type === 'service' ? 'forfait' : 'pce',
+        supplier: type === 'service' ? 'MMG' : '',
+        product_type: type,
+        available_in_pos: false,
+        image_url: '',
+        technical_doc_url: '',
+        compatible_series: type === 'service' ? 'Prestation devis libre' : '',
+        variant_ref: '',
+        barcode: '',
+        color: '',
+        length_per_unit: '',
+        supplier_reference: '',
+        cost_price: '',
+        min_threshold: type === 'service' ? 0 : 10,
+        location: ''
+    });
 
+    const openNewProductModal = (type = 'stockable') => {
+        setNewProductForm(defaultNewProductForm(type));
+        if (type === 'service') {
+            selectInventoryFocus('services');
+        }
+        setShowNewProductModal(true);
+    };
 
 
     // -------- INLINE LOCATION CREATION --------
@@ -653,7 +680,7 @@ export default function StockDashboard() {
         setSearchTerm('');
         setShowLowStockOnly(false);
         setShowDraftOnly(focus === 'drafts');
-        if (focus === 'catalog' || focus === 'drafts') {
+        if (focus === 'catalog' || focus === 'drafts' || focus === 'services') {
             setActiveLocationId('global');
         }
     };
@@ -669,6 +696,8 @@ export default function StockDashboard() {
         ? "Brouillons catalogue"
         : inventoryFocus === 'stock'
             ? (activeLocationId === 'global' ? "Stock réel global" : `Stock réel : ${locations.find(l => l.id === activeLocationId)?.name}`)
+            : inventoryFocus === 'services'
+                ? "Catalogue prestations"
             : "Catalogue articles";
 
     const inventorySubtitle = showDraftOnly
@@ -677,6 +706,8 @@ export default function StockDashboard() {
             ? (activeLocationId === 'global'
                 ? "Vue globale en lecture : choisissez un emplacement pour ajuster le stock physique."
                 : "Ajustement rapide : cliquez sur une quantité pour la modifier.")
+            : inventoryFocus === 'services'
+                ? "Prestations pré-enregistrées pour les devis libres, sans réservation ni débit de stock."
             : "Référentiel produits, variantes, fournisseurs et fiches techniques.";
 
     // Calculate Grid Data grouped by Product
@@ -687,7 +718,11 @@ export default function StockDashboard() {
 
     products.forEach(p => {
         const draftProduct = isDraftProduct(p);
+        const productType = (p.product_type || 'stockable').toLowerCase();
+        const isServiceProduct = productType === 'service';
         if (showDraftOnly && !draftProduct) return;
+        if (!showDraftOnly && inventoryFocus === 'services' && !isServiceProduct) return;
+        if (!showDraftOnly && inventoryFocus !== 'services' && isServiceProduct) return;
         let hasVisibleVariant = false;
         const variantsData = [];
 
@@ -717,8 +752,8 @@ export default function StockDashboard() {
 
             const isVisibleBase = searchTerm ? matchSearch : (activeLocationId === 'global' ? true : stockToDisplay > 0);
             
-            const isLowStock = stockToDisplay <= (v.min_threshold || 0);
-            if (activeLocationId === 'global') {
+            const isLowStock = !isServiceProduct && stockToDisplay <= (v.min_threshold || 0);
+            if (activeLocationId === 'global' && !isServiceProduct) {
                 totalValuation += stockToDisplay * (v.cost_price || 0);
                 if (isLowStock) totalLowStockCount++;
             }
@@ -798,9 +833,13 @@ export default function StockDashboard() {
                         <div className="grid grid-cols-2 gap-2">
                             {isManager && (
                                 <>
-                                    <button onClick={() => setShowNewProductModal(true)} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
+                                    <button onClick={() => openNewProductModal('stockable')} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
                                         <Plus className="w-5 h-5 text-blue-400"/>
                                         <span className="text-[10px] font-bold">Nv. Article</span>
+                                    </button>
+                                    <button onClick={() => openNewProductModal('service')} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
+                                        <FileEdit className="w-5 h-5 text-emerald-400"/>
+                                        <span className="text-[10px] font-bold">Nv. Prestation</span>
                                     </button>
                                     <button onClick={openReceptionModal} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
                                         <Truck className="w-5 h-5 text-emerald-400"/>
@@ -928,6 +967,9 @@ export default function StockDashboard() {
                                     <button onClick={() => selectInventoryFocus('stock')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${inventoryFocus === 'stock' && !showDraftOnly ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
                                         <MapPin className="w-4 h-4"/> Stock réel
                                     </button>
+                                    <button onClick={() => selectInventoryFocus('services')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${inventoryFocus === 'services' && !showDraftOnly ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                        <FileEdit className="w-4 h-4"/> Prestations
+                                    </button>
                                     <button onClick={() => selectInventoryFocus('drafts')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${showDraftOnly ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
                                         <FileEdit className="w-4 h-4"/> Brouillons
                                     </button>
@@ -982,6 +1024,7 @@ export default function StockDashboard() {
                                 onClick={() => {
                                     setShowLowStockOnly(false);
                                     setShowDraftOnly(false);
+                                    setInventoryFocus('catalog');
                                     setSearchTerm('');
                                 }}
                                 className="px-4 py-3 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 font-black text-xs uppercase tracking-widest shadow-sm"
@@ -1024,7 +1067,7 @@ export default function StockDashboard() {
                         <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-200 rounded-3xl m-6">
                             <Box className="w-12 h-12 text-slate-300 mb-4" />
                             <p className="text-center text-slate-400 font-bold">
-                                Aucun produit trouvé avec le filtre actuel. <br/> <span className="text-sm font-medium italic">Réinitialisez les filtres ou changez d'emplacement.</span>
+                                {inventoryFocus === 'services' ? 'Aucune prestation trouvée avec le filtre actuel.' : 'Aucun produit trouvé avec le filtre actuel.'} <br/> <span className="text-sm font-medium italic">Réinitialisez les filtres ou changez d'emplacement.</span>
                             </p>
                         </div>
                     )}
@@ -1035,8 +1078,8 @@ export default function StockDashboard() {
                                 <thead className="bg-slate-50/80 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-10">
                                     <tr>
                                         <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest w-1/3">Famille PIM</th>
-                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Catégorie</th>
-                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Fournisseur</th>
+                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">{inventoryFocus === 'services' ? 'Famille' : 'Catégorie'}</th>
+                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">{inventoryFocus === 'services' ? 'Unité' : 'Fournisseur'}</th>
                                         <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Contenu & Actions</th>
                                     </tr>
                                 </thead>
@@ -1081,7 +1124,9 @@ export default function StockDashboard() {
                                                         <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider">{product.material_type}</span>
                                                     </td>
                                                     <td className="py-4 px-4 text-center">
-                                                        {product.supplier ? <span className="bg-slate-800 text-white px-3 py-1.5 rounded-lg text-xs uppercase tracking-wide font-black">{product.supplier}</span> : <span className="text-slate-300">-</span>}
+                                                        {inventoryFocus === 'services' ? (
+                                                            <span className="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg text-xs uppercase tracking-wide font-black border border-emerald-100">{product.unit || 'forfait'}</span>
+                                                        ) : product.supplier ? <span className="bg-slate-800 text-white px-3 py-1.5 rounded-lg text-xs uppercase tracking-wide font-black">{product.supplier}</span> : <span className="text-slate-300">-</span>}
                                                     </td>
                                                     <td className="py-4 px-6 text-right">
                                                         <div className="flex items-center justify-end gap-3">
@@ -1131,18 +1176,18 @@ export default function StockDashboard() {
                                                                         <div className="flex items-center gap-6">
                                                                             {/* QUANTITY : INLINE EDIT */}
                                                                             <div className="text-right flex items-center gap-3 bg-white border border-slate-200 shadow-sm rounded-xl pr-1 overflow-hidden">
-                                                                                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest pl-3 bg-slate-50 h-full py-2 border-r border-slate-100">STOCK</span>
+                                                                                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest pl-3 bg-slate-50 h-full py-2 border-r border-slate-100">{inventoryFocus === 'services' ? 'Prix HT' : 'STOCK'}</span>
                                                                                 {isEditing ? (
                                                                                     <input 
                                                                                         autoFocus type="number" value={quantInputValue} onChange={(e) => setQuantInputValue(e.target.value)} onKeyDown={handleQuantInputKeyDown} onBlur={submitQuantEdit} className="w-20 text-center py-1 border-none text-lg font-black bg-blue-50 text-blue-700 outline-none focus:ring-0"
                                                                                     />
                                                                                 ) : (
                                                                                     <div 
-                                                                                        className={`inline-block px-3 py-1 min-w-[3.5rem] text-center border-2 border-transparent hover:border-blue-200 hover:bg-blue-50 transition-colors font-black text-lg rounded-lg mx-1 ${v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${!canEditInline || !isManager ? 'cursor-not-allowed opacity-50' : 'cursor-text'}`}
+                                                                                        className={`inline-block px-3 py-1 min-w-[3.5rem] text-center border-2 border-transparent hover:border-blue-200 hover:bg-blue-50 transition-colors font-black text-lg rounded-lg mx-1 ${inventoryFocus === 'services' ? 'text-emerald-600' : v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${inventoryFocus === 'services' || !canEditInline || !isManager ? 'cursor-not-allowed opacity-50' : 'cursor-text'}`}
                                                                                         onClick={() => (canEditInline && isManager) && startEditingQuant(v.variantId, v.locId, v.stockToDisplay)}
-                                                                                        title={(canEditInline && isManager) ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible (Vue globale ou permissions insuffisantes)"}
+                                                                                        title={inventoryFocus === 'services' ? "Le tarif se modifie depuis la fiche variante" : (canEditInline && isManager) ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible (Vue globale ou permissions insuffisantes)"}
                                                                                     >
-                                                                                        {Math.round(v.stockToDisplay*100)/100}
+                                                                                        {inventoryFocus === 'services' ? (v.fullVariant.cost_price || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }) : Math.round(v.stockToDisplay*100)/100}
                                                                                     </div>
                                                                                 )}
                                                                             </div>
@@ -1244,8 +1289,8 @@ export default function StockDashboard() {
                                             <div className="mt-auto space-y-3">
                                                 <div className="flex items-end justify-between items-center py-2 border-t border-slate-100 mt-2">
                                                     <div>
-                                                        <p className="text-[10px] uppercase text-slate-400 font-bold mb-0.5">Stock Total</p>
-                                                        <p className={`font-black text-xl leading-none ${isLowStock ? 'text-red-500' : 'text-emerald-500'}`}>{totalStock.toFixed(0)} <span className="text-sm font-bold text-slate-400">{product.unit || 'pce'}</span></p>
+                                                        <p className="text-[10px] uppercase text-slate-400 font-bold mb-0.5">{inventoryFocus === 'services' ? 'Tarif indicatif' : 'Stock Total'}</p>
+                                                        <p className={`font-black text-xl leading-none ${isLowStock ? 'text-red-500' : 'text-emerald-500'}`}>{inventoryFocus === 'services' ? ((variants[0]?.fullVariant?.cost_price || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })) : totalStock.toFixed(0)} {inventoryFocus !== 'services' && <span className="text-sm font-bold text-slate-400">{product.unit || 'pce'}</span>}</p>
                                                     </div>
                                                     <div className="bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100">
                                                         <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5"><Layers className="w-3.5 h-3.5" /> {variants.length} réf.</span>
@@ -1582,7 +1627,7 @@ export default function StockDashboard() {
                 >
                     <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-2xl w-full">
                         <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-black text-2xl">Créer un Produit</h3>
+                            <h3 className="font-black text-2xl">{newProductForm.product_type === 'service' ? 'Créer une Prestation' : 'Créer un Produit'}</h3>
                             <button onClick={()=>setShowNewProductModal(false)} className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
@@ -1597,9 +1642,10 @@ export default function StockDashboard() {
                             
                             {/* Nouveaux Champs PIM : Catégorie, Unité, Fournisseur */}
                             <div className="col-span-1">
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Catégorie Matériau</label>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">{newProductForm.product_type === 'service' ? 'Famille prestation' : 'Catégorie Matériau'}</label>
                                 <select value={newProductForm.material_type} onChange={e=>setNewProductForm({...newProductForm, material_type: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700">
                                     <option value="">Sélectionner...</option>
+                                    {newProductForm.product_type === 'service' && <option value="SERVICE">SERVICE</option>}
                                     {appConfigs.filter(c => c.category === 'material').map(c => (
                                         <option key={c.id} value={c.value}>{c.value}</option>
                                     ))}
@@ -1610,6 +1656,15 @@ export default function StockDashboard() {
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Unité de Mesure</label>
                                     <select value={newProductForm.unit} onChange={e=>setNewProductForm({...newProductForm, unit: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700">
                                         <option value="">Sélectionner...</option>
+                                        {newProductForm.product_type === 'service' && (
+                                            <>
+                                                <option value="forfait">forfait</option>
+                                                <option value="heure">heure</option>
+                                                <option value="jour">jour</option>
+                                                <option value="ml">ml</option>
+                                                <option value="u">u</option>
+                                            </>
+                                        )}
                                         {appConfigs.filter(c => c.category === 'unit').map(c => (
                                             <option key={c.id} value={c.value}>{c.value}</option>
                                         ))}
@@ -1635,10 +1690,25 @@ export default function StockDashboard() {
                             <div className="col-span-2 border-t border-slate-100 my-2 pt-4 flex gap-4">
                                 <div className="flex-1">
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Type d'Article</label>
-                                    <select value={newProductForm.product_type} onChange={e=>setNewProductForm({...newProductForm, product_type: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700">
+                                    <select
+                                        value={newProductForm.product_type}
+                                        onChange={e => {
+                                            const nextType = e.target.value;
+                                            setNewProductForm({
+                                                ...newProductForm,
+                                                product_type: nextType,
+                                                material_type: nextType === 'service' ? 'SERVICE' : newProductForm.material_type,
+                                                unit: nextType === 'service' ? 'forfait' : newProductForm.unit,
+                                                supplier: nextType === 'service' ? 'MMG' : newProductForm.supplier,
+                                                min_threshold: nextType === 'service' ? 0 : newProductForm.min_threshold,
+                                                compatible_series: nextType === 'service' ? 'Prestation devis libre' : newProductForm.compatible_series
+                                            });
+                                        }}
+                                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700"
+                                    >
                                         <option value="stockable">Article Stockable (Inventaire)</option>
                                         <option value="consumable">Consommable (Sans suivi fin)</option>
-                                        <option value="service">Service (Pose, Main d'oeuvre)</option>
+                                        <option value="service">Prestation (hors stock)</option>
                                     </select>
                                 </div>
                                 <div className="flex-1">
@@ -1660,8 +1730,8 @@ export default function StockDashboard() {
                             </div>
                             
                             <div className="col-span-2 border-t border-slate-100 my-2 pt-4">
-                                <label className="text-xs font-black text-emerald-500 mb-1 block">Déclinaison Initiale (Réf Interne)</label>
-                                <input value={newProductForm.variant_ref} onChange={e=>setNewProductForm({...newProductForm, variant_ref: e.target.value})} className="w-full p-3 bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 rounded-xl" placeholder="VEK-70-BLANC"/>
+                                <label className="text-xs font-black text-emerald-500 mb-1 block">{newProductForm.product_type === 'service' ? 'Référence prestation' : 'Déclinaison Initiale (Réf Interne)'}</label>
+                                <input value={newProductForm.variant_ref} onChange={e=>setNewProductForm({...newProductForm, variant_ref: e.target.value})} className="w-full p-3 bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 rounded-xl" placeholder={newProductForm.product_type === 'service' ? 'SERV-POSE-001' : 'VEK-70-BLANC'}/>
                             </div>
                             
                             <div className="col-span-1">
@@ -1679,11 +1749,11 @@ export default function StockDashboard() {
                                 </datalist>
                             </div>
                             <div>
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Prix Achat (€)</label>
-                                <input type="number" value={newProductForm.cost_price} onChange={e=>setNewProductForm({...newProductForm, cost_price: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" placeholder="45.50"/>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">{newProductForm.product_type === 'service' ? 'Prix HT conseillé (€)' : 'Prix Achat (€)'}</label>
+                                <input type="number" value={newProductForm.cost_price} onChange={e=>setNewProductForm({...newProductForm, cost_price: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" placeholder={newProductForm.product_type === 'service' ? '80.00' : '45.50'}/>
                             </div>
                         </div>
-                        <button onClick={handleQuickCreateProduct} className="w-full mt-6 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-lg shadow-lg">Enregistrer et Continuer</button>
+                        <button onClick={handleQuickCreateProduct} className="w-full mt-6 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-lg shadow-lg">{newProductForm.product_type === 'service' ? 'Enregistrer la prestation' : 'Enregistrer et Continuer'}</button>
                     </div>
                 </div>
             )}
