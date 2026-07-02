@@ -12,6 +12,7 @@ import CuttingOptimizerModal from '../components/CuttingOptimizerModal';
 import StockDashboard from './StockDashboard';
 import PurchasesDashboard from './PurchasesDashboard';
 import SalesDashboard from './SalesDashboard';
+import SaleDetailPage from './SaleDetailPage';
 import ConfigDashboard from './ConfigDashboard';
 import AccountingDashboard from './AccountingDashboard';
 import DeliveryDashboard from './DeliveryDashboard';
@@ -37,6 +38,17 @@ export default function ManagerDashboard() {
     const [sortConfig, setSortConfig] = useState({ key: 'id', direction: 'desc' });
     const [currentPage, setCurrentPage] = useState(1);
     const ITEMS_PER_PAGE = 10;
+    const sidebarActiveView = activeView === 'sale-detail' ? 'sales' : activeView;
+    const headerTitle = activeView === 'dashboard' ? 'Vue d\'Ensemble' :
+        activeView === 'live' ? 'Atelier Live' :
+            activeView === 'orders' ? 'Suivi Commandes' :
+                activeView === 'stock' ? 'Gestion de Stock' :
+                    activeView === 'purchases' ? 'Achats & Appro' :
+                        activeView === 'sales' || activeView === 'sale-detail' ? 'Ventes & Devis' :
+                            activeView === 'accounting' ? 'Facturation (NF525)' :
+                                activeView === 'logistics' ? 'Logistique & Expéditions' :
+                                    activeView === 'analytics_atelier' ? 'Performance Atelier' :
+                                        activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration';
     const handleViewChange = (view) => {
         setActiveView(view);
         setSearchParams(view === 'dashboard' ? {} : { view });
@@ -121,7 +133,7 @@ export default function ManagerDashboard() {
         <div className="min-h-screen bg-slate-50 flex">
             {/* Sidebar Component */}
             <Sidebar
-                activeView={activeView}
+                activeView={sidebarActiveView}
                 setActiveView={handleViewChange}
                 isOpen={isSidebarOpen}
                 setIsOpen={setIsSidebarOpen}
@@ -139,16 +151,7 @@ export default function ManagerDashboard() {
                             <Menu className="w-6 h-6" />
                         </button>
                         <h1 className="text-xl font-bold text-slate-900 capitalize">
-                            {activeView === 'dashboard' ? 'Vue d\'Ensemble' :
-                                activeView === 'live' ? 'Atelier Live' :
-                                     activeView === 'orders' ? 'Suivi Commandes' :
-                                        activeView === 'stock' ? 'Gestion de Stock' : 
-                                            activeView === 'purchases' ? 'Achats & Appro' :
-                                                activeView === 'sales' ? 'Ventes & Devis' : 
-                                                    activeView === 'accounting' ? 'Facturation (NF525)' :
-                                                        activeView === 'logistics' ? 'Logistique & Expéditions' : 
-                                                            activeView === 'analytics_atelier' ? 'Performance Atelier' :
-                                                                activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration'}
+                            {headerTitle}
                         </h1>
                     </div>
 
@@ -189,6 +192,7 @@ export default function ManagerDashboard() {
                     {activeView === 'stock' && <StockDashboard />}
                     {activeView === 'purchases' && <PurchasesDashboard />}
                     {activeView === 'sales' && <SalesDashboard />}
+                    {activeView === 'sale-detail' && <SaleDetailPage saleId={searchParams.get('id')} embedded />}
                     {activeView === 'accounting' && <AccountingDashboard />}
                     {activeView === 'logistics' && <DeliveryDashboard />}
                     {activeView === 'analytics_atelier' && renderAtelierAnalyticsView()}

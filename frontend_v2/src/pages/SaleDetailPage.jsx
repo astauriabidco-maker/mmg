@@ -4,18 +4,23 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle, Copy, FileText, Package, Send, Truck, Undo2, Wrench, X } from 'lucide-react';
 import api from '../services/api';
 
-export default function SaleDetailPage() {
-    const { saleId } = useParams();
+export default function SaleDetailPage({ saleId: saleIdProp, embedded = false }) {
+    const params = useParams();
+    const saleId = saleIdProp || params.saleId;
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const [busyAction, setBusyAction] = useState(null);
+    const pageShellClass = embedded
+        ? 'min-h-full bg-slate-100 text-slate-900 font-sans -m-8'
+        : 'min-h-screen bg-slate-100 text-slate-900 font-sans';
 
     const { data: sale, isLoading, refetch } = useQuery({
         queryKey: ['sale-detail', saleId],
         queryFn: async () => {
             const res = await api.get(`/v2/sales/${saleId}`);
             return res.data;
-        }
+        },
+        enabled: Boolean(saleId),
     });
 
     const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
@@ -147,12 +152,16 @@ export default function SaleDetailPage() {
         });
     };
 
+    if (!saleId) {
+        return <div className="min-h-[50vh] bg-slate-50 flex items-center justify-center text-sm font-bold text-slate-500">Sélectionnez un devis.</div>;
+    }
+
     if (isLoading) {
-        return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-sm font-bold text-slate-500">Chargement du devis...</div>;
+        return <div className="min-h-[50vh] bg-slate-50 flex items-center justify-center text-sm font-bold text-slate-500">Chargement du devis...</div>;
     }
 
     if (!sale) {
-        return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-sm font-bold text-slate-500">Devis introuvable.</div>;
+        return <div className="min-h-[50vh] bg-slate-50 flex items-center justify-center text-sm font-bold text-slate-500">Devis introuvable.</div>;
     }
 
     const isFreeSale = (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE';
@@ -170,7 +179,7 @@ export default function SaleDetailPage() {
     ];
 
     return (
-        <div className="min-h-screen bg-slate-100 text-slate-900 font-sans">
+        <div className={pageShellClass}>
             <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
                 <div className="flex items-center justify-between">
                     <button onClick={() => navigate('/manager?view=sales')} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-black hover:bg-slate-50">

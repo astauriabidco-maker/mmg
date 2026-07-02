@@ -188,7 +188,7 @@ export default function SalesDashboard() {
     };
 
     const openSaleDetails = async (sale_id) => {
-        navigate(`/sales/${sale_id}`);
+        navigate(`/manager?view=sale-detail&id=${sale_id}`);
     };
 
     const updateStatus = async (newStatus) => {

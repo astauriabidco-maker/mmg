@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
@@ -12,7 +12,6 @@ const POSDashboard = lazy(() => import('./pages/POSDashboard'));
 const StockDashboard = lazy(() => import('./pages/StockDashboard'));
 const ClientPortal = lazy(() => import('./pages/ClientPortal'));
 const DriverDashboard = lazy(() => import('./pages/DriverDashboard'));
-const SaleDetailPage = lazy(() => import('./pages/SaleDetailPage'));
 
 const PageLoader = () => (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center text-sm font-bold text-slate-500">
@@ -31,6 +30,11 @@ const RoleRoute = ({ children, allowedRoles }) => {
     if (!user) return <Navigate to="/login" replace />;
     if (!allowedRoles.includes(user.role)) return <Navigate to="/dashboard" replace />;
     return children;
+};
+
+const SaleDetailRedirect = () => {
+    const { saleId } = useParams();
+    return <Navigate to={`/manager?view=sale-detail&id=${saleId}`} replace />;
 };
 
 const queryClient = new QueryClient();
@@ -70,7 +74,7 @@ export default function App() {
                                 path="/sales/:saleId"
                                 element={
                                     <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
-                                        <SaleDetailPage />
+                                        <SaleDetailRedirect />
                                     </RoleRoute>
                                 }
                             />
