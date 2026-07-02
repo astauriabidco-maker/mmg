@@ -12,6 +12,7 @@ const POSDashboard = lazy(() => import('./pages/POSDashboard'));
 const StockDashboard = lazy(() => import('./pages/StockDashboard'));
 const ClientPortal = lazy(() => import('./pages/ClientPortal'));
 const DriverDashboard = lazy(() => import('./pages/DriverDashboard'));
+const SaleDetailPage = lazy(() => import('./pages/SaleDetailPage'));
 
 const PageLoader = () => (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center text-sm font-bold text-slate-500">
@@ -62,6 +63,14 @@ export default function App() {
                                 element={
                                     <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
                                         <ManagerDashboard />
+                                    </RoleRoute>
+                                }
+                            />
+                            <Route
+                                path="/sales/:saleId"
+                                element={
+                                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                                        <SaleDetailPage />
                                     </RoleRoute>
                                 }
                             />

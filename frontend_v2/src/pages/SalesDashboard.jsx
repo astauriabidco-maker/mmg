@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Users, FileText, Search, ArrowRight, CheckCircle, X, DollarSign, Send, Clock, AlertTriangle, FileCheck, Plus, ListTodo, UploadCloud, Copy, Sparkles, BrainCircuit, Package, Wrench, Tag, RefreshCw, Truck, Undo2 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
@@ -8,6 +9,7 @@ import PartnerDirectory from '../components/PartnerDirectory';
 
 export default function SalesDashboard() {
     const queryClient = useQueryClient();
+    const navigate = useNavigate();
 
     const [mainTab, setMainTab] = useState('pipeline'); // 'pipeline' | 'dossiers' | 'partners'
     const [pipelineView, setPipelineView] = useState('kanban'); // 'list' | 'kanban'
@@ -186,14 +188,7 @@ export default function SalesDashboard() {
     };
 
     const openSaleDetails = async (sale_id) => {
-        try {
-            const res = await api.get(`/v2/sales/${sale_id}`);
-            setSelectedSale(res.data);
-            setWorkshopPrepFiles([]);
-            setWorkshopPrepPreview(null);
-        } catch (err) {
-            console.error(err);
-        }
+        navigate(`/sales/${sale_id}`);
     };
 
     const updateStatus = async (newStatus) => {
