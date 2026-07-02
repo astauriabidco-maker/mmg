@@ -125,6 +125,22 @@ def _create_free_sale_quote(db, variant_id: int, *, quantity: float = 2.0, statu
     return sale.id
 
 
+def _sign_and_deliver_free_sale(client: TestClient, sale_id: int, headers: dict[str, str]) -> dict:
+    send_response = client.put(f"/v2/sales/{sale_id}/status", params={"status": "SENT"}, headers=headers)
+    assert send_response.status_code == 200, send_response.text
+
+    sale_response = client.get(f"/v2/sales/{sale_id}", headers=headers)
+    assert sale_response.status_code == 200, sale_response.text
+    token = sale_response.json()["signature_token"]
+
+    sign_response = client.post(f"/v2/sales/portal/{token}/sign")
+    assert sign_response.status_code == 200, sign_response.text
+
+    deliver_response = client.post(f"/v2/sales/{sale_id}/deliver-free-sale", headers=headers)
+    assert deliver_response.status_code == 200, deliver_response.text
+    return deliver_response.json()
+
+
 def test_free_sale_rejects_draft_catalog_product(stock_client):
     client, TestingSessionLocal = stock_client
     headers = _admin_headers()
@@ -410,6 +426,122 @@ def test_free_sale_delivery_consumes_commercial_reservation(stock_client):
     assert transaction["movement_kind"] == "stock_move"
     assert "WH/Stock" in transaction["transaction_type"]
     assert "Partner/Customer" in transaction["transaction_type"]
+
+
+def test_free_sale_return_recredits_customer_delivery_and_marks_traceability(stock_client):
+    client, TestingSessionLocal = stock_client
+    headers = _admin_headers()
+
+    with TestingSessionLocal() as db:
+        variant_id, stock_id, customer_id = _seed_stock_item(db, quantity=5)
+        sale_id = _create_free_sale_quote(db, variant_id, quantity=2)
+
+    delivery_payload = _sign_and_deliver_free_sale(client, sale_id, headers)
+    delivery_note_id = delivery_payload["delivery_note_id"]
+    delivery_note_reference = delivery_payload["delivery_note_reference"]
+
+    return_response = client.post(f"/v2/sales/{sale_id}/return-free-sale", headers=headers)
+
+    assert return_response.status_code == 200, return_response.text
+    return_payload = return_response.json()
+    assert return_payload["created_moves"] == 1
+    assert return_payload["returned_lines"] == 1
+    assert return_payload["delivery_note_id"] == delivery_note_id
+    assert return_payload["delivery_note_reference"] == delivery_note_reference
+
+    with TestingSessionLocal() as db:
+        sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_id).one()
+        reservation = db.query(models.StockReservation).one()
+        reservation_line = db.query(models.StockReservationLine).one()
+        source_quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=stock_id).one()
+        customer_quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=customer_id).one()
+        variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == variant_id).one()
+        moves = db.query(models.StockMove).order_by(models.StockMove.id.asc()).all()
+        delivery_note = db.query(models.DeliveryNote).filter(models.DeliveryNote.id == delivery_note_id).one()
+
+    assert sale.status == "VALIDATED"
+    assert reservation.status == "returned"
+    assert reservation_line.status == "returned"
+    assert reservation_line.consumed_quantity == 2
+    assert source_quant.quantity == 5
+    assert customer_quant.quantity == 0
+    assert variant.quantity_in_stock == 5
+    assert len(moves) == 2
+    delivery_move, return_move = moves
+    assert delivery_move.reference.startswith("SORTIE-CLIENT")
+    assert return_move.reference.startswith("RETOUR-CLIENT")
+    assert return_move.location_id == customer_id
+    assert return_move.location_dest_id == stock_id
+    assert return_move.quantity == 2
+    assert "Retour client devis libre" in return_move.notes
+    assert reservation.reference in return_move.notes
+    assert delivery_note.status in {"RETURNED", "CANCELLED"}
+    assert "Retour client" in delivery_note.delivery_notes
+
+    detail_response = client.get(f"/v2/sales/{sale_id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    detail = detail_response.json()
+    [reservation_payload] = detail["reservations"]
+    [reservation_line_payload] = reservation_payload["lines"]
+    [delivery_note_payload] = detail["delivery_notes"]
+    assert reservation_payload["status"] == "returned"
+    assert reservation_line_payload["status"] == "returned"
+    assert reservation_line_payload["consumed_quantity"] == 2
+    assert delivery_note_payload["id"] == delivery_note_id
+    assert delivery_note_payload["reference"] == delivery_note_reference
+    assert delivery_note_payload["status"] in {"RETURNED", "CANCELLED"}
+    assert "Retour client" in delivery_note_payload["delivery_notes"]
+
+    products_response = client.get("/v2/stock/products", headers=headers)
+    assert products_response.status_code == 200, products_response.text
+    product = next(product for product in products_response.json() if product["product_type"] == "stockable")
+    [variant_payload] = product["variants"]
+    assert variant_payload["quantity_in_stock"] == 5
+    assert variant_payload["reserved_quantity"] == 0
+    assert variant_payload["available_quantity"] == 5
+
+    transactions_response = client.get("/v2/stock/transactions", headers=headers)
+    assert transactions_response.status_code == 200, transactions_response.text
+    transactions = transactions_response.json()
+    assert [transaction["movement_kind"] for transaction in transactions] == ["stock_move", "stock_move"]
+    assert any("Partner/Customer" in transaction["transaction_type"] for transaction in transactions)
+    assert any("WH/Stock" in transaction["transaction_type"] for transaction in transactions)
+
+
+def test_free_sale_return_cannot_be_applied_twice(stock_client):
+    client, TestingSessionLocal = stock_client
+    headers = _admin_headers()
+
+    with TestingSessionLocal() as db:
+        variant_id, stock_id, customer_id = _seed_stock_item(db, quantity=5)
+        sale_id = _create_free_sale_quote(db, variant_id, quantity=2)
+
+    _sign_and_deliver_free_sale(client, sale_id, headers)
+
+    first_return_response = client.post(f"/v2/sales/{sale_id}/return-free-sale", headers=headers)
+    assert first_return_response.status_code == 200, first_return_response.text
+
+    second_return_response = client.post(f"/v2/sales/{sale_id}/return-free-sale", headers=headers)
+
+    assert second_return_response.status_code == 400
+    assert any(token in second_return_response.text.lower() for token in ["déjà retourn", "deja retourn", "retour"])
+
+    with TestingSessionLocal() as db:
+        reservation = db.query(models.StockReservation).one()
+        reservation_line = db.query(models.StockReservationLine).one()
+        source_quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=stock_id).one()
+        customer_quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=customer_id).one()
+        moves = db.query(models.StockMove).order_by(models.StockMove.id.asc()).all()
+        return_moves = [move for move in moves if move.reference.startswith("RETOUR-CLIENT")]
+        delivery_note = db.query(models.DeliveryNote).one()
+
+    assert reservation.status == "returned"
+    assert reservation_line.status == "returned"
+    assert source_quant.quantity == 5
+    assert customer_quant.quantity == 0
+    assert len(moves) == 2
+    assert len(return_moves) == 1
+    assert delivery_note.status in {"RETURNED", "CANCELLED"}
 
 
 def test_free_sale_cancellation_releases_commercial_reservation(stock_client):

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, FileText, Search, ArrowRight, CheckCircle, X, DollarSign, Send, Clock, AlertTriangle, FileCheck, Plus, ListTodo, UploadCloud, Copy, Sparkles, BrainCircuit, Package, Wrench, Tag, RefreshCw, Truck } from 'lucide-react';
+import { Users, FileText, Search, ArrowRight, CheckCircle, X, DollarSign, Send, Clock, AlertTriangle, FileCheck, Plus, ListTodo, UploadCloud, Copy, Sparkles, BrainCircuit, Package, Wrench, Tag, RefreshCw, Truck, Undo2 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import MMGDossiers from './MMGDossiers';
@@ -16,6 +16,7 @@ export default function SalesDashboard() {
     const [isStatusUpdating, setIsStatusUpdating] = useState(false);
     const [isUploadingBOM, setIsUploadingBOM] = useState(false);
     const [isDeliveringFreeSale, setIsDeliveringFreeSale] = useState(false);
+    const [isReturningFreeSale, setIsReturningFreeSale] = useState(false);
     const [workshopPrepFiles, setWorkshopPrepFiles] = useState([]);
     const [workshopPrepPreview, setWorkshopPrepPreview] = useState(null);
     const [isWorkshopPreparing, setIsWorkshopPreparing] = useState(false);
@@ -230,6 +231,28 @@ export default function SalesDashboard() {
         }
     };
 
+    const returnFreeSale = async () => {
+        if (!selectedSale) return;
+        if (!window.confirm("Préparer un retour client pour ce devis livré ?")) return;
+        setIsReturningFreeSale(true);
+        try {
+            const res = await api.post(`/v2/sales/${selectedSale.id}/return-free-sale`);
+            await Promise.all([
+                queryClient.invalidateQueries(['sales']),
+                queryClient.invalidateQueries(['products']),
+                queryClient.invalidateQueries(['quants']),
+                queryClient.invalidateQueries(['transactions']),
+            ]);
+            await openSaleDetails(selectedSale.id);
+            alert(res.data?.message || "Retour client enregistré.");
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors du retour client.");
+        } finally {
+            setIsReturningFreeSale(false);
+        }
+    };
+
     const handleDragStart = (e, id) => {
         e.dataTransfer.setData("saleId", id.toString());
     };
@@ -396,12 +419,14 @@ export default function SalesDashboard() {
     const getReservationStatusClass = (status) => {
         if (status === 'reserved') return 'bg-amber-50 text-amber-700 border-amber-100';
         if (status === 'consumed') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+        if (status === 'returned') return 'bg-blue-50 text-blue-700 border-blue-100';
         if (status === 'cancelled') return 'bg-slate-100 text-slate-500 border-slate-200';
         return 'bg-blue-50 text-blue-700 border-blue-100';
     };
     const getReservationStatusLabel = (status) => {
         if (status === 'reserved') return 'Réservée';
         if (status === 'consumed') return 'Consommée';
+        if (status === 'returned') return 'Retournée';
         if (status === 'cancelled') return 'Annulée';
         return status || 'Inconnu';
     };
@@ -420,6 +445,65 @@ export default function SalesDashboard() {
             0
         );
         return { count: activeReservations.length, totalReserved };
+    };
+    const getFreeSaleTraceability = (sale) => {
+        const reservations = sale?.reservations || [];
+        const invoices = sale?.invoices || [];
+        const deliveryNotes = sale?.delivery_notes || [];
+        const activeReservations = reservations.filter(reservation => reservation.status === 'reserved');
+        const consumedReservations = reservations.filter(reservation => reservation.status === 'consumed');
+        const returnedReservations = reservations.filter(reservation => reservation.status === 'returned');
+        const returnedDeliveryNotes = deliveryNotes.filter(note => ['RETURNED', 'CANCELLED'].includes(note.status));
+        const reservedQuantity = activeReservations.reduce(
+            (sum, reservation) => sum + (reservation.lines || []).reduce(
+                (lineSum, line) => lineSum + Number(line.reserved_quantity || 0),
+                0
+            ),
+            0
+        );
+        const hasStockLines = (sale?.lines || []).some(line => line.line_type === 'STOCK_ITEM' || line.variant_id);
+        const isSigned = Boolean(sale?.signed_at) || ['VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale?.status);
+        const isReserved = activeReservations.length > 0 || (sale?.lines || []).some(line => Number(line.reserved_quantity || 0) > 0);
+        const isReturned = returnedReservations.length > 0 || returnedDeliveryNotes.length > 0;
+        const isDelivered = !isReturned && (sale?.status === 'DELIVERED' || deliveryNotes.some(note => note.status === 'DELIVERED' || note.signed_at));
+        const isInvoiced = invoices.some(invoice => !['DRAFT', 'CANCELLED', 'VOID'].includes(invoice.status));
+
+        return {
+            isSigned,
+            isReserved,
+            isDelivered,
+            isReturned,
+            isInvoiced,
+            hasStockLines,
+            activeReservations,
+            consumedReservations,
+            returnedReservations,
+            reservedQuantity,
+            reservationsCount: reservations.length,
+            invoicesCount: invoices.length,
+            deliveryNotesCount: deliveryNotes.length,
+        };
+    };
+    const getFreeSaleBusinessLabel = (sale) => {
+        const trace = getFreeSaleTraceability(sale);
+        if (sale?.status === 'CANCELLED') return 'Annulé';
+        if (trace.isReturned) return 'Retourné';
+        if (trace.isInvoiced) return 'Facturé';
+        if (trace.isDelivered) return 'Livré';
+        if (trace.isReserved) return 'Réservé';
+        if (trace.isSigned) return 'Signé';
+        if (sale?.status === 'SENT') return 'Envoyé';
+        return 'Brouillon';
+    };
+    const getFreeSaleBusinessClass = (sale) => {
+        const label = getFreeSaleBusinessLabel(sale);
+        if (label === 'Facturé') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+        if (label === 'Livré') return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+        if (label === 'Réservé') return 'bg-amber-100 text-amber-700 border-amber-200';
+        if (label === 'Signé') return 'bg-blue-100 text-blue-700 border-blue-200';
+        if (label === 'Retourné') return 'bg-sky-100 text-sky-700 border-sky-200';
+        if (label === 'Annulé') return 'bg-red-100 text-red-700 border-red-200';
+        return 'bg-slate-100 text-slate-600 border-slate-200';
     };
     const normalizeSearchText = (value) => String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const filteredManualClients = clients
@@ -745,12 +829,25 @@ export default function SalesDashboard() {
         }
     };
 
+    const getSaleDisplayLabel = (sale) => (
+        (sale?.workflow_type || 'FREE_SALE') === 'FREE_SALE'
+            ? getFreeSaleBusinessLabel(sale)
+            : getStatusLabel(sale?.status)
+    );
+
+    const getSaleDisplayClass = (sale) => (
+        (sale?.workflow_type || 'FREE_SALE') === 'FREE_SALE'
+            ? getFreeSaleBusinessClass(sale)
+            : getStatusColor(sale?.status)
+    );
+
     const saleCycleSteps = [
         { key: 'draft', label: 'Brouillon', statuses: ['DRAFT'] },
         { key: 'sent', label: 'Envoyé', statuses: ['SENT'] },
-        { key: 'validated', label: 'Signé/Validé', statuses: ['VALIDATED', 'IN_DESIGN'] },
+        { key: 'validated', label: 'Signé', statuses: ['VALIDATED', 'IN_DESIGN'] },
         { key: 'reserved', label: 'Réservé', statuses: ['READY_FOR_PROD', 'IN_PRODUCTION'] },
-        { key: 'billed', label: 'Facturé/Acompte', statuses: ['DELIVERED'] }
+        { key: 'delivered', label: 'Livré', statuses: ['DELIVERED'] },
+        { key: 'billed', label: 'Facturé', statuses: [] }
     ];
 
     const getSaleCycleState = (sale) => {
@@ -758,21 +855,29 @@ export default function SalesDashboard() {
 
         const hasStockLines = (sale.lines || []).some(line => line.line_type === 'STOCK_ITEM' || line.variant_id);
         const hasReservedLines = (sale.lines || []).some(line => Number(line.reserved_quantity || 0) > 0);
+        const trace = getFreeSaleTraceability(sale);
         const statusIndex = saleCycleSteps.findIndex(step => step.statuses.includes(sale.status));
         let activeIndex = statusIndex >= 0 ? statusIndex : 0;
 
-        if (hasReservedLines || ['READY_FOR_PROD', 'IN_PRODUCTION'].includes(sale.status)) {
+        if (trace.isSigned) {
+            activeIndex = Math.max(activeIndex, 2);
+        }
+        if (hasReservedLines || trace.isReserved || ['READY_FOR_PROD', 'IN_PRODUCTION'].includes(sale.status)) {
             activeIndex = Math.max(activeIndex, 3);
         }
-        if (sale.status === 'DELIVERED') {
+        if (trace.isDelivered) {
             activeIndex = 4;
+        }
+        if (trace.isInvoiced) {
+            activeIndex = 5;
         }
 
         return {
             activeIndex,
             isCancelled: sale.status === 'CANCELLED',
             hasStockLines,
-            hasReservedLines
+            hasReservedLines,
+            trace
         };
     };
 
@@ -783,10 +888,13 @@ export default function SalesDashboard() {
             if (!cycle.hasStockLines) return "Sans stock";
             return cycle.hasReservedLines || cycle.activeIndex >= 3 ? "Stock bloqué" : "À réserver";
         }
-        if (stepKey === 'billed') {
-            return sale?.status === 'DELIVERED' ? "Terminé" : "À venir";
+        if (stepKey === 'delivered') {
+            return cycle.trace?.isDelivered ? "BL généré" : "À livrer";
         }
-        if (stepKey === 'validated' && sale?.signed_at) return "Signature client";
+        if (stepKey === 'billed') {
+            return cycle.trace?.isInvoiced ? "Facture liée" : "À facturer";
+        }
+        if (stepKey === 'validated' && cycle.trace?.isSigned) return sale?.signed_at ? "Signature client" : "Validation";
         return cycle.activeIndex >= saleCycleSteps.findIndex(step => step.key === stepKey) ? "OK" : "À venir";
     };
 
@@ -830,7 +938,7 @@ export default function SalesDashboard() {
                         </span>
                     )}
                 </div>
-                <div className="grid grid-cols-5 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
                     {saleCycleSteps.map((step, idx) => {
                         const isDone = !cycle.isCancelled && idx < cycle.activeIndex;
                         const isActive = !cycle.isCancelled && idx === cycle.activeIndex;
@@ -1019,6 +1127,9 @@ export default function SalesDashboard() {
                                                     >
                                                         <div className="flex justify-between items-start mb-2">
                                                             <span className="font-black text-slate-800 text-sm leading-tight">{sale.client_name}</span>
+                                                            <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getSaleDisplayClass(sale)}`}>
+                                                                {getSaleDisplayLabel(sale)}
+                                                            </span>
                                                         </div>
                                                         <div className="flex justify-between items-end mt-4">
                                                             <span className="font-bold text-slate-400 text-[10px] uppercase tracking-wider">{sale.reference}</span>
@@ -1062,7 +1173,7 @@ export default function SalesDashboard() {
                                         >
                                             <div className="flex justify-between items-start mb-2">
                                                 <span className="font-black text-slate-900">{sale.client_name}</span>
-                                                <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getStatusColor(sale.status)}`}>{getStatusLabel(sale.status)}</span>
+                                                <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getSaleDisplayClass(sale)}`}>{getSaleDisplayLabel(sale)}</span>
                                             </div>
                                             <div className="flex justify-between items-center text-sm">
                                                 <span className="font-bold text-slate-400 text-xs">{sale.reference}</span>
@@ -1101,7 +1212,7 @@ export default function SalesDashboard() {
                                     <div>
                                         <div className="flex items-center gap-3 mb-3">
                                             <h2 className="text-3xl font-black tracking-tight">{selectedSale.client_name}</h2>
-                                            <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getStatusColor(selectedSale.status)}`}>{getStatusLabel(selectedSale.status)}</span>
+                                            <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getSaleDisplayClass(selectedSale)}`}>{getSaleDisplayLabel(selectedSale)}</span>
                                             <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getWorkflowBadgeClass(selectedSale.workflow_type)}`}>
                                                 {getWorkflowLabel(selectedSale.workflow_type)}
                                             </span>
@@ -1283,7 +1394,7 @@ export default function SalesDashboard() {
                                 </table>
                                 </div>
 
-                                {(selectedSale.workflow_type === 'FREE_SALE' || selectedSale.reservations?.length > 0 || selectedSale.invoices?.length > 0 || selectedSale.delivery_notes?.length > 0) && (
+                                {((selectedSale.workflow_type || 'FREE_SALE') === 'FREE_SALE' || selectedSale.reservations?.length > 0 || selectedSale.invoices?.length > 0 || selectedSale.delivery_notes?.length > 0) && (
                                     <div className="mt-6 bg-slate-50 border border-slate-200 rounded-2xl p-5">
                                         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-5">
                                             <div>
@@ -1299,6 +1410,51 @@ export default function SalesDashboard() {
                                                 </span>
                                             </div>
                                         </div>
+
+                                        {(() => {
+                                            const trace = getFreeSaleTraceability(selectedSale);
+                                            const milestones = [
+                                                { label: 'Signé', done: trace.isSigned, detail: selectedSale.signed_at ? formatDate(selectedSale.signed_at) : (trace.isSigned ? 'Validation interne' : 'En attente') },
+                                                { label: 'Réservé', done: trace.isReserved, detail: trace.isReserved ? `${trace.activeReservations.length} active(s)` : (trace.hasStockLines ? 'Stock à bloquer' : 'Sans stock') },
+                                                { label: 'Livré', done: trace.isDelivered, detail: trace.isDelivered ? `${trace.deliveryNotesCount} BL` : 'Sortie client à faire' },
+                                                { label: 'Facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.invoicesCount} facture(s)` : 'À facturer' },
+                                            ];
+
+                                            return (
+                                                <div className="mb-5 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-stretch">
+                                                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                                                        {milestones.map(step => (
+                                                            <div key={step.label} className={`rounded-xl border p-3 ${step.done ? 'bg-white border-emerald-100' : 'bg-white/70 border-slate-200'}`}>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className={`w-7 h-7 rounded-full flex items-center justify-center ${step.done ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
+                                                                        <CheckCircle className="w-4 h-4" />
+                                                                    </span>
+                                                                    <p className={`text-xs font-black uppercase tracking-widest ${step.done ? 'text-emerald-700' : 'text-slate-400'}`}>{step.label}</p>
+                                                                </div>
+                                                                <p className="mt-2 text-sm font-black text-slate-900">{step.done ? 'OK' : 'À faire'}</p>
+                                                                <p className="text-xs font-bold text-slate-500">{step.detail}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                    <div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-col justify-between gap-3 min-w-[220px]">
+                                                        <div>
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Retour client</p>
+                                                            <p className="text-xs font-bold text-slate-500 mt-1">
+                                                                {trace.isDelivered ? 'Emplacement prêt pour reprise, retour SAV ou annulation de sortie.' : 'Disponible après livraison client.'}
+                                                            </p>
+                                                        </div>
+                                                        <button
+                                                            onClick={returnFreeSale}
+                                                            disabled={!trace.isDelivered || isReturningFreeSale}
+                                                            className={`w-full px-4 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${trace.isDelivered && !isReturningFreeSale ? 'bg-white border border-blue-200 text-blue-700 hover:bg-blue-50' : 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'}`}
+                                                        >
+                                                            <Undo2 className="w-4 h-4" />
+                                                            {isReturningFreeSale ? 'Retour...' : 'Retour client'}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
 
                                         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
                                             <div className="bg-white border border-slate-200 rounded-xl p-4">

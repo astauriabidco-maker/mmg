@@ -19,6 +19,7 @@ from ..services.stock_reservations import (
     consume_commercial_reservation,
     create_commercial_reservation_for_sale,
     create_reservation,
+    return_commercial_reservation,
 )
 from scripts.import_workshop_debits import parse_file
 
@@ -918,6 +919,94 @@ def deliver_free_sale_order(
         "reservation_id": reservation.id,
         "delivery_note_id": delivery_note.id,
         "delivery_note_reference": delivery_note.reference,
+        **stats,
+    }
+
+
+@router.post("/{order_id}/return-free-sale", dependencies=AUTH_DEPENDENCIES)
+def return_free_sale_delivery(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut annuler une sortie client.")
+
+    sale = (
+        db.query(models.SaleOrder)
+        .options(joinedload(models.SaleOrder.lines))
+        .filter(models.SaleOrder.id == order_id)
+        .first()
+    )
+    if not sale:
+        raise HTTPException(status_code=404, detail="Devis introuvable.")
+    if sale.workflow_type != "FREE_SALE":
+        raise HTTPException(status_code=400, detail="Le retour client direct est réservé aux devis libres.")
+    if sale.status != "DELIVERED":
+        raise HTTPException(status_code=400, detail="Le retour client nécessite un devis libre déjà livré.")
+
+    reservation = (
+        db.query(models.StockReservation)
+        .options(joinedload(models.StockReservation.lines).joinedload(models.StockReservationLine.variant))
+        .filter(
+            models.StockReservation.sale_order_id == sale.id,
+            models.StockReservation.source_label.in_(["devis libre", "devis_libre"]),
+            models.StockReservation.status.in_(["consumed", "returned"]),
+        )
+        .order_by(models.StockReservation.id.desc())
+        .first()
+    )
+    if not reservation:
+        raise HTTPException(status_code=400, detail="Aucune réservation commerciale liée à retourner pour ce devis.")
+    if reservation.status == "returned":
+        raise HTTPException(status_code=400, detail="Cette sortie client a déjà été retournée.")
+    if reservation.status != "consumed":
+        raise HTTPException(status_code=400, detail="Aucune réservation commerciale consommée à retourner pour ce devis.")
+
+    delivery_note = (
+        db.query(models.DeliveryNote)
+        .filter(
+            models.DeliveryNote.sale_order_id == sale.id,
+            models.DeliveryNote.status == "DELIVERED",
+        )
+        .order_by(models.DeliveryNote.id.desc())
+        .first()
+    )
+    if not delivery_note:
+        raise HTTPException(status_code=400, detail="Aucun bon de livraison livré lié à ce devis.")
+
+    try:
+        stats = return_commercial_reservation(
+            db,
+            reservation,
+            author=current_user.get("sub", "Admin"),
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if stats.get("returned_lines", 0) == 0:
+        raise HTTPException(status_code=400, detail="Aucune ligne de stock consommée à retourner.")
+
+    delivery_note.status = "RETURNED"
+    delivery_note.delivery_notes = (
+        (delivery_note.delivery_notes or "")
+        + f"\n[Retour client] Sortie client retournée depuis la réservation {reservation.reference}."
+    ).strip()
+    sale.status = "VALIDATED"
+    sale.notes = (
+        (sale.notes or "")
+        + f"\n[RETOUR CLIENT] Stock recrédité depuis la réservation {reservation.reference}."
+    )
+    db.commit()
+    return {
+        "message": "Retour client effectué.",
+        "reservation_id": reservation.id,
+        "reservation_status": reservation.status,
+        "delivery_note_id": delivery_note.id,
+        "delivery_note_reference": delivery_note.reference,
+        "delivery_note_status": delivery_note.status,
+        "sale_status": sale.status,
         **stats,
     }
 
