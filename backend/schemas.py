@@ -540,6 +540,10 @@ class SaleInvoiceSummary(BaseModel):
     issue_date: datetime
     status: str
     total: float
+    source_invoice_id: Optional[int] = None
+    source_invoice_reference: Optional[str] = None
+    delivery_note_id: Optional[int] = None
+    return_move_id: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
 class SaleDeliveryNoteSummary(BaseModel):
@@ -606,6 +610,9 @@ class InvoiceCreate(InvoiceBase):
     sale_order_id: Optional[int] = None
     lines: List[InvoiceLineBase]
 
+class CreditNoteCreate(BaseModel):
+    delivery_note_id: Optional[int] = None
+
 class InvoiceLineResponse(InvoiceLineBase):
     id: int
     model_config = ConfigDict(from_attributes=True)
@@ -613,6 +620,11 @@ class InvoiceLineResponse(InvoiceLineBase):
 class InvoiceResponse(InvoiceBase):
     id: int
     reference: str
+    sale_order_id: Optional[int] = None
+    source_invoice_id: Optional[int] = None
+    source_invoice_reference: Optional[str] = None
+    delivery_note_id: Optional[int] = None
+    return_move_id: Optional[int] = None
     issue_date: datetime
     status: str
     subtotal: float

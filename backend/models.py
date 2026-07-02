@@ -65,6 +65,15 @@ def ensure_schema_compatibility(engine):
                 )
             )
 
+        if inspector.has_table("invoices"):
+            invoice_columns = {column["name"] for column in inspector.get_columns("invoices")}
+            if "source_invoice_id" not in invoice_columns:
+                connection.execute(text("ALTER TABLE invoices ADD COLUMN source_invoice_id INTEGER"))
+            if "delivery_note_id" not in invoice_columns:
+                connection.execute(text("ALTER TABLE invoices ADD COLUMN delivery_note_id INTEGER"))
+            if "return_move_id" not in invoice_columns:
+                connection.execute(text("ALTER TABLE invoices ADD COLUMN return_move_id INTEGER"))
+
 class MaterialType(str, enum.Enum):
     PVC = "PVC"
     ALU = "ALU"
@@ -579,6 +588,9 @@ class Invoice(Base):
     issue_date = Column(DateTime, default=datetime.utcnow)
     due_date = Column(DateTime)
     status = Column(String, default="DRAFT") # DRAFT, UNPAID, PARTIAL, PAID, AVOIR
+    source_invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=True)
+    delivery_note_id = Column(Integer, ForeignKey("delivery_notes.id"), nullable=True)
+    return_move_id = Column(Integer, ForeignKey("stock_moves.id"), nullable=True)
     
     subtotal = Column(Float, default=0.0)
     tax_rate = Column(Float, default=20.0) # French standard TVA
@@ -590,6 +602,13 @@ class Invoice(Base):
     lines = relationship("InvoiceLine", back_populates="invoice", cascade="all, delete-orphan")
     payments = relationship("Payment", back_populates="invoice", cascade="all, delete-orphan")
     sale_order = relationship("SaleOrder")
+    source_invoice = relationship("Invoice", remote_side=[id], foreign_keys=[source_invoice_id])
+    delivery_note = relationship("DeliveryNote")
+    return_move = relationship("StockMove")
+
+    @property
+    def source_invoice_reference(self):
+        return self.source_invoice.reference if self.source_invoice else None
 
 class InvoiceLine(Base):
     __tablename__ = "invoice_lines"

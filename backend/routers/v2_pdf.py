@@ -217,6 +217,9 @@ def generate_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    is_credit_note = invoice.status == "AVOIR" or str(invoice.reference or "").startswith("AV-")
+    document_label = "AVOIR CLIENT" if is_credit_note else "FACTURE CLIENT"
+    document_title = "AVOIR" if is_credit_note else "FACTURE"
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
@@ -237,7 +240,7 @@ def generate_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
     header_data = [
         [
             Paragraph("<b>MMG MENUISERIES</b><br/>123 Zone Industrielle<br/>75000 PARIS<br/>Tél: 01 23 45 67 89", normal_style),
-            Paragraph(f"<b>FACTURE CLIENT</b><br/>Réf: {invoice.reference}<br/>Date: {invoice.issue_date.strftime('%d/%m/%Y')}", normal_style)
+            Paragraph(f"<b>{document_label}</b><br/>Réf: {invoice.reference}<br/>Date: {invoice.issue_date.strftime('%d/%m/%Y')}", normal_style)
         ]
     ]
     header_table = Table(header_data, colWidths=[300, 200])
@@ -259,7 +262,7 @@ def generate_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
     elements.append(Spacer(1, 30))
     
     # --- TITLE ---
-    elements.append(Paragraph(f"FACTURE N° {invoice.reference}", title_style))
+    elements.append(Paragraph(f"{document_title} N° {invoice.reference}", title_style))
     elements.append(Spacer(1, 20))
     
     # --- ITEMS TABLE ---
@@ -343,7 +346,7 @@ def generate_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
         content=pdf_value,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=Facture_{invoice.reference}.pdf"
+            "Content-Disposition": f"attachment; filename={'Avoir' if is_credit_note else 'Facture'}_{invoice.reference}.pdf"
         }
     )
 

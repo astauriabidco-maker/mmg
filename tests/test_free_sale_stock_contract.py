@@ -508,6 +508,109 @@ def test_free_sale_return_recredits_customer_delivery_and_marks_traceability(sto
     assert any("WH/Stock" in transaction["transaction_type"] for transaction in transactions)
 
 
+def test_free_sale_return_does_not_create_credit_note_automatically(stock_client):
+    client, TestingSessionLocal = stock_client
+    headers = _admin_headers()
+
+    with TestingSessionLocal() as db:
+        variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)
+        sale_id = _create_free_sale_quote(db, variant_id, quantity=2)
+
+    _sign_and_deliver_free_sale(client, sale_id, headers)
+
+    with TestingSessionLocal() as db:
+        [source_invoice] = db.query(models.Invoice).filter(models.Invoice.sale_order_id == sale_id).all()
+        assert source_invoice.status == "UNPAID"
+        assert source_invoice.reference.startswith("F-")
+
+    return_response = client.post(f"/v2/sales/{sale_id}/return-free-sale", headers=headers)
+
+    assert return_response.status_code == 200, return_response.text
+
+    with TestingSessionLocal() as db:
+        invoices = db.query(models.Invoice).filter(models.Invoice.sale_order_id == sale_id).order_by(models.Invoice.id).all()
+
+    assert len(invoices) == 1
+    assert invoices[0].reference.startswith("F-")
+    assert invoices[0].status == "UNPAID"
+    assert invoices[0].total == 60
+
+
+def test_free_sale_return_credit_note_requires_explicit_post_and_is_idempotent(stock_client):
+    client, TestingSessionLocal = stock_client
+    headers = _admin_headers()
+
+    with TestingSessionLocal() as db:
+        variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)
+        sale_id = _create_free_sale_quote(db, variant_id, quantity=2)
+
+    delivery_payload = _sign_and_deliver_free_sale(client, sale_id, headers)
+    return_response = client.post(f"/v2/sales/{sale_id}/return-free-sale", headers=headers)
+    assert return_response.status_code == 200, return_response.text
+
+    with TestingSessionLocal() as db:
+        source_invoice = db.query(models.Invoice).filter(models.Invoice.sale_order_id == sale_id).one()
+        return_move = (
+            db.query(models.StockMove)
+            .filter(models.StockMove.reference.like("RETOUR-CLIENT%"))
+            .one()
+        )
+        delivery_note = db.query(models.DeliveryNote).filter(models.DeliveryNote.id == delivery_payload["delivery_note_id"]).one()
+        source_invoice_id = source_invoice.id
+        source_invoice_reference = source_invoice.reference
+        return_move_id = return_move.id
+        delivery_note_id = delivery_note.id
+
+    credit_response = client.post(
+        f"/v2/accounting/invoices/{source_invoice_id}/credit-note-from-return",
+        headers=headers,
+    )
+
+    assert credit_response.status_code == 200, credit_response.text
+    credit_note = credit_response.json()
+    assert credit_note["id"] != source_invoice_id
+    assert credit_note["reference"].startswith("AV-")
+    assert credit_note["status"] == "AVOIR"
+    assert credit_note["source_invoice_id"] == source_invoice_id
+    assert credit_note["source_invoice_reference"] == source_invoice_reference
+    assert credit_note["sale_order_id"] == sale_id
+    assert credit_note["return_move_id"] == return_move_id
+    assert credit_note["delivery_note_id"] == delivery_note_id
+    assert credit_note["subtotal"] == -50
+    assert credit_note["tax_amount"] == -10
+    assert credit_note["total"] == -60
+    assert [line["description"] for line in credit_note["lines"]] == ["Avoir sur: Poignee baie en stock"]
+
+    with TestingSessionLocal() as db:
+        source_invoice = db.query(models.Invoice).filter(models.Invoice.id == source_invoice_id).one()
+        invoices = db.query(models.Invoice).filter(models.Invoice.sale_order_id == sale_id).order_by(models.Invoice.id).all()
+        credit_notes = [invoice for invoice in invoices if invoice.status == "AVOIR"]
+
+    assert source_invoice.status == "UNPAID"
+    assert len(invoices) == 2
+    assert len(credit_notes) == 1
+    assert credit_notes[0].reference == credit_note["reference"]
+    assert credit_notes[0].total == -60
+
+    duplicate_response = client.post(
+        f"/v2/accounting/invoices/{source_invoice_id}/credit-note-from-return",
+        headers=headers,
+    )
+
+    assert duplicate_response.status_code in {400, 409}
+    assert any(token in duplicate_response.text.lower() for token in ["avoir", "déjà", "deja", "retour"])
+
+    with TestingSessionLocal() as db:
+        invoices_after_duplicate = db.query(models.Invoice).filter(models.Invoice.sale_order_id == sale_id).all()
+
+    assert len([invoice for invoice in invoices_after_duplicate if invoice.status == "AVOIR"]) == 1
+
+    pdf_response = client.get(f"/v2/pdf/invoice/{credit_note['id']}", headers=headers)
+    assert pdf_response.status_code == 200, pdf_response.text
+    assert pdf_response.headers["content-type"] == "application/pdf"
+    assert pdf_response.content.startswith(b"%PDF")
+
+
 def test_free_sale_return_cannot_be_applied_twice(stock_client):
     client, TestingSessionLocal = stock_client
     headers = _admin_headers()

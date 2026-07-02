@@ -17,6 +17,7 @@ export default function SalesDashboard() {
     const [isUploadingBOM, setIsUploadingBOM] = useState(false);
     const [isDeliveringFreeSale, setIsDeliveringFreeSale] = useState(false);
     const [isReturningFreeSale, setIsReturningFreeSale] = useState(false);
+    const [isCreatingCreditNote, setIsCreatingCreditNote] = useState(false);
     const [workshopPrepFiles, setWorkshopPrepFiles] = useState([]);
     const [workshopPrepPreview, setWorkshopPrepPreview] = useState(null);
     const [isWorkshopPreparing, setIsWorkshopPreparing] = useState(false);
@@ -253,6 +254,26 @@ export default function SalesDashboard() {
         }
     };
 
+    const createCreditNote = async (invoice, deliveryNoteId = null) => {
+        if (!selectedSale || !invoice) return;
+        if (!window.confirm(`Créer un avoir pour la facture ${invoice.reference} ?`)) return;
+        setIsCreatingCreditNote(true);
+        try {
+            await api.post(
+                `/v2/accounting/invoices/${invoice.id}/credit-note-from-return`,
+                deliveryNoteId ? { delivery_note_id: deliveryNoteId } : undefined
+            );
+            await queryClient.invalidateQueries(['sales']);
+            await openSaleDetails(selectedSale.id);
+            alert("Avoir généré avec succès.");
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de la création de l'avoir.");
+        } finally {
+            setIsCreatingCreditNote(false);
+        }
+    };
+
     const handleDragStart = (e, id) => {
         e.dataTransfer.setData("saleId", id.toString());
     };
@@ -446,9 +467,33 @@ export default function SalesDashboard() {
         );
         return { count: activeReservations.length, totalReserved };
     };
+    const isCreditNote = (invoice) => {
+        const status = String(invoice?.status || '').toUpperCase();
+        const reference = String(invoice?.reference || '').toUpperCase();
+        return status === 'AVOIR' || status === 'CREDIT_NOTE' || reference.startsWith('AV-') || Number(invoice?.total || 0) < 0;
+    };
+    const getSaleCreditNotes = (sale) => {
+        const exposedCreditNotes = [
+            ...(sale?.credit_notes || []),
+            ...(sale?.creditNotes || []),
+            ...(sale?.avoirs || []),
+        ];
+        const invoiceCreditNotes = (sale?.invoices || []).filter(isCreditNote);
+        const byId = new Map();
+        [...exposedCreditNotes, ...invoiceCreditNotes].forEach(creditNote => {
+            if (!creditNote) return;
+            byId.set(creditNote.id || creditNote.reference, creditNote);
+        });
+        return Array.from(byId.values());
+    };
+    const getSaleBillableInvoices = (sale) => (
+        (sale?.invoices || []).filter(invoice => !isCreditNote(invoice) && !['DRAFT', 'CANCELLED', 'VOID'].includes(invoice.status))
+    );
     const getFreeSaleTraceability = (sale) => {
         const reservations = sale?.reservations || [];
         const invoices = sale?.invoices || [];
+        const billableInvoices = getSaleBillableInvoices(sale);
+        const creditNotes = getSaleCreditNotes(sale);
         const deliveryNotes = sale?.delivery_notes || [];
         const activeReservations = reservations.filter(reservation => reservation.status === 'reserved');
         const consumedReservations = reservations.filter(reservation => reservation.status === 'consumed');
@@ -466,7 +511,8 @@ export default function SalesDashboard() {
         const isReserved = activeReservations.length > 0 || (sale?.lines || []).some(line => Number(line.reserved_quantity || 0) > 0);
         const isReturned = returnedReservations.length > 0 || returnedDeliveryNotes.length > 0;
         const isDelivered = !isReturned && (sale?.status === 'DELIVERED' || deliveryNotes.some(note => note.status === 'DELIVERED' || note.signed_at));
-        const isInvoiced = invoices.some(invoice => !['DRAFT', 'CANCELLED', 'VOID'].includes(invoice.status));
+        const isInvoiced = billableInvoices.length > 0;
+        const hasCreditNote = creditNotes.length > 0;
 
         return {
             isSigned,
@@ -474,13 +520,19 @@ export default function SalesDashboard() {
             isDelivered,
             isReturned,
             isInvoiced,
+            hasCreditNote,
             hasStockLines,
             activeReservations,
             consumedReservations,
             returnedReservations,
+            returnedDeliveryNotes,
+            billableInvoices,
+            creditNotes,
             reservedQuantity,
             reservationsCount: reservations.length,
             invoicesCount: invoices.length,
+            billableInvoicesCount: billableInvoices.length,
+            creditNotesCount: creditNotes.length,
             deliveryNotesCount: deliveryNotes.length,
         };
     };
@@ -1417,12 +1469,16 @@ export default function SalesDashboard() {
                                                 { label: 'Signé', done: trace.isSigned, detail: selectedSale.signed_at ? formatDate(selectedSale.signed_at) : (trace.isSigned ? 'Validation interne' : 'En attente') },
                                                 { label: 'Réservé', done: trace.isReserved, detail: trace.isReserved ? `${trace.activeReservations.length} active(s)` : (trace.hasStockLines ? 'Stock à bloquer' : 'Sans stock') },
                                                 { label: 'Livré', done: trace.isDelivered, detail: trace.isDelivered ? `${trace.deliveryNotesCount} BL` : 'Sortie client à faire' },
-                                                { label: 'Facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.invoicesCount} facture(s)` : 'À facturer' },
+                                                { label: 'Facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.billableInvoicesCount} facture(s)` : 'À facturer' },
+                                                { label: 'Avoir', done: trace.hasCreditNote, detail: trace.hasCreditNote ? `${trace.creditNotesCount} avoir(s)` : (trace.isReturned && trace.isInvoiced ? 'À créer' : 'Non requis') },
                                             ];
+                                            const canCreateCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote;
+                                            const creditNoteSourceInvoice = trace.billableInvoices[0];
+                                            const returnedDeliveryNote = trace.returnedDeliveryNotes[0];
 
                                             return (
                                                 <div className="mb-5 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-stretch">
-                                                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                                                    <div className="grid grid-cols-2 xl:grid-cols-5 gap-3">
                                                         {milestones.map(step => (
                                                             <div key={step.label} className={`rounded-xl border p-3 ${step.done ? 'bg-white border-emerald-100' : 'bg-white/70 border-slate-200'}`}>
                                                                 <div className="flex items-center gap-2">
@@ -1440,7 +1496,7 @@ export default function SalesDashboard() {
                                                         <div>
                                                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Retour client</p>
                                                             <p className="text-xs font-bold text-slate-500 mt-1">
-                                                                {trace.isDelivered ? 'Emplacement prêt pour reprise, retour SAV ou annulation de sortie.' : 'Disponible après livraison client.'}
+                                                                {trace.isReturned ? 'Retour client enregistré. La régularisation comptable peut suivre.' : (trace.isDelivered ? 'Emplacement prêt pour reprise, retour SAV ou annulation de sortie.' : 'Disponible après livraison client.')}
                                                             </p>
                                                         </div>
                                                         <button
@@ -1451,12 +1507,25 @@ export default function SalesDashboard() {
                                                             <Undo2 className="w-4 h-4" />
                                                             {isReturningFreeSale ? 'Retour...' : 'Retour client'}
                                                         </button>
+                                                        {canCreateCreditNote && (
+                                                            <button
+                                                                onClick={() => createCreditNote(creditNoteSourceInvoice, returnedDeliveryNote?.id)}
+                                                                disabled={isCreatingCreditNote}
+                                                                className={`w-full px-4 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${!isCreatingCreditNote ? 'bg-rose-600 text-white hover:bg-rose-500 shadow-md shadow-rose-500/20' : 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'}`}
+                                                            >
+                                                                <FileText className="w-4 h-4" />
+                                                                {isCreatingCreditNote ? 'Création...' : 'Créer un avoir'}
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </div>
                                             );
                                         })()}
 
-                                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                                        {(() => {
+                                            const trace = getFreeSaleTraceability(selectedSale);
+                                            return (
+                                        <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
                                             <div className="bg-white border border-slate-200 rounded-xl p-4">
                                                 <div className="flex items-center justify-between mb-3">
                                                     <p className="text-xs font-black uppercase tracking-widest text-slate-400">Réservations</p>
@@ -1508,11 +1577,11 @@ export default function SalesDashboard() {
                                             <div className="bg-white border border-slate-200 rounded-xl p-4">
                                                 <div className="flex items-center justify-between mb-3">
                                                     <p className="text-xs font-black uppercase tracking-widest text-slate-400">Facturation</p>
-                                                    <span className="text-xs font-black text-slate-600">{selectedSale.invoices?.length || 0}</span>
+                                                    <span className="text-xs font-black text-slate-600">{trace.billableInvoicesCount}</span>
                                                 </div>
-                                                {selectedSale.invoices?.length > 0 ? (
+                                                {trace.billableInvoicesCount > 0 ? (
                                                     <div className="space-y-3">
-                                                        {selectedSale.invoices.map(invoice => (
+                                                        {trace.billableInvoices.map(invoice => (
                                                             <div key={invoice.id} className="flex items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50 p-3">
                                                                 <div>
                                                                     <p className="text-sm font-black text-slate-900">{invoice.reference}</p>
@@ -1534,6 +1603,42 @@ export default function SalesDashboard() {
                                                     </div>
                                                 ) : (
                                                     <p className="text-sm font-bold text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4">Aucune facture générée pour ce devis.</p>
+                                                )}
+                                            </div>
+
+                                            <div className="bg-white border border-slate-200 rounded-xl p-4">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Avoirs</p>
+                                                    <span className="text-xs font-black text-slate-600">{trace.creditNotesCount}</span>
+                                                </div>
+                                                {trace.creditNotesCount > 0 ? (
+                                                    <div className="space-y-3">
+                                                        {trace.creditNotes.map(creditNote => (
+                                                            <div key={creditNote.id || creditNote.reference} className="flex items-center justify-between gap-4 rounded-xl border border-rose-100 bg-rose-50/60 p-3">
+                                                                <div>
+                                                                    <p className="text-sm font-black text-slate-900">{creditNote.reference || 'Avoir'}</p>
+                                                                    <p className="text-[11px] font-bold text-rose-700">{formatDate(creditNote.issue_date || creditNote.created_at)} - {creditNote.status || 'AVOIR'}</p>
+                                                                </div>
+                                                                <div className="text-right">
+                                                                    <p className="text-sm font-black text-slate-900">{formatMoney(creditNote.total)}</p>
+                                                                    {creditNote.id && (
+                                                                        <a
+                                                                            href={`${api.defaults.baseURL}/v2/pdf/invoice/${creditNote.id}`}
+                                                                            target="_blank"
+                                                                            rel="noopener noreferrer"
+                                                                            className="text-[11px] font-black text-rose-700 hover:text-rose-900"
+                                                                        >
+                                                                            PDF avoir
+                                                                        </a>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-sm font-bold text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4">
+                                                        {trace.isReturned && trace.isInvoiced ? "Aucun avoir lié détecté pour ce retour client." : "Les avoirs rattachés apparaîtront ici si l'API les expose."}
+                                                    </p>
                                                 )}
                                             </div>
 
@@ -1568,6 +1673,8 @@ export default function SalesDashboard() {
                                                 )}
                                             </div>
                                         </div>
+                                            );
+                                        })()}
                                     </div>
                                 )}
                                 
