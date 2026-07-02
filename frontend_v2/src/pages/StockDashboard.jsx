@@ -710,6 +710,8 @@ export default function StockDashboard() {
                 ? "Prestations pré-enregistrées pour les devis libres, sans réservation ni débit de stock."
             : "Référentiel produits, variantes, fournisseurs et fiches techniques.";
 
+    const formatQty = (value) => Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+
     // Calculate Grid Data grouped by Product
     let groupedData = [];
     let totalValuation = 0;
@@ -762,7 +764,21 @@ export default function StockDashboard() {
 
             if (isVisible) {
                 hasVisibleVariant = true;
-                variantsData.push({ fullVariant: v, variantLabel: v.color || "Standard", variantRef: v.reference, variantId: v.id, stockToDisplay, locId, isLowStock });
+                const reservedQuantity = Number(v.reserved_quantity || 0);
+                const availableQuantity = Number(
+                    v.available_quantity ?? Math.max(stockToDisplay - reservedQuantity, 0)
+                );
+                variantsData.push({
+                    fullVariant: v,
+                    variantLabel: v.color || "Standard",
+                    variantRef: v.reference,
+                    variantId: v.id,
+                    stockToDisplay,
+                    reservedQuantity,
+                    availableQuantity,
+                    locId,
+                    isLowStock
+                });
             }
         });
 
@@ -1175,6 +1191,22 @@ export default function StockDashboard() {
                                                                         </div>
                                                                         <div className="flex items-center gap-6">
                                                                             {/* QUANTITY : INLINE EDIT */}
+                                                                            {inventoryFocus !== 'services' && (
+                                                                                <div className="hidden lg:flex items-center gap-2">
+                                                                                    <div className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-right shadow-sm min-w-[84px]">
+                                                                                        <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Réservé</p>
+                                                                                        <p className={`text-sm font-black ${v.reservedQuantity > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                                                                            {formatQty(v.reservedQuantity)}
+                                                                                        </p>
+                                                                                    </div>
+                                                                                    <div className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-right shadow-sm min-w-[96px]">
+                                                                                        <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Disponible</p>
+                                                                                        <p className={`text-sm font-black ${v.availableQuantity > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                                                                            {formatQty(v.availableQuantity)}
+                                                                                        </p>
+                                                                                    </div>
+                                                                                </div>
+                                                                            )}
                                                                             <div className="text-right flex items-center gap-3 bg-white border border-slate-200 shadow-sm rounded-xl pr-1 overflow-hidden">
                                                                                 <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest pl-3 bg-slate-50 h-full py-2 border-r border-slate-100">{inventoryFocus === 'services' ? 'Prix HT' : 'STOCK'}</span>
                                                                                 {isEditing ? (
@@ -1187,7 +1219,7 @@ export default function StockDashboard() {
                                                                                         onClick={() => (canEditInline && isManager) && startEditingQuant(v.variantId, v.locId, v.stockToDisplay)}
                                                                                         title={inventoryFocus === 'services' ? "Le tarif se modifie depuis la fiche variante" : (canEditInline && isManager) ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible (Vue globale ou permissions insuffisantes)"}
                                                                                     >
-                                                                                        {inventoryFocus === 'services' ? (v.fullVariant.cost_price || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }) : Math.round(v.stockToDisplay*100)/100}
+                                                                                        {inventoryFocus === 'services' ? (v.fullVariant.cost_price || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }) : formatQty(v.stockToDisplay)}
                                                                                     </div>
                                                                                 )}
                                                                             </div>

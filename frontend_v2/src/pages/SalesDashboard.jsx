@@ -386,6 +386,18 @@ export default function SalesDashboard() {
         const match = String(source || '').match(/^sale_order_line:(\d+)$/);
         return match ? Number(match[1]) : null;
     };
+    const getSaleReservationSummary = (sale) => {
+        const reservations = sale?.reservations || [];
+        const activeReservations = reservations.filter(reservation => reservation.status === 'reserved');
+        const totalReserved = activeReservations.reduce(
+            (sum, reservation) => sum + (reservation.lines || []).reduce(
+                (lineSum, line) => lineSum + Number(line.reserved_quantity || 0),
+                0
+            ),
+            0
+        );
+        return { count: activeReservations.length, totalReserved };
+    };
     const normalizeSearchText = (value) => String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const filteredManualClients = clients
         .filter(client => client.is_active !== false)
@@ -1074,6 +1086,14 @@ export default function SalesDashboard() {
                                         <div className="flex gap-6 text-slate-400 text-sm font-medium">
                                             <p>Réf: <span className="text-white font-bold">{selectedSale.reference}</span></p>
                                             <p>Date: <span className="text-white font-bold">{new Date(selectedSale.created_at).toLocaleDateString('fr-FR')}</span></p>
+                                            {getSaleReservationSummary(selectedSale).count > 0 && (
+                                                <p>
+                                                    Réservation:
+                                                    <span className="text-amber-300 font-black ml-1">
+                                                        {getSaleReservationSummary(selectedSale).count} active(s), {getSaleReservationSummary(selectedSale).totalReserved.toLocaleString('fr-FR')} réservé
+                                                    </span>
+                                                </p>
+                                            )}
                                         </div>
                                     </div>
                                     <div className="text-right">
