@@ -613,9 +613,6 @@ export default function SalesDashboard() {
         if (item.isDraft) {
             return alert("Article brouillon: qualifiez-le dans le catalogue avant de le vendre.");
         }
-        if (item.unitPrice <= 0) {
-            return alert("Prix HT manquant: renseignez un prix de vente dans le catalogue avant d'ajouter cet article au devis.");
-        }
         setManualQuote(prev => ({
             ...prev,
             lines: [...prev.lines, {
@@ -675,6 +672,10 @@ export default function SalesDashboard() {
         }
         if (validLines.length === 0) {
             return alert("Ajoutez au moins une ligne de devis avec une désignation et une quantité.");
+        }
+        const zeroPricedStockLine = validLines.find(line => line.line_type === "stock" && line.unit_price <= 0);
+        if (zeroPricedStockLine) {
+            return alert(`Prix HT manquant: renseignez le prix de vente de "${zeroPricedStockLine.description}" avant de créer le devis.`);
         }
 
         setIsCreatingManualQuote(true);
@@ -2270,14 +2271,14 @@ export default function SalesDashboard() {
                                                     </div>
                                                 )}
                                                 {filteredCatalogItems.map(item => {
-                                                    const isBlockedForQuote = item.isDraft || item.unitPrice <= 0;
+                                                    const isBlockedForQuote = item.isDraft;
                                                     return (
                                                     <button
                                                         key={item.variant_id}
                                                         type="button"
                                                         onClick={() => addStockLineFromCatalog(item)}
                                                         disabled={isBlockedForQuote}
-                                                        className={`w-full text-left border rounded-xl p-3 transition-all ${isBlockedForQuote ? 'border-amber-200 bg-amber-50/60 cursor-not-allowed opacity-75' : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/40'}`}
+                                                        className={`w-full text-left border rounded-xl p-3 transition-all ${isBlockedForQuote ? 'border-amber-200 bg-amber-50/60 cursor-not-allowed opacity-75' : item.unitPrice <= 0 ? 'border-amber-200 bg-amber-50/50 hover:border-amber-300 hover:bg-amber-50' : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/40'}`}
                                                     >
                                                         <div className="flex items-start justify-between gap-3">
                                                             <div className="min-w-0">
@@ -2303,7 +2304,7 @@ export default function SalesDashboard() {
                                                             </div>
                                                         </div>
                                                         {item.unitPrice <= 0 && (
-                                                            <p className="mt-2 text-[11px] font-bold text-red-700">Prix catalogue absent: article bloqué pour devis client.</p>
+                                                            <p className="mt-2 text-[11px] font-bold text-amber-700">Prix catalogue absent: ajoutez l'article puis renseignez le prix HT sur la ligne.</p>
                                                         )}
                                                     </button>
                                                     );
@@ -2451,7 +2452,7 @@ export default function SalesDashboard() {
                                                             step="0.01"
                                                             value={line.unit_price}
                                                             onChange={e => updateManualLine(index, 'unit_price', e.target.value)}
-                                                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                                            className={`w-full bg-white border rounded-xl px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500 ${line.line_type === 'stock' && Number(line.unit_price || 0) <= 0 ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`}
                                                         />
                                                     </div>
                                                     <div className="col-span-3 md:col-span-2">
@@ -2474,10 +2475,12 @@ export default function SalesDashboard() {
                                                         <X className="w-4 h-4" />
                                                     </button>
                                                     {line.line_type === 'stock' && (
-                                                        <div className={`col-span-12 rounded-xl px-3 py-2 text-xs font-bold flex items-center gap-2 ${stockShortage ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-slate-50 text-slate-600 border border-slate-100'}`}>
+                                                        <div className={`col-span-12 rounded-xl px-3 py-2 text-xs font-bold flex items-center gap-2 ${stockShortage ? 'bg-red-50 text-red-700 border border-red-100' : Number(line.unit_price || 0) <= 0 ? 'bg-amber-50 text-amber-800 border border-amber-100' : 'bg-slate-50 text-slate-600 border border-slate-100'}`}>
                                                             <Tag className="w-4 h-4 shrink-0" />
-                                                            Stock disponible: {Math.round(Number(line.available_stock || 0) * 100) / 100} {line.unit || 'u'}.
-                                                            {stockShortage ? " Quantité demandée supérieure au stock connu: vérifiez avant envoi." : " Référence catalogue conservée sur la ligne de devis."}
+                                                            {Number(line.unit_price || 0) <= 0
+                                                                ? "Prix HT obligatoire avant création du devis. La référence catalogue est conservée."
+                                                                : `Stock disponible: ${Math.round(Number(line.available_stock || 0) * 100) / 100} ${line.unit || 'u'}.`}
+                                                            {Number(line.unit_price || 0) > 0 && (stockShortage ? " Quantité demandée supérieure au stock connu: vérifiez avant envoi." : " Référence catalogue conservée sur la ligne de devis.")}
                                                         </div>
                                                     )}
                                                 </div>
