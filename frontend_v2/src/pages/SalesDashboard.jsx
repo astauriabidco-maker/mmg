@@ -50,7 +50,7 @@ export default function SalesDashboard() {
         }
     });
 
-    const { data: clients = [] } = useQuery({
+    const { data: clients = [], refetch: refetchClients } = useQuery({
         queryKey: ['partners', 'clients'],
         queryFn: async () => {
             const res = await api.get('/v2/partners/clients');
@@ -386,6 +386,22 @@ export default function SalesDashboard() {
         const match = String(source || '').match(/^sale_order_line:(\d+)$/);
         return match ? Number(match[1]) : null;
     };
+    const normalizeSearchText = (value) => String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const filteredManualClients = clients
+        .filter(client => client.is_active !== false)
+        .filter(client => {
+            const search = normalizeSearchText(manualClientSearch);
+            if (!search) return false;
+            return [
+                client.name,
+                client.contact_name,
+                client.phone,
+                client.email,
+                client.address,
+                client.tax_id
+            ].some(value => normalizeSearchText(value).includes(search));
+        })
+        .slice(0, 8);
     const stockProductsErrorStatus = stockProductsError?.response?.status;
     const stockProductsErrorDetail = stockProductsError?.response?.data?.detail || stockProductsError?.message || "Erreur inconnue";
 
@@ -892,7 +908,10 @@ export default function SalesDashboard() {
                             />
                         </div>
                         <button 
-                            onClick={() => setShowManualQuoteModal(true)} 
+                            onClick={() => {
+                                refetchClients();
+                                setShowManualQuoteModal(true);
+                            }}
                             className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black shadow-md shadow-slate-900/10 flex items-center gap-2 transition-all"
                         >
                             <Plus className="w-4 h-4"/> Devis libre
@@ -1694,10 +1713,7 @@ export default function SalesDashboard() {
 
                                     {manualClientSearch && !manualQuote.client_name && !isManualNewClient && (
                                         <div className="absolute top-full mt-2 left-0 right-0 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden">
-                                            {clients
-                                                .filter(c => c.name.toLowerCase().includes(manualClientSearch.toLowerCase()) || (c.phone && c.phone.includes(manualClientSearch)))
-                                                .slice(0, 8)
-                                                .map(client => (
+                                            {filteredManualClients.map(client => (
                                                     <button
                                                         key={client.id}
                                                         className="w-full text-left px-6 py-4 hover:bg-slate-50 border-b border-slate-100 last:border-0 transition-colors flex items-center justify-between"
@@ -1709,7 +1725,13 @@ export default function SalesDashboard() {
                                                         </div>
                                                         <ArrowRight className="w-4 h-4 text-slate-300" />
                                                     </button>
-                                                ))}
+                                            ))}
+                                            {filteredManualClients.length === 0 && (
+                                                <div className="px-6 py-4 bg-amber-50 border-b border-amber-100">
+                                                    <p className="text-sm font-black text-amber-900">Aucun client existant trouvé.</p>
+                                                    <p className="text-xs font-bold text-amber-700 mt-1">Vérifiez l’orthographe ou créez ce client depuis ce devis.</p>
+                                                </div>
+                                            )}
                                             <button
                                                 className="w-full text-left px-6 py-4 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold transition-colors flex items-center gap-2"
                                                 onClick={startManualNewClient}

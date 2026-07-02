@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Plus, Mail, Phone, MapPin, Building2, UserCircle, Edit, Trash2 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 
 export default function PartnerDirectory({ type = "CLIENT" }) {
+    const queryClient = useQueryClient();
     const [partners, setPartners] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -10,6 +12,7 @@ export default function PartnerDirectory({ type = "CLIENT" }) {
 
     const endpoint = type === 'CLIENT' ? '/v2/partners/clients' : '/v2/partners/suppliers';
     const title = type === 'CLIENT' ? 'Annuaire Clients' : 'Annuaire Fournisseurs';
+    const queryKey = type === 'CLIENT' ? ['partners', 'clients'] : ['partners', 'suppliers'];
 
     const fetchPartners = async () => {
         try {
@@ -36,6 +39,7 @@ export default function PartnerDirectory({ type = "CLIENT" }) {
                 await api.post(endpoint, data);
             }
             fetchPartners();
+            queryClient.invalidateQueries({ queryKey });
             setIsModalOpen(false);
             setEditingPartner(null);
         } catch (error) {
@@ -48,6 +52,7 @@ export default function PartnerDirectory({ type = "CLIENT" }) {
         try {
             await api.delete(`${endpoint}/${id}`);
             fetchPartners();
+            queryClient.invalidateQueries({ queryKey });
         } catch (error) {
             alert("Erreur lors de la suppression.");
         }
