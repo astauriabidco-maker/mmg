@@ -173,6 +173,96 @@ def test_free_sale_validation_reserves_stock_without_physical_debit(stock_client
     assert variant.quantity_in_stock == 5
 
 
+def test_free_sale_full_signature_flow_reserves_stock_without_debit(stock_client):
+    client, TestingSessionLocal = stock_client
+    headers = _admin_headers()
+
+    with TestingSessionLocal() as db:
+        variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)
+
+    create_response = client.post(
+        "/v2/sales/",
+        headers=headers,
+        json={
+            "client_name": "Client devis libre réel",
+            "client_contact": "Responsable achat",
+            "client_email": "client@example.test",
+            "client_address": "1 rue du Stock, 75000 Paris",
+            "workflow_type": "FREE_SALE",
+            "validity_days": 30,
+            "tax_rate": 20,
+            "currency": "EUR",
+            "lines": [
+                {
+                    "line_type": "stock",
+                    "variant_id": variant_id,
+                    "description": "Poignée baie catalogue",
+                    "quantity": 2,
+                    "unit_price": 25,
+                    "discount_pct": 0,
+                },
+                {
+                    "line_type": "service",
+                    "variant_id": None,
+                    "description": "Prestation SAV",
+                    "quantity": 1,
+                    "unit_price": 80,
+                    "discount_pct": 0,
+                },
+            ],
+        },
+    )
+    assert create_response.status_code == 200, create_response.text
+    sale = create_response.json()
+    assert sale["status"] == "DRAFT"
+    assert [line["line_type"] for line in sale["lines"]] == ["STOCK_ITEM", "SERVICE"]
+
+    sent_response = client.put(
+        f"/v2/sales/{sale['id']}/status",
+        params={"status": "SENT"},
+        headers=headers,
+    )
+    assert sent_response.status_code == 200, sent_response.text
+
+    refreshed_response = client.get(f"/v2/sales/{sale['id']}", headers=headers)
+    assert refreshed_response.status_code == 200, refreshed_response.text
+    signature_token = refreshed_response.json()["signature_token"]
+    assert signature_token
+
+    sign_response = client.post(f"/v2/sales/portal/{signature_token}/sign")
+    assert sign_response.status_code == 200, sign_response.text
+    assert sign_response.json()["commercial_reservation_id"]
+
+    with TestingSessionLocal() as db:
+        reservation = db.query(models.StockReservation).one()
+        reservation_line = db.query(models.StockReservationLine).one()
+        quant = db.query(models.StockQuant).one()
+        variant = db.query(models.ProductVariant).one()
+        move_count = db.query(models.StockMove).count()
+        invoice_count = db.query(models.Invoice).count()
+
+    assert reservation.reference.startswith("RSV-COM")
+    assert reservation.sale_order_id == sale["id"]
+    assert reservation.production_order_id is None
+    assert reservation.source_label == "devis libre"
+    assert reservation.status == "reserved"
+    assert reservation_line.variant_id == variant_id
+    assert reservation_line.requested_quantity == 2
+    assert reservation_line.reserved_quantity == 2
+    assert quant.quantity == 5
+    assert variant.quantity_in_stock == 5
+    assert move_count == 0
+    assert invoice_count == 1
+
+    products_response = client.get("/v2/stock/products", headers=headers)
+    assert products_response.status_code == 200, products_response.text
+    [product] = products_response.json()
+    [variant_payload] = product["variants"]
+    assert variant_payload["quantity_in_stock"] == 5
+    assert variant_payload["reserved_quantity"] == 2
+    assert variant_payload["available_quantity"] == 3
+
+
 def test_free_sale_cancellation_releases_commercial_reservation(stock_client):
     client, TestingSessionLocal = stock_client
     headers = _admin_headers()
