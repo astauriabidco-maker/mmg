@@ -363,6 +363,29 @@ export default function SalesDashboard() {
     };
 
     const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+    const formatDate = (value) => value ? new Date(value).toLocaleDateString('fr-FR') : '-';
+    const getLineTypeLabel = (lineType) => (lineType === 'STOCK_ITEM' ? 'Article stock' : 'Prestation');
+    const getLineTypeClass = (lineType) => (
+        lineType === 'STOCK_ITEM'
+            ? 'bg-blue-50 text-blue-700 border-blue-100'
+            : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+    );
+    const getReservationStatusClass = (status) => {
+        if (status === 'reserved') return 'bg-amber-50 text-amber-700 border-amber-100';
+        if (status === 'consumed') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+        if (status === 'cancelled') return 'bg-slate-100 text-slate-500 border-slate-200';
+        return 'bg-blue-50 text-blue-700 border-blue-100';
+    };
+    const getReservationStatusLabel = (status) => {
+        if (status === 'reserved') return 'Réservée';
+        if (status === 'consumed') return 'Consommée';
+        if (status === 'cancelled') return 'Annulée';
+        return status || 'Inconnu';
+    };
+    const getReservationLineSourceId = (source) => {
+        const match = String(source || '').match(/^sale_order_line:(\d+)$/);
+        return match ? Number(match[1]) : null;
+    };
     const stockProductsErrorStatus = stockProductsError?.response?.status;
     const stockProductsErrorDetail = stockProductsError?.response?.data?.detail || stockProductsError?.message || "Erreur inconnue";
 
@@ -668,6 +691,119 @@ export default function SalesDashboard() {
         }
     };
 
+    const saleCycleSteps = [
+        { key: 'draft', label: 'Brouillon', statuses: ['DRAFT'] },
+        { key: 'sent', label: 'Envoyé', statuses: ['SENT'] },
+        { key: 'validated', label: 'Signé/Validé', statuses: ['VALIDATED', 'IN_DESIGN'] },
+        { key: 'reserved', label: 'Réservé', statuses: ['READY_FOR_PROD', 'IN_PRODUCTION'] },
+        { key: 'billed', label: 'Facturé/Acompte', statuses: ['DELIVERED'] }
+    ];
+
+    const getSaleCycleState = (sale) => {
+        if (!sale) return { activeIndex: 0, isCancelled: false, hasStockLines: false, hasReservedLines: false };
+
+        const hasStockLines = (sale.lines || []).some(line => line.line_type === 'STOCK_ITEM' || line.variant_id);
+        const hasReservedLines = (sale.lines || []).some(line => Number(line.reserved_quantity || 0) > 0);
+        const statusIndex = saleCycleSteps.findIndex(step => step.statuses.includes(sale.status));
+        let activeIndex = statusIndex >= 0 ? statusIndex : 0;
+
+        if (hasReservedLines || ['READY_FOR_PROD', 'IN_PRODUCTION'].includes(sale.status)) {
+            activeIndex = Math.max(activeIndex, 3);
+        }
+        if (sale.status === 'DELIVERED') {
+            activeIndex = 4;
+        }
+
+        return {
+            activeIndex,
+            isCancelled: sale.status === 'CANCELLED',
+            hasStockLines,
+            hasReservedLines
+        };
+    };
+
+    const getSaleCycleCaption = (sale, stepKey) => {
+        const cycle = getSaleCycleState(sale);
+        if (cycle.isCancelled) return "Cycle interrompu";
+        if (stepKey === 'reserved') {
+            if (!cycle.hasStockLines) return "Sans stock";
+            return cycle.hasReservedLines || cycle.activeIndex >= 3 ? "Stock bloqué" : "À réserver";
+        }
+        if (stepKey === 'billed') {
+            return sale?.status === 'DELIVERED' ? "Terminé" : "À venir";
+        }
+        if (stepKey === 'validated' && sale?.signed_at) return "Signature client";
+        return cycle.activeIndex >= saleCycleSteps.findIndex(step => step.key === stepKey) ? "OK" : "À venir";
+    };
+
+    const SaleCycleIndicator = ({ sale, compact = false }) => {
+        const cycle = getSaleCycleState(sale);
+        const activeStep = saleCycleSteps[cycle.activeIndex] || saleCycleSteps[0];
+
+        if (compact) {
+            return (
+                <div className="mt-3">
+                    <div className="flex items-center gap-1.5">
+                        {saleCycleSteps.map((step, idx) => {
+                            const isDone = !cycle.isCancelled && idx <= cycle.activeIndex;
+                            const isActive = idx === cycle.activeIndex;
+                            return (
+                                <div
+                                    key={step.key}
+                                    title={step.label}
+                                    className={`h-1.5 flex-1 rounded-full ${cycle.isCancelled ? 'bg-red-200' : isDone ? (isActive ? 'bg-blue-600' : 'bg-emerald-400') : 'bg-slate-200'}`}
+                                />
+                            );
+                        })}
+                    </div>
+                    <p className={`mt-1 text-[10px] font-black uppercase tracking-widest ${cycle.isCancelled ? 'text-red-500' : 'text-slate-400'}`}>
+                        {cycle.isCancelled ? 'Annulé' : activeStep.label}
+                    </p>
+                </div>
+            );
+        }
+
+        return (
+            <div className="px-8 py-6 border-b border-slate-100 bg-white">
+                <div className="flex items-center justify-between mb-4">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Cycle devis</p>
+                        <p className="text-sm font-bold text-slate-600">Lecture rapide du passage commercial jusqu'à la réservation et la facturation.</p>
+                    </div>
+                    {cycle.isCancelled && (
+                        <span className="text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg bg-red-100 text-red-700 border border-red-200">
+                            Cycle interrompu
+                        </span>
+                    )}
+                </div>
+                <div className="grid grid-cols-5 gap-2">
+                    {saleCycleSteps.map((step, idx) => {
+                        const isDone = !cycle.isCancelled && idx < cycle.activeIndex;
+                        const isActive = !cycle.isCancelled && idx === cycle.activeIndex;
+                        const isFuture = !cycle.isCancelled && idx > cycle.activeIndex;
+                        return (
+                            <div
+                                key={step.key}
+                                className={`rounded-2xl border p-3 min-h-[86px] ${isActive ? 'bg-blue-50 border-blue-200 shadow-sm' : isDone ? 'bg-emerald-50 border-emerald-100' : cycle.isCancelled ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-200'}`}
+                            >
+                                <div className="flex items-center gap-2 mb-2">
+                                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black ${isActive ? 'bg-blue-600 text-white' : isDone ? 'bg-emerald-500 text-white' : cycle.isCancelled ? 'bg-red-200 text-red-700' : 'bg-slate-200 text-slate-500'}`}>
+                                        {isDone ? <CheckCircle className="w-3.5 h-3.5" /> : idx + 1}
+                                    </span>
+                                    <span className={`text-[10px] font-black uppercase tracking-widest ${isActive ? 'text-blue-700' : isDone ? 'text-emerald-700' : cycle.isCancelled ? 'text-red-600' : 'text-slate-400'}`}>
+                                        {isActive ? 'En cours' : isDone ? 'Fait' : isFuture ? 'À venir' : 'Arrêt'}
+                                    </span>
+                                </div>
+                                <p className="text-sm font-black text-slate-900 leading-tight">{step.label}</p>
+                                <p className="text-xs font-bold text-slate-500 mt-1">{getSaleCycleCaption(sale, step.key)}</p>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    };
+
     const filteredSales = sales.filter(s => 
         s.reference.toLowerCase().includes(searchTerm.toLowerCase()) || 
         s.client_name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -834,6 +970,7 @@ export default function SalesDashboard() {
                                                         <span className={`inline-block mt-3 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getWorkflowBadgeClass(sale.workflow_type)}`}>
                                                             {getWorkflowLabel(sale.workflow_type)}
                                                         </span>
+                                                        <SaleCycleIndicator sale={sale} compact />
                                                     </div>
                                                 )
                                             })}
@@ -877,6 +1014,7 @@ export default function SalesDashboard() {
                                             <span className={`inline-block mt-3 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getWorkflowBadgeClass(sale.workflow_type)}`}>
                                                 {getWorkflowLabel(sale.workflow_type)}
                                             </span>
+                                            <SaleCycleIndicator sale={sale} compact />
                                         </div>
                                     );
                                 })}
@@ -958,6 +1096,8 @@ export default function SalesDashboard() {
                                 </button>
                             </div>
 
+                            <SaleCycleIndicator sale={selectedSale} />
+
                             {/* CLIENT DETAILS */}
                             <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
                                 <div>
@@ -1023,12 +1163,13 @@ export default function SalesDashboard() {
 
                             {/* LINES */}
                             <div className="px-8 pb-8">
-                                <h4 className="font-black text-xs text-slate-400 uppercase tracking-widest mb-4">Détail des Prestations</h4>
+                                <h4 className="font-black text-xs text-slate-400 uppercase tracking-widest mb-4">Détail du devis</h4>
                                 <div className="overflow-x-auto">
                                 <table className="w-full text-left border-collapse">
                                     <thead className="bg-slate-50 border-b border-slate-200">
                                         <tr>
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest w-1/2">Description</th>
+                                            <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Type</th>
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Qté</th>
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Prix Unitaire</th>
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Total HT</th>
@@ -1058,6 +1199,15 @@ export default function SalesDashboard() {
                                                             </div>
                                                         )}
                                                     </td>
+                                                    <td className="py-4 px-4">
+                                                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${getLineTypeClass(line.line_type)}`}>
+                                                            {line.line_type === 'STOCK_ITEM' ? <Package className="w-3 h-3" /> : <Wrench className="w-3 h-3" />}
+                                                            {getLineTypeLabel(line.line_type)}
+                                                        </span>
+                                                        {line.variant?.reference && (
+                                                            <p className="mt-1 text-[10px] font-bold text-slate-400">{line.variant.reference}</p>
+                                                        )}
+                                                    </td>
                                                     <td className="py-4 px-4 text-center font-black text-blue-600">{line.quantity}</td>
                                                     <td className="py-4 px-4 text-right font-mono text-slate-600">{line.unit_price.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</td>
                                                     <td className="py-4 px-4 text-right font-black text-slate-900">{(line.quantity * line.unit_price * (1 - line.discount_pct / 100)).toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</td>
@@ -1067,6 +1217,107 @@ export default function SalesDashboard() {
                                     </tbody>
                                 </table>
                                 </div>
+
+                                {(selectedSale.workflow_type === 'FREE_SALE' || selectedSale.reservations?.length > 0 || selectedSale.invoices?.length > 0) && (
+                                    <div className="mt-6 bg-slate-50 border border-slate-200 rounded-2xl p-5">
+                                        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-5">
+                                            <div>
+                                                <h4 className="font-black text-xs text-slate-500 uppercase tracking-widest">Traçabilité devis libre</h4>
+                                                <p className="text-sm font-semibold text-slate-500 mt-1">Réservations commerciales, lignes stock réservées et facture rattachée.</p>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                <span className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                                    {selectedSale.lines?.filter(line => line.line_type === 'STOCK_ITEM').length || 0} article(s) stock
+                                                </span>
+                                                <span className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                                    {selectedSale.lines?.filter(line => line.line_type !== 'STOCK_ITEM').length || 0} prestation(s)
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                            <div className="bg-white border border-slate-200 rounded-xl p-4">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Réservations</p>
+                                                    <span className="text-xs font-black text-slate-600">{selectedSale.reservations?.length || 0}</span>
+                                                </div>
+                                                {selectedSale.reservations?.length > 0 ? (
+                                                    <div className="space-y-3">
+                                                        {selectedSale.reservations.map(reservation => {
+                                                            const totalReserved = reservation.lines?.reduce((sum, line) => sum + Number(line.reserved_quantity || 0), 0) || 0;
+                                                            return (
+                                                                <div key={reservation.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                                                                    <div className="flex items-start justify-between gap-3">
+                                                                        <div>
+                                                                            <p className="text-sm font-black text-slate-900">{reservation.reference}</p>
+                                                                            <p className="text-[11px] font-bold text-slate-500">{reservation.source_label || 'Source non renseignée'} - {formatDate(reservation.created_at)}</p>
+                                                                        </div>
+                                                                        <span className={`px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${getReservationStatusClass(reservation.status)}`}>
+                                                                            {getReservationStatusLabel(reservation.status)}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="mt-3 space-y-2">
+                                                                        {reservation.lines?.map(line => {
+                                                                            const sourceLineId = getReservationLineSourceId(line.source);
+                                                                            const saleLine = selectedSale.lines?.find(item => item.id === sourceLineId);
+                                                                            return (
+                                                                                <div key={line.id} className="flex items-center justify-between gap-3 text-xs bg-white border border-slate-100 rounded-lg px-3 py-2">
+                                                                                    <div>
+                                                                                        <p className="font-black text-slate-800">{line.supplier_reference || line.variant?.reference || line.designation || 'Référence stock'}</p>
+                                                                                        <p className="font-semibold text-slate-400">{saleLine?.description || line.designation || 'Ligne stock réservée'}</p>
+                                                                                    </div>
+                                                                                    <div className="text-right">
+                                                                                        <p className="font-black text-amber-700">{Number(line.reserved_quantity || 0).toLocaleString('fr-FR')} {line.unit || saleLine?.variant?.product?.unit || ''}</p>
+                                                                                        <p className="font-semibold text-slate-400">sur {Number(line.requested_quantity || 0).toLocaleString('fr-FR')} demandé</p>
+                                                                                    </div>
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                    <p className="mt-3 text-[11px] font-black text-slate-500 uppercase tracking-widest">{totalReserved.toLocaleString('fr-FR')} unité(s) réservée(s)</p>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-sm font-bold text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4">Aucune réservation commerciale rattachée pour l’instant.</p>
+                                                )}
+                                            </div>
+
+                                            <div className="bg-white border border-slate-200 rounded-xl p-4">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Facturation</p>
+                                                    <span className="text-xs font-black text-slate-600">{selectedSale.invoices?.length || 0}</span>
+                                                </div>
+                                                {selectedSale.invoices?.length > 0 ? (
+                                                    <div className="space-y-3">
+                                                        {selectedSale.invoices.map(invoice => (
+                                                            <div key={invoice.id} className="flex items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50 p-3">
+                                                                <div>
+                                                                    <p className="text-sm font-black text-slate-900">{invoice.reference}</p>
+                                                                    <p className="text-[11px] font-bold text-slate-500">{formatDate(invoice.issue_date)} - {invoice.status}</p>
+                                                                </div>
+                                                                <div className="text-right">
+                                                                    <p className="text-sm font-black text-slate-900">{formatMoney(invoice.total)}</p>
+                                                                    <a
+                                                                        href={`${api.defaults.baseURL}/v2/pdf/invoice/${invoice.id}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="text-[11px] font-black text-blue-600 hover:text-blue-800"
+                                                                    >
+                                                                        PDF facture
+                                                                    </a>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-sm font-bold text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4">Aucune facture générée pour ce devis.</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                                 
                                 {selectedSale.notes && (
                                     <div className="mt-6 bg-yellow-50/50 border border-yellow-100 p-4 rounded-xl flex gap-3">
@@ -1117,7 +1368,23 @@ export default function SalesDashboard() {
                         )}
 
                         {/* VALIDATED ACTION */}
-                        {selectedSale.status === 'VALIDATED' && (
+                        {selectedSale.status === 'VALIDATED' && (selectedSale.workflow_type || 'FREE_SALE') === 'FREE_SALE' && (
+                            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm mb-8">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                    <div>
+                                        <h3 className="font-black text-xl text-slate-900 mb-1">Devis libre signé</h3>
+                                        <p className="text-sm font-medium text-slate-500">
+                                            Ce devis concerne des pièces, accessoires, prestations ou SAV. Il reste hors workflow fabrication atelier.
+                                        </p>
+                                    </div>
+                                    <span className="bg-slate-100 text-slate-700 border border-slate-200 px-4 py-2 rounded-xl font-black text-xs uppercase">
+                                        Pas de métré atelier
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        {selectedSale.status === 'VALIDATED' && (selectedSale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' && (
                             <div className="bg-gradient-to-r from-emerald-600 to-teal-600 rounded-2xl p-6 text-white flex flex-col md:flex-row justify-between items-center gap-4 shadow-lg shadow-emerald-500/20 mb-8">
                                 <div>
                                     <h3 className="font-black text-xl mb-1">Bon de Commande Signé !</h3>
@@ -1253,7 +1520,7 @@ export default function SalesDashboard() {
                         )}
 
                         {/* IN_DESIGN ACTION */}
-                        {selectedSale.status === 'IN_DESIGN' && (
+                        {selectedSale.status === 'IN_DESIGN' && (selectedSale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' && (
                             <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg shadow-purple-500/20 mb-8">
                                 <div className="flex justify-between items-start mb-4">
                                     <div>
@@ -1278,7 +1545,7 @@ export default function SalesDashboard() {
                         )}
 
                         {/* READY_FOR_PROD ACTION */}
-                        {selectedSale.status === 'READY_FOR_PROD' && (
+                        {selectedSale.status === 'READY_FOR_PROD' && (selectedSale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' && (
                             <div className="bg-gradient-to-r from-amber-500 to-yellow-500 rounded-2xl p-6 text-white flex flex-col md:flex-row justify-between items-center gap-4 shadow-lg shadow-amber-500/20 mb-8">
                                 <div>
                                     <h3 className="font-black text-xl mb-1">Dossier Prêt & Stock Réservé</h3>

@@ -534,6 +534,14 @@ class SaleOrderLineSchema(BaseModel):
     available_quantity: float = 0.0
     model_config = ConfigDict(from_attributes=True)
 
+class SaleInvoiceSummary(BaseModel):
+    id: int
+    reference: str
+    issue_date: datetime
+    status: str
+    total: float
+    model_config = ConfigDict(from_attributes=True)
+
 class SaleOrderSchema(BaseModel):
     id: int
     reference: str
@@ -555,6 +563,8 @@ class SaleOrderSchema(BaseModel):
     signed_by_ip: Optional[str]
     lines: List[SaleOrderLineSchema] = []
     mmg_dossiers: List[MMGResponse] = []
+    reservations: List[StockReservationResponse] = []
+    invoices: List[SaleInvoiceSummary] = []
     model_config = ConfigDict(from_attributes=True)
 
 # --- FACTURATION ---

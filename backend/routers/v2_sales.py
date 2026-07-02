@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Tuple
@@ -129,6 +130,27 @@ def _load_sale(db: Session, order_id: int) -> Optional[models.SaleOrder]:
     )
 
 
+def _attach_sale_traceability(db: Session, sale: models.SaleOrder) -> models.SaleOrder:
+    sale.reservations = (
+        db.query(models.StockReservation)
+        .options(
+            joinedload(models.StockReservation.lines)
+            .joinedload(models.StockReservationLine.variant)
+            .joinedload(models.ProductVariant.product)
+        )
+        .filter(models.StockReservation.sale_order_id == sale.id)
+        .order_by(models.StockReservation.created_at.desc())
+        .all()
+    )
+    sale.invoices = (
+        db.query(models.Invoice)
+        .filter(models.Invoice.sale_order_id == sale.id)
+        .order_by(models.Invoice.issue_date.desc())
+        .all()
+    )
+    return sale
+
+
 def _create_commercial_reservation_if_validated(
     db: Session,
     sale: models.SaleOrder,
@@ -158,7 +180,10 @@ def _sale_has_measure_context(sale: models.SaleOrder) -> bool:
     return bool(sale.mmg_dossiers)
 
 
-def _ensure_sale_can_prepare_workshop(sale: models.SaleOrder) -> None:
+def _ensure_sale_can_prepare_workshop(
+    sale: models.SaleOrder,
+    allowed_statuses: Optional[set[str]] = None,
+) -> None:
     workflow_type = _normalise_sale_workflow_type(getattr(sale, "workflow_type", None))
     if workflow_type == "FREE_SALE":
         raise HTTPException(
@@ -169,6 +194,12 @@ def _ensure_sale_can_prepare_workshop(sale: models.SaleOrder) -> None:
         raise HTTPException(
             status_code=400,
             detail="Un pré-devis fabrication doit être rattaché à un métré avant préparation atelier.",
+        )
+    if allowed_statuses and sale.status not in allowed_statuses:
+        readable_statuses = ", ".join(sorted(allowed_statuses))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Préparation atelier autorisée uniquement pour les statuts: {readable_statuses}.",
         )
 
 def _material_from_text(value: Optional[str]) -> Optional[str]:
@@ -261,15 +292,26 @@ def _ensure_first_planning_step(db: Session, order: models.Order) -> None:
     )
 
 def _link_active_reservations_to_order(db: Session, sale_id: int, order: models.Order) -> int:
-    reservations = db.query(models.StockReservation).filter(
+    reservations = _active_workshop_reservations_for_sale(db, sale_id).filter(
         models.StockReservation.sale_order_id == sale_id,
-        models.StockReservation.status == "reserved",
         models.StockReservation.production_order_id.is_(None),
     ).all()
     for reservation in reservations:
         reservation.production_order_id = order.id
         reservation.order_reference = order.reference
     return len(reservations)
+
+def _active_workshop_reservations_for_sale(db: Session, sale_id: int):
+    return db.query(models.StockReservation).join(models.StockReservation.lines).filter(
+        models.StockReservation.sale_order_id == sale_id,
+        models.StockReservation.status == "reserved",
+        models.StockReservationLine.status == "reserved",
+        models.StockReservationLine.reserved_quantity > 0,
+        or_(
+            models.StockReservation.source_label.is_(None),
+            ~models.StockReservation.source_label.in_(["devis libre", "devis_libre"]),
+        ),
+    ).distinct()
 
 async def _parse_workshop_uploads(files: List[UploadFile]):
     records = []
@@ -541,6 +583,7 @@ def get_sale_order(order_id: int, db: Session = Depends(get_db)):
     if not order:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
     annotate_sale_availability(db, order)
+    _attach_sale_traceability(db, order)
     return order
 
 @router.post("/{order_id}/prepare-workshop/preview", dependencies=AUTH_DEPENDENCIES)
@@ -553,7 +596,7 @@ async def preview_sale_workshop_preparation(
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
-    _ensure_sale_can_prepare_workshop(sale)
+    _ensure_sale_can_prepare_workshop(sale, allowed_statuses={"IN_DESIGN", "VALIDATED"})
     records, issues, _source_names = await _parse_workshop_uploads(files)
     return build_preview_payload(
         db,
@@ -577,9 +620,7 @@ async def reserve_sale_workshop_preparation(
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
-    _ensure_sale_can_prepare_workshop(sale)
-    if sale.status not in ["VALIDATED", "IN_DESIGN", "READY_FOR_PROD"]:
-        raise HTTPException(status_code=400, detail="Préparation atelier possible uniquement après validation du devis.")
+    _ensure_sale_can_prepare_workshop(sale, allowed_statuses={"IN_DESIGN", "VALIDATED"})
 
     records, issues, source_names = await _parse_workshop_uploads(files)
     blocking_errors = [issue for issue in issues if issue.severity == "error"]
@@ -667,6 +708,10 @@ def get_quote_by_token(token: str, db: Session = Depends(get_db)):
         "client_email": order.client_email,
         "client_address": order.client_address,
         "status": order.status,
+        "validity_days": order.validity_days,
+        "tax_rate": order.tax_rate,
+        "currency": order.currency,
+        "notes": order.notes,
         "created_at": order.created_at,
         "signed_at": order.signed_at,
         "lines": [
@@ -779,6 +824,13 @@ def launch_production(order_id: int, db: Session = Depends(get_db)):
             "existing_orders": len(existing_orders),
             "linked_reservations": linked_reservations,
         }
+
+    active_workshop_reservations = _active_workshop_reservations_for_sale(db, sale.id).count()
+    if active_workshop_reservations == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Transmettre à l'atelier nécessite une réservation atelier active. Préparez l'atelier et réservez le stock avant lancement.",
+        )
 
     specs = _fabricable_specs_from_sale(sale)
     if not specs:

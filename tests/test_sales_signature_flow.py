@@ -1,7 +1,9 @@
 import pytest
 import sys
+from io import BytesIO
 from fastapi.testclient import TestClient
 from pathlib import Path
+from pypdf import PdfReader
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -163,3 +165,57 @@ def test_sales_signature_flow_creates_invoice_from_public_portal(client: TestCli
         "Baie coulissante aluminium",
         "Motorisation volet",
     ]
+
+
+def test_quote_pdf_contains_client_totals_status_and_conditions(client: TestClient):
+    admin_headers = _admin_headers(client)
+
+    create_response = client.post(
+        "/v2/sales/",
+        json={
+            "client_name": "Client PDF Libre",
+            "client_contact": "Claire Client",
+            "client_email": "claire@example.test",
+            "client_address": "8 avenue des Tests, 69000 Lyon",
+            "validity_days": 14,
+            "tax_rate": 5.5,
+            "currency": "EUR",
+            "notes": "Livraison sur rendez-vous.",
+            "lines": [
+                {
+                    "line_type": "service",
+                    "variant_id": None,
+                    "description": "Intervention SAV catalogue",
+                    "quantity": 2,
+                    "unit_price": 100.0,
+                    "discount_pct": 10,
+                    "visual_config": None,
+                },
+            ],
+        },
+        headers=admin_headers,
+    )
+    assert create_response.status_code == 200, create_response.text
+    sale = create_response.json()
+
+    pdf_response = client.get(f"/v2/pdf/quote/{sale['id']}")
+    assert pdf_response.status_code == 200, pdf_response.text
+    assert pdf_response.headers["content-type"] == "application/pdf"
+    assert "Devis_" in pdf_response.headers["content-disposition"]
+
+    reader = PdfReader(BytesIO(pdf_response.content))
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+
+    assert "DEVIS CLIENT" in text
+    assert sale["reference"] in text
+    assert "Client PDF Libre" in text
+    assert "Brouillon" in text
+    assert "Prestation" in text
+    assert "Intervention SAV catalogue" in text
+    assert "10 %" in text
+    assert "TVA" in text
+    assert "5,5" in text
+    assert "Validité du devis: 14 jours" in text
+    assert "Livraison sur rendez-vous." in text
+    assert "180,00 EUR" in text
+    assert "189,90 EUR" in text

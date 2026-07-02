@@ -293,6 +293,22 @@ def test_free_sale_full_signature_flow_reserves_stock_without_debit(stock_client
     assert service_product["variants"][0]["quantity_in_stock"] == 0
     assert service_product["variants"][0]["reserved_quantity"] == 0
 
+    detail_response = client.get(f"/v2/sales/{sale['id']}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    detail = detail_response.json()
+    assert len(detail["reservations"]) == 1
+    assert detail["reservations"][0]["reference"].startswith("RSV-COM")
+    assert detail["reservations"][0]["sale_order_id"] == sale["id"]
+    assert detail["reservations"][0]["source_label"] == "devis libre"
+    assert detail["reservations"][0]["status"] == "reserved"
+    assert len(detail["reservations"][0]["lines"]) == 1
+    assert detail["reservations"][0]["lines"][0]["variant_id"] == variant_id
+    assert detail["reservations"][0]["lines"][0]["reserved_quantity"] == 2
+    assert detail["reservations"][0]["lines"][0]["source"].startswith("sale_order_line:")
+    assert len(detail["invoices"]) == 1
+    assert detail["invoices"][0]["reference"].startswith("F-")
+    assert detail["invoices"][0]["total"] == 156
+
 
 def test_free_sale_cancellation_releases_commercial_reservation(stock_client):
     client, TestingSessionLocal = stock_client

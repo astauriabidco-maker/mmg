@@ -55,9 +55,25 @@ export default function ClientPortal() {
         </div>
     );
 
-    const totalHT = quote.lines.reduce((sum, l) => sum + (l.quantity * l.unit_price), 0);
-    const tva = totalHT * 0.20;
+    const currency = quote.currency || 'EUR';
+    const taxRate = Number(quote.tax_rate ?? 20);
+    const totalHT = quote.lines.reduce((sum, l) => sum + (l.quantity * l.unit_price * (1 - (l.discount_pct || 0) / 100)), 0);
+    const tva = totalHT * (taxRate / 100);
     const totalTTC = totalHT + tva;
+    const formatMoney = (value) => value.toLocaleString('fr-FR', {style: 'currency', currency});
+    const statusLabels = {
+        DRAFT: 'Brouillon',
+        SENT: 'Envoyé',
+        VALIDATED: 'Signé',
+        ACCEPTED: 'Accepté',
+        CANCELLED: 'Annulé',
+        IN_DESIGN: "Bureau d'études",
+        READY_FOR_PROD: 'Prêt pour production',
+        IN_PRODUCTION: 'En production'
+    };
+    const validUntil = quote.created_at
+        ? new Date(new Date(quote.created_at).getTime() + Number(quote.validity_days || 30) * 24 * 60 * 60 * 1000)
+        : null;
 
     return (
         <div className="min-h-screen bg-slate-50 font-sans py-12 px-4">
@@ -80,10 +96,15 @@ export default function ClientPortal() {
                             <div>
                                 <h2 className="text-2xl font-black mb-1">Devis {quote.reference}</h2>
                                 <p className="text-blue-200 font-medium">{quote.client_name}</p>
+                                <p className="text-slate-300 font-bold text-xs uppercase tracking-widest mt-3">
+                                    Statut : {statusLabels[quote.status] || quote.status} · Validité : {quote.validity_days || 30} jours
+                                    {validUntil ? ` · Jusqu'au ${validUntil.toLocaleDateString('fr-FR')}` : ''}
+                                </p>
                             </div>
                             <div className="text-right">
                                 <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Montant TTC</p>
-                                <p className="text-4xl font-black">{totalTTC.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</p>
+                                <p className="text-4xl font-black">{formatMoney(totalTTC)}</p>
+                                <p className="text-xs font-bold text-slate-300 mt-2">HT {formatMoney(totalHT)} · TVA {taxRate}%</p>
                             </div>
                         </div>
                     </div>
@@ -133,11 +154,15 @@ export default function ClientPortal() {
                                         )}
                                         <div className="flex-1">
                                             <h4 className="font-black text-slate-800 text-lg">{line.description}</h4>
-                                            <p className="text-slate-500 font-medium text-sm mt-1">Quantité : <span className="text-slate-700 font-bold">{line.quantity}</span></p>
+                                            <p className="text-slate-500 font-medium text-sm mt-1">
+                                                <span className="text-slate-700 font-bold">{line.line_type === 'STOCK_ITEM' ? 'Article stock' : 'Prestation'}</span>
+                                                {' · '}Quantité : <span className="text-slate-700 font-bold">{line.quantity}</span>
+                                                {line.discount_pct ? <> · Remise : <span className="text-slate-700 font-bold">{line.discount_pct}%</span></> : null}
+                                            </p>
                                         </div>
                                         <div className="text-right shrink-0">
-                                            <p className="font-mono text-slate-400 text-sm">{line.unit_price.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})} / u</p>
-                                            <p className="font-black text-slate-900 text-xl">{(line.quantity * line.unit_price * (1 - line.discount_pct/100)).toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</p>
+                                            <p className="font-mono text-slate-400 text-sm">{formatMoney(line.unit_price)} / u</p>
+                                            <p className="font-black text-slate-900 text-xl">{formatMoney(line.quantity * line.unit_price * (1 - (line.discount_pct || 0)/100))}</p>
                                         </div>
                                     </div>
                                 );
@@ -156,7 +181,7 @@ export default function ClientPortal() {
                             <p>Les présentes conditions générales de vente régissent les droits et obligations des parties dans le cadre de la vente des menuiseries métalliques fabriquées par MMG. Toute commande implique l'adhésion sans réserve de l'acheteur aux présentes CGV.</p>
                             
                             <p className="font-bold text-slate-800">Article 2 - Commandes et Validité des devis</p>
-                            <p>Le devis est valable pour une durée de 30 jours à compter de sa date d'émission. La commande ne devient définitive qu'après signature électronique du devis et versement d'un acompte de 50%, sauf dérogation expresse.</p>
+                            <p>Le devis est valable pour une durée de {quote.validity_days || 30} jours à compter de sa date d'émission. La commande ne devient définitive qu'après signature électronique du devis et versement d'un acompte de 50%, sauf dérogation expresse.</p>
                             
                             <p className="font-bold text-slate-800">Article 3 - Délais et Livraison</p>
                             <p>Les délais de fabrication (indiqués à titre indicatif) courent à partir de la réception de l'acompte et de la prise de côtes définitive sur chantier. MMG ne saurait être tenue responsable des retards liés à des cas de force majeure ou des ruptures d'approvisionnement fournisseurs.</p>

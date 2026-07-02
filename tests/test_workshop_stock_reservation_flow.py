@@ -390,6 +390,19 @@ def test_launch_production_is_idempotent_and_links_reservation_to_order():
                 created_by="test",
             )
             db.add(reservation)
+            db.flush()
+            db.add(
+                models.StockReservationLine(
+                    reservation_id=reservation.id,
+                    supplier="CORTIZO",
+                    supplier_reference="2000",
+                    designation="Profil atelier",
+                    unit="barre",
+                    requested_quantity=1,
+                    reserved_quantity=1,
+                    status="reserved",
+                )
+            )
             db.commit()
             sale_id = sale.id
             line_id = line.id
@@ -424,6 +437,120 @@ def test_launch_production_is_idempotent_and_links_reservation_to_order():
         assert len(plans) == 1
         assert reservation_db.production_order_id == order.id
         assert reservation_db.order_reference == order.reference
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_sale_workshop_preview_rejects_wrong_sales_status():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        with TestingSessionLocal() as db:
+            sale = models.SaleOrder(
+                reference="DEV-FAB-DRAFT",
+                client_name="Client fabrication brouillon",
+                status="DRAFT",
+                workflow_type="FABRICATION_FROM_MEASURE",
+                tax_rate=20,
+            )
+            db.add(sale)
+            db.commit()
+            sale_id = sale.id
+
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+        content = b"CORTIZO GAMME BASE\r\nVER TEST\r\nRAL;2000;PROFIL;4;barre  6,50\r\n"
+
+        response = client.post(
+            f"/v2/sales/{sale_id}/prepare-workshop/preview",
+            headers=headers,
+            files=[("files", ("SEPVER.TXT", content, "text/plain"))],
+        )
+
+        assert response.status_code == 400
+        assert "Préparation atelier autorisée uniquement" in response.text
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_launch_production_requires_active_workshop_reservation():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        with TestingSessionLocal() as db:
+            sale = models.SaleOrder(
+                reference="DEV-FAB-SANS-RESERVATION",
+                client_name="Client sans réservation",
+                status="READY_FOR_PROD",
+                workflow_type="FABRICATION_FROM_MEASURE",
+                tax_rate=20,
+            )
+            db.add(sale)
+            db.flush()
+            db.add(
+                models.SaleOrderLine(
+                    order_id=sale.id,
+                    description="Chassis ALU",
+                    quantity=1,
+                    unit_price=1000,
+                    visual_config=json.dumps(
+                        {
+                            "type": "Fenêtre",
+                            "width": 1200,
+                            "height": 1400,
+                            "material": "ALU",
+                        }
+                    ),
+                )
+            )
+            db.commit()
+            sale_id = sale.id
+
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = client.post(f"/v2/sales/{sale_id}/launch-production", headers=headers)
+
+        assert response.status_code == 400
+        assert "réservation atelier active" in response.text
+
+        with TestingSessionLocal() as db:
+            assert db.query(models.Order).count() == 0
+            assert db.query(models.Planning).count() == 0
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)
