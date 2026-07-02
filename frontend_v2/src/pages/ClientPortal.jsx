@@ -11,6 +11,7 @@ export default function ClientPortal() {
     const [error, setError] = useState(null);
     const [isSigning, setIsSigning] = useState(false);
     const [signSuccess, setSignSuccess] = useState(false);
+    const [signError, setSignError] = useState(null);
     const [consent, setConsent] = useState(false);
 
     useEffect(() => {
@@ -33,11 +34,18 @@ export default function ClientPortal() {
     const handleSign = async () => {
         if (!consent) return;
         setIsSigning(true);
+        setSignError(null);
         try {
             await api.post(`/v2/sales/portal/${token}/sign`);
+            const refreshed = await api.get(`/v2/sales/portal/${token}`);
+            setQuote(refreshed.data);
             setSignSuccess(true);
         } catch (err) {
-            alert("Une erreur est survenue lors de la signature.");
+            const detail = err.response?.data?.detail;
+            const message = Array.isArray(detail)
+                ? detail.map(item => item.msg || item.message || String(item)).join("\n")
+                : detail || err.message || "Une erreur est survenue lors de la signature.";
+            setSignError(message);
         } finally {
             setIsSigning(false);
         }
@@ -237,6 +245,15 @@ export default function ClientPortal() {
                                     {isSigning ? "Signature en cours..." : "Approuver et Signer"} 
                                     {!isSigning && <CheckCircle2 className="w-6 h-6"/>}
                                 </button>
+                                {signError && (
+                                    <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-sm font-bold text-red-700 flex items-start gap-3">
+                                        <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+                                        <div>
+                                            <p className="font-black">Signature impossible</p>
+                                            <p className="mt-1 whitespace-pre-line">{signError}</p>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>

@@ -90,6 +90,8 @@ def _resolve_sale_line(db: Session, line_req: schemas.SaleOrderLineCreate) -> Tu
         raise HTTPException(status_code=400, detail="La quantité d'une ligne de devis doit être positive.")
     if line_req.discount_pct < 0 or line_req.discount_pct > 100:
         raise HTTPException(status_code=400, detail="La remise d'une ligne doit être comprise entre 0 et 100%.")
+    if line_type == "STOCK_ITEM" and line_req.unit_price <= 0:
+        raise HTTPException(status_code=400, detail="Un article stock doit avoir un prix de vente HT positif avant création du devis.")
 
     variant = None
     if line_type == "STOCK_ITEM" and not line_req.variant_id:
@@ -114,6 +116,22 @@ def _sale_total_amount(sale: models.SaleOrder) -> float:
             for line in sale.lines
         )
     )
+
+
+def _ensure_sale_is_commercially_signable(sale: models.SaleOrder) -> None:
+    zero_priced_stock_lines = [
+        line.description or f"Ligne #{line.id}"
+        for line in sale.lines or []
+        if (line.line_type or "").upper() == "STOCK_ITEM" and (line.unit_price or 0) <= 0
+    ]
+    if zero_priced_stock_lines:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Signature impossible: article stock sans prix de vente HT positif. "
+                + ", ".join(zero_priced_stock_lines[:5])
+            ),
+        )
 
 
 def _load_sale(db: Session, order_id: int) -> Optional[models.SaleOrder]:
@@ -730,12 +748,23 @@ def get_quote_by_token(token: str, db: Session = Depends(get_db)):
 from fastapi import Request
 @router.post("/portal/{token}/sign")
 def sign_quote(token: str, request: Request, db: Session = Depends(get_db)):
-    order = db.query(models.SaleOrder).filter(models.SaleOrder.signature_token == token).first()
+    order = (
+        db.query(models.SaleOrder)
+        .options(
+            joinedload(models.SaleOrder.lines)
+            .joinedload(models.SaleOrderLine.variant)
+            .joinedload(models.ProductVariant.product)
+        )
+        .filter(models.SaleOrder.signature_token == token)
+        .first()
+    )
     if not order:
         raise HTTPException(status_code=404, detail="Lien invalide ou expiré.")
         
     if order.status == "VALIDATED":
         return {"message": "Ce devis est déjà signé."}
+
+    _ensure_sale_is_commercially_signable(order)
         
     client_ip = request.client.host
     # Capture timestamp
@@ -746,10 +775,16 @@ def sign_quote(token: str, request: Request, db: Session = Depends(get_db)):
     order.signed_by_ip = client_ip
     
     order.notes = (order.notes or "") + f"\n[SIGNATURE ÉLECTRONIQUE] Validé par le client le {current_time.strftime('%Y-%m-%d %H:%M:%S')} depuis l'IP: {client_ip}."
+
+    try:
+        reservation = _create_commercial_reservation_if_validated(db, order, actor="Portail client")
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     
     # --- AUTO-GENERATE NF525 INVOICE ---
     # Calculate Totals from Sale Order Lines
-    subtotal = sum(l.unit_price * l.quantity for l in order.lines)
+    subtotal = sum((l.unit_price or 0) * (l.quantity or 0) * (1 - (l.discount_pct or 0) / 100) for l in order.lines)
     tax_rate = order.tax_rate if hasattr(order, 'tax_rate') and order.tax_rate else 20.0
     tax_amount = subtotal * (tax_rate / 100.0)
     total = subtotal + tax_amount
@@ -781,11 +816,6 @@ def sign_quote(token: str, request: Request, db: Session = Depends(get_db)):
         db.add(db_inv_line)
         
     new_invoice.qr_code_hash = compute_qr_seal(new_invoice)
-    try:
-        reservation = _create_commercial_reservation_if_validated(db, order, actor="Portail client")
-    except ValueError as exc:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=str(exc))
     
     db.commit()
     return {

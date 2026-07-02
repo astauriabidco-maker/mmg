@@ -442,6 +442,9 @@ export default function SalesDashboard() {
         if (item.isDraft) {
             return alert("Article brouillon: qualifiez-le dans le catalogue avant de le vendre.");
         }
+        if (item.unitPrice <= 0) {
+            return alert("Prix HT manquant: renseignez un prix de vente dans le catalogue avant d'ajouter cet article au devis.");
+        }
         setManualQuote(prev => ({
             ...prev,
             lines: [...prev.lines, {
@@ -1913,13 +1916,15 @@ export default function SalesDashboard() {
                                                         Aucun article stock ne correspond à cette recherche. Créez une prestation si la vente ne concerne pas une référence catalogue.
                                                     </div>
                                                 )}
-                                                {filteredCatalogItems.map(item => (
+                                                {filteredCatalogItems.map(item => {
+                                                    const isBlockedForQuote = item.isDraft || item.unitPrice <= 0;
+                                                    return (
                                                     <button
                                                         key={item.variant_id}
                                                         type="button"
                                                         onClick={() => addStockLineFromCatalog(item)}
-                                                        disabled={item.isDraft}
-                                                        className={`w-full text-left border rounded-xl p-3 transition-all ${item.isDraft ? 'border-amber-200 bg-amber-50/60 cursor-not-allowed opacity-75' : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/40'}`}
+                                                        disabled={isBlockedForQuote}
+                                                        className={`w-full text-left border rounded-xl p-3 transition-all ${isBlockedForQuote ? 'border-amber-200 bg-amber-50/60 cursor-not-allowed opacity-75' : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/40'}`}
                                                     >
                                                         <div className="flex items-start justify-between gap-3">
                                                             <div className="min-w-0">
@@ -1945,10 +1950,11 @@ export default function SalesDashboard() {
                                                             </div>
                                                         </div>
                                                         {item.unitPrice <= 0 && (
-                                                            <p className="mt-2 text-[11px] font-bold text-amber-700">Prix catalogue absent: renseignez le prix HT sur la ligne.</p>
+                                                            <p className="mt-2 text-[11px] font-bold text-red-700">Prix catalogue absent: article bloqué pour devis client.</p>
                                                         )}
                                                     </button>
-                                                ))}
+                                                    );
+                                                })}
                                             </div>
                                         </div>
                                     ) : (

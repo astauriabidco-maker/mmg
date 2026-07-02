@@ -155,6 +155,36 @@ def test_free_sale_rejects_draft_catalog_product(stock_client):
     assert any(token in response.text.lower() for token in ["non actif", "brouillon", "draft"])
 
 
+def test_free_sale_rejects_zero_priced_stock_item(stock_client):
+    client, TestingSessionLocal = stock_client
+    headers = _admin_headers()
+
+    with TestingSessionLocal() as db:
+        variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)
+
+    response = client.post(
+        "/v2/sales/",
+        headers=headers,
+        json={
+            "client_name": "Client prix zero",
+            "workflow_type": "FREE_SALE",
+            "tax_rate": 20,
+            "lines": [
+                {
+                    "line_type": "STOCK_ITEM",
+                    "variant_id": variant_id,
+                    "description": "Poignee sans prix",
+                    "quantity": 1,
+                    "unit_price": 0,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert "prix de vente HT positif" in response.text
+
+
 def test_free_sale_validation_blocks_when_stock_is_insufficient(stock_client):
     client, TestingSessionLocal = stock_client
     headers = _admin_headers()
