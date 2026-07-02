@@ -1019,6 +1019,281 @@ export default function SalesDashboard() {
         );
     };
 
+    const renderSaleDetailCard = (sale) => {
+        const trace = getFreeSaleTraceability(sale);
+        const reservationSummary = getSaleReservationSummary(sale);
+        const saleTotal = (sale.lines || []).reduce(
+            (sum, line) => sum + (Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100)),
+            0
+        );
+        const isFreeSale = (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE';
+        const billableInvoice = trace.billableInvoices?.[0];
+        const returnedDeliveryNote = trace.returnedDeliveryNotes?.[0];
+        const canCreateCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote && billableInvoice;
+        const canDeliverFreeSale = isFreeSale && sale.status === 'VALIDATED' && reservationSummary.count > 0;
+
+        const renderPrimaryAction = () => {
+            if (sale.status === 'DRAFT') {
+                return (
+                    <button onClick={() => updateStatus('SENT')} disabled={isStatusUpdating} className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-500/20">
+                        <Send className="w-4 h-4" /> Envoyer au client
+                    </button>
+                );
+            }
+            if (sale.status === 'SENT') {
+                return (
+                    <button onClick={validateSale} disabled={isStatusUpdating} className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20">
+                        <CheckCircle className="w-4 h-4" /> Marquer signé
+                    </button>
+                );
+            }
+            if (canDeliverFreeSale) {
+                return (
+                    <button onClick={deliverFreeSale} disabled={isDeliveringFreeSale} className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20">
+                        <Truck className="w-4 h-4" /> {isDeliveringFreeSale ? "Sortie..." : "Sortie client"}
+                    </button>
+                );
+            }
+            if (trace.isDelivered) {
+                return (
+                    <button onClick={returnFreeSale} disabled={isReturningFreeSale} className="px-5 py-3 rounded-xl bg-white hover:bg-blue-50 border border-blue-200 text-blue-700 disabled:bg-slate-100 disabled:text-slate-400 font-black text-sm flex items-center justify-center gap-2">
+                        <Undo2 className="w-4 h-4" /> {isReturningFreeSale ? "Retour..." : "Retour client"}
+                    </button>
+                );
+            }
+            if (canCreateCreditNote) {
+                return (
+                    <button onClick={() => createCreditNote(billableInvoice, returnedDeliveryNote?.id)} disabled={isCreatingCreditNote} className="px-5 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-rose-500/20">
+                        <FileText className="w-4 h-4" /> {isCreatingCreditNote ? "Création..." : "Créer un avoir"}
+                    </button>
+                );
+            }
+            if (!isFreeSale && sale.status === 'VALIDATED') {
+                return (
+                    <button onClick={sendToDesign} disabled={isStatusUpdating} className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20">
+                        Bureau d'Études <ArrowRight className="w-4 h-4" />
+                    </button>
+                );
+            }
+            return (
+                <span className="px-5 py-3 rounded-xl bg-slate-100 border border-slate-200 text-slate-500 font-black text-sm flex items-center justify-center gap-2">
+                    <CheckCircle className="w-4 h-4" /> Aucune action urgente
+                </span>
+            );
+        };
+
+        const timeline = [
+            { label: 'Brouillon', done: true, detail: formatDate(sale.created_at) },
+            { label: 'Envoyé', done: ['SENT', 'VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale.status), detail: sale.status === 'DRAFT' ? 'À envoyer' : 'Client notifié' },
+            { label: 'Signé', done: trace.isSigned, detail: sale.signed_at ? formatDate(sale.signed_at) : (trace.isSigned ? 'Validation interne' : 'En attente') },
+            { label: 'Réservé', done: trace.isReserved, detail: trace.isReserved ? `${reservationSummary.totalReserved.toLocaleString('fr-FR')} réservé` : (trace.hasStockLines ? 'À réserver' : 'Sans stock') },
+            { label: 'Livré', done: trace.isDelivered || trace.isReturned, detail: trace.isReturned ? 'Retourné' : (trace.isDelivered ? 'BL généré' : 'À livrer') },
+            { label: 'Facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.billableInvoicesCount} facture(s)` : 'À facturer' },
+            { label: 'Avoir', done: trace.hasCreditNote, detail: trace.hasCreditNote ? `${trace.creditNotesCount} avoir(s)` : (trace.isReturned ? 'À décider' : 'Non requis') },
+        ];
+
+        return (
+            <div className="space-y-6 mb-8 mt-4">
+                <section className="bg-white border border-slate-200 rounded-3xl shadow-xl overflow-hidden">
+                    <div className="bg-slate-900 text-white px-6 py-6">
+                        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+                            <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2 mb-3">
+                                    <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getSaleDisplayClass(sale)}`}>{getSaleDisplayLabel(sale)}</span>
+                                    <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getWorkflowBadgeClass(sale.workflow_type)}`}>{getWorkflowLabel(sale.workflow_type)}</span>
+                                </div>
+                                <h2 className="text-3xl font-black tracking-tight truncate">{sale.client_name}</h2>
+                                <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm font-bold text-slate-300">
+                                    <span>{sale.reference}</span>
+                                    <span>{formatDate(sale.created_at)}</span>
+                                    <span>{sale.lines?.length || 0} ligne(s)</span>
+                                </div>
+                            </div>
+                            <div className="lg:text-right">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total HT</p>
+                                <p className="text-4xl font-black tracking-tight">{formatMoney(saleTotal)}</p>
+                                <p className="text-xs font-bold text-slate-400">TVA {sale.tax_rate || 0}% · {sale.currency || 'EUR'}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="px-6 py-5 border-b border-slate-100 bg-slate-50">
+                        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Prochaine action</p>
+                                <p className="text-sm font-bold text-slate-700">
+                                    {sale.status === 'DRAFT' && "Envoyer le devis au client."}
+                                    {sale.status === 'SENT' && "Attendre la signature ou valider manuellement."}
+                                    {canDeliverFreeSale && "Sortir les articles réservés quand ils sont remis au client."}
+                                    {trace.isDelivered && "Le client a été livré. Un retour reste possible si erreur."}
+                                    {canCreateCreditNote && "Retour facturé détecté: créer un avoir si la régularisation est confirmée."}
+                                    {!['DRAFT', 'SENT'].includes(sale.status) && !canDeliverFreeSale && !trace.isDelivered && !canCreateCreditNote && "Le devis est à jour. Consultez la timeline et les documents liés."}
+                                </p>
+                            </div>
+                            <div className="flex flex-wrap gap-3">
+                                {renderPrimaryAction()}
+                                <a href={`${api.defaults.baseURL}/v2/pdf/quote/${sale.id}`} target="_blank" rel="noopener noreferrer" className="px-5 py-3 rounded-xl bg-white border border-slate-200 text-slate-800 hover:bg-slate-100 font-black text-sm flex items-center justify-center gap-2">
+                                    <FileText className="w-4 h-4" /> PDF devis
+                                </a>
+                                {!['CANCELLED', 'DELIVERED'].includes(sale.status) && (
+                                    <button onClick={() => updateStatus('CANCELLED')} className="px-5 py-3 rounded-xl bg-white border border-red-200 text-red-600 hover:bg-red-50 font-black text-sm flex items-center justify-center gap-2">
+                                        <X className="w-4 h-4" /> Refuser
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="p-6 grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-6">
+                        <aside className="space-y-4">
+                            <div className="border border-slate-200 rounded-2xl p-4 bg-white">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Client</p>
+                                <div className="space-y-2 text-sm font-bold text-slate-700">
+                                    {sale.client_contact && <p>{sale.client_contact}</p>}
+                                    {sale.client_email && <p className="break-all">{sale.client_email}</p>}
+                                    {sale.client_address && <p>{sale.client_address}</p>}
+                                    {!sale.client_contact && !sale.client_email && !sale.client_address && <p className="text-slate-400">Coordonnées non renseignées</p>}
+                                </div>
+                            </div>
+                            <div className="border border-slate-200 rounded-2xl p-4 bg-white">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Conditions</p>
+                                <div className="space-y-2 text-sm font-bold text-slate-700">
+                                    <p>Validité: {sale.validity_days} jours</p>
+                                    <p>Workflow: {getWorkflowLabel(sale.workflow_type)}</p>
+                                </div>
+                            </div>
+                            {getWorkshopBlockedMessage(sale) && (
+                                <div className="border border-amber-200 rounded-2xl p-4 bg-amber-50">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-amber-700 mb-2">Règle métier</p>
+                                    <p className="text-sm font-bold text-amber-900">{getWorkshopBlockedMessage(sale)}</p>
+                                </div>
+                            )}
+                        </aside>
+
+                        <div className="space-y-6 min-w-0">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Timeline métier</p>
+                                <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
+                                    {timeline.map((step, index) => (
+                                        <div key={step.label} className="flex gap-3 p-4 border-b border-slate-100 last:border-b-0">
+                                            <div className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${step.done ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                                {step.done ? <CheckCircle className="w-4 h-4" /> : <span className="text-xs font-black">{index + 1}</span>}
+                                            </div>
+                                            <div className="min-w-0">
+                                                <p className="font-black text-slate-900">{step.label}</p>
+                                                <p className="text-sm font-bold text-slate-500">{step.detail}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                <div className="border border-slate-200 rounded-2xl p-4 bg-white">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Documents</p>
+                                    <div className="space-y-2">
+                                        <a href={`${api.defaults.baseURL}/v2/pdf/quote/${sale.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm font-black text-slate-800 hover:bg-slate-100">
+                                            <span>Devis PDF</span><FileText className="w-4 h-4" />
+                                        </a>
+                                        {sale.signature_token && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(`${window.location.origin}/portal/sign/${sale.signature_token}`);
+                                                    alert("Lien de signature copié.");
+                                                }}
+                                                className="w-full flex items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-sm font-black text-indigo-900 hover:bg-indigo-100"
+                                            >
+                                                <span>Lien signature client</span><Copy className="w-4 h-4" />
+                                            </button>
+                                        )}
+                                        {trace.billableInvoices.map(invoice => (
+                                            <a key={invoice.id} href={`${api.defaults.baseURL}/v2/pdf/invoice/${invoice.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm font-black text-blue-900 hover:bg-blue-100">
+                                                <span>{invoice.reference} · {formatMoney(invoice.total)}</span><FileText className="w-4 h-4" />
+                                            </a>
+                                        ))}
+                                        {trace.creditNotes.map(creditNote => (
+                                            <a key={creditNote.id || creditNote.reference} href={`${api.defaults.baseURL}/v2/pdf/invoice/${creditNote.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-rose-100 bg-rose-50 p-3 text-sm font-black text-rose-900 hover:bg-rose-100">
+                                                <span>{creditNote.reference || 'Avoir'} · {formatMoney(creditNote.total)}</span><FileText className="w-4 h-4" />
+                                            </a>
+                                        ))}
+                                        {sale.delivery_notes?.map(note => (
+                                            <a key={note.id} href={`${api.defaults.baseURL}/v2/pdf/delivery-note/${note.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-sm font-black text-emerald-900 hover:bg-emerald-100">
+                                                <span>{note.reference} · {note.status}</span><Truck className="w-4 h-4" />
+                                            </a>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="border border-slate-200 rounded-2xl p-4 bg-white">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Stock & réservations</p>
+                                    {sale.reservations?.length > 0 ? (
+                                        <div className="space-y-3">
+                                            {sale.reservations.map(reservation => {
+                                                const totalReserved = reservation.lines?.reduce((sum, line) => sum + Number(line.reserved_quantity || 0), 0) || 0;
+                                                return (
+                                                    <div key={reservation.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                                                        <div className="flex items-start justify-between gap-3">
+                                                            <div>
+                                                                <p className="text-sm font-black text-slate-900">{reservation.reference}</p>
+                                                                <p className="text-xs font-bold text-slate-500">{formatDate(reservation.created_at)}</p>
+                                                            </div>
+                                                            <span className={`px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${getReservationStatusClass(reservation.status)}`}>
+                                                                {getReservationStatusLabel(reservation.status)}
+                                                            </span>
+                                                        </div>
+                                                        <p className="mt-2 text-xs font-black uppercase tracking-widest text-slate-500">{totalReserved.toLocaleString('fr-FR')} unité(s)</p>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-400">Aucune réservation rattachée.</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
+                                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Lignes du devis</p>
+                                    <span className="text-xs font-black text-slate-500">{sale.lines?.length || 0} ligne(s)</span>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {(sale.lines || []).map((line, idx) => {
+                                        const lineTotal = Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100);
+                                        return (
+                                            <div key={line.id || idx} className="grid grid-cols-12 gap-3 p-4 items-center">
+                                                <div className="col-span-12 lg:col-span-6 min-w-0">
+                                                    <p className="font-black text-slate-900 leading-tight">{line.description}</p>
+                                                    {line.variant?.reference && <p className="mt-1 text-xs font-mono font-black text-slate-400">{line.variant.reference}</p>}
+                                                </div>
+                                                <div className="col-span-6 lg:col-span-2">
+                                                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${getLineTypeClass(line.line_type)}`}>
+                                                        {line.line_type === 'STOCK_ITEM' ? <Package className="w-3 h-3" /> : <Wrench className="w-3 h-3" />}
+                                                        {getLineTypeLabel(line.line_type)}
+                                                    </span>
+                                                </div>
+                                                <p className="col-span-2 lg:col-span-1 text-center font-black text-blue-700">{line.quantity}</p>
+                                                <p className="col-span-4 lg:col-span-3 text-right font-black text-slate-900">{formatMoney(lineTotal)}</p>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {sale.notes && (
+                                <div className="bg-yellow-50/70 border border-yellow-100 rounded-2xl p-4 flex gap-3">
+                                    <FileCheck className="w-5 h-5 text-yellow-600 shrink-0" />
+                                    <p className="text-sm font-bold text-yellow-900">{sale.notes}</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </section>
+            </div>
+        );
+    };
+
     const filteredSales = sales.filter(s => 
         s.reference.toLowerCase().includes(searchTerm.toLowerCase()) || 
         s.client_name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -1256,440 +1531,10 @@ export default function SalesDashboard() {
                                     <X className="w-5 h-5" />
                                 </button>
                             )}
-                        {/* HEADER CARD */}
-                        <div className="bg-white rounded-[2rem] shadow-xl border border-slate-200 overflow-hidden mb-8 mt-4">
-                            <div className="px-8 py-8 border-b border-slate-100 bg-slate-900 text-white relative overflow-hidden">
-                                <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/20 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-                                
-                                <div className="flex justify-between items-start relative z-10">
-                                    <div>
-                                        <div className="flex items-center gap-3 mb-3">
-                                            <h2 className="text-3xl font-black tracking-tight">{selectedSale.client_name}</h2>
-                                            <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getSaleDisplayClass(selectedSale)}`}>{getSaleDisplayLabel(selectedSale)}</span>
-                                            <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getWorkflowBadgeClass(selectedSale.workflow_type)}`}>
-                                                {getWorkflowLabel(selectedSale.workflow_type)}
-                                            </span>
-                                        </div>
-                                        <div className="flex gap-6 text-slate-400 text-sm font-medium">
-                                            <p>Réf: <span className="text-white font-bold">{selectedSale.reference}</span></p>
-                                            <p>Date: <span className="text-white font-bold">{new Date(selectedSale.created_at).toLocaleDateString('fr-FR')}</span></p>
-                                            {getSaleReservationSummary(selectedSale).count > 0 && (
-                                                <p>
-                                                    Réservation:
-                                                    <span className="text-amber-300 font-black ml-1">
-                                                        {getSaleReservationSummary(selectedSale).count} active(s), {getSaleReservationSummary(selectedSale).totalReserved.toLocaleString('fr-FR')} réservé
-                                                    </span>
-                                                </p>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <span className="text-sm font-bold text-slate-400 uppercase tracking-widest">Total Devis HT</span>
-                                        <div className="text-5xl font-black tracking-tight text-white mt-1">
-                                            {selectedSale.lines.reduce((sum, l) => sum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0).toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            {/* PIPELINE ACTIONS */}
-                            <div className="bg-slate-50 px-8 py-4 border-b border-slate-200 flex gap-3 flex-wrap">
-                                <a 
-                                    href={`${api.defaults.baseURL}/v2/pdf/quote/${selectedSale.id}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 bg-slate-900 text-white hover:bg-slate-800 shadow-md shadow-slate-900/20 transition-all"
-                                >
-                                    <FileText className="w-4 h-4"/> Télécharger PDF
-                                </a>
-                                <button 
-                                    onClick={() => updateStatus('SENT')}
-                                    disabled={selectedSale.status !== 'DRAFT'}
-                                    className={`flex-1 min-w-[150px] py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${selectedSale.status === 'DRAFT' ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-md shadow-blue-500/20' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-                                >
-                                    <Send className="w-4 h-4"/> Envoyer (Mail)
-                                </button>
-                                <button 
-                                    onClick={() => updateStatus('VALIDATED')}
-                                    disabled={!['DRAFT', 'SENT'].includes(selectedSale.status)}
-                                    className={`flex-1 min-w-[200px] py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${['DRAFT', 'SENT'].includes(selectedSale.status) ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-500/20' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-                                >
-                                    <CheckCircle className="w-4 h-4"/> Marquer Validé (Signé)
-                                </button>
-                                <button 
-                                    onClick={() => updateStatus('CANCELLED')}
-                                    disabled={['CANCELLED', 'DELIVERED'].includes(selectedSale.status)}
-                                    className={`px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${!['CANCELLED', 'DELIVERED'].includes(selectedSale.status) ? 'bg-white border border-red-200 text-red-600 hover:bg-red-50' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-                                >
-                                    <X className="w-4 h-4"/> Refusé
-                                </button>
-                            </div>
-
-                            <SaleCycleIndicator sale={selectedSale} />
-
-                            {/* CLIENT DETAILS */}
-                            <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
-                                <div>
-                                    <h4 className="font-black text-xs text-slate-400 uppercase tracking-widest mb-4">Informations Client</h4>
-                                    <div className="space-y-3 bg-slate-50 p-5 rounded-2xl border border-slate-100">
-                                        {selectedSale.client_contact && <p className="text-sm font-bold text-slate-700"><span className="text-slate-400 font-normal w-20 inline-block">Contact:</span> {selectedSale.client_contact}</p>}
-                                        {selectedSale.client_email && <p className="text-sm font-bold text-slate-700"><span className="text-slate-400 font-normal w-20 inline-block">Email:</span> {selectedSale.client_email}</p>}
-                                        {selectedSale.client_address && <p className="text-sm font-bold text-slate-700"><span className="text-slate-400 font-normal w-20 inline-block">Adresse:</span> {selectedSale.client_address}</p>}
-                                    </div>
-                                </div>
-                                <div>
-                                    <h4 className="font-black text-xs text-slate-400 uppercase tracking-widest mb-4">Conditions B2B</h4>
-                                    <div className="space-y-3 bg-slate-50 p-5 rounded-2xl border border-slate-100">
-                                        <p className="text-sm font-bold text-slate-700"><span className="text-slate-400 font-normal w-24 inline-block">Validité:</span> {selectedSale.validity_days} jours</p>
-                                        <p className="text-sm font-bold text-slate-700"><span className="text-slate-400 font-normal w-24 inline-block">TVA:</span> {selectedSale.tax_rate} %</p>
-                                        <p className="text-sm font-bold text-slate-700"><span className="text-slate-400 font-normal w-24 inline-block">Devise:</span> {selectedSale.currency}</p>
-                                        <p className="text-sm font-bold text-slate-700"><span className="text-slate-400 font-normal w-24 inline-block">Workflow:</span> {getWorkflowLabel(selectedSale.workflow_type)}</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {getWorkshopBlockedMessage(selectedSale) && (
-                                <div className="px-8 pb-6">
-                                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                        <div>
-                                            <p className="text-xs font-black text-amber-700 uppercase tracking-widest mb-1">Atelier non disponible</p>
-                                            <p className="text-sm font-bold text-amber-900">{getWorkshopBlockedMessage(selectedSale)}</p>
-                                        </div>
-                                        <button
-                                            onClick={() => setMainTab('dossiers')}
-                                            className="px-4 py-3 bg-white text-amber-700 border border-amber-200 rounded-xl font-black text-sm hover:bg-amber-100 transition-colors flex items-center justify-center gap-2"
-                                        >
-                                            <ListTodo className="w-4 h-4" /> Aller aux métrés
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* METRES ASSOCIES */}
-                            {selectedSale.mmg_dossiers && selectedSale.mmg_dossiers.length > 0 && (
-                                <div className="px-8 pb-4">
-                                    <h4 className="font-black text-xs text-blue-600 uppercase tracking-widest mb-4">Métrés Associés (Chantiers)</h4>
-                                    <div className="grid grid-cols-1 gap-4">
-                                        {selectedSale.mmg_dossiers.map(m => (
-                                            <div key={m.id} className="bg-blue-50 border border-blue-100 p-4 rounded-xl flex items-center justify-between">
-                                                <div>
-                                                    <p className="font-bold text-blue-900">{m.reference}</p>
-                                                    <p className="text-xs text-blue-600">Statut: {m.status}</p>
-                                                </div>
-                                                <button 
-                                                    onClick={() => {
-                                                        setMainTab('dossiers');
-                                                    }}
-                                                    className="px-3 py-1.5 bg-white text-blue-600 text-xs font-bold rounded-lg shadow-sm border border-blue-200"
-                                                >
-                                                    Ouvrir
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* LINES */}
-                            <div className="px-8 pb-8">
-                                <h4 className="font-black text-xs text-slate-400 uppercase tracking-widest mb-4">Détail du devis</h4>
-                                <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
-                                    <thead className="bg-slate-50 border-b border-slate-200">
-                                        <tr>
-                                            <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest w-1/2">Description</th>
-                                            <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Type</th>
-                                            <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Qté</th>
-                                            <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Prix Unitaire</th>
-                                            <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Total HT</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {selectedSale.lines && selectedSale.lines.map((line, idx) => {
-                                            const visualConfig = line.visual_config ? JSON.parse(line.visual_config) : null;
-                                            return (
-                                                <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                                                    <td className="py-4 px-4 font-bold text-slate-800 text-sm">
-                                                        {line.description}
-                                                        {visualConfig && (
-                                                            <div className="mt-2 bg-white border border-slate-200 rounded-lg inline-block p-2">
-                                                                <WindowVisualizer 
-                                                                    type={visualConfig.type} 
-                                                                    width={visualConfig.width} 
-                                                                    height={visualConfig.height} 
-                                                                    color={visualConfig.color} 
-                                                                    hasRollerShutter={visualConfig.hasRollerShutter}
-                                                                    openingDirection={visualConfig.openingDirection}
-                                                                    glassType={visualConfig.glassType}
-                                                                    hasMuntins={visualConfig.hasMuntins}
-                                                                    bottomPanelHeight={visualConfig.bottomPanelHeight}
-                                                                    scale={0.06} 
-                                                                />
-                                                            </div>
-                                                        )}
-                                                    </td>
-                                                    <td className="py-4 px-4">
-                                                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${getLineTypeClass(line.line_type)}`}>
-                                                            {line.line_type === 'STOCK_ITEM' ? <Package className="w-3 h-3" /> : <Wrench className="w-3 h-3" />}
-                                                            {getLineTypeLabel(line.line_type)}
-                                                        </span>
-                                                        {line.variant?.reference && (
-                                                            <p className="mt-1 text-[10px] font-bold text-slate-400">{line.variant.reference}</p>
-                                                        )}
-                                                    </td>
-                                                    <td className="py-4 px-4 text-center font-black text-blue-600">{line.quantity}</td>
-                                                    <td className="py-4 px-4 text-right font-mono text-slate-600">{line.unit_price.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</td>
-                                                    <td className="py-4 px-4 text-right font-black text-slate-900">{(line.quantity * line.unit_price * (1 - line.discount_pct / 100)).toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                                </div>
-
-                                {((selectedSale.workflow_type || 'FREE_SALE') === 'FREE_SALE' || selectedSale.reservations?.length > 0 || selectedSale.invoices?.length > 0 || selectedSale.delivery_notes?.length > 0) && (
-                                    <div className="mt-6 bg-slate-50 border border-slate-200 rounded-2xl p-5">
-                                        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-5">
-                                            <div>
-                                                <h4 className="font-black text-xs text-slate-500 uppercase tracking-widest">Traçabilité devis libre</h4>
-                                                <p className="text-sm font-semibold text-slate-500 mt-1">Réservations commerciales, facture et bon de livraison rattachés.</p>
-                                            </div>
-                                            <div className="flex flex-wrap gap-2">
-                                                <span className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                                                    {selectedSale.lines?.filter(line => line.line_type === 'STOCK_ITEM').length || 0} article(s) stock
-                                                </span>
-                                                <span className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                                                    {selectedSale.lines?.filter(line => line.line_type !== 'STOCK_ITEM').length || 0} prestation(s)
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        {(() => {
-                                            const trace = getFreeSaleTraceability(selectedSale);
-                                            const milestones = [
-                                                { label: 'Signé', done: trace.isSigned, detail: selectedSale.signed_at ? formatDate(selectedSale.signed_at) : (trace.isSigned ? 'Validation interne' : 'En attente') },
-                                                { label: 'Réservé', done: trace.isReserved, detail: trace.isReserved ? `${trace.activeReservations.length} active(s)` : (trace.hasStockLines ? 'Stock à bloquer' : 'Sans stock') },
-                                                { label: 'Livré', done: trace.isDelivered, detail: trace.isDelivered ? `${trace.deliveryNotesCount} BL` : 'Sortie client à faire' },
-                                                { label: 'Facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.billableInvoicesCount} facture(s)` : 'À facturer' },
-                                                { label: 'Avoir', done: trace.hasCreditNote, detail: trace.hasCreditNote ? `${trace.creditNotesCount} avoir(s)` : (trace.isReturned && trace.isInvoiced ? 'À créer' : 'Non requis') },
-                                            ];
-                                            const canCreateCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote;
-                                            const creditNoteSourceInvoice = trace.billableInvoices[0];
-                                            const returnedDeliveryNote = trace.returnedDeliveryNotes[0];
-
-                                            return (
-                                                <div className="mb-5 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-stretch">
-                                                    <div className="grid grid-cols-2 xl:grid-cols-5 gap-3">
-                                                        {milestones.map(step => (
-                                                            <div key={step.label} className={`rounded-xl border p-3 ${step.done ? 'bg-white border-emerald-100' : 'bg-white/70 border-slate-200'}`}>
-                                                                <div className="flex items-center gap-2">
-                                                                    <span className={`w-7 h-7 rounded-full flex items-center justify-center ${step.done ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
-                                                                        <CheckCircle className="w-4 h-4" />
-                                                                    </span>
-                                                                    <p className={`text-xs font-black uppercase tracking-widest ${step.done ? 'text-emerald-700' : 'text-slate-400'}`}>{step.label}</p>
-                                                                </div>
-                                                                <p className="mt-2 text-sm font-black text-slate-900">{step.done ? 'OK' : 'À faire'}</p>
-                                                                <p className="text-xs font-bold text-slate-500">{step.detail}</p>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                    <div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-col justify-between gap-3 min-w-[220px]">
-                                                        <div>
-                                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Retour client</p>
-                                                            <p className="text-xs font-bold text-slate-500 mt-1">
-                                                                {trace.isReturned ? 'Retour client enregistré. La régularisation comptable peut suivre.' : (trace.isDelivered ? 'Emplacement prêt pour reprise, retour SAV ou annulation de sortie.' : 'Disponible après livraison client.')}
-                                                            </p>
-                                                        </div>
-                                                        <button
-                                                            onClick={returnFreeSale}
-                                                            disabled={!trace.isDelivered || isReturningFreeSale}
-                                                            className={`w-full px-4 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${trace.isDelivered && !isReturningFreeSale ? 'bg-white border border-blue-200 text-blue-700 hover:bg-blue-50' : 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'}`}
-                                                        >
-                                                            <Undo2 className="w-4 h-4" />
-                                                            {isReturningFreeSale ? 'Retour...' : 'Retour client'}
-                                                        </button>
-                                                        {canCreateCreditNote && (
-                                                            <button
-                                                                onClick={() => createCreditNote(creditNoteSourceInvoice, returnedDeliveryNote?.id)}
-                                                                disabled={isCreatingCreditNote}
-                                                                className={`w-full px-4 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${!isCreatingCreditNote ? 'bg-rose-600 text-white hover:bg-rose-500 shadow-md shadow-rose-500/20' : 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'}`}
-                                                            >
-                                                                <FileText className="w-4 h-4" />
-                                                                {isCreatingCreditNote ? 'Création...' : 'Créer un avoir'}
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            );
-                                        })()}
-
-                                        {(() => {
-                                            const trace = getFreeSaleTraceability(selectedSale);
-                                            return (
-                                        <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
-                                            <div className="bg-white border border-slate-200 rounded-xl p-4">
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Réservations</p>
-                                                    <span className="text-xs font-black text-slate-600">{selectedSale.reservations?.length || 0}</span>
-                                                </div>
-                                                {selectedSale.reservations?.length > 0 ? (
-                                                    <div className="space-y-3">
-                                                        {selectedSale.reservations.map(reservation => {
-                                                            const totalReserved = reservation.lines?.reduce((sum, line) => sum + Number(line.reserved_quantity || 0), 0) || 0;
-                                                            return (
-                                                                <div key={reservation.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                                                                    <div className="flex items-start justify-between gap-3">
-                                                                        <div>
-                                                                            <p className="text-sm font-black text-slate-900">{reservation.reference}</p>
-                                                                            <p className="text-[11px] font-bold text-slate-500">{reservation.source_label || 'Source non renseignée'} - {formatDate(reservation.created_at)}</p>
-                                                                        </div>
-                                                                        <span className={`px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${getReservationStatusClass(reservation.status)}`}>
-                                                                            {getReservationStatusLabel(reservation.status)}
-                                                                        </span>
-                                                                    </div>
-                                                                    <div className="mt-3 space-y-2">
-                                                                        {reservation.lines?.map(line => {
-                                                                            const sourceLineId = getReservationLineSourceId(line.source);
-                                                                            const saleLine = selectedSale.lines?.find(item => item.id === sourceLineId);
-                                                                            return (
-                                                                                <div key={line.id} className="flex items-center justify-between gap-3 text-xs bg-white border border-slate-100 rounded-lg px-3 py-2">
-                                                                                    <div>
-                                                                                        <p className="font-black text-slate-800">{line.supplier_reference || line.variant?.reference || line.designation || 'Référence stock'}</p>
-                                                                                        <p className="font-semibold text-slate-400">{saleLine?.description || line.designation || 'Ligne stock réservée'}</p>
-                                                                                    </div>
-                                                                                    <div className="text-right">
-                                                                                        <p className="font-black text-amber-700">{Number(line.reserved_quantity || 0).toLocaleString('fr-FR')} {line.unit || saleLine?.variant?.product?.unit || ''}</p>
-                                                                                        <p className="font-semibold text-slate-400">sur {Number(line.requested_quantity || 0).toLocaleString('fr-FR')} demandé</p>
-                                                                                    </div>
-                                                                                </div>
-                                                                            );
-                                                                        })}
-                                                                    </div>
-                                                                    <p className="mt-3 text-[11px] font-black text-slate-500 uppercase tracking-widest">{totalReserved.toLocaleString('fr-FR')} unité(s) réservée(s)</p>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                ) : (
-                                                    <p className="text-sm font-bold text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4">Aucune réservation commerciale rattachée pour l’instant.</p>
-                                                )}
-                                            </div>
-
-                                            <div className="bg-white border border-slate-200 rounded-xl p-4">
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Facturation</p>
-                                                    <span className="text-xs font-black text-slate-600">{trace.billableInvoicesCount}</span>
-                                                </div>
-                                                {trace.billableInvoicesCount > 0 ? (
-                                                    <div className="space-y-3">
-                                                        {trace.billableInvoices.map(invoice => (
-                                                            <div key={invoice.id} className="flex items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50 p-3">
-                                                                <div>
-                                                                    <p className="text-sm font-black text-slate-900">{invoice.reference}</p>
-                                                                    <p className="text-[11px] font-bold text-slate-500">{formatDate(invoice.issue_date)} - {invoice.status}</p>
-                                                                </div>
-                                                                <div className="text-right">
-                                                                    <p className="text-sm font-black text-slate-900">{formatMoney(invoice.total)}</p>
-                                                                    <a
-                                                                        href={`${api.defaults.baseURL}/v2/pdf/invoice/${invoice.id}`}
-                                                                        target="_blank"
-                                                                        rel="noopener noreferrer"
-                                                                        className="text-[11px] font-black text-blue-600 hover:text-blue-800"
-                                                                    >
-                                                                        PDF facture
-                                                                    </a>
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <p className="text-sm font-bold text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4">Aucune facture générée pour ce devis.</p>
-                                                )}
-                                            </div>
-
-                                            <div className="bg-white border border-slate-200 rounded-xl p-4">
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Avoirs</p>
-                                                    <span className="text-xs font-black text-slate-600">{trace.creditNotesCount}</span>
-                                                </div>
-                                                {trace.creditNotesCount > 0 ? (
-                                                    <div className="space-y-3">
-                                                        {trace.creditNotes.map(creditNote => (
-                                                            <div key={creditNote.id || creditNote.reference} className="flex items-center justify-between gap-4 rounded-xl border border-rose-100 bg-rose-50/60 p-3">
-                                                                <div>
-                                                                    <p className="text-sm font-black text-slate-900">{creditNote.reference || 'Avoir'}</p>
-                                                                    <p className="text-[11px] font-bold text-rose-700">{formatDate(creditNote.issue_date || creditNote.created_at)} - {creditNote.status || 'AVOIR'}</p>
-                                                                </div>
-                                                                <div className="text-right">
-                                                                    <p className="text-sm font-black text-slate-900">{formatMoney(creditNote.total)}</p>
-                                                                    {creditNote.id && (
-                                                                        <a
-                                                                            href={`${api.defaults.baseURL}/v2/pdf/invoice/${creditNote.id}`}
-                                                                            target="_blank"
-                                                                            rel="noopener noreferrer"
-                                                                            className="text-[11px] font-black text-rose-700 hover:text-rose-900"
-                                                                        >
-                                                                            PDF avoir
-                                                                        </a>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <p className="text-sm font-bold text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4">
-                                                        {trace.isReturned && trace.isInvoiced ? "Aucun avoir lié détecté pour ce retour client." : "Les avoirs rattachés apparaîtront ici si l'API les expose."}
-                                                    </p>
-                                                )}
-                                            </div>
-
-                                            <div className="bg-white border border-slate-200 rounded-xl p-4">
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Livraison client</p>
-                                                    <span className="text-xs font-black text-slate-600">{selectedSale.delivery_notes?.length || 0}</span>
-                                                </div>
-                                                {selectedSale.delivery_notes?.length > 0 ? (
-                                                    <div className="space-y-3">
-                                                        {selectedSale.delivery_notes.map(note => (
-                                                            <div key={note.id} className="flex items-center justify-between gap-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
-                                                                <div>
-                                                                    <p className="text-sm font-black text-slate-900">{note.reference}</p>
-                                                                    <p className="text-[11px] font-bold text-emerald-700">{formatDate(note.signed_at)} - {note.status}</p>
-                                                                    {note.delivery_notes && <p className="mt-1 text-[11px] font-semibold text-slate-500">{note.delivery_notes}</p>}
-                                                                </div>
-                                                                <a
-                                                                    href={`${api.defaults.baseURL}/v2/pdf/delivery-note/${note.id}`}
-                                                                    target="_blank"
-                                                                    rel="noopener noreferrer"
-                                                                    className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 hover:text-emerald-900 whitespace-nowrap"
-                                                                >
-                                                                    <Truck className="w-3 h-3" />
-                                                                    PDF BL
-                                                                </a>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <p className="text-sm font-bold text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4">Aucun bon de livraison généré. Il apparaîtra après la sortie client.</p>
-                                                )}
-                                            </div>
-                                        </div>
-                                            );
-                                        })()}
-                                    </div>
-                                )}
-                                
-                                {selectedSale.notes && (
-                                    <div className="mt-6 bg-yellow-50/50 border border-yellow-100 p-4 rounded-xl flex gap-3">
-                                        <FileCheck className="w-5 h-5 text-yellow-600 shrink-0"/>
-                                        <p className="text-sm font-medium text-yellow-800">{selectedSale.notes}</p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
+                        {renderSaleDetailCard(selectedSale)}
 
                         {/* SENT ACTION */}
-                        {selectedSale.status === 'SENT' && (
+                        {false && selectedSale.status === 'SENT' && (
                             <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg shadow-blue-500/20 mb-8">
                                 <div className="flex justify-between items-start mb-6">
                                     <div>
@@ -1728,7 +1573,7 @@ export default function SalesDashboard() {
                         )}
 
                         {/* VALIDATED ACTION */}
-                        {selectedSale.status === 'VALIDATED' && (selectedSale.workflow_type || 'FREE_SALE') === 'FREE_SALE' && (
+                        {false && selectedSale.status === 'VALIDATED' && (selectedSale.workflow_type || 'FREE_SALE') === 'FREE_SALE' && (
                             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm mb-8">
                                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                                     <div>
