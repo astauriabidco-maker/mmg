@@ -313,6 +313,27 @@ export default function SalesDashboard() {
         }));
     };
 
+    const addServiceLineFromCatalog = (item) => {
+        if (item.isDraft) {
+            return alert("Prestation brouillon: activez-la dans le catalogue avant de l'utiliser.");
+        }
+        setManualQuote(prev => ({
+            ...prev,
+            lines: [...prev.lines, {
+                line_type: "service",
+                variant_id: item.variant_id,
+                description: item.label,
+                quantity: 1,
+                unit_price: item.unitPrice,
+                discount_pct: 0,
+                catalog_reference: item.reference,
+                catalog_status: item.status,
+                unit: item.unit
+            }]
+        }));
+        setManualCatalogSearch('');
+    };
+
     const removeManualLine = (index) => {
         setManualQuote(prev => ({
             ...prev,
@@ -350,6 +371,7 @@ export default function SalesDashboard() {
         const availableStock = Number(variant.available_quantity ?? getInternalStockForVariant(variant.id));
         const status = product.catalog_status || 'ACTIVE';
         const reference = variant.reference || product.reference_base;
+        const productType = (product.product_type || 'stockable').toLowerCase();
         return {
             product,
             variant,
@@ -361,12 +383,19 @@ export default function SalesDashboard() {
             unitPrice,
             availableStock,
             status,
+            productType,
             isDraft: status === 'DRAFT',
             searchable: `${product.name} ${product.reference_base || ''} ${reference || ''} ${variant.supplier_reference || ''} ${product.supplier || ''}`.toLowerCase()
         };
     }));
 
     const filteredCatalogItems = catalogItems
+        .filter(item => item.productType !== 'service')
+        .filter(item => !manualCatalogSearch.trim() || item.searchable.includes(manualCatalogSearch.trim().toLowerCase()))
+        .slice(0, 12);
+
+    const filteredServiceCatalogItems = catalogItems
+        .filter(item => item.productType === 'service')
         .filter(item => !manualCatalogSearch.trim() || item.searchable.includes(manualCatalogSearch.trim().toLowerCase()))
         .slice(0, 12);
 
@@ -1640,13 +1669,67 @@ export default function SalesDashboard() {
                                                 onClick={addServiceLine}
                                                 className="w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20"
                                             >
-                                                <Wrench className="w-4 h-4" /> Ajouter prestation
+                                                <Wrench className="w-4 h-4" /> Ajouter prestation libre
                                             </button>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Recherche prestations</label>
+                                                <div className="relative">
+                                                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                    <input
+                                                        value={manualCatalogSearch}
+                                                        onChange={e => setManualCatalogSearch(e.target.value)}
+                                                        placeholder="Pose, SAV, déplacement, main-d'oeuvre..."
+                                                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                                                    />
+                                                </div>
+                                            </div>
                                             <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
-                                                <p className="text-xs font-black text-emerald-700 uppercase tracking-widest mb-1">Ligne hors stock</p>
+                                                <p className="text-xs font-black text-emerald-700 uppercase tracking-widest mb-1">Catalogue prestations</p>
                                                 <p className="text-sm font-bold text-emerald-900">
-                                                    À utiliser pour pose, déplacement, SAV ou main-d'oeuvre. Aucun stock ne sera réservé ni débité pour ces lignes.
+                                                    Les prestations pré-enregistrées restent hors stock: elles ne réservent ni ne débitent de matière.
                                                 </p>
+                                            </div>
+                                            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                                                {isLoadingStockProducts && (
+                                                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm font-bold text-slate-500">Chargement des prestations...</div>
+                                                )}
+                                                {!hasStockProductsError && !isLoadingStockProducts && filteredServiceCatalogItems.length === 0 && (
+                                                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 text-sm font-bold text-amber-800">
+                                                        Aucune prestation catalogue ne correspond. Utilisez une prestation libre si le cas est exceptionnel.
+                                                    </div>
+                                                )}
+                                                {filteredServiceCatalogItems.map(item => (
+                                                    <button
+                                                        key={item.variant_id}
+                                                        type="button"
+                                                        onClick={() => addServiceLineFromCatalog(item)}
+                                                        disabled={item.isDraft}
+                                                        className={`w-full text-left border rounded-xl p-3 transition-all ${item.isDraft ? 'border-amber-200 bg-amber-50/60 cursor-not-allowed opacity-75' : 'border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40'}`}
+                                                    >
+                                                        <div className="flex items-start justify-between gap-3">
+                                                            <div className="min-w-0">
+                                                                <p className="font-black text-slate-900 text-sm truncate">{item.label}</p>
+                                                                <p className="text-[10px] font-mono font-black text-slate-400 uppercase mt-1">{item.reference}</p>
+                                                            </div>
+                                                            <span className={`shrink-0 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getProductStatusClass(item.status)}`}>
+                                                                {getProductStatusLabel(item.status)}
+                                                            </span>
+                                                        </div>
+                                                        <div className="grid grid-cols-2 gap-2 mt-3">
+                                                            <div className="bg-white border border-slate-100 rounded-lg px-2 py-1.5">
+                                                                <p className="text-[9px] font-black text-slate-400 uppercase">Prix HT</p>
+                                                                <p className="text-sm font-black text-slate-800">{formatMoney(item.unitPrice)}</p>
+                                                            </div>
+                                                            <div className="bg-white border border-slate-100 rounded-lg px-2 py-1.5">
+                                                                <p className="text-[9px] font-black text-slate-400 uppercase">Unité</p>
+                                                                <p className="text-sm font-black text-slate-800">{item.unit}</p>
+                                                            </div>
+                                                        </div>
+                                                        {item.unitPrice <= 0 && (
+                                                            <p className="mt-2 text-[11px] font-bold text-amber-700">Prix catalogue absent: renseignez le prix HT sur la ligne.</p>
+                                                        )}
+                                                    </button>
+                                                ))}
                                             </div>
                                         </div>
                                     )}
@@ -1659,7 +1742,7 @@ export default function SalesDashboard() {
                                             <button onClick={() => setManualQuoteLineMode('stock')} className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-black text-xs flex items-center gap-2">
                                                 <Package className="w-4 h-4" /> Ajouter article stock
                                             </button>
-                                            <button onClick={addServiceLine} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs flex items-center gap-2">
+                                            <button onClick={() => setManualQuoteLineMode('service')} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs flex items-center gap-2">
                                                 <Wrench className="w-4 h-4" /> Ajouter prestation
                                             </button>
                                         </div>

@@ -75,6 +75,32 @@ def _seed_stock_item(db, *, catalog_status: str = "ACTIVE", quantity: float = 5.
     return variant.id, stock.id, customer.id
 
 
+def _seed_service_item(db, *, catalog_status: str = "ACTIVE", price: float = 80.0):
+    product = models.Product(
+        reference_base=f"SERV-SAV-{catalog_status}",
+        name=f"Prestation SAV {catalog_status}",
+        material_type="SERVICE",
+        unit="forfait",
+        supplier="MMG",
+        product_type="service",
+        available_in_pos=False,
+        catalog_status=catalog_status,
+    )
+    db.add(product)
+    db.flush()
+    variant = models.ProductVariant(
+        product_id=product.id,
+        reference=f"SERV-SAV-{catalog_status}-STD",
+        supplier_reference=f"SAV-{catalog_status}",
+        cost_price=price,
+        quantity_in_stock=0,
+        min_threshold=0,
+    )
+    db.add(variant)
+    db.commit()
+    return variant.id
+
+
 def _create_free_sale_quote(db, variant_id: int, *, quantity: float = 2.0, status: str = "DRAFT"):
     sale = models.SaleOrder(
         reference=f"DEV-LIBRE-STOCK-{variant_id}-{quantity:g}",
@@ -179,6 +205,7 @@ def test_free_sale_full_signature_flow_reserves_stock_without_debit(stock_client
 
     with TestingSessionLocal() as db:
         variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)
+        service_variant_id = _seed_service_item(db, price=80)
 
     create_response = client.post(
         "/v2/sales/",
@@ -203,8 +230,8 @@ def test_free_sale_full_signature_flow_reserves_stock_without_debit(stock_client
                 },
                 {
                     "line_type": "service",
-                    "variant_id": None,
-                    "description": "Prestation SAV",
+                    "variant_id": service_variant_id,
+                    "description": "Prestation SAV catalogue",
                     "quantity": 1,
                     "unit_price": 80,
                     "discount_pct": 0,
@@ -216,6 +243,7 @@ def test_free_sale_full_signature_flow_reserves_stock_without_debit(stock_client
     sale = create_response.json()
     assert sale["status"] == "DRAFT"
     assert [line["line_type"] for line in sale["lines"]] == ["STOCK_ITEM", "SERVICE"]
+    assert sale["lines"][1]["variant_id"] == service_variant_id
 
     sent_response = client.put(
         f"/v2/sales/{sale['id']}/status",
@@ -237,7 +265,7 @@ def test_free_sale_full_signature_flow_reserves_stock_without_debit(stock_client
         reservation = db.query(models.StockReservation).one()
         reservation_line = db.query(models.StockReservationLine).one()
         quant = db.query(models.StockQuant).one()
-        variant = db.query(models.ProductVariant).one()
+        variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == variant_id).one()
         move_count = db.query(models.StockMove).count()
         invoice_count = db.query(models.Invoice).count()
 
@@ -256,11 +284,14 @@ def test_free_sale_full_signature_flow_reserves_stock_without_debit(stock_client
 
     products_response = client.get("/v2/stock/products", headers=headers)
     assert products_response.status_code == 200, products_response.text
-    [product] = products_response.json()
+    product = next(product for product in products_response.json() if product["product_type"] == "stockable")
     [variant_payload] = product["variants"]
     assert variant_payload["quantity_in_stock"] == 5
     assert variant_payload["reserved_quantity"] == 2
     assert variant_payload["available_quantity"] == 3
+    service_product = next(product for product in products_response.json() if product["product_type"] == "service")
+    assert service_product["variants"][0]["quantity_in_stock"] == 0
+    assert service_product["variants"][0]["reserved_quantity"] == 0
 
 
 def test_free_sale_cancellation_releases_commercial_reservation(stock_client):
