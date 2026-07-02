@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, FileText, Search, ArrowRight, CheckCircle, X, DollarSign, Send, Clock, AlertTriangle, FileCheck, Plus, ListTodo, UploadCloud, Copy, Sparkles, BrainCircuit, Package, Wrench, Tag, RefreshCw } from 'lucide-react';
+import { Users, FileText, Search, ArrowRight, CheckCircle, X, DollarSign, Send, Clock, AlertTriangle, FileCheck, Plus, ListTodo, UploadCloud, Copy, Sparkles, BrainCircuit, Package, Wrench, Tag, RefreshCw, Truck } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import MMGDossiers from './MMGDossiers';
@@ -15,6 +15,7 @@ export default function SalesDashboard() {
     const [selectedSale, setSelectedSale] = useState(null);
     const [isStatusUpdating, setIsStatusUpdating] = useState(false);
     const [isUploadingBOM, setIsUploadingBOM] = useState(false);
+    const [isDeliveringFreeSale, setIsDeliveringFreeSale] = useState(false);
     const [workshopPrepFiles, setWorkshopPrepFiles] = useState([]);
     const [workshopPrepPreview, setWorkshopPrepPreview] = useState(null);
     const [isWorkshopPreparing, setIsWorkshopPreparing] = useState(false);
@@ -204,6 +205,28 @@ export default function SalesDashboard() {
             alert("Erreur lors de la mise à jour du statut");
         } finally {
             setIsStatusUpdating(false);
+        }
+    };
+
+    const deliverFreeSale = async () => {
+        if (!selectedSale) return;
+        if (!window.confirm("Confirmer la sortie client ? Le stock réservé sera débité définitivement.")) return;
+        setIsDeliveringFreeSale(true);
+        try {
+            const res = await api.post(`/v2/sales/${selectedSale.id}/deliver-free-sale`);
+            await Promise.all([
+                queryClient.invalidateQueries(['sales']),
+                queryClient.invalidateQueries(['products']),
+                queryClient.invalidateQueries(['quants']),
+                queryClient.invalidateQueries(['transactions']),
+            ]);
+            await openSaleDetails(selectedSale.id);
+            alert(res.data?.message || "Sortie client effectuée.");
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de la sortie client.");
+        } finally {
+            setIsDeliveringFreeSale(false);
         }
     };
 
@@ -1419,9 +1442,25 @@ export default function SalesDashboard() {
                                             Ce devis concerne des pièces, accessoires, prestations ou SAV. Il reste hors workflow fabrication atelier.
                                         </p>
                                     </div>
-                                    <span className="bg-slate-100 text-slate-700 border border-slate-200 px-4 py-2 rounded-xl font-black text-xs uppercase">
-                                        Pas de métré atelier
-                                    </span>
+                                    <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                                        <span className="bg-slate-100 text-slate-700 border border-slate-200 px-4 py-2 rounded-xl font-black text-xs uppercase text-center">
+                                            Pas de métré atelier
+                                        </span>
+                                        {getSaleReservationSummary(selectedSale).count > 0 ? (
+                                            <button
+                                                onClick={deliverFreeSale}
+                                                disabled={isDeliveringFreeSale}
+                                                className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 disabled:text-slate-500 text-white font-black text-sm shadow-md shadow-emerald-500/20 flex items-center justify-center gap-2 transition-all"
+                                            >
+                                                <Truck className="w-4 h-4" />
+                                                {isDeliveringFreeSale ? "Sortie en cours..." : "Sortie client"}
+                                            </button>
+                                        ) : (
+                                            <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-4 py-2 rounded-xl font-black text-xs uppercase text-center">
+                                                Stock déjà sorti ou aucune ligne stock
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         )}

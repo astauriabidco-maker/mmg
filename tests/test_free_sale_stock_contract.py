@@ -340,6 +340,59 @@ def test_free_sale_full_signature_flow_reserves_stock_without_debit(stock_client
     assert detail["invoices"][0]["total"] == 156
 
 
+def test_free_sale_delivery_consumes_commercial_reservation(stock_client):
+    client, TestingSessionLocal = stock_client
+    headers = _admin_headers()
+
+    with TestingSessionLocal() as db:
+        variant_id, stock_id, customer_id = _seed_stock_item(db, quantity=5)
+        sale_id = _create_free_sale_quote(db, variant_id, quantity=2)
+
+    send_response = client.put(f"/v2/sales/{sale_id}/status", params={"status": "SENT"}, headers=headers)
+    assert send_response.status_code == 200, send_response.text
+
+    sale_response = client.get(f"/v2/sales/{sale_id}", headers=headers)
+    token = sale_response.json()["signature_token"]
+    sign_response = client.post(f"/v2/sales/portal/{token}/sign")
+    assert sign_response.status_code == 200, sign_response.text
+
+    deliver_response = client.post(f"/v2/sales/{sale_id}/deliver-free-sale", headers=headers)
+    assert deliver_response.status_code == 200, deliver_response.text
+    assert deliver_response.json()["created_moves"] == 1
+    assert deliver_response.json()["consumed_lines"] == 1
+
+    with TestingSessionLocal() as db:
+        sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_id).one()
+        reservation = db.query(models.StockReservation).one()
+        reservation_line = db.query(models.StockReservationLine).one()
+        source_quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=stock_id).one()
+        customer_quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=customer_id).one()
+        move = db.query(models.StockMove).one()
+
+    assert sale.status == "DELIVERED"
+    assert reservation.status == "consumed"
+    assert reservation.consumed_at is not None
+    assert reservation_line.status == "consumed"
+    assert reservation_line.consumed_quantity == 2
+    assert source_quant.quantity == 3
+    assert customer_quant.quantity == 2
+    assert move.reference.startswith("SORTIE-CLIENT")
+    assert "Sortie client devis libre" in move.notes
+
+    products_response = client.get("/v2/stock/products", headers=headers)
+    product = next(product for product in products_response.json() if product["product_type"] == "stockable")
+    [variant_payload] = product["variants"]
+    assert variant_payload["quantity_in_stock"] == 3
+    assert variant_payload["reserved_quantity"] == 0
+    assert variant_payload["available_quantity"] == 3
+
+    transactions_response = client.get("/v2/stock/transactions", headers=headers)
+    [transaction] = transactions_response.json()
+    assert transaction["movement_kind"] == "stock_move"
+    assert "WH/Stock" in transaction["transaction_type"]
+    assert "Partner/Customer" in transaction["transaction_type"]
+
+
 def test_free_sale_cancellation_releases_commercial_reservation(stock_client):
     client, TestingSessionLocal = stock_client
     headers = _admin_headers()

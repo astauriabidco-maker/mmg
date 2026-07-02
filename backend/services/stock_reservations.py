@@ -486,6 +486,82 @@ def consume_reservation(
     return stats
 
 
+def consume_commercial_reservation(
+    db: Session,
+    reservation: models.StockReservation,
+    source_location: str = "WH/Stock",
+    dest_location: str = "Partner/Customer",
+    author: str = "Système",
+) -> dict[str, int]:
+    if reservation.status != ACTIVE_RESERVATION_STATUS:
+        return {"created_moves": 0, "consumed_lines": 0}
+    if reservation.source_label not in {"devis libre", "devis_libre"}:
+        raise ValueError("Cette réservation n'est pas une réservation commerciale de devis libre.")
+
+    source = get_or_create_location(db, source_location, "internal")
+    dest = get_or_create_location(db, dest_location, "customer")
+    now_ref = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    stats = {"created_moves": 0, "consumed_lines": 0}
+
+    for line in reservation.lines:
+        if line.status != ACTIVE_RESERVATION_STATUS or not line.variant_id or (line.reserved_quantity or 0) <= 0:
+            continue
+
+        src_quant = db.query(models.StockQuant).filter_by(variant_id=line.variant_id, location_id=source.id).first()
+        current_qty = float(src_quant.quantity if src_quant else 0)
+        if current_qty < line.reserved_quantity:
+            raise ValueError(
+                f"Stock insuffisant à la sortie client pour {line.supplier_reference}: {current_qty:g} < {line.reserved_quantity:g}"
+            )
+        if not src_quant:
+            src_quant = models.StockQuant(variant_id=line.variant_id, location_id=source.id, quantity=0)
+            db.add(src_quant)
+            db.flush()
+
+        dest_quant = db.query(models.StockQuant).filter_by(variant_id=line.variant_id, location_id=dest.id).first()
+        if not dest_quant:
+            dest_quant = models.StockQuant(variant_id=line.variant_id, location_id=dest.id, quantity=0)
+            db.add(dest_quant)
+            db.flush()
+
+        src_quant.quantity -= line.reserved_quantity
+        dest_quant.quantity += line.reserved_quantity
+        line.consumed_quantity = line.reserved_quantity
+        line.status = "consumed"
+        if line.variant:
+            line.variant.quantity_in_stock = (line.variant.quantity_in_stock or 0) - line.reserved_quantity
+
+        context_reference = reservation.order_reference or reservation.project_reference or "sans contexte"
+        move = models.StockMove(
+            reference=f"SORTIE-CLIENT-{now_ref}",
+            variant_id=line.variant_id,
+            location_id=source.id,
+            location_dest_id=dest.id,
+            quantity=line.reserved_quantity,
+            state="done",
+            notes=f"Sortie client devis libre | Réservation {reservation.reference} | Devis {context_reference}",
+            author=author,
+        )
+        db.add(move)
+        db.flush()
+        db.add(
+            models.ChatterMessage(
+                model_name="variant",
+                record_id=line.variant_id,
+                body=f"Sortie client de {line.reserved_quantity:g} unité(s) depuis la réservation {reservation.reference}.",
+                author=author,
+                is_system_log=True,
+            )
+        )
+        stats["created_moves"] += 1
+        stats["consumed_lines"] += 1
+
+    if stats["consumed_lines"]:
+        reservation.status = "consumed"
+        reservation.consumed_at = datetime.utcnow()
+    return stats
+
+
 def cancel_reservation(
     db: Session,
     reservation: models.StockReservation,

@@ -16,6 +16,7 @@ from ..services.stock_reservations import (
     annotate_sale_availability,
     build_preview_payload,
     cancel_reservation,
+    consume_commercial_reservation,
     create_commercial_reservation_for_sale,
     create_reservation,
 )
@@ -822,6 +823,65 @@ def sign_quote(token: str, request: Request, db: Session = Depends(get_db)):
         "message": "Devis signé avec succès et Facture d'acompte/définitive générée !",
         "commercial_reservation_id": reservation.id if reservation else None,
     }
+
+
+@router.post("/{order_id}/deliver-free-sale", dependencies=AUTH_DEPENDENCIES)
+def deliver_free_sale_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut valider une sortie client.")
+
+    sale = (
+        db.query(models.SaleOrder)
+        .options(joinedload(models.SaleOrder.lines))
+        .filter(models.SaleOrder.id == order_id)
+        .first()
+    )
+    if not sale:
+        raise HTTPException(status_code=404, detail="Devis introuvable.")
+    if sale.workflow_type != "FREE_SALE":
+        raise HTTPException(status_code=400, detail="La sortie client directe est réservée aux devis libres.")
+    if sale.status not in ["VALIDATED", "ACCEPTED"]:
+        raise HTTPException(status_code=400, detail="La sortie client nécessite un devis libre signé/validé.")
+
+    reservation = (
+        db.query(models.StockReservation)
+        .options(joinedload(models.StockReservation.lines).joinedload(models.StockReservationLine.variant))
+        .filter(
+            models.StockReservation.sale_order_id == sale.id,
+            models.StockReservation.status == "reserved",
+            models.StockReservation.source_label.in_(["devis libre", "devis_libre"]),
+        )
+        .first()
+    )
+    if not reservation:
+        raise HTTPException(status_code=400, detail="Aucune réservation commerciale active à livrer pour ce devis.")
+
+    try:
+        stats = consume_commercial_reservation(
+            db,
+            reservation,
+            author=current_user.get("sub", "Admin"),
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if stats.get("consumed_lines", 0) == 0:
+        raise HTTPException(status_code=400, detail="Aucune ligne de stock réservée à sortir.")
+
+    sale.status = "DELIVERED"
+    sale.notes = (sale.notes or "") + f"\n[SORTIE CLIENT] Stock livré depuis la réservation {reservation.reference}."
+    db.commit()
+    return {
+        "message": "Sortie client effectuée.",
+        "reservation_id": reservation.id,
+        **stats,
+    }
+
 
 @router.post("/{order_id}/launch-production", dependencies=AUTH_DEPENDENCIES)
 def launch_production(order_id: int, db: Session = Depends(get_db)):
