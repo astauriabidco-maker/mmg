@@ -8,10 +8,11 @@ import PartnerDirectory from '../components/PartnerDirectory';
 
 export default function SalesDashboard() {
     const queryClient = useQueryClient();
-    
+
     const [mainTab, setMainTab] = useState('pipeline'); // 'pipeline' | 'dossiers' | 'partners'
     const [pipelineView, setPipelineView] = useState('kanban'); // 'list' | 'kanban'
     const [searchTerm, setSearchTerm] = useState("");
+    const [pipelineFilter, setPipelineFilter] = useState("all");
     const [selectedSale, setSelectedSale] = useState(null);
     const [isStatusUpdating, setIsStatusUpdating] = useState(false);
     const [isUploadingBOM, setIsUploadingBOM] = useState(false);
@@ -148,7 +149,7 @@ export default function SalesDashboard() {
         }
         return null;
     };
-    
+
     // Sync local state with server state
     React.useEffect(() => {
         if (serverStages && serverStages.length > 0) {
@@ -318,7 +319,7 @@ export default function SalesDashboard() {
         setIsGenerating(true);
         try {
             const res = await api.post('/v2/sales/ai-quote', { prompt: aiPrompt });
-            
+
             if (res.data.type === 'stages_updated') {
                 setShowAIModal(false);
                 setAiPrompt('');
@@ -328,7 +329,7 @@ export default function SalesDashboard() {
                 const quoteDraft = res.data.quote || res.data;
                 quoteDraft.workflow_type = quoteDraft.workflow_type || "FABRICATION_ESTIMATE";
                 const createRes = await api.post('/v2/sales/', quoteDraft);
-                
+
                 setShowAIModal(false);
                 setAiPrompt('');
                 queryClient.invalidateQueries(['sales']);
@@ -835,7 +836,7 @@ export default function SalesDashboard() {
                 headers: { "Content-Type": "multipart/form-data" }
             });
             let alertMsg = `✅ Succès: ${res.data.processed_count} articles ont été débités du stock.`;
-            
+
             if (res.data.warnings && res.data.warnings.length > 0) {
                 alertMsg += `\n\n⚠️ AVERTISSEMENT RUPTURE DE STOCK :\n- ` + res.data.warnings.join('\n- ');
             }
@@ -1294,10 +1295,111 @@ export default function SalesDashboard() {
         );
     };
 
-    const filteredSales = sales.filter(s => 
-        s.reference.toLowerCase().includes(searchTerm.toLowerCase()) || 
-        s.client_name.toLowerCase().includes(searchTerm.toLowerCase())
+    const getSaleTotal = (sale) => (sale?.lines || []).reduce(
+        (sum, line) => sum + (Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100)),
+        0
     );
+
+    const getSaleNextAction = (sale) => {
+        const trace = getFreeSaleTraceability(sale);
+        const reservationSummary = getSaleReservationSummary(sale);
+        const isFreeSale = (sale?.workflow_type || 'FREE_SALE') === 'FREE_SALE';
+        if (sale?.status === 'DRAFT') return { label: 'Envoyer au client', tone: 'blue' };
+        if (sale?.status === 'SENT') return { label: 'Relancer signature', tone: 'amber' };
+        if (isFreeSale && sale?.status === 'VALIDATED' && reservationSummary.count > 0) return { label: 'Sortie client à faire', tone: 'emerald' };
+        if (trace.isDelivered && !trace.isReturned) return { label: 'Livré, surveiller retour', tone: 'indigo' };
+        if (trace.isReturned && trace.isInvoiced && !trace.hasCreditNote) return { label: 'Avoir à décider', tone: 'rose' };
+        if (!isFreeSale && sale?.status === 'VALIDATED') return { label: 'Envoyer au BE', tone: 'emerald' };
+        if (!isFreeSale && ['IN_DESIGN', 'READY_FOR_PROD'].includes(sale?.status)) return { label: 'Préparer atelier', tone: 'amber' };
+        if (sale?.status === 'CANCELLED') return { label: 'Clôturé', tone: 'slate' };
+        return { label: 'À jour', tone: 'slate' };
+    };
+
+    const getNextActionClass = (tone) => {
+        if (tone === 'blue') return 'bg-blue-50 text-blue-700 border-blue-100';
+        if (tone === 'amber') return 'bg-amber-50 text-amber-700 border-amber-100';
+        if (tone === 'emerald') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+        if (tone === 'indigo') return 'bg-indigo-50 text-indigo-700 border-indigo-100';
+        if (tone === 'rose') return 'bg-rose-50 text-rose-700 border-rose-100';
+        return 'bg-slate-100 text-slate-600 border-slate-200';
+    };
+
+    const pipelineFilters = [
+        { key: 'all', label: 'Tous', match: () => true },
+        { key: 'to_send', label: 'À envoyer', match: (sale) => sale.status === 'DRAFT' },
+        { key: 'to_sign', label: 'À signer', match: (sale) => sale.status === 'SENT' },
+        { key: 'to_deliver', label: 'À livrer', match: (sale) => {
+            const trace = getFreeSaleTraceability(sale);
+            return (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE' && sale.status === 'VALIDATED' && trace.isReserved;
+        }},
+        { key: 'to_invoice', label: 'À facturer', match: (sale) => {
+            const trace = getFreeSaleTraceability(sale);
+            return trace.isDelivered && !trace.isInvoiced;
+        }},
+        { key: 'returns', label: 'Retours/Avoirs', match: (sale) => {
+            const trace = getFreeSaleTraceability(sale);
+            return trace.isReturned || trace.hasCreditNote;
+        }},
+        { key: 'fabrication', label: 'Fabrication', match: (sale) => (sale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' },
+    ];
+
+    const SalePipelineCard = ({ sale, compact = false }) => {
+        const total = getSaleTotal(sale);
+        const trace = getFreeSaleTraceability(sale);
+        const nextAction = getSaleNextAction(sale);
+        const stockLines = (sale.lines || []).filter(line => line.line_type === 'STOCK_ITEM' || line.variant_id).length;
+        const serviceLines = (sale.lines || []).length - stockLines;
+        return (
+            <div
+                draggable={!compact}
+                onDragStart={(event) => !compact && handleDragStart(event, sale.id)}
+                onClick={() => openSaleDetails(sale.id)}
+                className={`bg-white border cursor-pointer transition-all ${compact ? 'p-4 rounded-2xl hover:border-blue-300 hover:shadow-md' : 'p-4 rounded-2xl shadow-sm hover:shadow-md cursor-grab active:cursor-grabbing'} ${selectedSale?.id === sale.id ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200'}`}
+            >
+                <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <p className="font-black text-slate-900 leading-tight truncate">{sale.client_name}</p>
+                        <p className="mt-1 text-[10px] font-mono font-black text-slate-400 uppercase">{sale.reference}</p>
+                    </div>
+                    <p className="font-black text-slate-900 whitespace-nowrap">{formatMoney(total)}</p>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                    <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getSaleDisplayClass(sale)}`}>{getSaleDisplayLabel(sale)}</span>
+                    <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getWorkflowBadgeClass(sale.workflow_type)}`}>{getWorkflowLabel(sale.workflow_type)}</span>
+                </div>
+                <div className={`mt-3 rounded-xl border px-3 py-2 text-xs font-black ${getNextActionClass(nextAction.tone)}`}>
+                    {nextAction.label}
+                </div>
+                <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+                    <div className="rounded-lg bg-slate-50 border border-slate-100 p-2">
+                        <p className="text-[9px] font-black uppercase text-slate-400">Stock</p>
+                        <p className="font-black text-slate-800">{stockLines}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 border border-slate-100 p-2">
+                        <p className="text-[9px] font-black uppercase text-slate-400">Prest.</p>
+                        <p className="font-black text-slate-800">{serviceLines}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 border border-slate-100 p-2">
+                        <p className="text-[9px] font-black uppercase text-slate-400">Rés.</p>
+                        <p className="font-black text-slate-800">{trace.reservationsCount}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 border border-slate-100 p-2">
+                        <p className="text-[9px] font-black uppercase text-slate-400">Docs</p>
+                        <p className="font-black text-slate-800">{trace.billableInvoicesCount + trace.creditNotesCount + trace.deliveryNotesCount}</p>
+                    </div>
+                </div>
+                <SaleCycleIndicator sale={sale} compact />
+            </div>
+        );
+    };
+
+    const activePipelineFilter = pipelineFilters.find(filter => filter.key === pipelineFilter) || pipelineFilters[0];
+    const filteredSales = sales
+        .filter(s =>
+            s.reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            s.client_name.toLowerCase().includes(searchTerm.toLowerCase())
+        )
+        .filter(s => activePipelineFilter.match(s));
 
     // Calculate total pipeline value
     const pipelineValue = sales
@@ -1310,22 +1412,22 @@ export default function SalesDashboard() {
 
     return (
         <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex flex-col overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in relative">
-            
+
             {/* TOP NAVIGATION TABS */}
             <div className="bg-slate-900 px-6 py-4 flex gap-4 shrink-0 rounded-t-[2rem]">
-                <button 
+                <button
                     onClick={() => setMainTab('pipeline')}
                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'pipeline' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
                     <DollarSign className="w-5 h-5"/> Pipeline Commercial
                 </button>
-                <button 
+                <button
                     onClick={() => setMainTab('dossiers')}
                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'dossiers' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
                     <ListTodo className="w-5 h-5"/> Métrés & Dossiers Techniques
                 </button>
-                <button 
+                <button
                     onClick={() => setMainTab('clients')}
                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'clients' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
@@ -1348,40 +1450,40 @@ export default function SalesDashboard() {
             {mainTab === 'pipeline' && (
             <div className="flex-1 flex flex-col overflow-hidden relative">
                 {/* PIPELINE HEADER CONTROLS */}
-                <div className="bg-white border-b border-slate-200 p-4 flex items-center justify-between shrink-0 z-20">
-                    <div className="flex items-center gap-4">
-                        <h3 className="font-black text-slate-900 flex items-center gap-2 tracking-tight text-lg">
-                            <Users className="text-blue-600 w-5 h-5"/> Ventes & Devis
-                        </h3>
-                        <div className="h-6 w-px bg-slate-200"></div>
-                        <div className="flex bg-slate-100 p-1 rounded-xl">
-                            <button onClick={() => setPipelineView('kanban')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${pipelineView === 'kanban' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}>Kanban</button>
-                            <button onClick={() => setPipelineView('list')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${pipelineView === 'list' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}>Liste</button>
-                        </div>
-                        <div className="flex items-center gap-4 ml-4">
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold text-slate-400 uppercase">Pipeline</span>
-                                <span className="text-sm font-black text-blue-600">{pipelineValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold text-slate-400 uppercase">Validé</span>
-                                <span className="text-sm font-black text-emerald-600">{validatedValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-3">
-                        <div className="relative w-64">
-                            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                            <input 
-                                type="text" 
-                                placeholder="Rechercher..." 
+	                <div className="bg-white border-b border-slate-200 p-4 shrink-0 z-20 space-y-4">
+	                    <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+	                        <div className="flex flex-wrap items-center gap-4">
+	                            <h3 className="font-black text-slate-900 flex items-center gap-2 tracking-tight text-lg">
+	                                <Users className="text-blue-600 w-5 h-5"/> Ventes & Devis
+	                            </h3>
+	                            <div className="flex bg-slate-100 p-1 rounded-xl">
+	                                <button onClick={() => setPipelineView('kanban')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${pipelineView === 'kanban' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}>Kanban</button>
+	                                <button onClick={() => setPipelineView('list')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${pipelineView === 'list' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}>Liste</button>
+	                            </div>
+	                            <div className="flex items-center gap-3">
+	                                <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+	                                    <span className="block text-[9px] font-black text-blue-400 uppercase tracking-widest">Pipeline</span>
+	                                    <span className="text-sm font-black text-blue-700">{pipelineValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
+	                                </div>
+	                                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
+	                                    <span className="block text-[9px] font-black text-emerald-500 uppercase tracking-widest">Validé</span>
+	                                    <span className="text-sm font-black text-emerald-700">{validatedValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
+	                                </div>
+	                            </div>
+	                        </div>
+
+	                        <div className="flex flex-wrap items-center gap-3">
+	                        <div className="relative w-64">
+	                            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+	                            <input
+                                type="text"
+                                placeholder="Rechercher..."
                                 value={searchTerm}
                                 onChange={e => setSearchTerm(e.target.value)}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
                             />
                         </div>
-                        <button 
+                        <button
                             onClick={() => {
                                 refetchClients();
                                 setShowManualQuoteModal(true);
@@ -1396,26 +1498,41 @@ export default function SalesDashboard() {
                         >
                             <ListTodo className="w-4 h-4"/> Métré fabrication
                         </button>
-                        <button 
-                            onClick={() => setShowAIModal(true)} 
+                        <button
+                            onClick={() => setShowAIModal(true)}
                             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black shadow-md shadow-indigo-500/20 flex items-center gap-2 transition-all"
                         >
-                            <Sparkles className="w-4 h-4"/> Assistant devis IA
-                        </button>
-                    </div>
-                </div>
+	                            <Sparkles className="w-4 h-4"/> Assistant devis IA
+	                        </button>
+	                        </div>
+	                    </div>
+	                    <div className="flex gap-2 overflow-x-auto pb-1">
+	                        {pipelineFilters.map(filter => {
+	                            const count = sales.filter(filter.match).length;
+	                            return (
+	                                <button
+	                                    key={filter.key}
+	                                    onClick={() => setPipelineFilter(filter.key)}
+	                                    className={`shrink-0 px-3 py-2 rounded-xl border text-xs font-black transition-all ${pipelineFilter === filter.key ? 'bg-slate-900 text-white border-slate-900 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-200 hover:text-blue-700'}`}
+	                                >
+	                                    {filter.label} <span className={pipelineFilter === filter.key ? 'text-slate-300' : 'text-slate-400'}>{count}</span>
+	                                </button>
+	                            );
+	                        })}
+	                    </div>
+	                </div>
 
                 <div className="flex-1 flex overflow-hidden relative bg-slate-50/50">
-                    
+
                     {/* KANBAN VIEW */}
                     {pipelineView === 'kanban' && (
                         <div className="flex-1 overflow-x-auto p-6 flex gap-6 items-start h-full pb-10">
                             {pipelineStages.map(col => {
                                 const colSales = filteredSales.filter(s => s.status === col.id);
                                 const colValue = colSales.reduce((sum, s) => sum + s.lines.reduce((lsum, l) => lsum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0), 0);
-                                
+
                                 return (
-                                    <div 
+                                    <div
                                         key={col.id}
                                         onDragOver={handleDragOver}
                                         onDrop={(e) => handleDrop(e, col.id)}
@@ -1423,8 +1540,8 @@ export default function SalesDashboard() {
                                     >
                                         <div className="flex items-center justify-between mb-4 px-2 group">
                                             <div className="flex-1 mr-2">
-                                                <input 
-                                                    type="text" 
+                                                <input
+                                                    type="text"
                                                     value={col.title}
                                                     onChange={(e) => {
                                                         const newStages = pipelineStages.map(s => s.id === col.id ? { ...s, title: e.target.value } : s);
@@ -1442,42 +1559,23 @@ export default function SalesDashboard() {
                                                 </button>
                                             </div>
                                         </div>
-                                        <div className={`flex-1 overflow-y-auto space-y-3 p-2 rounded-2xl ${isStatusUpdating ? 'opacity-50' : ''} bg-slate-100/50 border border-slate-200/50 min-h-[150px]`}>
-                                            {colSales.map(sale => {
-                                                const total = sale.lines.reduce((sum, l) => sum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0);
-                                                return (
-                                                    <div 
-                                                        key={sale.id}
-                                                        draggable
-                                                        onDragStart={(e) => handleDragStart(e, sale.id)}
-                                                        onClick={() => openSaleDetails(sale.id)}
-                                                        className={`bg-white p-4 rounded-xl shadow-sm border-2 cursor-grab active:cursor-grabbing hover:shadow-md transition-all ${selectedSale?.id === sale.id ? 'border-blue-500 ring-2 ring-blue-50' : 'border-slate-200 hover:border-blue-300'}`}
-                                                    >
-                                                        <div className="flex justify-between items-start mb-2">
-                                                            <span className="font-black text-slate-800 text-sm leading-tight">{sale.client_name}</span>
-                                                            <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getSaleDisplayClass(sale)}`}>
-                                                                {getSaleDisplayLabel(sale)}
-                                                            </span>
-                                                        </div>
-                                                        <div className="flex justify-between items-end mt-4">
-                                                            <span className="font-bold text-slate-400 text-[10px] uppercase tracking-wider">{sale.reference}</span>
-                                                            <span className="font-black text-slate-700 text-sm">{total.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
-                                                        </div>
-                                                        <span className={`inline-block mt-3 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getWorkflowBadgeClass(sale.workflow_type)}`}>
-                                                            {getWorkflowLabel(sale.workflow_type)}
-                                                        </span>
-                                                        <SaleCycleIndicator sale={sale} compact />
-                                                    </div>
-                                                )
-                                            })}
-                                        </div>
+	                                        <div className={`flex-1 overflow-y-auto space-y-3 p-2 rounded-2xl ${isStatusUpdating ? 'opacity-50' : ''} bg-slate-100/50 border border-slate-200/50 min-h-[150px]`}>
+	                                            {colSales.map(sale => (
+	                                                <SalePipelineCard key={sale.id} sale={sale} />
+	                                            ))}
+	                                            {colSales.length === 0 && (
+	                                                <div className="h-32 rounded-2xl border border-dashed border-slate-200 bg-white/60 flex items-center justify-center text-center px-4">
+	                                                    <p className="text-sm font-bold text-slate-400">Aucun devis dans cette étape.</p>
+	                                                </div>
+	                                            )}
+	                                        </div>
                                     </div>
                                 )
                             })}
-                            
+
                             {/* ADD NEW STAGE BUTTON */}
                             <div className="w-80 shrink-0 flex flex-col h-full opacity-60 hover:opacity-100 transition-opacity">
-                                <button 
+                                <button
                                     onClick={handleAddStage}
                                     className="flex items-center justify-center gap-2 h-12 border-2 border-dashed border-slate-300 rounded-xl text-slate-500 font-bold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
                                 >
@@ -1490,30 +1588,10 @@ export default function SalesDashboard() {
                     {/* LIST VIEW (Legacy) */}
                     {pipelineView === 'list' && (
                         <div className="w-[400px] bg-white border-r border-slate-200 flex flex-col h-full shadow-xl z-10 shrink-0">
-                            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                                {filteredSales.map(sale => {
-                                    const total = sale.lines.reduce((sum, l) => sum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0);
-                                    return (
-                                        <div 
-                                            key={sale.id} 
-                                            onClick={() => openSaleDetails(sale.id)}
-                                            className={`p-4 rounded-xl cursor-pointer border-2 transition-all ${selectedSale?.id === sale.id ? 'bg-blue-50 border-blue-500 shadow-md' : 'bg-white border-slate-100 hover:border-slate-300 shadow-sm'}`}
-                                        >
-                                            <div className="flex justify-between items-start mb-2">
-                                                <span className="font-black text-slate-900">{sale.client_name}</span>
-                                                <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getSaleDisplayClass(sale)}`}>{getSaleDisplayLabel(sale)}</span>
-                                            </div>
-                                            <div className="flex justify-between items-center text-sm">
-                                                <span className="font-bold text-slate-400 text-xs">{sale.reference}</span>
-                                                <span className="font-black text-slate-800">{total.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
-                                            </div>
-                                            <span className={`inline-block mt-3 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getWorkflowBadgeClass(sale.workflow_type)}`}>
-                                                {getWorkflowLabel(sale.workflow_type)}
-                                            </span>
-                                            <SaleCycleIndicator sale={sale} compact />
-                                        </div>
-                                    );
-                                })}
+	                            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+	                                {filteredSales.map(sale => (
+	                                    <SalePipelineCard key={sale.id} sale={sale} compact />
+	                                ))}
                                 {filteredSales.length === 0 && (
                                     <div className="text-center py-10 text-slate-400 font-bold">Aucun devis trouvé.</div>
                                 )}
@@ -1541,7 +1619,7 @@ export default function SalesDashboard() {
                                         <h3 className="font-black text-xl mb-1">En Négociation</h3>
                                         <p className="text-blue-100 text-sm font-medium">Le devis a été envoyé. En attente de signature électronique du client.</p>
                                     </div>
-                                    <button 
+                                    <button
                                         onClick={validateSale}
                                         disabled={isStatusUpdating}
                                         className="bg-white/10 text-white border border-white/20 px-4 py-2 rounded-xl font-bold hover:bg-white/20 transition-colors text-sm"
@@ -1549,7 +1627,7 @@ export default function SalesDashboard() {
                                         Ou Valider Manuellement
                                     </button>
                                 </div>
-                                
+
                                 {selectedSale.signature_token && (
                                     <div className="bg-slate-900/40 rounded-xl p-4 flex items-center justify-between border border-white/10 backdrop-blur-sm">
                                         <div className="overflow-hidden mr-4">
@@ -1558,7 +1636,7 @@ export default function SalesDashboard() {
                                                 {window.location.origin}/portal/sign/{selectedSale.signature_token}
                                             </p>
                                         </div>
-                                        <button 
+                                        <button
                                             onClick={() => {
                                                 navigator.clipboard.writeText(`${window.location.origin}/portal/sign/${selectedSale.signature_token}`);
                                                 alert("Lien copié dans le presse-papier !");
@@ -1612,14 +1690,14 @@ export default function SalesDashboard() {
                                     <p className="text-emerald-100 text-sm font-medium">Vous devez maintenant faire un métré précis ou transmettre au BE.</p>
                                 </div>
                                 <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-                                    <button 
+                                    <button
                                         onClick={generateMetre}
                                         disabled={isStatusUpdating}
                                         className="w-full sm:w-auto bg-white/20 text-white border border-white/30 px-4 py-3 rounded-xl font-bold hover:bg-white/30 transition-colors flex items-center justify-center gap-2"
                                     >
                                         Générer Métré
                                     </button>
-                                    <button 
+                                    <button
                                         onClick={sendToDesign}
                                         disabled={isStatusUpdating}
                                         className="w-full sm:w-auto bg-white text-emerald-700 px-6 py-3 rounded-xl font-black shadow-md hover:scale-105 transition-transform flex items-center justify-center gap-2"
@@ -1772,7 +1850,7 @@ export default function SalesDashboard() {
                                     <h3 className="font-black text-xl mb-1">Dossier Prêt & Stock Réservé</h3>
                                     <p className="text-amber-100 text-sm font-medium">La préparation atelier est validée sans débit réel. Transmettez à l'Atelier Live.</p>
                                 </div>
-                                <button 
+                                <button
                                     onClick={launchProduction}
                                     disabled={isStatusUpdating}
                                     className="w-full sm:w-auto bg-white text-amber-700 px-6 py-3 rounded-xl font-black shadow-md hover:scale-105 transition-transform flex items-center justify-center gap-2"
@@ -1781,7 +1859,7 @@ export default function SalesDashboard() {
                                 </button>
                             </div>
                         )}
-                        
+
                         {/* IN PRODUCTION STATE */}
                         {selectedSale.status === 'IN_PRODUCTION' && (
                             <div className="bg-gradient-to-r from-orange-500 to-amber-500 rounded-2xl p-6 text-white flex flex-col sm:flex-row justify-between items-center gap-4 shadow-lg shadow-orange-500/20 mb-8">
@@ -1827,11 +1905,11 @@ export default function SalesDashboard() {
                                 <X className="w-6 h-6" />
                             </button>
                         </div>
-                        
+
                         <div className="p-8">
                             <label className="block text-sm font-bold text-slate-700 mb-3">Votre requête client :</label>
                             <div className="relative">
-                                <textarea 
+                                <textarea
                                     value={aiPrompt}
                                     onChange={e => setAiPrompt(e.target.value)}
                                     placeholder="Ex: Je veux un devis pour Mr Martin avec 3 baies coulissantes et 1 porte d'entrée..."
@@ -1841,13 +1919,13 @@ export default function SalesDashboard() {
                             </div>
 
                             <div className="mt-6 flex justify-end gap-3">
-                                <button 
+                                <button
                                     onClick={() => setShowAIModal(false)}
                                     className="px-6 py-3 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl font-bold transition-all"
                                 >
                                     Annuler
                                 </button>
-                                <button 
+                                <button
                                     onClick={handleAIGenerate}
                                     disabled={!aiPrompt.trim() || isGenerating}
                                     className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-300 text-white rounded-xl font-black shadow-lg shadow-indigo-500/30 flex items-center gap-2 transition-all active:scale-95"
@@ -2347,13 +2425,13 @@ export default function SalesDashboard() {
                         </div>
 
                         <div className="p-6 border-t border-slate-200 flex flex-col sm:flex-row justify-end gap-3 shrink-0">
-                            <button 
+                            <button
                                 onClick={() => setShowManualQuoteModal(false)}
                                 className="px-6 py-3 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl font-bold transition-all"
                             >
                                 Annuler
                             </button>
-                            <button 
+                            <button
                                 onClick={createManualQuote}
                                 disabled={isCreatingManualQuote}
                                 className="px-6 py-3 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white rounded-xl font-black shadow-lg shadow-slate-900/20 flex items-center justify-center gap-2 transition-all active:scale-95"
