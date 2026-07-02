@@ -1402,24 +1402,38 @@ export default function SalesDashboard() {
         <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex flex-col overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in relative">
 
             {/* TOP NAVIGATION TABS */}
-            <div className="bg-slate-900 px-6 py-4 flex gap-4 shrink-0 rounded-t-[2rem]">
+            <div className="bg-slate-900 px-6 py-4 flex flex-wrap items-center justify-between gap-4 shrink-0 rounded-t-[2rem]">
+                <div className="flex flex-wrap gap-3">
                 <button
-                    onClick={() => setMainTab('pipeline')}
-                    className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'pipeline' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
+                    onClick={() => {
+                        setMainTab('pipeline');
+                        setPipelineView('kanban');
+                    }}
+                    className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'pipeline' && pipelineView === 'kanban' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
-                    <DollarSign className="w-5 h-5"/> Pipeline Commercial
+                    <DollarSign className="w-5 h-5"/> Pipeline
                 </button>
                 <button
-                    onClick={() => setMainTab('dossiers')}
-                    className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'dossiers' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
+                    onClick={() => {
+                        setMainTab('pipeline');
+                        setPipelineView('list');
+                    }}
+                    className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'pipeline' && pipelineView === 'list' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
-                    <ListTodo className="w-5 h-5"/> Métrés & Dossiers Techniques
+                    <FileText className="w-5 h-5"/> Liste devis
                 </button>
                 <button
                     onClick={() => setMainTab('clients')}
                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'clients' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
                     <Users className="w-5 h-5"/> Annuaire Clients
+                </button>
+                </div>
+                <button
+                    onClick={() => setMainTab('dossiers')}
+                    className={`px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'dossiers' ? 'bg-emerald-600 text-white shadow-lg' : 'text-emerald-200 hover:bg-slate-800'}`}
+                >
+                    <ListTodo className="w-5 h-5"/> Métrés fabrication
                 </button>
             </div>
 
@@ -1444,10 +1458,6 @@ export default function SalesDashboard() {
 	                            <h3 className="font-black text-slate-900 flex items-center gap-2 tracking-tight text-lg">
 	                                <Users className="text-blue-600 w-5 h-5"/> Ventes & Devis
 	                            </h3>
-	                            <div className="flex bg-slate-100 p-1 rounded-xl">
-	                                <button onClick={() => setPipelineView('kanban')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${pipelineView === 'kanban' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}>Kanban</button>
-	                                <button onClick={() => setPipelineView('list')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${pipelineView === 'list' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}>Liste</button>
-	                            </div>
 	                            <div className="flex items-center gap-3">
 	                                <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
 	                                    <span className="block text-[9px] font-black text-blue-400 uppercase tracking-widest">Pipeline</span>
@@ -1573,306 +1583,56 @@ export default function SalesDashboard() {
                         </div>
                     )}
 
-                    {/* LIST VIEW (Legacy) */}
+                    {/* LIST VIEW */}
                     {pipelineView === 'list' && (
-                        <div className="w-[400px] bg-white border-r border-slate-200 flex flex-col h-full shadow-xl z-10 shrink-0">
-	                            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-	                                {filteredSales.map(sale => (
-	                                    <SalePipelineCard key={sale.id} sale={sale} compact />
-	                                ))}
-                                {filteredSales.length === 0 && (
-                                    <div className="text-center py-10 text-slate-400 font-bold">Aucun devis trouvé.</div>
-                                )}
+                        <div className="flex-1 overflow-y-auto p-6">
+                            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                                <div className="grid grid-cols-[1.1fr_170px_170px_140px_180px] gap-4 px-5 py-3 bg-slate-50 border-b border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                    <span>Client / devis</span>
+                                    <span>Workflow</span>
+                                    <span>Statut métier</span>
+                                    <span className="text-right">Montant HT</span>
+                                    <span>Prochaine action</span>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {filteredSales.map(sale => {
+                                        const total = getSaleTotal(sale);
+                                        const nextAction = getSaleNextAction(sale);
+                                        return (
+                                            <button
+                                                key={sale.id}
+                                                type="button"
+                                                onClick={() => openSaleDetails(sale.id)}
+                                                className="w-full grid grid-cols-[1.1fr_170px_170px_140px_180px] gap-4 px-5 py-4 items-center text-left hover:bg-blue-50/40 transition-colors"
+                                            >
+                                                <div className="min-w-0">
+                                                    <p className="font-black text-slate-900 truncate">{sale.client_name}</p>
+                                                    <p className="mt-1 text-xs font-mono font-black text-slate-400">{sale.reference} · {formatDate(sale.created_at)}</p>
+                                                </div>
+                                                <span className={`justify-self-start text-[10px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg border ${getWorkflowBadgeClass(sale.workflow_type)}`}>
+                                                    {getWorkflowLabel(sale.workflow_type)}
+                                                </span>
+                                                <span className={`justify-self-start text-[10px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg border ${getSaleDisplayClass(sale)}`}>
+                                                    {getSaleDisplayLabel(sale)}
+                                                </span>
+                                                <p className="font-black text-slate-900 text-right">{formatMoney(total)}</p>
+                                                <span className={`justify-self-start rounded-xl border px-3 py-2 text-xs font-black ${getNextActionClass(nextAction.tone)}`}>
+                                                    {nextAction.label}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                    {filteredSales.length === 0 && (
+                                        <div className="p-12 text-center">
+                                            <FileText className="w-12 h-12 mx-auto text-slate-200 mb-3" />
+                                            <p className="text-sm font-black text-slate-500">Aucun devis trouvé avec les filtres actuels.</p>
+                                            <p className="text-xs font-bold text-slate-400 mt-1">Changez le filtre ou la recherche.</p>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     )}
-
-            {/* MAIN AREA : SALE DETAILS OVERLAY / PANEL */}
-            {(pipelineView === 'list' || selectedSale) && (
-                <div className={`${pipelineView === 'kanban' ? 'absolute inset-y-0 right-0 w-[800px] border-l shadow-2xl z-40 bg-slate-50 shadow-slate-900/10' : 'flex-1'} flex flex-col relative overflow-y-auto`}>
-                    {selectedSale ? (
-                        <div className="p-8 max-w-4xl mx-auto w-full relative">
-                            {pipelineView === 'kanban' && (
-                                <button onClick={() => setSelectedSale(null)} className="absolute top-4 right-4 p-2 bg-white rounded-full shadow-md text-slate-500 hover:text-slate-800 z-50">
-                                    <X className="w-5 h-5" />
-                                </button>
-                            )}
-                        {renderSaleDetailCard(selectedSale)}
-
-                        {/* SENT ACTION */}
-                        {false && selectedSale.status === 'SENT' && (
-                            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg shadow-blue-500/20 mb-8">
-                                <div className="flex justify-between items-start mb-6">
-                                    <div>
-                                        <h3 className="font-black text-xl mb-1">En Négociation</h3>
-                                        <p className="text-blue-100 text-sm font-medium">Le devis a été envoyé. En attente de signature électronique du client.</p>
-                                    </div>
-                                    <button
-                                        onClick={validateSale}
-                                        disabled={isStatusUpdating}
-                                        className="bg-white/10 text-white border border-white/20 px-4 py-2 rounded-xl font-bold hover:bg-white/20 transition-colors text-sm"
-                                    >
-                                        Ou Valider Manuellement
-                                    </button>
-                                </div>
-
-                                {selectedSale.signature_token && (
-                                    <div className="bg-slate-900/40 rounded-xl p-4 flex items-center justify-between border border-white/10 backdrop-blur-sm">
-                                        <div className="overflow-hidden mr-4">
-                                            <p className="text-xs font-bold text-blue-200 uppercase tracking-widest mb-1">Lien Sécurisé Client</p>
-                                            <p className="font-mono text-sm text-white opacity-80 truncate">
-                                                {window.location.origin}/portal/sign/{selectedSale.signature_token}
-                                            </p>
-                                        </div>
-                                        <button
-                                            onClick={() => {
-                                                navigator.clipboard.writeText(`${window.location.origin}/portal/sign/${selectedSale.signature_token}`);
-                                                alert("Lien copié dans le presse-papier !");
-                                            }}
-                                            className="bg-blue-500 hover:bg-blue-400 text-white px-4 py-2 rounded-lg font-bold shadow-md transition-colors flex items-center gap-2 shrink-0"
-                                        >
-                                            <Copy className="w-4 h-4"/> Copier
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {/* VALIDATED ACTION */}
-                        {false && selectedSale.status === 'VALIDATED' && (selectedSale.workflow_type || 'FREE_SALE') === 'FREE_SALE' && (
-                            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm mb-8">
-                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                    <div>
-                                        <h3 className="font-black text-xl text-slate-900 mb-1">Devis libre signé</h3>
-                                        <p className="text-sm font-medium text-slate-500">
-                                            Ce devis concerne des pièces, accessoires, prestations ou SAV. Il reste hors workflow fabrication atelier.
-                                        </p>
-                                    </div>
-                                    <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-                                        <span className="bg-slate-100 text-slate-700 border border-slate-200 px-4 py-2 rounded-xl font-black text-xs uppercase text-center">
-                                            Pas de métré atelier
-                                        </span>
-                                        {getSaleReservationSummary(selectedSale).count > 0 ? (
-                                            <button
-                                                onClick={deliverFreeSale}
-                                                disabled={isDeliveringFreeSale}
-                                                className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 disabled:text-slate-500 text-white font-black text-sm shadow-md shadow-emerald-500/20 flex items-center justify-center gap-2 transition-all"
-                                            >
-                                                <Truck className="w-4 h-4" />
-                                                {isDeliveringFreeSale ? "Sortie en cours..." : "Sortie client"}
-                                            </button>
-                                        ) : (
-                                            <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-4 py-2 rounded-xl font-black text-xs uppercase text-center">
-                                                Stock déjà sorti ou aucune ligne stock
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {selectedSale.status === 'VALIDATED' && (selectedSale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' && (
-                            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 rounded-2xl p-6 text-white flex flex-col md:flex-row justify-between items-center gap-4 shadow-lg shadow-emerald-500/20 mb-8">
-                                <div>
-                                    <h3 className="font-black text-xl mb-1">Bon de Commande Signé !</h3>
-                                    <p className="text-emerald-100 text-sm font-medium">Vous devez maintenant faire un métré précis ou transmettre au BE.</p>
-                                </div>
-                                <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-                                    <button
-                                        onClick={generateMetre}
-                                        disabled={isStatusUpdating}
-                                        className="w-full sm:w-auto bg-white/20 text-white border border-white/30 px-4 py-3 rounded-xl font-bold hover:bg-white/30 transition-colors flex items-center justify-center gap-2"
-                                    >
-                                        Générer Métré
-                                    </button>
-                                    <button
-                                        onClick={sendToDesign}
-                                        disabled={isStatusUpdating}
-                                        className="w-full sm:w-auto bg-white text-emerald-700 px-6 py-3 rounded-xl font-black shadow-md hover:scale-105 transition-transform flex items-center justify-center gap-2"
-                                    >
-                                        {isStatusUpdating ? "Envoi..." : "Bureau d'Études"} <ArrowRight className="w-4 h-4"/>
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
-                        {canPrepareWorkshop(selectedSale) && (
-                            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm mb-8">
-                                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-5">
-                                    <div>
-                                        <h3 className="font-black text-xl text-slate-900 mb-1 flex items-center gap-2">
-                                            <UploadCloud className="w-5 h-5 text-amber-500" />
-                                            Préparer atelier
-                                        </h3>
-                                        <p className="text-sm font-medium text-slate-500">
-                                            Chargez les fichiers Proges/Orgadata pour prévisualiser puis réserver le stock sans le débiter.
-                                        </p>
-                                    </div>
-                                    <label className="bg-amber-50 text-amber-700 border border-amber-200 px-4 py-3 rounded-xl font-black text-sm shadow-sm cursor-pointer hover:bg-amber-100 transition-colors flex items-center justify-center gap-2 min-w-[220px]">
-                                        {workshopPrepFiles.length ? `${workshopPrepFiles.length} fichier(s)` : "Choisir fichiers atelier"}
-                                        <UploadCloud className="w-4 h-4"/>
-                                        <input
-                                            type="file"
-                                            multiple
-                                            accept=".txt,.pdf"
-                                            className="hidden"
-                                            onChange={(event) => {
-                                                setWorkshopPrepFiles(Array.from(event.target.files || []));
-                                                setWorkshopPrepPreview(null);
-                                            }}
-                                        />
-                                    </label>
-                                </div>
-
-                                <div className="flex flex-wrap gap-3 mt-5">
-                                    <button
-                                        onClick={previewWorkshopPreparation}
-                                        disabled={isWorkshopPreparing || workshopPrepFiles.length === 0}
-                                        className="px-5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black transition-colors"
-                                    >
-                                        {isWorkshopPreparing ? "Analyse..." : "Prévisualiser"}
-                                    </button>
-                                    <button
-                                        onClick={reserveWorkshopPreparation}
-                                        disabled={isWorkshopPreparing || !workshopPrepPreview}
-                                        className="px-5 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black transition-colors"
-                                    >
-                                        Réserver pour atelier
-                                    </button>
-                                </div>
-
-                                {workshopPrepPreview && (
-                                    <div className="mt-5 space-y-4">
-                                        {workshopPrepPreview.issues?.length > 0 && (
-                                            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-                                                <p className="text-xs font-black text-amber-700 uppercase mb-2">Contrôles workflow</p>
-                                                <div className="space-y-1">
-                                                    {workshopPrepPreview.issues.map((issue, idx) => (
-                                                        <p key={idx} className={`text-sm font-bold ${issue.severity === 'error' ? 'text-red-700' : 'text-amber-700'}`}>
-                                                            {issue.message || issue.code}
-                                                        </p>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                        <div className="grid grid-cols-4 gap-3">
-                                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
-                                                <span className="text-[10px] font-black text-slate-400 uppercase">Lignes</span>
-                                                <p className="text-2xl font-black text-slate-900">{workshopPrepPreview.summary?.debit_lines || 0}</p>
-                                            </div>
-                                            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
-                                                <span className="text-[10px] font-black text-emerald-600 uppercase">OK</span>
-                                                <p className="text-2xl font-black text-emerald-700">{workshopPrepPreview.summary?.stock_match_status?.ok || 0}</p>
-                                            </div>
-                                            <div className="bg-red-50 border border-red-100 rounded-2xl p-4">
-                                                <span className="text-[10px] font-black text-red-600 uppercase">Inconnues</span>
-                                                <p className="text-2xl font-black text-red-700">{workshopPrepPreview.summary?.stock_match_status?.not_found || 0}</p>
-                                            </div>
-                                            <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4">
-                                                <span className="text-[10px] font-black text-orange-600 uppercase">Manques</span>
-                                                <p className="text-2xl font-black text-orange-700">{workshopPrepPreview.summary?.stock_match_status?.shortage || 0}</p>
-                                            </div>
-                                        </div>
-                                        <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-64 overflow-y-auto">
-                                            <table className="w-full text-left">
-                                                <thead className="bg-slate-50 sticky top-0">
-                                                    <tr>
-                                                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase">Référence</th>
-                                                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase">Produit</th>
-                                                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase text-right">Demandé</th>
-                                                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase text-right">Disponible</th>
-                                                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase text-center">Statut</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-slate-100">
-                                                    {workshopPrepPreview.stock_matches?.map((line, idx) => (
-                                                        <tr key={`${line.reference}-${idx}`} className="hover:bg-slate-50">
-                                                            <td className="px-4 py-3 font-mono font-black text-sm">{line.supplier}/{line.reference}</td>
-                                                            <td className="px-4 py-3 text-sm font-bold text-slate-700">{line.product_name || "Non trouvé"}</td>
-                                                            <td className="px-4 py-3 text-sm font-black text-right">{line.requested_quantity} {line.unit}</td>
-                                                            <td className="px-4 py-3 text-sm font-black text-right">{line.available_quantity}</td>
-                                                            <td className="px-4 py-3 text-center">
-                                                                <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase ${line.status === 'ok' ? 'bg-emerald-100 text-emerald-700' : line.status === 'shortage' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
-                                                                    {line.status}
-                                                                </span>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {/* IN_DESIGN ACTION */}
-                        {selectedSale.status === 'IN_DESIGN' && (selectedSale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' && (
-                            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg shadow-purple-500/20 mb-8">
-                                <div className="flex justify-between items-start mb-4">
-                                    <div>
-                                        <h3 className="font-black text-xl mb-1">En Bureau d'Études</h3>
-                                        <p className="text-purple-100 text-sm font-medium">En attente des fichiers de fabrication (Orgadata/Proges).</p>
-                                    </div>
-                                    <div className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold border border-white/30 flex items-center gap-2">
-                                        <div className="w-2 h-2 rounded-full bg-white animate-pulse"></div>
-                                        BE / MÉTODES
-                                    </div>
-                                </div>
-                                <div className="bg-white/10 rounded-xl p-4 border border-white/20 flex flex-col sm:flex-row items-center justify-between gap-4">
-                                    <div>
-                                        <h4 className="font-bold text-sm mb-1 text-white">Fichiers atelier Proges/Orgadata</h4>
-                                        <p className="text-xs text-purple-100">Utilisez la carte Préparer atelier ci-dessus pour prévisualiser et réserver le stock sans débit immédiat.</p>
-                                    </div>
-                                    <span className="bg-white/15 text-white px-4 py-2 rounded-lg font-black text-sm border border-white/20 w-full sm:w-auto text-center shrink-0">
-                                        Réservation sécurisée
-                                    </span>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* READY_FOR_PROD ACTION */}
-                        {selectedSale.status === 'READY_FOR_PROD' && (selectedSale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' && (
-                            <div className="bg-gradient-to-r from-amber-500 to-yellow-500 rounded-2xl p-6 text-white flex flex-col md:flex-row justify-between items-center gap-4 shadow-lg shadow-amber-500/20 mb-8">
-                                <div>
-                                    <h3 className="font-black text-xl mb-1">Dossier Prêt & Stock Réservé</h3>
-                                    <p className="text-amber-100 text-sm font-medium">La préparation atelier est validée sans débit réel. Transmettez à l'Atelier Live.</p>
-                                </div>
-                                <button
-                                    onClick={launchProduction}
-                                    disabled={isStatusUpdating}
-                                    className="w-full sm:w-auto bg-white text-amber-700 px-6 py-3 rounded-xl font-black shadow-md hover:scale-105 transition-transform flex items-center justify-center gap-2"
-                                >
-                                    {isStatusUpdating ? "Lancement..." : "Transmettre à l'Atelier"} <Send className="w-4 h-4"/>
-                                </button>
-                            </div>
-                        )}
-
-                        {/* IN PRODUCTION STATE */}
-                        {selectedSale.status === 'IN_PRODUCTION' && (
-                            <div className="bg-gradient-to-r from-orange-500 to-amber-500 rounded-2xl p-6 text-white flex flex-col sm:flex-row justify-between items-center gap-4 shadow-lg shadow-orange-500/20 mb-8">
-                                <div>
-                                    <h3 className="font-black text-xl mb-1">Fabrication en Cours</h3>
-                                    <p className="text-orange-100 text-sm font-medium">Les fiches de fabrication sont sur les tablettes de l'Atelier.</p>
-                                </div>
-                                <div className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold border border-white/30 flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-white animate-pulse"></div>
-                                    ATELIER LIVE
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                ) : (
-                    pipelineView === 'list' && (
-                        <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-                            <Users className="w-24 h-24 text-slate-200 mb-6" />
-                            <h2 className="text-2xl font-black text-slate-500">Aucun devis sélectionné</h2>
-                            <p className="font-medium mt-2">Sélectionnez un devis à gauche pour voir les détails ou le valider.</p>
-                        </div>
-                    )
-                )}
-            </div>
-            )}
             </div>
             </div>
             )}
