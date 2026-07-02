@@ -1283,12 +1283,12 @@ export default function SalesDashboard() {
                                 </table>
                                 </div>
 
-                                {(selectedSale.workflow_type === 'FREE_SALE' || selectedSale.reservations?.length > 0 || selectedSale.invoices?.length > 0) && (
+                                {(selectedSale.workflow_type === 'FREE_SALE' || selectedSale.reservations?.length > 0 || selectedSale.invoices?.length > 0 || selectedSale.delivery_notes?.length > 0) && (
                                     <div className="mt-6 bg-slate-50 border border-slate-200 rounded-2xl p-5">
                                         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-5">
                                             <div>
                                                 <h4 className="font-black text-xs text-slate-500 uppercase tracking-widest">Traçabilité devis libre</h4>
-                                                <p className="text-sm font-semibold text-slate-500 mt-1">Réservations commerciales, lignes stock réservées et facture rattachée.</p>
+                                                <p className="text-sm font-semibold text-slate-500 mt-1">Réservations commerciales, facture et bon de livraison rattachés.</p>
                                             </div>
                                             <div className="flex flex-wrap gap-2">
                                                 <span className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -1300,7 +1300,7 @@ export default function SalesDashboard() {
                                             </div>
                                         </div>
 
-                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
                                             <div className="bg-white border border-slate-200 rounded-xl p-4">
                                                 <div className="flex items-center justify-between mb-3">
                                                     <p className="text-xs font-black uppercase tracking-widest text-slate-400">Réservations</p>
@@ -1378,6 +1378,37 @@ export default function SalesDashboard() {
                                                     </div>
                                                 ) : (
                                                     <p className="text-sm font-bold text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4">Aucune facture générée pour ce devis.</p>
+                                                )}
+                                            </div>
+
+                                            <div className="bg-white border border-slate-200 rounded-xl p-4">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Livraison client</p>
+                                                    <span className="text-xs font-black text-slate-600">{selectedSale.delivery_notes?.length || 0}</span>
+                                                </div>
+                                                {selectedSale.delivery_notes?.length > 0 ? (
+                                                    <div className="space-y-3">
+                                                        {selectedSale.delivery_notes.map(note => (
+                                                            <div key={note.id} className="flex items-center justify-between gap-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+                                                                <div>
+                                                                    <p className="text-sm font-black text-slate-900">{note.reference}</p>
+                                                                    <p className="text-[11px] font-bold text-emerald-700">{formatDate(note.signed_at)} - {note.status}</p>
+                                                                    {note.delivery_notes && <p className="mt-1 text-[11px] font-semibold text-slate-500">{note.delivery_notes}</p>}
+                                                                </div>
+                                                                <a
+                                                                    href={`${api.defaults.baseURL}/v2/pdf/delivery-note/${note.id}`}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 hover:text-emerald-900 whitespace-nowrap"
+                                                                >
+                                                                    <Truck className="w-3 h-3" />
+                                                                    PDF BL
+                                                                </a>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-sm font-bold text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4">Aucun bon de livraison généré. Il apparaîtra après la sortie client.</p>
                                                 )}
                                             </div>
                                         </div>

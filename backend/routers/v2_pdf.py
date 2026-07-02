@@ -4,6 +4,7 @@ from typing import Optional
 from xml.sax.saxutils import escape
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -344,4 +345,186 @@ def generate_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
         headers={
             "Content-Disposition": f"attachment; filename=Facture_{invoice.reference}.pdf"
         }
+    )
+
+
+@router.get("/delivery-note/{note_id}")
+def generate_delivery_note_pdf(note_id: int, db: Session = Depends(get_db)):
+    note = (
+        db.query(models.DeliveryNote)
+        .options(
+            joinedload(models.DeliveryNote.sale_order)
+            .joinedload(models.SaleOrder.lines)
+            .joinedload(models.SaleOrderLine.variant)
+            .joinedload(models.ProductVariant.product),
+            joinedload(models.DeliveryNote.order),
+        )
+        .filter(models.DeliveryNote.id == note_id)
+        .first()
+    )
+    if not note:
+        raise HTTPException(status_code=404, detail="Delivery note not found")
+
+    reservations = []
+    if note.sale_order_id:
+        reservations = (
+            db.query(models.StockReservation)
+            .options(
+                joinedload(models.StockReservation.lines)
+                .joinedload(models.StockReservationLine.variant)
+                .joinedload(models.ProductVariant.product)
+            )
+            .filter(models.StockReservation.sale_order_id == note.sale_order_id)
+            .order_by(models.StockReservation.created_at.desc())
+            .all()
+        )
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+    elements = []
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        name="DeliveryTitleStyle",
+        parent=styles["Heading1"],
+        fontSize=22,
+        textColor=colors.HexColor("#1e293b"),
+        spaceAfter=12,
+    )
+    normal_style = styles["Normal"]
+    small_style = ParagraphStyle(name="DeliverySmallStyle", parent=styles["Normal"], fontSize=8, leading=10)
+    muted_style = ParagraphStyle(name="DeliveryMutedStyle", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#64748b"))
+
+    source_reference = note.sale_order.reference if note.sale_order else (note.order.reference if note.order else "-")
+    status_label = "Livré" if note.status == "DELIVERED" else note.status
+    date_value = note.signed_at or note.sale_order.signed_at if note.sale_order else note.signed_at
+
+    header_data = [
+        [
+            Paragraph("<b>MMG MENUISERIES</b><br/>Bon de livraison / reçu de sortie client", normal_style),
+            Paragraph(
+                f"<b>BON DE LIVRAISON</b><br/>"
+                f"Réf: {escape(note.reference)}<br/>"
+                f"Statut: {escape(status_label or '')}<br/>"
+                f"Document lié: {escape(source_reference or '-')}",
+                normal_style,
+            ),
+        ]
+    ]
+    header_table = Table(header_data, colWidths=[300, 200])
+    header_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+    ]))
+    elements.append(header_table)
+    elements.append(Spacer(1, 26))
+
+    elements.append(Paragraph(f"BON DE LIVRAISON N° {escape(note.reference)}", title_style))
+    elements.append(Paragraph("Reçu de remise client généré depuis une sortie stock validée.", muted_style))
+    elements.append(Spacer(1, 18))
+
+    client_info = (
+        "<b>Client / destinataire</b><br/>"
+        f"{escape(note.client_name or 'Client non renseigné')}<br/>"
+        f"{escape(note.delivery_address or 'Adresse non renseignée')}<br/>"
+        f"{escape(note.contact_phone or '')}"
+    )
+    meta_info = (
+        "<b>Traçabilité</b><br/>"
+        f"Devis / ordre: {escape(source_reference or '-')}<br/>"
+        f"Date de sortie: {date_value.strftime('%d/%m/%Y %H:%M') if date_value else '-'}<br/>"
+        f"Origine: Sortie client"
+    )
+    info_table = Table([[Paragraph(client_info, normal_style), Paragraph(meta_info, normal_style)]], colWidths=[260, 240])
+    info_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    elements.append(info_table)
+    elements.append(Spacer(1, 20))
+
+    table_data = [["Réf.", "Désignation", "Qté livrée", "Unité", "Réservation"]]
+    delivered_lines = 0
+    for reservation in reservations:
+        for line in reservation.lines:
+            quantity = float(line.consumed_quantity or line.reserved_quantity or 0)
+            if quantity <= 0:
+                continue
+            product = line.variant.product if line.variant else None
+            reference = line.supplier_reference or (line.variant.reference if line.variant else "") or (product.reference_base if product else "")
+            designation = line.designation or (product.name if product else "") or "Article stock"
+            unit = line.unit or (product.unit if product else "") or "u"
+            table_data.append([
+                Paragraph(escape(reference or "-"), small_style),
+                Paragraph(escape(designation), normal_style),
+                f"{quantity:g}",
+                escape(unit),
+                Paragraph(escape(reservation.reference), small_style),
+            ])
+            delivered_lines += 1
+
+    if delivered_lines == 0 and note.sale_order:
+        for sale_line in note.sale_order.lines:
+            if sale_line.line_type != "STOCK_ITEM":
+                continue
+            reference = _variant_reference(sale_line)
+            table_data.append([
+                Paragraph(escape(reference or "-"), small_style),
+                Paragraph(escape(sale_line.description or "Article stock"), normal_style),
+                f"{float(sale_line.quantity or 0):g}",
+                "u",
+                "-",
+            ])
+            delivered_lines += 1
+
+    if delivered_lines == 0:
+        table_data.append(["-", "Aucune ligne stock rattachée", "-", "-", "-"])
+
+    lines_table = Table(table_data, colWidths=[90, 245, 70, 45, 100], repeatRows=1)
+    lines_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("ALIGN", (2, 1), (3, -1), "RIGHT"),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8fafc")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(lines_table)
+
+    if note.delivery_notes:
+        elements.append(Spacer(1, 18))
+        elements.append(Paragraph("<b>Notes de livraison</b>", normal_style))
+        elements.append(Paragraph(escape(note.delivery_notes), normal_style))
+
+    elements.append(Spacer(1, 36))
+    signature_table = Table(
+        [[Paragraph("<b>Remis par MMG</b><br/><br/><br/>Signature :", normal_style), Paragraph("<b>Reçu par le client</b><br/><br/><br/>Signature :", normal_style)]],
+        colWidths=[250, 250],
+    )
+    signature_table.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+        ("TOPPADDING", (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 42),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+    ]))
+    elements.append(signature_table)
+
+    doc.build(elements)
+
+    pdf_value = buffer.getvalue()
+    buffer.close()
+    return Response(
+        content=pdf_value,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=Bon_Livraison_{note.reference}.pdf"},
     )

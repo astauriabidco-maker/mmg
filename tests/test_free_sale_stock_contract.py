@@ -360,6 +360,7 @@ def test_free_sale_delivery_consumes_commercial_reservation(stock_client):
     assert deliver_response.status_code == 200, deliver_response.text
     assert deliver_response.json()["created_moves"] == 1
     assert deliver_response.json()["consumed_lines"] == 1
+    assert deliver_response.json()["delivery_note_reference"].startswith("BL-")
 
     with TestingSessionLocal() as db:
         sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_id).one()
@@ -368,6 +369,7 @@ def test_free_sale_delivery_consumes_commercial_reservation(stock_client):
         source_quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=stock_id).one()
         customer_quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=customer_id).one()
         move = db.query(models.StockMove).one()
+        delivery_note = db.query(models.DeliveryNote).one()
 
     assert sale.status == "DELIVERED"
     assert reservation.status == "consumed"
@@ -378,6 +380,23 @@ def test_free_sale_delivery_consumes_commercial_reservation(stock_client):
     assert customer_quant.quantity == 2
     assert move.reference.startswith("SORTIE-CLIENT")
     assert "Sortie client devis libre" in move.notes
+    assert delivery_note.reference == deliver_response.json()["delivery_note_reference"]
+    assert delivery_note.sale_order_id == sale_id
+    assert delivery_note.order_id is None
+    assert delivery_note.status == "DELIVERED"
+    assert delivery_note.signed_at is not None
+    assert reservation.reference in delivery_note.delivery_notes
+
+    detail_response = client.get(f"/v2/sales/{sale_id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    [delivery_payload] = detail_response.json()["delivery_notes"]
+    assert delivery_payload["id"] == delivery_note.id
+    assert delivery_payload["reference"] == delivery_note.reference
+
+    pdf_response = client.get(f"/v2/pdf/delivery-note/{delivery_note.id}", headers=headers)
+    assert pdf_response.status_code == 200, pdf_response.text
+    assert pdf_response.headers["content-type"] == "application/pdf"
+    assert pdf_response.content.startswith(b"%PDF")
 
     products_response = client.get("/v2/stock/products", headers=headers)
     product = next(product for product in products_response.json() if product["product_type"] == "stockable")

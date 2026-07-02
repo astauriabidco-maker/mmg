@@ -167,7 +167,19 @@ def _attach_sale_traceability(db: Session, sale: models.SaleOrder) -> models.Sal
         .order_by(models.Invoice.issue_date.desc())
         .all()
     )
+    sale.delivery_notes = (
+        db.query(models.DeliveryNote)
+        .filter(models.DeliveryNote.sale_order_id == sale.id)
+        .order_by(models.DeliveryNote.id.desc())
+        .all()
+    )
     return sale
+
+
+def _generate_delivery_note_reference(db: Session) -> str:
+    year = datetime.utcnow().year
+    count = db.query(models.DeliveryNote).filter(models.DeliveryNote.reference.like(f"BL-{year}-%")).count()
+    return f"BL-{year}-{count + 1:04d}"
 
 
 def _create_commercial_reservation_if_validated(
@@ -873,12 +885,39 @@ def deliver_free_sale_order(
     if stats.get("consumed_lines", 0) == 0:
         raise HTTPException(status_code=400, detail="Aucune ligne de stock réservée à sortir.")
 
+    delivery_note = (
+        db.query(models.DeliveryNote)
+        .filter(models.DeliveryNote.sale_order_id == sale.id)
+        .order_by(models.DeliveryNote.id.asc())
+        .first()
+    )
+    if not delivery_note:
+        delivery_note = models.DeliveryNote(
+            reference=_generate_delivery_note_reference(db),
+            order_id=None,
+            sale_order_id=sale.id,
+            client_name=sale.client_name,
+            delivery_address=sale.client_address,
+            contact_phone=sale.client_contact,
+            status="DELIVERED",
+            signed_at=datetime.utcnow(),
+            delivery_notes=f"Sortie client depuis réservation {reservation.reference}.",
+        )
+        db.add(delivery_note)
+        db.flush()
+    else:
+        delivery_note.status = "DELIVERED"
+        delivery_note.signed_at = delivery_note.signed_at or datetime.utcnow()
+        delivery_note.delivery_notes = delivery_note.delivery_notes or f"Sortie client depuis réservation {reservation.reference}."
+
     sale.status = "DELIVERED"
     sale.notes = (sale.notes or "") + f"\n[SORTIE CLIENT] Stock livré depuis la réservation {reservation.reference}."
     db.commit()
     return {
         "message": "Sortie client effectuée.",
         "reservation_id": reservation.id,
+        "delivery_note_id": delivery_note.id,
+        "delivery_note_reference": delivery_note.reference,
         **stats,
     }
 

@@ -542,6 +542,14 @@ class SaleInvoiceSummary(BaseModel):
     total: float
     model_config = ConfigDict(from_attributes=True)
 
+class SaleDeliveryNoteSummary(BaseModel):
+    id: int
+    reference: str
+    status: str
+    signed_at: Optional[datetime] = None
+    delivery_notes: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
 class SaleOrderSchema(BaseModel):
     id: int
     reference: str
@@ -565,6 +573,7 @@ class SaleOrderSchema(BaseModel):
     mmg_dossiers: List[MMGResponse] = []
     reservations: List[StockReservationResponse] = []
     invoices: List[SaleInvoiceSummary] = []
+    delivery_notes: List[SaleDeliveryNoteSummary] = []
     model_config = ConfigDict(from_attributes=True)
 
 # --- FACTURATION ---
@@ -617,7 +626,8 @@ class InvoiceResponse(InvoiceBase):
 
 # --- LOGISTIQUE & LIVRAISON ---
 class DeliveryNoteBase(BaseModel):
-    order_id: int
+    order_id: Optional[int] = None
+    sale_order_id: Optional[int] = None
     client_name: str
     delivery_address: Optional[str] = None
     contact_phone: Optional[str] = None

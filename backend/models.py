@@ -23,6 +23,9 @@ def ensure_schema_compatibility(engine):
 
         if inspector.has_table("delivery_notes"):
             delivery_columns = {column["name"] for column in inspector.get_columns("delivery_notes")}
+            if "sale_order_id" not in delivery_columns:
+                connection.execute(text("ALTER TABLE delivery_notes ADD COLUMN sale_order_id INTEGER"))
+                delivery_columns.add("sale_order_id")
             if "delivery_notes" not in delivery_columns:
                 connection.execute(text("ALTER TABLE delivery_notes ADD COLUMN delivery_notes TEXT"))
                 delivery_columns.add("delivery_notes")
@@ -629,7 +632,8 @@ class DeliveryNote(Base):
     id = Column(Integer, primary_key=True, index=True)
     reference = Column(String, unique=True, index=True) # BL-YYYY-XXXX
     route_id = Column(Integer, ForeignKey("delivery_routes.id"), nullable=True)
-    order_id = Column(Integer, ForeignKey("orders.id"))
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
+    sale_order_id = Column(Integer, ForeignKey("sale_orders.id"), nullable=True)
     
     client_name = Column(String)
     delivery_address = Column(String, nullable=True)
@@ -640,6 +644,7 @@ class DeliveryNote(Base):
     delivery_notes = Column(Text, nullable=True) # Changed from 'notes' to avoid name clash
     
     order = relationship("Order")
+    sale_order = relationship("SaleOrder")
     route = relationship("DeliveryRoute", back_populates="notes")
 
 class BusinessRule(Base):

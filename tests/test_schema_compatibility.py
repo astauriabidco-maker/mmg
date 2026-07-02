@@ -75,6 +75,7 @@ def test_legacy_stock_and_delivery_schema_is_patched(tmp_path):
 
     assert {"technical_doc_url", "compatible_series", "catalog_status"}.issubset(product_columns)
     assert "delivery_notes" in delivery_columns
+    assert "sale_order_id" in delivery_columns
 
     Session = sessionmaker(bind=engine)
     with Session() as session:
