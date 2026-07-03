@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Users, FileText, Search, ArrowRight, CheckCircle, X, DollarSign, Send, Clock, AlertTriangle, FileCheck, Plus, ListTodo, UploadCloud, Copy, Sparkles, BrainCircuit, Package, Wrench, Tag, RefreshCw, Truck, Undo2 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
@@ -9,6 +9,7 @@ import WindowVisualizer from '../components/WindowVisualizer';
 export default function SalesDashboard() {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
+    const location = useLocation();
 
     const [mainTab, setMainTab] = useState('pipeline'); // 'pipeline' | 'dossiers'
     const [pipelineView, setPipelineView] = useState('kanban'); // 'list' | 'kanban'
@@ -46,6 +47,7 @@ export default function SalesDashboard() {
         workflow_type: "FREE_SALE",
         lines: []
     });
+    const prefillHandledRef = React.useRef(null);
 
     const { data: sales = [], isLoading: isLoadingSales } = useQuery({
         queryKey: ['sales'],
@@ -106,6 +108,31 @@ export default function SalesDashboard() {
     });
 
     const [pipelineStages, setPipelineStages] = useState([]);
+
+    React.useEffect(() => {
+        const state = location.state || {};
+        const client = state.prefillClient;
+        const signature = client ? `${client.id || client.name}-${state.openManualQuote ? 'quote' : 'view'}` : null;
+        if (!state.openManualQuote || !client || prefillHandledRef.current === signature) return;
+
+        prefillHandledRef.current = signature;
+        setMainTab('pipeline');
+        setPipelineView('list');
+        setManualQuote(prev => ({
+            ...prev,
+            client_name: client.name || "",
+            client_contact: client.phone || "",
+            client_email: client.email || "",
+            client_address: client.address || "",
+            lines: []
+        }));
+        setManualClientSearch('');
+        setManualCatalogSearch('');
+        setManualQuoteLineMode('stock');
+        setIsManualNewClient(false);
+        setShowManualQuoteModal(true);
+        navigate('/manager?view=sales', { replace: true, state: { view: 'sales' } });
+    }, [location.state, navigate]);
 
     const getWorkflowLabel = (workflowType) => {
         switch (workflowType) {
