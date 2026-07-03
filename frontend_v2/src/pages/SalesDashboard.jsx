@@ -1343,14 +1343,25 @@ export default function SalesDashboard() {
         const trace = getFreeSaleTraceability(sale);
         return executionStatuses.includes(sale.status) || trace.isReturned || trace.hasCreditNote;
     };
+    const isSaleToDeliver = (sale) => {
+        const trace = getFreeSaleTraceability(sale);
+        const isFreeSale = (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE';
+        return isFreeSale && sale.status === 'VALIDATED' && trace.isReserved && !trace.isDelivered && !trace.isReturned;
+    };
+    const matchesExecutionStage = (sale, stageId) => {
+        if (stageId === 'TO_DELIVER') return isSaleToDeliver(sale);
+        if (stageId === 'VALIDATED') return sale.status === 'VALIDATED' && !isSaleToDeliver(sale);
+        if (stageId === 'DELIVERED') {
+            const trace = getFreeSaleTraceability(sale);
+            return sale.status === 'DELIVERED' || trace.isDelivered || trace.isReturned;
+        }
+        return sale.status === stageId;
+    };
     const pipelineFilters = [
         { key: 'execution', label: 'Exécution signée', match: isExecutionSale },
         { key: 'validated', label: 'Signés / validés', match: (sale) => ['VALIDATED', 'IN_DESIGN'].includes(sale.status) },
         { key: 'production', label: 'Atelier / production', match: (sale) => ['READY_FOR_PROD', 'IN_PRODUCTION'].includes(sale.status) },
-        { key: 'to_deliver', label: 'À livrer', match: (sale) => {
-            const trace = getFreeSaleTraceability(sale);
-            return (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE' && sale.status === 'VALIDATED' && trace.isReserved;
-        }},
+        { key: 'to_deliver', label: 'À livrer', match: isSaleToDeliver },
         { key: 'to_invoice', label: 'À facturer', match: (sale) => {
             const trace = getFreeSaleTraceability(sale);
             return trace.isDelivered && !trace.isInvoiced;
@@ -1430,6 +1441,7 @@ export default function SalesDashboard() {
         { id: 'IN_DESIGN', title: "Bureau d'études" },
         { id: 'READY_FOR_PROD', title: 'Prêts pour production' },
         { id: 'IN_PRODUCTION', title: 'En production' },
+        { id: 'TO_DELIVER', title: 'À livrer' },
         { id: 'DELIVERED', title: 'Livrés / facturés' },
     ];
 
@@ -1542,14 +1554,14 @@ export default function SalesDashboard() {
                     {pipelineView === 'kanban' && (
                         <div className="flex-1 overflow-x-auto p-6 flex gap-6 items-start h-full pb-10">
                             {executionPipelineStages.map(col => {
-                                const colSales = filteredSales.filter(s => s.status === col.id);
+                                const colSales = filteredSales.filter(s => matchesExecutionStage(s, col.id));
                                 const colValue = colSales.reduce((sum, s) => sum + s.lines.reduce((lsum, l) => lsum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0), 0);
 
                                 return (
                                     <div
                                         key={col.id}
-                                        onDragOver={handleDragOver}
-                                        onDrop={(e) => handleDrop(e, col.id)}
+                                        onDragOver={col.id === 'TO_DELIVER' ? undefined : handleDragOver}
+                                        onDrop={col.id === 'TO_DELIVER' ? undefined : (e) => handleDrop(e, col.id)}
                                         className="w-80 shrink-0 flex flex-col h-full"
                                     >
                                         <div className="flex items-center justify-between mb-4 px-2">
