@@ -14,6 +14,7 @@ const isActivePresalesStatus = (status) => ['DRAFT', 'SENT'].includes(status);
 
 export default function CRMClientsDashboard() {
     const navigate = useNavigate();
+    const [crmView, setCrmView] = useState('pipeline');
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedClientId, setSelectedClientId] = useState(null);
     const [showProposalStarter, setShowProposalStarter] = useState(false);
@@ -105,6 +106,7 @@ export default function CRMClientsDashboard() {
             const res = await api.post('/v2/partners/clients', payload);
             await refetchClients();
             setSelectedClientId(res.data.id);
+            setCrmView('clients');
             setSearchTerm('');
             setShowClientModal(false);
             resetClientDraft();
@@ -136,6 +138,30 @@ export default function CRMClientsDashboard() {
     const selectedClient = useMemo(() => (
         clients.find(client => client.id === selectedClientId) || filteredClients[0] || null
     ), [clients, filteredClients, selectedClientId]);
+
+    const allPresalesQuotes = useMemo(() => (
+        sales
+            .filter(sale => isPresalesStatus(sale.status))
+            .filter(sale => {
+                const needle = normalize(searchTerm);
+                if (!needle || crmView !== 'pipeline') return true;
+                return [
+                    sale.reference,
+                    sale.client_name,
+                    sale.client_contact,
+                    sale.client_email,
+                ].some(value => normalize(value).includes(needle));
+            })
+            .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
+    ), [sales, searchTerm, crmView]);
+
+    const crmPipelineColumns = [
+        { status: 'DRAFT', label: 'À préparer', detail: 'Brouillons à compléter avant envoi', tone: 'slate' },
+        { status: 'SENT', label: 'En attente client', detail: 'Propositions envoyées à relancer', tone: 'blue' },
+        { status: 'CANCELLED', label: 'Perdues / annulées', detail: 'Historique avant-vente clôturé', tone: 'red' },
+    ];
+
+    const crmPipelineTotal = allPresalesQuotes.reduce((sum, sale) => sum + saleAmount(sale), 0);
 
     const clientSales = useMemo(() => {
         if (!selectedClient) return [];
@@ -295,6 +321,20 @@ export default function CRMClientsDashboard() {
                         </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
+                        <div className="inline-flex rounded-xl border border-white/10 bg-white/10 p-1">
+                            <button
+                                onClick={() => setCrmView('pipeline')}
+                                className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${crmView === 'pipeline' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'}`}
+                            >
+                                Pipeline avant-vente
+                            </button>
+                            <button
+                                onClick={() => setCrmView('clients')}
+                                className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${crmView === 'clients' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'}`}
+                            >
+                                Fiches clients
+                            </button>
+                        </div>
                         <button
                             onClick={() => setShowClientModal(true)}
                             className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/15"
@@ -314,6 +354,89 @@ export default function CRMClientsDashboard() {
                 </div>
             </div>
 
+            {crmView === 'pipeline' && (
+                <div className="flex-1 min-h-0 overflow-y-auto p-6">
+                    <div className="mb-5 grid grid-cols-1 gap-4 lg:grid-cols-4">
+                        <CrmMetric label="Avant-vente ouverte" value={allPresalesQuotes.filter(sale => isActivePresalesStatus(sale.status)).length} detail={formatMoney(allPresalesQuotes.filter(sale => isActivePresalesStatus(sale.status)).reduce((sum, sale) => sum + saleAmount(sale), 0))} tone="blue" />
+                        <CrmMetric label="À préparer" value={allPresalesQuotes.filter(sale => sale.status === 'DRAFT').length} detail="Brouillons CRM" tone="slate" />
+                        <CrmMetric label="En attente client" value={allPresalesQuotes.filter(sale => sale.status === 'SENT').length} detail="Signature ou relance" tone="amber" />
+                        <CrmMetric label="Montant pipeline" value={formatMoney(crmPipelineTotal)} detail="Avant-vente total" tone="emerald" />
+                    </div>
+
+                    <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="relative w-full lg:max-w-md">
+                            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                            <input
+                                value={searchTerm}
+                                onChange={event => setSearchTerm(event.target.value)}
+                                placeholder="Rechercher opportunité, client, téléphone..."
+                                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            <button
+                                onClick={() => setCrmView('clients')}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 hover:bg-slate-50"
+                            >
+                                <Users className="w-4 h-4" />
+                                Ouvrir les fiches clients
+                            </button>
+                            <button
+                                onClick={createQuoteForClient}
+                                disabled={!selectedClient}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white shadow-md shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-200 disabled:text-slate-400"
+                            >
+                                <Plus className="w-4 h-4" />
+                                Créer une proposition
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="grid min-h-[520px] grid-cols-1 gap-5 xl:grid-cols-3">
+                        {crmPipelineColumns.map(column => {
+                            const columnSales = allPresalesQuotes.filter(sale => sale.status === column.status);
+                            const columnAmount = columnSales.reduce((sum, sale) => sum + saleAmount(sale), 0);
+                            return (
+                                <section key={column.status} className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
+                                    <div className="border-b border-slate-100 p-4">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <p className="text-sm font-black text-slate-900">{column.label}</p>
+                                                <p className="mt-1 text-xs font-bold text-slate-500">{column.detail}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-lg font-black text-slate-900">{columnSales.length}</p>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{formatMoney(columnAmount)}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50/70 p-4">
+                                        {columnSales.map(sale => (
+                                            <CrmOpportunityCard
+                                                key={sale.id}
+                                                sale={sale}
+                                                total={saleAmount(sale)}
+                                                statusLabel={statusLabel(sale)}
+                                                statusClassName={statusClassName(sale.status)}
+                                                formatDate={formatDate}
+                                                formatMoney={formatMoney}
+                                                onOpen={() => openSale(sale.id)}
+                                            />
+                                        ))}
+                                        {columnSales.length === 0 && (
+                                            <div className="flex h-36 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-center">
+                                                <p className="px-6 text-sm font-bold text-slate-400">Aucune proposition dans cette étape.</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </section>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {crmView === 'clients' && (
             <div className="grid grid-cols-[360px_1fr] flex-1 min-h-0">
                 <aside className="bg-white border-r border-slate-200 flex flex-col min-h-0">
                     <div className="p-5 border-b border-slate-200">
@@ -571,6 +694,7 @@ export default function CRMClientsDashboard() {
                     )}
                 </main>
             </div>
+            )}
 
             {showProposalStarter && selectedClient && (
                 <CRMQuoteComposer
@@ -1025,6 +1149,57 @@ function InfoLine({ icon: Icon, label, value }) {
             </div>
             <p className="text-sm font-black text-slate-800 truncate">{value || 'Non renseigné'}</p>
         </div>
+    );
+}
+
+function CrmMetric({ label, value, detail, tone }) {
+    const toneClasses = {
+        blue: 'border-blue-100 bg-blue-50 text-blue-700',
+        emerald: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+        amber: 'border-amber-100 bg-amber-50 text-amber-700',
+        slate: 'border-slate-200 bg-white text-slate-800',
+    };
+
+    return (
+        <div className={`rounded-2xl border p-5 shadow-sm ${toneClasses[tone] || toneClasses.slate}`}>
+            <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{label}</p>
+            <p className="mt-2 text-2xl font-black">{value}</p>
+            <p className="mt-1 text-xs font-bold opacity-75">{detail}</p>
+        </div>
+    );
+}
+
+function CrmOpportunityCard({ sale, total, statusLabel, statusClassName, formatDate, formatMoney, onOpen }) {
+    const lineCount = (sale.lines || []).length;
+
+    return (
+        <button
+            onClick={onOpen}
+            className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:border-blue-300 hover:shadow-md"
+        >
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <p className="truncate text-base font-black text-slate-900">{sale.client_name || 'Client inconnu'}</p>
+                    <p className="mt-1 font-mono text-[10px] font-black uppercase tracking-widest text-slate-400">{sale.reference}</p>
+                </div>
+                <p className="whitespace-nowrap text-base font-black text-slate-900">{formatMoney(total)}</p>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className={`rounded-md border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${statusClassName}`}>
+                    {statusLabel}
+                </span>
+                <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    {lineCount} ligne(s)
+                </span>
+            </div>
+            <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+                <p className="text-xs font-bold text-slate-500">{formatDate(sale.updated_at || sale.created_at)}</p>
+                <span className="inline-flex items-center gap-1 text-xs font-black text-blue-700">
+                    Ouvrir
+                    <ArrowRight className="h-4 w-4" />
+                </span>
+            </div>
+        </button>
     );
 }
 

@@ -1343,8 +1343,6 @@ export default function SalesDashboard() {
         const trace = getFreeSaleTraceability(sale);
         return executionStatuses.includes(sale.status) || trace.isReturned || trace.hasCreditNote;
     };
-    const isCrmPreSalesSale = (sale) => ['DRAFT', 'SENT'].includes(sale.status);
-
     const pipelineFilters = [
         { key: 'execution', label: 'Exécution signée', match: isExecutionSale },
         { key: 'validated', label: 'Signés / validés', match: (sale) => ['VALIDATED', 'IN_DESIGN'].includes(sale.status) },
@@ -1362,8 +1360,7 @@ export default function SalesDashboard() {
             return trace.isReturned || trace.hasCreditNote;
         }},
         { key: 'fabrication', label: 'Fabrication signée', match: (sale) => isExecutionSale(sale) && (sale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' },
-        { key: 'crm_presales', label: 'CRM avant-vente', match: isCrmPreSalesSale },
-        { key: 'all', label: 'Tous', match: () => true },
+        { key: 'all', label: 'Toutes commandes', match: isExecutionSale },
     ];
 
     const SalePipelineCard = ({ sale, compact = false }) => {
@@ -1424,13 +1421,11 @@ export default function SalesDashboard() {
         )
         .filter(s => activePipelineFilter.match(s));
 
-    const preSalesValue = sales
-        .filter(s => ['DRAFT', 'SENT'].includes(s.status))
-        .reduce((sum, s) => sum + s.lines.reduce((lsum, l) => lsum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0), 0);
-
     const executionValue = sales
         .filter(isExecutionSale)
         .reduce((sum, s) => sum + s.lines.reduce((lsum, l) => lsum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0), 0);
+
+    const executionPipelineStages = pipelineStages.filter(col => !['DRAFT', 'SENT'].includes(col.id));
 
     return (
         <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex flex-col overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in relative">
@@ -1481,10 +1476,6 @@ export default function SalesDashboard() {
 	                                <Users className="text-blue-600 w-5 h-5"/> Exécution commerciale
 	                            </h3>
 	                            <div className="flex items-center gap-3">
-	                                <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
-	                                    <span className="block text-[9px] font-black text-blue-400 uppercase tracking-widest">CRM avant-vente</span>
-	                                    <span className="text-sm font-black text-blue-700">{preSalesValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
-	                                </div>
 	                                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
 	                                    <span className="block text-[9px] font-black text-emerald-500 uppercase tracking-widest">Signé / commandes</span>
 	                                    <span className="text-sm font-black text-emerald-700">{executionValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
@@ -1544,7 +1535,7 @@ export default function SalesDashboard() {
                     {/* KANBAN VIEW */}
                     {pipelineView === 'kanban' && (
                         <div className="flex-1 overflow-x-auto p-6 flex gap-6 items-start h-full pb-10">
-                            {pipelineStages.map(col => {
+                            {executionPipelineStages.map(col => {
                                 const colSales = filteredSales.filter(s => s.status === col.id);
                                 const colValue = colSales.reduce((sum, s) => sum + s.lines.reduce((lsum, l) => lsum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0), 0);
 
