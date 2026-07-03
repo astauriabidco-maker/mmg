@@ -47,6 +47,14 @@ export default function CRMClientsDashboard() {
         }
     });
 
+    const { data: dossiers = [] } = useQuery({
+        queryKey: ['mmg-dossiers'],
+        queryFn: async () => {
+            const res = await api.get('/mmg/list');
+            return res.data;
+        }
+    });
+
     const normalize = (value) => String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
     const formatDate = (value) => value ? new Date(value).toLocaleDateString('fr-FR') : '-';
@@ -156,13 +164,78 @@ export default function CRMClientsDashboard() {
             .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
     ), [sales, searchTerm, crmView]);
 
-    const crmPipelineColumns = [
-        { status: 'DRAFT', label: 'À préparer', detail: 'Brouillons à compléter avant envoi', tone: 'slate' },
-        { status: 'SENT', label: 'En attente client', detail: 'Propositions envoyées à relancer', tone: 'blue' },
-        { status: 'CANCELLED', label: 'Perdues / annulées', detail: 'Historique avant-vente clôturé', tone: 'red' },
-    ];
+    const filteredDossiers = useMemo(() => {
+        const needle = normalize(searchTerm);
+        return dossiers
+            .filter(dossier => {
+                if (!needle || crmView !== 'pipeline') return true;
+                return [
+                    dossier.reference,
+                    dossier.client_name,
+                    dossier.client_contact,
+                    dossier.client_email,
+                ].some(value => normalize(value).includes(needle));
+            })
+            .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    }, [dossiers, searchTerm, crmView]);
 
     const crmPipelineTotal = allPresalesQuotes.reduce((sum, sale) => sum + saleAmount(sale), 0);
+    const measurePending = filteredDossiers.filter(dossier => dossier.status !== 'VALIDATED');
+    const measureValidated = filteredDossiers.filter(dossier => dossier.status === 'VALIDATED');
+    const quoteDrafts = allPresalesQuotes.filter(sale => sale.status === 'DRAFT');
+    const quoteSent = allPresalesQuotes.filter(sale => sale.status === 'SENT');
+    const quoteLost = allPresalesQuotes.filter(sale => sale.status === 'CANCELLED');
+
+    const crmPipelineColumns = [
+        {
+            key: 'request',
+            label: 'Demande reçue',
+            detail: 'Créer un client, une proposition ou une prise de côte',
+            tone: 'slate',
+            items: [],
+            kind: 'empty',
+        },
+        {
+            key: 'measure_pending',
+            label: 'Métré à traiter',
+            detail: 'Prises de côte reçues, à contrôler',
+            tone: 'emerald',
+            items: measurePending,
+            kind: 'dossier',
+        },
+        {
+            key: 'measure_done',
+            label: 'Métré réalisé',
+            detail: 'Dossiers validés, prêts pour chiffrage',
+            tone: 'emerald',
+            items: measureValidated,
+            kind: 'dossier',
+        },
+        {
+            key: 'quote_draft',
+            label: 'Chiffrage / devis',
+            detail: 'Propositions en préparation',
+            tone: 'blue',
+            items: quoteDrafts,
+            kind: 'sale',
+        },
+        {
+            key: 'quote_sent',
+            label: 'Devis envoyé / relance',
+            detail: 'Client à suivre jusqu’à signature',
+            tone: 'amber',
+            items: quoteSent,
+            kind: 'sale',
+        },
+        {
+            key: 'lost',
+            label: 'Perdu / annulé',
+            detail: 'Opportunités clôturées sans commande',
+            tone: 'red',
+            items: quoteLost,
+            kind: 'sale',
+        },
+    ];
 
     const clientSales = useMemo(() => {
         if (!selectedClient) return [];
@@ -371,9 +444,9 @@ export default function CRMClientsDashboard() {
             {crmView === 'pipeline' && (
                 <div className="flex-1 min-h-0 overflow-y-auto p-6">
                     <div className="mb-5 grid grid-cols-1 gap-4 lg:grid-cols-4">
-                        <CrmMetric label="Avant-vente ouverte" value={allPresalesQuotes.filter(sale => isActivePresalesStatus(sale.status)).length} detail={formatMoney(allPresalesQuotes.filter(sale => isActivePresalesStatus(sale.status)).reduce((sum, sale) => sum + saleAmount(sale), 0))} tone="blue" />
-                        <CrmMetric label="À préparer" value={allPresalesQuotes.filter(sale => sale.status === 'DRAFT').length} detail="Brouillons CRM" tone="slate" />
-                        <CrmMetric label="En attente client" value={allPresalesQuotes.filter(sale => sale.status === 'SENT').length} detail="Signature ou relance" tone="amber" />
+                        <CrmMetric label="Métrés ouverts" value={measurePending.length + measureValidated.length} detail={`${measurePending.length} à traiter · ${measureValidated.length} réalisés`} tone="emerald" />
+                        <CrmMetric label="Chiffrages en cours" value={quoteDrafts.length} detail="Devis à préparer" tone="slate" />
+                        <CrmMetric label="Relances client" value={quoteSent.length} detail="Devis envoyés" tone="amber" />
                         <CrmMetric label="Montant pipeline" value={formatMoney(crmPipelineTotal)} detail="Avant-vente total" tone="emerald" />
                     </div>
 
@@ -413,12 +486,11 @@ export default function CRMClientsDashboard() {
                         </div>
                     </div>
 
-                    <div className="grid min-h-[520px] grid-cols-1 gap-5 xl:grid-cols-3">
+                    <div className="flex min-h-[520px] gap-5 overflow-x-auto pb-3">
                         {crmPipelineColumns.map(column => {
-                            const columnSales = allPresalesQuotes.filter(sale => sale.status === column.status);
-                            const columnAmount = columnSales.reduce((sum, sale) => sum + saleAmount(sale), 0);
+                            const columnAmount = column.kind === 'sale' ? column.items.reduce((sum, sale) => sum + saleAmount(sale), 0) : 0;
                             return (
-                                <section key={column.status} className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
+                                <section key={column.key} className="flex min-h-0 w-80 shrink-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
                                     <div className="border-b border-slate-100 p-4">
                                         <div className="flex items-start justify-between gap-3">
                                             <div>
@@ -426,13 +498,46 @@ export default function CRMClientsDashboard() {
                                                 <p className="mt-1 text-xs font-bold text-slate-500">{column.detail}</p>
                                             </div>
                                             <div className="text-right">
-                                                <p className="text-lg font-black text-slate-900">{columnSales.length}</p>
-                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{formatMoney(columnAmount)}</p>
+                                                <p className="text-lg font-black text-slate-900">{column.items.length}</p>
+                                                {column.kind === 'sale' && <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{formatMoney(columnAmount)}</p>}
                                             </div>
                                         </div>
                                     </div>
                                     <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50/70 p-4">
-                                        {columnSales.map(sale => (
+                                        {column.kind === 'empty' && (
+                                            <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4">
+                                                <p className="text-sm font-black text-slate-700">Point d’entrée client</p>
+                                                <p className="mt-1 text-xs font-bold text-slate-500">
+                                                    Pour une fabrication : créez une prise de côte. Pour une vente simple : créez une proposition.
+                                                </p>
+                                                <div className="mt-4 grid gap-2">
+                                                    <button
+                                                        onClick={() => setCrmView('measures')}
+                                                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-500"
+                                                    >
+                                                        <ClipboardList className="w-4 h-4" />
+                                                        Prise de côte
+                                                    </button>
+                                                    <button
+                                                        onClick={createQuoteForClient}
+                                                        disabled={!selectedClient}
+                                                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                                                    >
+                                                        <Plus className="w-4 h-4" />
+                                                        Proposition libre
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {column.kind === 'dossier' && column.items.map(dossier => (
+                                            <CrmDossierCard
+                                                key={dossier.id}
+                                                dossier={dossier}
+                                                formatDate={formatDate}
+                                                onOpen={() => setCrmView('measures')}
+                                            />
+                                        ))}
+                                        {column.kind === 'sale' && column.items.map(sale => (
                                             <CrmOpportunityCard
                                                 key={sale.id}
                                                 sale={sale}
@@ -444,9 +549,9 @@ export default function CRMClientsDashboard() {
                                                 onOpen={() => openSale(sale.id)}
                                             />
                                         ))}
-                                        {columnSales.length === 0 && (
+                                        {column.kind !== 'empty' && column.items.length === 0 && (
                                             <div className="flex h-36 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-center">
-                                                <p className="px-6 text-sm font-bold text-slate-400">Aucune proposition dans cette étape.</p>
+                                                <p className="px-6 text-sm font-bold text-slate-400">Aucun élément dans cette étape.</p>
                                             </div>
                                         )}
                                     </div>
@@ -1248,6 +1353,41 @@ function CrmOpportunityCard({ sale, total, statusLabel, statusClassName, formatD
                 <p className="text-xs font-bold text-slate-500">{formatDate(sale.updated_at || sale.created_at)}</p>
                 <span className="inline-flex items-center gap-1 text-xs font-black text-blue-700">
                     Ouvrir
+                    <ArrowRight className="h-4 w-4" />
+                </span>
+            </div>
+        </button>
+    );
+}
+
+function CrmDossierCard({ dossier, formatDate, onOpen }) {
+    const statusLabel = dossier.status === 'VALIDATED' ? 'Métré réalisé' : 'À traiter';
+    const statusClass = dossier.status === 'VALIDATED'
+        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+        : 'border-amber-200 bg-amber-50 text-amber-700';
+
+    return (
+        <button
+            onClick={onOpen}
+            className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:border-emerald-300 hover:shadow-md"
+        >
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <p className="truncate text-base font-black text-slate-900">{dossier.client_name || 'Client inconnu'}</p>
+                    <p className="mt-1 font-mono text-[10px] font-black uppercase tracking-widest text-slate-400">{dossier.reference}</p>
+                </div>
+                <span className={`shrink-0 rounded-md border px-2 py-1 text-[9px] font-black uppercase tracking-widest ${statusClass}`}>
+                    {statusLabel}
+                </span>
+            </div>
+            <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Chantier</p>
+                <p className="mt-1 text-xs font-bold text-slate-600">{dossier.client_address || 'Adresse à compléter'}</p>
+            </div>
+            <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+                <p className="text-xs font-bold text-slate-500">{formatDate(dossier.created_at)}</p>
+                <span className="inline-flex items-center gap-1 text-xs font-black text-emerald-700">
+                    Ouvrir métrés
                     <ArrowRight className="h-4 w-4" />
                 </span>
             </div>
