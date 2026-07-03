@@ -1045,6 +1045,49 @@ def create_final_invoice(
     }
 
 
+@router.post("/{order_id}/create-deposit-invoice", dependencies=AUTH_DEPENDENCIES)
+def create_deposit_invoice(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut créer une facture d'acompte.")
+
+    sale = (
+        db.query(models.SaleOrder)
+        .options(joinedload(models.SaleOrder.lines))
+        .filter(models.SaleOrder.id == order_id)
+        .first()
+    )
+    if not sale:
+        raise HTTPException(status_code=404, detail="Devis introuvable.")
+    if _is_free_sale(sale):
+        raise HTTPException(status_code=400, detail="L'acompte est réservé aux devis de fabrication.")
+    if not sale.signed_at and sale.status not in ["VALIDATED", "IN_DESIGN", "READY_FOR_PROD", "IN_PRODUCTION", "DELIVERED"]:
+        raise HTTPException(status_code=400, detail="La facture d'acompte nécessite un devis signé.")
+
+    existing_invoice = _non_cancelled_invoice_query(db, sale.id, "DEPOSIT").first()
+    if existing_invoice:
+        return {
+            "message": f"Facture d'acompte déjà créée: {existing_invoice.reference}.",
+            "invoice_id": existing_invoice.id,
+            "invoice_reference": existing_invoice.reference,
+        }
+
+    invoice = _create_signature_invoice(db, sale)
+    if invoice.invoice_type != "DEPOSIT":
+        raise HTTPException(status_code=400, detail="Impossible de créer un acompte pour ce type de devis.")
+
+    sale.notes = (sale.notes or "") + f"\n[ACOMPTE] {invoice.reference} générée depuis la timeline métier."
+    db.commit()
+    return {
+        "message": "Facture d'acompte générée.",
+        "invoice_id": invoice.id,
+        "invoice_reference": invoice.reference,
+    }
+
+
 @router.post("/{order_id}/return-free-sale", dependencies=AUTH_DEPENDENCIES)
 def return_free_sale_delivery(
     order_id: int,

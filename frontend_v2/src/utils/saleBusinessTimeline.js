@@ -105,6 +105,8 @@ export function buildSaleBusinessTimeline(sale) {
             label: 'Acompte',
             state: stepState({ done: trace.hasDepositInvoice || isFreeSale, active: trace.isSigned && trace.isFabrication && !trace.hasDepositInvoice, skipped: isFreeSale, blocked: isCancelled }),
             detail: isFreeSale ? 'Non requis' : trace.hasDepositInvoice ? (trace.depositPaid ? 'Acompte payé' : 'Facture émise') : 'À émettre',
+            actionKey: !isFreeSale && trace.isSigned && trace.isFabrication && !trace.hasDepositInvoice && !isCancelled ? 'createDepositInvoice' : null,
+            actionLabel: 'Créer facture d’acompte',
         },
         {
             key: 'measure',
@@ -135,18 +137,24 @@ export function buildSaleBusinessTimeline(sale) {
             label: 'Livraison',
             state: stepState({ done: trace.isDelivered || trace.isReturned, active: trace.isSigned && !trace.isDelivered && !trace.isReturned, blocked: isCancelled }),
             detail: trace.isReturned ? 'Retourné' : trace.isDelivered ? 'BL généré' : 'À livrer',
+            actionKey: isFreeSale && trace.isSigned && trace.isReserved && !trace.isDelivered && !trace.isReturned && !isCancelled ? 'deliverFreeSale' : null,
+            actionLabel: 'Sortie client / BL',
         },
         {
             key: 'finalInvoice',
             label: 'Solde facture',
             state: stepState({ done: trace.hasFinalInvoice, active: trace.isDelivered && !trace.hasFinalInvoice, blocked: isCancelled }),
             detail: trace.hasFinalInvoice ? 'Facture liée' : 'À facturer',
+            actionKey: trace.isDelivered && !trace.hasFinalInvoice && !trace.isReturned && !isCancelled ? 'createFinalInvoice' : null,
+            actionLabel: 'Créer facture finale',
         },
         {
             key: 'payment',
             label: 'Paiement',
             state: stepState({ done: trace.finalPaid, active: trace.hasFinalInvoice && !trace.finalPaid, blocked: isCancelled }),
             detail: trace.finalPaid ? 'Soldé' : trace.hasFinalInvoice ? 'À encaisser' : 'À venir',
+            actionKey: trace.hasFinalInvoice && !trace.finalPaid && !isCancelled ? 'recordPayment' : null,
+            actionLabel: 'Encaisser',
         },
     ];
 

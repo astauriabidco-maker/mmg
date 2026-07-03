@@ -24,6 +24,8 @@ export default function SalesDashboard() {
     const [isReturningFreeSale, setIsReturningFreeSale] = useState(false);
     const [isCreatingCreditNote, setIsCreatingCreditNote] = useState(false);
     const [isCreatingFinalInvoice, setIsCreatingFinalInvoice] = useState(false);
+    const [isCreatingDepositInvoice, setIsCreatingDepositInvoice] = useState(false);
+    const [isRecordingPayment, setIsRecordingPayment] = useState(false);
     const [workshopPrepFiles, setWorkshopPrepFiles] = useState([]);
     const [workshopPrepPreview, setWorkshopPrepPreview] = useState(null);
     const [isWorkshopPreparing, setIsWorkshopPreparing] = useState(false);
@@ -235,19 +237,19 @@ export default function SalesDashboard() {
         }
     };
 
-    const deliverFreeSale = async () => {
-        if (!selectedSale) return;
+    const deliverFreeSale = async (sale = selectedSale) => {
+        if (!sale) return;
         if (!window.confirm("Confirmer la sortie client ? Le stock réservé sera débité définitivement.")) return;
         setIsDeliveringFreeSale(true);
         try {
-            const res = await api.post(`/v2/sales/${selectedSale.id}/deliver-free-sale`);
+            const res = await api.post(`/v2/sales/${sale.id}/deliver-free-sale`);
             await Promise.all([
                 queryClient.invalidateQueries(['sales']),
                 queryClient.invalidateQueries(['products']),
                 queryClient.invalidateQueries(['quants']),
                 queryClient.invalidateQueries(['transactions']),
             ]);
-            await openSaleDetails(selectedSale.id);
+            await openSaleDetails(sale.id);
             alert(res.data?.message || "Sortie client effectuée.");
         } catch (err) {
             console.error(err);
@@ -299,20 +301,74 @@ export default function SalesDashboard() {
         }
     };
 
-    const createFinalInvoice = async () => {
-        if (!selectedSale) return;
+    const createFinalInvoice = async (sale = selectedSale) => {
+        if (!sale) return;
         if (!window.confirm("Créer la facture finale / solde pour ce devis livré ?")) return;
         setIsCreatingFinalInvoice(true);
         try {
-            const res = await api.post(`/v2/sales/${selectedSale.id}/create-final-invoice`);
+            const res = await api.post(`/v2/sales/${sale.id}/create-final-invoice`);
             await queryClient.invalidateQueries(['sales']);
-            await openSaleDetails(selectedSale.id);
+            await openSaleDetails(sale.id);
             alert(res.data?.message || "Facture finale générée.");
         } catch (err) {
             console.error(err);
             alert(err.response?.data?.detail || "Erreur lors de la création de la facture finale.");
         } finally {
             setIsCreatingFinalInvoice(false);
+        }
+    };
+
+    const createDepositInvoice = async (sale = selectedSale) => {
+        if (!sale) return;
+        if (!window.confirm("Créer la facture d'acompte pour ce dossier signé ?")) return;
+        setIsCreatingDepositInvoice(true);
+        try {
+            const res = await api.post(`/v2/sales/${sale.id}/create-deposit-invoice`);
+            await queryClient.invalidateQueries(['sales']);
+            await openSaleDetails(sale.id);
+            alert(res.data?.message || "Facture d'acompte générée.");
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de la création de l'acompte.");
+        } finally {
+            setIsCreatingDepositInvoice(false);
+        }
+    };
+
+    const getInvoicePaidAmount = (invoice) => (
+        (invoice?.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+    );
+
+    const getInvoiceRemainder = (invoice) => (
+        Math.max(0, Number(invoice?.total || 0) - getInvoicePaidAmount(invoice))
+    );
+
+    const recordPayment = async (invoice, sale = selectedSale) => {
+        if (!sale || !invoice) return;
+        const remainder = getInvoiceRemainder(invoice);
+        const rawAmount = window.prompt(`Montant encaissé pour ${invoice.reference}`, remainder.toFixed(2));
+        if (rawAmount === null) return;
+        const amount = Number(String(rawAmount).replace(',', '.'));
+        if (!amount || amount <= 0) {
+            alert("Montant invalide.");
+            return;
+        }
+        const method = window.prompt("Mode de paiement", "VIREMENT") || "VIREMENT";
+        setIsRecordingPayment(true);
+        try {
+            await api.post(`/v2/accounting/invoices/${invoice.id}/pay`, {
+                amount,
+                method,
+                reference: `Encaissement ${sale.reference}`,
+            });
+            await queryClient.invalidateQueries(['sales']);
+            await openSaleDetails(sale.id);
+            alert("Paiement enregistré.");
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de l'encaissement.");
+        } finally {
+            setIsRecordingPayment(false);
         }
     };
 
@@ -958,6 +1014,23 @@ export default function SalesDashboard() {
         const canCreateCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote && billableInvoice;
         const canDeliverFreeSale = isFreeSale && sale.status === 'VALIDATED' && reservationSummary.count > 0;
         const canCreateFinalInvoice = trace.isDelivered && !trace.isInvoiced && !trace.isReturned;
+        const canCreateDepositInvoice = !isFreeSale && trace.isSigned && !trace.hasDepositInvoice;
+        const unpaidFinalInvoice = trace.finalInvoices?.find(invoice => String(invoice.status || '').toUpperCase() !== 'PAID');
+        const timelineActions = {
+            createDepositInvoice: canCreateDepositInvoice ? { label: "Créer acompte", onClick: () => createDepositInvoice(sale) } : null,
+            deliverFreeSale: canDeliverFreeSale ? { label: "Sortie client / BL", onClick: () => deliverFreeSale(sale) } : null,
+            createFinalInvoice: canCreateFinalInvoice ? { label: "Créer facture finale", onClick: () => createFinalInvoice(sale) } : null,
+            recordPayment: unpaidFinalInvoice ? { label: "Encaisser", onClick: () => recordPayment(unpaidFinalInvoice, sale) } : null,
+        };
+        const timelineBusyAction = isCreatingDepositInvoice
+            ? 'createDepositInvoice'
+            : isDeliveringFreeSale
+                ? 'deliverFreeSale'
+                : isCreatingFinalInvoice
+                    ? 'createFinalInvoice'
+                    : isRecordingPayment
+                        ? 'recordPayment'
+                        : null;
 
         const renderPrimaryAction = () => {
             if (sale.status === 'DRAFT') {
@@ -976,14 +1049,14 @@ export default function SalesDashboard() {
             }
             if (canDeliverFreeSale) {
                 return (
-                    <button onClick={deliverFreeSale} disabled={isDeliveringFreeSale} className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20">
+                    <button onClick={() => deliverFreeSale()} disabled={isDeliveringFreeSale} className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20">
                         <Truck className="w-4 h-4" /> {isDeliveringFreeSale ? "Sortie..." : "Sortie client"}
                     </button>
                 );
             }
             if (canCreateFinalInvoice) {
                 return (
-                    <button onClick={createFinalInvoice} disabled={isCreatingFinalInvoice} className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-500/20">
+                    <button onClick={() => createFinalInvoice()} disabled={isCreatingFinalInvoice} className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-500/20">
                         <FileText className="w-4 h-4" /> {isCreatingFinalInvoice ? "Création..." : "Créer facture finale"}
                     </button>
                 );
@@ -1093,7 +1166,7 @@ export default function SalesDashboard() {
                             </div>
                         )}
 
-                        <BusinessTimeline sale={sale} />
+                        <BusinessTimeline sale={sale} actions={timelineActions} busyAction={timelineBusyAction} />
 
                         <div className="grid grid-cols-[1.2fr_0.8fr] gap-4 items-start">
                             <div className="border border-slate-200 rounded-xl p-4 bg-white">

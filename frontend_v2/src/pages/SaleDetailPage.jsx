@@ -123,7 +123,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
 
     const deliverFreeSale = () => {
         if (!window.confirm("Confirmer la sortie client ? Le stock réservé sera débité définitivement.")) return;
-        runAction('deliver', async () => {
+        runAction('deliverFreeSale', async () => {
             await api.post(`/v2/sales/${sale.id}/deliver-free-sale`);
         });
     };
@@ -150,8 +150,43 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
 
     const createFinalInvoice = () => {
         if (!window.confirm("Créer la facture finale / solde pour ce devis livré ?")) return;
-        runAction('final-invoice', async () => {
+        runAction('createFinalInvoice', async () => {
             await api.post(`/v2/sales/${sale.id}/create-final-invoice`);
+        });
+    };
+
+    const createDepositInvoice = () => {
+        if (!window.confirm("Créer la facture d'acompte pour ce dossier signé ?")) return;
+        runAction('createDepositInvoice', async () => {
+            await api.post(`/v2/sales/${sale.id}/create-deposit-invoice`);
+        });
+    };
+
+    const getInvoicePaidAmount = (invoice) => (
+        (invoice?.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+    );
+
+    const getInvoiceRemainder = (invoice) => (
+        Math.max(0, Number(invoice?.total || 0) - getInvoicePaidAmount(invoice))
+    );
+
+    const recordPayment = (invoice) => {
+        if (!invoice) return;
+        const remainder = getInvoiceRemainder(invoice);
+        const rawAmount = window.prompt(`Montant encaissé pour ${invoice.reference}`, remainder.toFixed(2));
+        if (rawAmount === null) return;
+        const amount = Number(String(rawAmount).replace(',', '.'));
+        if (!amount || amount <= 0) {
+            alert("Montant invalide.");
+            return;
+        }
+        const method = window.prompt("Mode de paiement", "VIREMENT") || "VIREMENT";
+        runAction('recordPayment', async () => {
+            await api.post(`/v2/accounting/invoices/${invoice.id}/pay`, {
+                amount,
+                method,
+                reference: `Encaissement ${sale.reference}`,
+            });
         });
     };
 
@@ -170,8 +205,16 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     const isFreeSale = (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE';
     const canDeliver = isFreeSale && sale.status === 'VALIDATED' && trace.activeReservations.length > 0;
     const canCreateFinalInvoice = trace.isDelivered && !trace.isInvoiced && !trace.isReturned;
+    const canCreateDepositInvoice = !isFreeSale && trace.isSigned && !trace.hasDepositInvoice;
     const canReturn = trace.isDelivered;
     const canCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote;
+    const unpaidFinalInvoice = trace.finalInvoices.find(invoice => String(invoice.status || '').toUpperCase() !== 'PAID');
+    const timelineActions = {
+        createDepositInvoice: canCreateDepositInvoice ? { label: "Créer acompte", onClick: createDepositInvoice } : null,
+        deliverFreeSale: canDeliver ? { label: "Sortie client / BL", onClick: deliverFreeSale } : null,
+        createFinalInvoice: canCreateFinalInvoice ? { label: "Créer facture finale", onClick: createFinalInvoice } : null,
+        recordPayment: unpaidFinalInvoice ? { label: "Encaisser", onClick: () => recordPayment(unpaidFinalInvoice) } : null,
+    };
     return (
         <div className={pageShellClass}>
             <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
@@ -243,12 +286,12 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                                 </button>
                             )}
                             {canDeliver && (
-                                <button onClick={deliverFreeSale} disabled={busyAction === 'deliver'} className="px-5 py-3 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500 disabled:bg-slate-300 inline-flex items-center gap-2">
+                                <button onClick={deliverFreeSale} disabled={busyAction === 'deliverFreeSale'} className="px-5 py-3 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500 disabled:bg-slate-300 inline-flex items-center gap-2">
                                     <Truck className="w-4 h-4" /> Sortie client
                                 </button>
                             )}
                             {canCreateFinalInvoice && (
-                                <button onClick={createFinalInvoice} disabled={busyAction === 'final-invoice'} className="px-5 py-3 rounded-xl bg-blue-600 text-white font-black hover:bg-blue-500 disabled:bg-slate-300 inline-flex items-center gap-2">
+                                <button onClick={createFinalInvoice} disabled={busyAction === 'createFinalInvoice'} className="px-5 py-3 rounded-xl bg-blue-600 text-white font-black hover:bg-blue-500 disabled:bg-slate-300 inline-flex items-center gap-2">
                                     <FileText className="w-4 h-4" /> Facture finale
                                 </button>
                             )}
@@ -271,7 +314,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                     </div>
                 </section>
 
-                <BusinessTimeline sale={sale} />
+                <BusinessTimeline sale={sale} actions={timelineActions} busyAction={busyAction} />
 
                 <div className="grid grid-cols-[1fr_360px] gap-6 items-start">
                     <main className="space-y-6">

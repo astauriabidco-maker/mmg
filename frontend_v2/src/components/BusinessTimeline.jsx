@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle, Clock, MinusCircle, XCircle } from 'lucide-react';
+import { ArrowRight, CheckCircle, Clock, MinusCircle, XCircle } from 'lucide-react';
 import { buildSaleBusinessTimeline } from '../utils/saleBusinessTimeline';
 
 const stateClasses = {
@@ -34,7 +34,14 @@ function StepIcon({ state, index }) {
     return <span className="text-[10px] font-black">{index + 1}</span>;
 }
 
-export default function BusinessTimeline({ sale, compact = false, title = 'Timeline métier', subtitle = 'De la signature client au paiement final.' }) {
+export default function BusinessTimeline({
+    sale,
+    compact = false,
+    title = 'Timeline métier',
+    subtitle = 'De la signature client au paiement final.',
+    actions = {},
+    busyAction = null,
+}) {
     const timeline = buildSaleBusinessTimeline(sale);
     const activeStep = timeline.steps[timeline.activeIndex] || timeline.steps[0];
 
@@ -64,8 +71,14 @@ export default function BusinessTimeline({ sale, compact = false, title = 'Timel
                 <p className="mt-1 text-sm font-bold text-slate-600">{subtitle}</p>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-9 gap-2 p-4">
-                {timeline.steps.map((step, index) => (
-                    <div key={step.key} className={`rounded-2xl border p-3 min-h-[92px] ${stateClasses[step.state] || stateClasses.todo}`}>
+                {timeline.steps.map((step, index) => {
+                    const rawAction = step.actionKey ? actions[step.actionKey] : null;
+                    const action = typeof rawAction === 'function'
+                        ? { onClick: rawAction, label: step.actionLabel || 'Traiter' }
+                        : rawAction;
+                    const showAction = action && typeof action.onClick === 'function';
+                    return (
+                    <div key={step.key} className={`rounded-2xl border p-3 min-h-[92px] flex flex-col ${stateClasses[step.state] || stateClasses.todo}`}>
                         <div className="mb-2 flex items-center gap-2">
                             <span className={`flex h-6 w-6 items-center justify-center rounded-full ${dotClasses[step.state] || dotClasses.todo}`}>
                                 <StepIcon state={step.state} index={index} />
@@ -74,8 +87,20 @@ export default function BusinessTimeline({ sale, compact = false, title = 'Timel
                         </div>
                         <p className="text-sm font-black leading-tight text-slate-900">{step.label}</p>
                         <p className="mt-1 text-xs font-bold text-slate-500">{step.detail}</p>
+                        {showAction && (
+                            <button
+                                type="button"
+                                onClick={action.onClick}
+                                disabled={action.disabled || busyAction === step.actionKey}
+                                className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-[11px] font-black text-white hover:bg-slate-700 disabled:bg-slate-300 disabled:text-slate-500"
+                            >
+                                {busyAction === step.actionKey ? 'Traitement...' : action.label}
+                                <ArrowRight className="h-3 w-3" />
+                            </button>
+                        )}
                     </div>
-                ))}
+                    );
+                })}
             </div>
         </section>
     );
