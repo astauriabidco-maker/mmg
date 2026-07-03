@@ -17,8 +17,19 @@ export default function CRMClientsDashboard() {
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedClientId, setSelectedClientId] = useState(null);
     const [showProposalStarter, setShowProposalStarter] = useState(false);
+    const [showClientModal, setShowClientModal] = useState(false);
+    const [isCreatingClient, setIsCreatingClient] = useState(false);
+    const [clientDraft, setClientDraft] = useState({
+        name: '',
+        contact_name: '',
+        phone: '',
+        email: '',
+        address: '',
+        tax_id: '',
+        customer_type: 'B2B',
+    });
 
-    const { data: clients = [] } = useQuery({
+    const { data: clients = [], refetch: refetchClients } = useQuery({
         queryKey: ['partners', 'clients'],
         queryFn: async () => {
             const res = await api.get('/v2/partners/clients');
@@ -69,6 +80,52 @@ export default function CRMClientsDashboard() {
 
     const openSale = (saleId) => {
         navigate(`/manager?view=sale-detail&id=${saleId}`);
+    };
+
+    const updateClientDraft = (field, value) => {
+        setClientDraft(prev => ({ ...prev, [field]: value }));
+    };
+
+    const resetClientDraft = () => {
+        setClientDraft({
+            name: '',
+            contact_name: '',
+            phone: '',
+            email: '',
+            address: '',
+            tax_id: '',
+            customer_type: 'B2B',
+        });
+    };
+
+    const createClient = async () => {
+        if (!clientDraft.name.trim()) {
+            return alert('Renseignez le nom du client.');
+        }
+        setIsCreatingClient(true);
+        try {
+            const payload = {
+                name: clientDraft.name.trim(),
+                contact_name: clientDraft.contact_name.trim() || null,
+                phone: clientDraft.phone.trim() || null,
+                email: clientDraft.email.trim() || null,
+                address: clientDraft.address.trim() || null,
+                tax_id: clientDraft.tax_id.trim() || null,
+                customer_type: clientDraft.customer_type,
+                is_active: true,
+            };
+            const res = await api.post('/v2/partners/clients', payload);
+            await refetchClients();
+            setSelectedClientId(res.data.id);
+            setSearchTerm('');
+            setShowClientModal(false);
+            resetClientDraft();
+        } catch (err) {
+            console.error('Create client error:', err);
+            alert(err.response?.data?.detail || 'Erreur lors de la création du client.');
+        } finally {
+            setIsCreatingClient(false);
+        }
     };
 
     const filteredClients = useMemo(() => {
@@ -249,14 +306,23 @@ export default function CRMClientsDashboard() {
                             Pilotez l'avant-vente client: propositions ouvertes, relances, historique et passage vers l'exécution.
                         </p>
                     </div>
-                    <button
-                        onClick={createQuoteForClient}
-                        disabled={!selectedClient}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-400"
-                    >
-                        <Plus className="w-4 h-4" />
-                        Créer une proposition
-                    </button>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <button
+                            onClick={() => setShowClientModal(true)}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/15"
+                        >
+                            <Users className="w-4 h-4" />
+                            Nouveau client
+                        </button>
+                        <button
+                            onClick={createQuoteForClient}
+                            disabled={!selectedClient}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-400"
+                        >
+                            <Plus className="w-4 h-4" />
+                            Créer une proposition
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -272,6 +338,13 @@ export default function CRMClientsDashboard() {
                                 className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
                             />
                         </div>
+                        <button
+                            onClick={() => setShowClientModal(true)}
+                            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-black text-white hover:bg-slate-800"
+                        >
+                            <Plus className="w-4 h-4" />
+                            Nouveau client
+                        </button>
                     </div>
                     <div className="flex-1 overflow-y-auto p-4 space-y-2">
                         {filteredClients.map(client => {
@@ -302,7 +375,14 @@ export default function CRMClientsDashboard() {
                         <div className="h-full rounded-2xl border border-dashed border-slate-200 bg-white flex flex-col items-center justify-center text-center p-10">
                             <Users className="w-14 h-14 text-slate-200 mb-4" />
                             <p className="text-lg font-black text-slate-600">Aucun client sélectionné</p>
-                            <p className="text-sm font-bold text-slate-400 mt-1">Sélectionnez un client dans la liste.</p>
+                            <p className="text-sm font-bold text-slate-400 mt-1">Sélectionnez un client dans la liste ou créez-en un nouveau.</p>
+                            <button
+                                onClick={() => setShowClientModal(true)}
+                                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white hover:bg-blue-500"
+                            >
+                                <Plus className="w-4 h-4" />
+                                Créer un client
+                            </button>
                         </div>
                     ) : (
                         <div className="space-y-6">
@@ -516,7 +596,7 @@ export default function CRMClientsDashboard() {
                             <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
                                 <p className="text-sm font-black text-blue-950">On reste dans le CRM.</p>
                                 <p className="mt-1 text-sm font-bold text-blue-800">
-                                    Le client est déjà sélectionné. L'étape suivante ouvre seulement le compositeur de devis avec ce client prérempli.
+                                    Le client est sélectionné ici. Le compositeur détaillé de devis s'ouvre ensuite avec ce client prérempli, puis le brouillon reviendra dans cette fiche CRM.
                                 </p>
                             </div>
                             <div className="grid grid-cols-1 gap-3 text-sm font-bold text-slate-700">
@@ -536,7 +616,104 @@ export default function CRMClientsDashboard() {
                                 onClick={composeQuoteForClient}
                                 className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500"
                             >
-                                Composer le devis
+                                Ouvrir le compositeur devis
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showClientModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6">
+                    <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+                        <div className="bg-slate-900 px-6 py-5 text-white">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">CRM Clients</p>
+                            <h3 className="mt-2 text-2xl font-black">Nouveau client</h3>
+                            <p className="mt-1 text-sm font-bold text-slate-300">Créez la fiche client avant toute proposition commerciale.</p>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-6">
+                            <label className="md:col-span-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Nom client *</span>
+                                <input
+                                    value={clientDraft.name}
+                                    onChange={event => updateClientDraft('name', event.target.value)}
+                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Entreprise ou particulier"
+                                />
+                            </label>
+                            <label>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contact</span>
+                                <input
+                                    value={clientDraft.contact_name}
+                                    onChange={event => updateClientDraft('contact_name', event.target.value)}
+                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Nom du contact"
+                                />
+                            </label>
+                            <label>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Type</span>
+                                <select
+                                    value={clientDraft.customer_type}
+                                    onChange={event => updateClientDraft('customer_type', event.target.value)}
+                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="B2B">Entreprise</option>
+                                    <option value="B2C">Particulier</option>
+                                </select>
+                            </label>
+                            <label>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Téléphone</span>
+                                <input
+                                    value={clientDraft.phone}
+                                    onChange={event => updateClientDraft('phone', event.target.value)}
+                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="+237..."
+                                />
+                            </label>
+                            <label>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email</span>
+                                <input
+                                    value={clientDraft.email}
+                                    onChange={event => updateClientDraft('email', event.target.value)}
+                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="client@example.com"
+                                />
+                            </label>
+                            <label className="md:col-span-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Adresse</span>
+                                <input
+                                    value={clientDraft.address}
+                                    onChange={event => updateClientDraft('address', event.target.value)}
+                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Adresse client ou chantier"
+                                />
+                            </label>
+                            <label className="md:col-span-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Identifiant fiscal</span>
+                                <input
+                                    value={clientDraft.tax_id}
+                                    onChange={event => updateClientDraft('tax_id', event.target.value)}
+                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Optionnel"
+                                />
+                            </label>
+                        </div>
+                        <div className="flex items-center justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
+                            <button
+                                onClick={() => {
+                                    setShowClientModal(false);
+                                    resetClientDraft();
+                                }}
+                                className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-600 hover:bg-slate-100"
+                            >
+                                Annuler
+                            </button>
+                            <button
+                                onClick={createClient}
+                                disabled={isCreatingClient}
+                                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-300"
+                            >
+                                {isCreatingClient ? 'Création...' : 'Créer le client'}
                             </button>
                         </div>
                     </div>
