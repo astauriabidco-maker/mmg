@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, BellRing, CalendarClock, CheckCircle2, ClipboardList, FileText, Mail, MapPin, Phone, Plus, Search, Truck, Users } from 'lucide-react';
+import { ArrowRight, BellRing, CalendarClock, CheckCircle2, ClipboardList, FileText, Mail, MapPin, Package, Phone, Plus, Search, Send, Truck, Users, Wrench, X } from 'lucide-react';
 import api from '../services/api';
 
 const saleAmount = (sale) => (sale.lines || []).reduce(
@@ -64,18 +64,6 @@ export default function CRMClientsDashboard() {
     const createQuoteForClient = () => {
         if (!selectedClient) return;
         setShowProposalStarter(true);
-    };
-
-    const composeQuoteForClient = () => {
-        if (!selectedClient) return;
-        setShowProposalStarter(false);
-        navigate('/manager?view=sales', {
-            state: {
-                view: 'sales',
-                openManualQuote: true,
-                prefillClient: selectedClient,
-            }
-        });
     };
 
     const openSale = (saleId) => {
@@ -585,42 +573,15 @@ export default function CRMClientsDashboard() {
             </div>
 
             {showProposalStarter && selectedClient && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6">
-                    <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-                        <div className="bg-slate-900 px-6 py-5 text-white">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">Nouvelle proposition CRM</p>
-                            <h3 className="mt-2 text-2xl font-black">Préparer une proposition</h3>
-                            <p className="mt-1 text-sm font-bold text-slate-300">{selectedClient.name}</p>
-                        </div>
-                        <div className="space-y-4 p-6">
-                            <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
-                                <p className="text-sm font-black text-blue-950">On reste dans le CRM.</p>
-                                <p className="mt-1 text-sm font-bold text-blue-800">
-                                    Le client est sélectionné ici. Le compositeur détaillé de devis s'ouvre ensuite avec ce client prérempli, puis le brouillon reviendra dans cette fiche CRM.
-                                </p>
-                            </div>
-                            <div className="grid grid-cols-1 gap-3 text-sm font-bold text-slate-700">
-                                <InfoLine icon={Phone} label="Téléphone" value={selectedClient.phone} />
-                                <InfoLine icon={Mail} label="Email" value={selectedClient.email} />
-                                <InfoLine icon={MapPin} label="Adresse" value={selectedClient.address} />
-                            </div>
-                        </div>
-                        <div className="flex items-center justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
-                            <button
-                                onClick={() => setShowProposalStarter(false)}
-                                className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-600 hover:bg-slate-100"
-                            >
-                                Rester sur la fiche
-                            </button>
-                            <button
-                                onClick={composeQuoteForClient}
-                                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500"
-                            >
-                                Ouvrir le compositeur devis
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <CRMQuoteComposer
+                    client={selectedClient}
+                    onClose={() => setShowProposalStarter(false)}
+                    onCreated={(sale) => {
+                        setShowProposalStarter(false);
+                        setSelectedClientId(selectedClient.id);
+                        openSale(sale.id);
+                    }}
+                />
             )}
 
             {showClientModal && (
@@ -719,6 +680,338 @@ export default function CRMClientsDashboard() {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+function CRMQuoteComposer({ client, onClose, onCreated }) {
+    const [catalogSearch, setCatalogSearch] = useState('');
+    const [lineMode, setLineMode] = useState('stock');
+    const [isCreating, setIsCreating] = useState(false);
+    const [quote, setQuote] = useState({
+        validity_days: 30,
+        tax_rate: 20,
+        notes: '',
+        lines: [],
+    });
+
+    const { data: products = [], isLoading, isError, error, refetch } = useQuery({
+        queryKey: ['products', 'crm-quote-composer'],
+        retry: 1,
+        queryFn: async () => {
+            const res = await api.get('/v2/stock/products');
+            return res.data;
+        }
+    });
+
+    const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+    const normalizedSearch = catalogSearch.trim().toLowerCase();
+    const catalogItems = products.flatMap(product => (product.variants || []).map(variant => {
+        const reference = variant.reference || product.reference_base;
+        const productType = (product.product_type || 'stockable').toLowerCase();
+        const unitPrice = Number(variant.sale_price ?? variant.price ?? variant.unit_price ?? variant.list_price ?? variant.cost_price ?? 0);
+        return {
+            variant_id: variant.id,
+            reference,
+            label: `${product.name}${variant.color ? ` - ${variant.color}` : ''}`,
+            unit: product.unit || 'u',
+            unitPrice,
+            productType,
+            status: product.catalog_status || 'ACTIVE',
+            availableStock: Number(variant.available_quantity ?? variant.quantity_in_stock ?? 0),
+            searchable: `${product.name} ${product.reference_base || ''} ${reference || ''} ${variant.supplier_reference || ''} ${product.supplier || ''}`.toLowerCase(),
+        };
+    }));
+
+    const visibleItems = catalogItems
+        .filter(item => lineMode === 'service' ? item.productType === 'service' : item.productType !== 'service')
+        .filter(item => !normalizedSearch || item.searchable.includes(normalizedSearch))
+        .slice(0, 12);
+
+    const quoteTotal = quote.lines.reduce((sum, line) => (
+        sum + Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100)
+    ), 0);
+
+    const updateQuote = (field, value) => {
+        setQuote(prev => ({ ...prev, [field]: value }));
+    };
+
+    const updateLine = (index, field, value) => {
+        setQuote(prev => ({
+            ...prev,
+            lines: prev.lines.map((line, currentIndex) => currentIndex === index ? { ...line, [field]: value } : line),
+        }));
+    };
+
+    const removeLine = (index) => {
+        setQuote(prev => ({
+            ...prev,
+            lines: prev.lines.filter((_, currentIndex) => currentIndex !== index),
+        }));
+    };
+
+    const addCatalogLine = (item) => {
+        if (item.status === 'DRAFT') {
+            return alert('Article brouillon: qualifiez-le dans le catalogue avant de le vendre.');
+        }
+        setQuote(prev => ({
+            ...prev,
+            lines: [
+                ...prev.lines,
+                {
+                    line_type: item.productType === 'service' ? 'service' : 'stock',
+                    variant_id: item.variant_id,
+                    description: `${item.label} (${item.reference})`,
+                    quantity: 1,
+                    unit_price: item.unitPrice,
+                    discount_pct: 0,
+                    unit: item.unit,
+                    reference: item.reference,
+                    availableStock: item.availableStock,
+                }
+            ]
+        }));
+        setCatalogSearch('');
+    };
+
+    const addFreeServiceLine = () => {
+        setQuote(prev => ({
+            ...prev,
+            lines: [
+                ...prev.lines,
+                {
+                    line_type: 'service',
+                    variant_id: null,
+                    description: 'Prestation',
+                    quantity: 1,
+                    unit_price: 0,
+                    discount_pct: 0,
+                    unit: 'u',
+                }
+            ]
+        }));
+    };
+
+    const createQuote = async () => {
+        const validLines = quote.lines
+            .map(line => ({
+                line_type: line.line_type || (line.variant_id ? 'stock' : 'service'),
+                variant_id: line.variant_id || null,
+                description: String(line.description || '').trim(),
+                quantity: Number(line.quantity || 0),
+                unit_price: Number(line.unit_price || 0),
+                discount_pct: Number(line.discount_pct || 0),
+            }))
+            .filter(line => line.description && line.quantity > 0);
+
+        if (validLines.length === 0) {
+            return alert('Ajoutez au moins une ligne de devis.');
+        }
+        const zeroPricedStockLine = validLines.find(line => line.line_type === 'stock' && line.unit_price <= 0);
+        if (zeroPricedStockLine) {
+            return alert(`Prix HT manquant: renseignez le prix de vente de "${zeroPricedStockLine.description}".`);
+        }
+
+        setIsCreating(true);
+        try {
+            const payload = {
+                client_name: client.name,
+                client_contact: client.phone || null,
+                client_email: client.email || null,
+                client_address: client.address || null,
+                notes: quote.notes.trim() || null,
+                validity_days: Number(quote.validity_days || 30),
+                tax_rate: Number(quote.tax_rate || 0),
+                currency: 'EUR',
+                workflow_type: 'FREE_SALE',
+                lines: validLines,
+            };
+            const res = await api.post('/v2/sales/', payload);
+            onCreated(res.data);
+        } catch (err) {
+            console.error('CRM quote error:', err);
+            alert(err.response?.data?.detail || 'Erreur lors de la création de la proposition.');
+        } finally {
+            setIsCreating(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-6">
+            <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+                <div className="flex items-center justify-between bg-slate-900 px-6 py-5 text-white">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">CRM avant-vente</p>
+                        <h3 className="mt-2 text-2xl font-black">Composer une proposition</h3>
+                        <p className="mt-1 text-sm font-bold text-slate-300">{client.name} · brouillon de devis libre</p>
+                    </div>
+                    <button onClick={onClose} className="rounded-full p-2 text-slate-300 hover:bg-white/10 hover:text-white">
+                        <X className="h-6 w-6" />
+                    </button>
+                </div>
+
+                <div className="grid flex-1 grid-cols-[390px_1fr] gap-0 overflow-hidden">
+                    <aside className="min-h-0 overflow-y-auto border-r border-slate-200 bg-slate-50 p-5">
+                        <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Client sélectionné</p>
+                            <p className="mt-2 text-xl font-black text-blue-950">{client.name}</p>
+                            <p className="mt-1 text-xs font-bold text-blue-700">{[client.phone, client.email].filter(Boolean).join(' · ') || 'Coordonnées à compléter'}</p>
+                        </div>
+
+                        <div className="mb-4 flex rounded-xl border border-slate-200 bg-white p-1">
+                            <button onClick={() => setLineMode('stock')} className={`flex-1 rounded-lg px-3 py-2 text-xs font-black uppercase ${lineMode === 'stock' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                Stock
+                            </button>
+                            <button onClick={() => setLineMode('service')} className={`flex-1 rounded-lg px-3 py-2 text-xs font-black uppercase ${lineMode === 'service' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                Prestation
+                            </button>
+                        </div>
+
+                        <div className="relative mb-4">
+                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                            <input
+                                value={catalogSearch}
+                                onChange={event => setCatalogSearch(event.target.value)}
+                                placeholder={lineMode === 'stock' ? 'Référence, article, fournisseur...' : 'Pose, SAV, déplacement...'}
+                                className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+
+                        {lineMode === 'service' && (
+                            <button onClick={addFreeServiceLine} className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white hover:bg-emerald-500">
+                                <Wrench className="h-4 w-4" />
+                                Ajouter prestation libre
+                            </button>
+                        )}
+
+                        {isError && (
+                            <div className="mb-3 rounded-xl border border-red-100 bg-red-50 p-4">
+                                <p className="text-sm font-black text-red-700">Catalogue indisponible</p>
+                                <p className="mt-1 text-xs font-bold text-red-600">{error?.response?.data?.detail || error?.message || 'Erreur inconnue'}</p>
+                                <button onClick={() => refetch()} className="mt-3 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-black text-red-700 hover:bg-red-100">Réessayer</button>
+                            </div>
+                        )}
+
+                        <div className="space-y-2">
+                            {isLoading && <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm font-bold text-slate-500">Chargement du catalogue...</div>}
+                            {!isLoading && !isError && visibleItems.length === 0 && (
+                                <div className="rounded-xl border border-amber-100 bg-amber-50 p-4 text-sm font-bold text-amber-800">Aucun résultat. Utilisez une prestation libre si nécessaire.</div>
+                            )}
+                            {visibleItems.map(item => (
+                                <button
+                                    key={item.variant_id}
+                                    onClick={() => addCatalogLine(item)}
+                                    disabled={item.status === 'DRAFT'}
+                                    className={`w-full rounded-xl border p-3 text-left transition-all ${item.status === 'DRAFT' ? 'cursor-not-allowed border-amber-200 bg-amber-50 opacity-70' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/50'}`}
+                                >
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="truncate text-sm font-black text-slate-900">{item.label}</p>
+                                            <p className="mt-1 font-mono text-[10px] font-black uppercase text-slate-400">{item.reference}</p>
+                                        </div>
+                                        <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-slate-500">{lineMode === 'service' ? 'Service' : 'Stock'}</span>
+                                    </div>
+                                    <div className="mt-3 grid grid-cols-3 gap-2">
+                                        <MetricPill label="Prix HT" value={formatMoney(item.unitPrice)} />
+                                        <MetricPill label="Stock" value={`${Math.round(item.availableStock * 100) / 100} ${item.unit}`} />
+                                        <MetricPill label="Unité" value={item.unit} />
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    </aside>
+
+                    <main className="min-h-0 overflow-y-auto p-6">
+                        <div className="mb-5 grid grid-cols-3 gap-4">
+                            <label>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Validité</span>
+                                <input type="number" min="1" value={quote.validity_days} onChange={event => updateQuote('validity_days', event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+                            </label>
+                            <label>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">TVA %</span>
+                                <input type="number" min="0" step="0.1" value={quote.tax_rate} onChange={event => updateQuote('tax_rate', event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+                            </label>
+                            <div className="rounded-2xl border border-slate-200 bg-slate-900 px-5 py-3 text-white">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total HT</p>
+                                <p className="mt-1 text-2xl font-black">{formatMoney(quoteTotal)}</p>
+                            </div>
+                        </div>
+
+                        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4">
+                                <div>
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Lignes de proposition</p>
+                                    <p className="text-sm font-bold text-slate-700">Articles stock ou prestations hors fabrication.</p>
+                                </div>
+                                <p className="text-sm font-black text-slate-900">{quote.lines.length} ligne(s)</p>
+                            </div>
+                            <div className="divide-y divide-slate-100">
+                                {quote.lines.length === 0 && (
+                                    <div className="p-10 text-center">
+                                        <Package className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+                                        <p className="font-black text-slate-700">Ajoutez une ligne depuis le catalogue.</p>
+                                        <p className="mt-1 text-sm font-bold text-slate-500">Le brouillon ne sera créé qu'après ajout d'au moins une ligne.</p>
+                                    </div>
+                                )}
+                                {quote.lines.map((line, index) => {
+                                    const lineTotal = Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100);
+                                    return (
+                                        <div key={`${line.reference || line.description}-${index}`} className="grid grid-cols-12 gap-3 p-4">
+                                            <div className="col-span-12 md:col-span-5">
+                                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Désignation</label>
+                                                <input value={line.description} onChange={event => updateLine(index, 'description', event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+                                            </div>
+                                            <div className="col-span-4 md:col-span-2">
+                                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Qté</label>
+                                                <input type="number" min="0" step="0.01" value={line.quantity} onChange={event => updateLine(index, 'quantity', event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+                                            </div>
+                                            <div className="col-span-4 md:col-span-2">
+                                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Prix HT</label>
+                                                <input type="number" min="0" step="0.01" value={line.unit_price} onChange={event => updateLine(index, 'unit_price', event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+                                            </div>
+                                            <div className="col-span-4 md:col-span-2">
+                                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Remise</label>
+                                                <input type="number" min="0" max="100" step="0.1" value={line.discount_pct} onChange={event => updateLine(index, 'discount_pct', event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+                                            </div>
+                                            <div className="col-span-12 md:col-span-1 flex items-end justify-between gap-3 md:block">
+                                                <p className="pb-2 text-sm font-black text-slate-900 md:text-right">{formatMoney(lineTotal)}</p>
+                                                <button onClick={() => removeLine(index)} className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs font-black text-red-600 hover:bg-red-100">
+                                                    <X className="h-4 w-4" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        <label className="mt-5 block">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notes</span>
+                            <textarea value={quote.notes} onChange={event => updateQuote('notes', event.target.value)} placeholder="Conditions, contexte client, remarques..." className="mt-2 h-24 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500" />
+                        </label>
+                    </main>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-6 py-4">
+                    <p className="text-sm font-bold text-slate-500">La proposition sera créée en brouillon CRM, sans réservation stock.</p>
+                    <div className="flex items-center gap-3">
+                        <button onClick={onClose} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-600 hover:bg-slate-100">Annuler</button>
+                        <button onClick={createQuote} disabled={isCreating} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-300">
+                            <Send className="h-4 w-4" />
+                            {isCreating ? 'Création...' : 'Créer le brouillon'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function MetricPill({ label, value }) {
+    return (
+        <div className="rounded-lg border border-slate-100 bg-slate-50 px-2 py-1.5">
+            <p className="text-[9px] font-black uppercase text-slate-400">{label}</p>
+            <p className="truncate text-xs font-black text-slate-800">{value}</p>
         </div>
     );
 }
