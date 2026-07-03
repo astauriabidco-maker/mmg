@@ -14,7 +14,7 @@ export default function SalesDashboard() {
     const [mainTab, setMainTab] = useState('pipeline'); // 'pipeline' | 'dossiers'
     const [pipelineView, setPipelineView] = useState('kanban'); // 'list' | 'kanban'
     const [searchTerm, setSearchTerm] = useState("");
-    const [pipelineFilter, setPipelineFilter] = useState("all");
+    const [pipelineFilter, setPipelineFilter] = useState("execution");
     const [selectedSale, setSelectedSale] = useState(null);
     const [isStatusUpdating, setIsStatusUpdating] = useState(false);
     const [isUploadingBOM, setIsUploadingBOM] = useState(false);
@@ -57,7 +57,7 @@ export default function SalesDashboard() {
         }
     });
 
-    const { data: clients = [], refetch: refetchClients } = useQuery({
+    const { data: clients = [] } = useQuery({
         queryKey: ['partners', 'clients'],
         queryFn: async () => {
             const res = await api.get('/v2/partners/clients');
@@ -892,14 +892,14 @@ export default function SalesDashboard() {
 
     const getStatusLabel = (status) => {
         switch (status) {
-            case 'DRAFT': return 'Brouillon';
-            case 'SENT': return 'Envoyé au Client';
-            case 'VALIDATED': return 'Validé (Signé)';
+            case 'DRAFT': return 'CRM - Brouillon';
+            case 'SENT': return 'CRM - Envoyé';
+            case 'VALIDATED': return 'Commande signée';
             case 'IN_DESIGN': return 'Bureau d\'Études';
             case 'READY_FOR_PROD': return 'Préparation atelier';
             case 'IN_PRODUCTION': return 'En Production';
             case 'CANCELLED': return 'Refusé / Annulé';
-            case 'DELIVERED': return 'Livré & Facturé';
+            case 'DELIVERED': return 'Livré / Facturé';
             default: return status;
         }
     };
@@ -917,9 +917,9 @@ export default function SalesDashboard() {
     );
 
     const saleCycleSteps = [
-        { key: 'draft', label: 'Brouillon', statuses: ['DRAFT'] },
-        { key: 'sent', label: 'Envoyé', statuses: ['SENT'] },
-        { key: 'validated', label: 'Signé', statuses: ['VALIDATED', 'IN_DESIGN'] },
+        { key: 'draft', label: 'CRM brouillon', statuses: ['DRAFT'] },
+        { key: 'sent', label: 'CRM envoyé', statuses: ['SENT'] },
+        { key: 'validated', label: 'Signé / validé', statuses: ['VALIDATED', 'IN_DESIGN'] },
         { key: 'reserved', label: 'Réservé', statuses: ['READY_FOR_PROD', 'IN_PRODUCTION'] },
         { key: 'delivered', label: 'Livré', statuses: ['DELIVERED'] },
         { key: 'billed', label: 'Facturé', statuses: [] }
@@ -1004,8 +1004,8 @@ export default function SalesDashboard() {
             <div className="px-8 py-6 border-b border-slate-100 bg-white">
                 <div className="flex items-center justify-between mb-4">
                     <div>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Cycle devis</p>
-                        <p className="text-sm font-bold text-slate-600">Lecture rapide du passage commercial jusqu'à la réservation et la facturation.</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Cycle vente signée</p>
+                        <p className="text-sm font-bold text-slate-600">Lecture rapide depuis la validation client jusqu'à la réservation, livraison et facturation.</p>
                     </div>
                     {cycle.isCancelled && (
                         <span className="text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg bg-red-100 text-red-700 border border-red-200">
@@ -1058,7 +1058,7 @@ export default function SalesDashboard() {
             if (sale.status === 'DRAFT') {
                 return (
                     <button onClick={() => updateStatus('SENT')} disabled={isStatusUpdating} className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-500/20">
-                        <Send className="w-4 h-4" /> Envoyer au client
+                        <Send className="w-4 h-4" /> Envoyer depuis CRM
                     </button>
                 );
             }
@@ -1105,9 +1105,9 @@ export default function SalesDashboard() {
         };
 
         const timeline = [
-            { label: 'Brouillon', done: true, detail: formatDate(sale.created_at) },
-            { label: 'Envoyé', done: ['SENT', 'VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale.status), detail: sale.status === 'DRAFT' ? 'À envoyer' : 'Client notifié' },
-            { label: 'Signé', done: trace.isSigned, detail: sale.signed_at ? formatDate(sale.signed_at) : (trace.isSigned ? 'Validation interne' : 'En attente') },
+            { label: 'CRM brouillon', done: true, detail: formatDate(sale.created_at) },
+            { label: 'CRM envoyé', done: ['SENT', 'VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale.status), detail: sale.status === 'DRAFT' ? 'Avant-vente' : 'Client notifié' },
+            { label: 'Signé / validé', done: trace.isSigned, detail: sale.signed_at ? formatDate(sale.signed_at) : (trace.isSigned ? 'Validation interne' : 'En attente') },
             { label: 'Réservé', done: trace.isReserved, detail: trace.isReserved ? `${reservationSummary.totalReserved.toLocaleString('fr-FR')} réservé` : (trace.hasStockLines ? 'À réserver' : 'Sans stock') },
             { label: 'Livré', done: trace.isDelivered || trace.isReturned, detail: trace.isReturned ? 'Retourné' : (trace.isDelivered ? 'BL généré' : 'À livrer') },
             { label: 'Facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.billableInvoicesCount} facture(s)` : 'À facturer' },
@@ -1144,8 +1144,8 @@ export default function SalesDashboard() {
                             <div className="min-w-0">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Prochaine action</p>
                                 <p className="text-sm font-bold text-slate-700">
-                                    {sale.status === 'DRAFT' && "Envoyer le devis au client."}
-                                    {sale.status === 'SENT' && "Attendre la signature ou valider manuellement."}
+                                    {sale.status === 'DRAFT' && "Avant-vente CRM: envoyer au client si le devis doit sortir."}
+                                    {sale.status === 'SENT' && "Avant-vente CRM: attendre la signature ou valider quand la commande est confirmée."}
                                     {canDeliverFreeSale && "Sortir les articles réservés quand ils sont remis au client."}
                                     {trace.isDelivered && "Le client a été livré. Un retour reste possible si erreur."}
                                     {canCreateCreditNote && "Retour facturé détecté: créer un avoir si la régularisation est confirmée."}
@@ -1318,8 +1318,8 @@ export default function SalesDashboard() {
         const trace = getFreeSaleTraceability(sale);
         const reservationSummary = getSaleReservationSummary(sale);
         const isFreeSale = (sale?.workflow_type || 'FREE_SALE') === 'FREE_SALE';
-        if (sale?.status === 'DRAFT') return { label: 'Envoyer au client', tone: 'blue' };
-        if (sale?.status === 'SENT') return { label: 'Relancer signature', tone: 'amber' };
+        if (sale?.status === 'DRAFT') return { label: 'Avant-vente CRM', tone: 'blue' };
+        if (sale?.status === 'SENT') return { label: 'Signature CRM', tone: 'amber' };
         if (isFreeSale && sale?.status === 'VALIDATED' && reservationSummary.count > 0) return { label: 'Sortie client à faire', tone: 'emerald' };
         if (trace.isDelivered && !trace.isReturned) return { label: 'Livré, surveiller retour', tone: 'indigo' };
         if (trace.isReturned && trace.isInvoiced && !trace.hasCreditNote) return { label: 'Avoir à décider', tone: 'rose' };
@@ -1338,10 +1338,17 @@ export default function SalesDashboard() {
         return 'bg-slate-100 text-slate-600 border-slate-200';
     };
 
+    const executionStatuses = ['VALIDATED', 'READY_FOR_PROD', 'IN_DESIGN', 'IN_PRODUCTION', 'DELIVERED'];
+    const isExecutionSale = (sale) => {
+        const trace = getFreeSaleTraceability(sale);
+        return executionStatuses.includes(sale.status) || trace.isReturned || trace.hasCreditNote;
+    };
+    const isCrmPreSalesSale = (sale) => ['DRAFT', 'SENT'].includes(sale.status);
+
     const pipelineFilters = [
-        { key: 'all', label: 'Tous', match: () => true },
-        { key: 'to_send', label: 'À envoyer', match: (sale) => sale.status === 'DRAFT' },
-        { key: 'to_sign', label: 'À signer', match: (sale) => sale.status === 'SENT' },
+        { key: 'execution', label: 'Exécution signée', match: isExecutionSale },
+        { key: 'validated', label: 'Signés / validés', match: (sale) => ['VALIDATED', 'IN_DESIGN'].includes(sale.status) },
+        { key: 'production', label: 'Atelier / production', match: (sale) => ['READY_FOR_PROD', 'IN_PRODUCTION'].includes(sale.status) },
         { key: 'to_deliver', label: 'À livrer', match: (sale) => {
             const trace = getFreeSaleTraceability(sale);
             return (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE' && sale.status === 'VALIDATED' && trace.isReserved;
@@ -1354,7 +1361,9 @@ export default function SalesDashboard() {
             const trace = getFreeSaleTraceability(sale);
             return trace.isReturned || trace.hasCreditNote;
         }},
-        { key: 'fabrication', label: 'Fabrication', match: (sale) => (sale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' },
+        { key: 'fabrication', label: 'Fabrication signée', match: (sale) => isExecutionSale(sale) && (sale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' },
+        { key: 'crm_presales', label: 'CRM avant-vente', match: isCrmPreSalesSale },
+        { key: 'all', label: 'Tous', match: () => true },
     ];
 
     const SalePipelineCard = ({ sale, compact = false }) => {
@@ -1415,13 +1424,12 @@ export default function SalesDashboard() {
         )
         .filter(s => activePipelineFilter.match(s));
 
-    // Calculate total pipeline value
-    const pipelineValue = sales
+    const preSalesValue = sales
         .filter(s => ['DRAFT', 'SENT'].includes(s.status))
         .reduce((sum, s) => sum + s.lines.reduce((lsum, l) => lsum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0), 0);
 
-    const validatedValue = sales
-        .filter(s => ['VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'DELIVERED', 'IN_PRODUCTION'].includes(s.status))
+    const executionValue = sales
+        .filter(isExecutionSale)
         .reduce((sum, s) => sum + s.lines.reduce((lsum, l) => lsum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0), 0);
 
     return (
@@ -1437,7 +1445,7 @@ export default function SalesDashboard() {
                     }}
                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'pipeline' && pipelineView === 'kanban' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
-                    <DollarSign className="w-5 h-5"/> Pipeline
+                    <DollarSign className="w-5 h-5"/> Exécution
                 </button>
                 <button
                     onClick={() => {
@@ -1446,7 +1454,7 @@ export default function SalesDashboard() {
                     }}
                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'pipeline' && pipelineView === 'list' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
-                    <FileText className="w-5 h-5"/> Liste devis
+                    <FileText className="w-5 h-5"/> Liste signés
                 </button>
                 </div>
                 <button
@@ -1470,16 +1478,16 @@ export default function SalesDashboard() {
 	                    <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
 	                        <div className="flex flex-wrap items-center gap-4">
 	                            <h3 className="font-black text-slate-900 flex items-center gap-2 tracking-tight text-lg">
-	                                <Users className="text-blue-600 w-5 h-5"/> Ventes & Devis
+	                                <Users className="text-blue-600 w-5 h-5"/> Exécution commerciale
 	                            </h3>
 	                            <div className="flex items-center gap-3">
 	                                <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
-	                                    <span className="block text-[9px] font-black text-blue-400 uppercase tracking-widest">Pipeline</span>
-	                                    <span className="text-sm font-black text-blue-700">{pipelineValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
+	                                    <span className="block text-[9px] font-black text-blue-400 uppercase tracking-widest">CRM avant-vente</span>
+	                                    <span className="text-sm font-black text-blue-700">{preSalesValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
 	                                </div>
 	                                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
-	                                    <span className="block text-[9px] font-black text-emerald-500 uppercase tracking-widest">Validé</span>
-	                                    <span className="text-sm font-black text-emerald-700">{validatedValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
+	                                    <span className="block text-[9px] font-black text-emerald-500 uppercase tracking-widest">Signé / commandes</span>
+	                                    <span className="text-sm font-black text-emerald-700">{executionValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0})}</span>
 	                                </div>
 	                            </div>
 	                        </div>
@@ -1489,20 +1497,17 @@ export default function SalesDashboard() {
 	                            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
 	                            <input
                                 type="text"
-                                placeholder="Rechercher..."
+                                placeholder="Rechercher commande, client..."
                                 value={searchTerm}
                                 onChange={e => setSearchTerm(e.target.value)}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
                             />
                         </div>
                         <button
-                            onClick={() => {
-                                refetchClients();
-                                setShowManualQuoteModal(true);
-                            }}
-                            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black shadow-md shadow-slate-900/10 flex items-center gap-2 transition-all"
+                            onClick={() => navigate('/manager?view=crm')}
+                            className="px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl font-black flex items-center gap-2 transition-all"
                         >
-                            <Plus className="w-4 h-4"/> Devis libre
+                            <Plus className="w-4 h-4"/> Créer dans CRM
                         </button>
                         <button
                             onClick={() => setMainTab('dossiers')}

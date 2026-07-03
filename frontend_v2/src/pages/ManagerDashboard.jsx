@@ -45,8 +45,8 @@ export default function ManagerDashboard() {
             activeView === 'orders' ? 'Suivi Commandes' :
                 activeView === 'stock' ? 'Gestion de Stock' :
                     activeView === 'purchases' ? 'Achats & Appro' :
-                        activeView === 'sales' || activeView === 'sale-detail' ? 'Ventes & Devis' :
-                            activeView === 'crm' ? 'CRM Clients' :
+                        activeView === 'sales' || activeView === 'sale-detail' ? 'Commandes & Exécution Ventes' :
+                            activeView === 'crm' ? 'CRM Clients - Avant-vente' :
                                 activeView === 'accounting' ? 'Facturation (NF525)' :
                                     activeView === 'logistics' ? 'Logistique & Expéditions' :
                                         activeView === 'analytics_atelier' ? 'Performance Atelier' :

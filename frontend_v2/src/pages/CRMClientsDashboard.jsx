@@ -1,8 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, ClipboardList, FileText, Mail, MapPin, Phone, Plus, Search, Truck, Users } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ClipboardList, FileText, Mail, MapPin, Phone, Plus, Search, Truck, Users } from 'lucide-react';
 import api from '../services/api';
+
+const saleAmount = (sale) => (sale.lines || []).reduce(
+    (sum, line) => sum + (Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100)),
+    0
+);
 
 export default function CRMClientsDashboard() {
     const navigate = useNavigate();
@@ -69,16 +74,27 @@ export default function CRMClientsDashboard() {
 
     const totals = useMemo(() => {
         return clientSales.reduce((acc, sale) => {
-            const amount = (sale.lines || []).reduce(
-                (sum, line) => sum + (Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100)),
-                0
-            );
-            acc.quoteAmount += amount;
+            const amount = saleAmount(sale);
+            if (['DRAFT', 'SENT', 'CANCELLED'].includes(sale.status)) {
+                acc.presales += 1;
+                acc.presalesAmount += amount;
+            } else {
+                acc.orders += 1;
+                acc.orderAmount += amount;
+            }
             acc.invoices += (sale.invoices || []).filter(invoice => !String(invoice.reference || '').startsWith('AV-')).length;
             acc.deliveryNotes += (sale.delivery_notes || []).length;
             return acc;
-        }, { quoteAmount: 0, invoices: 0, deliveryNotes: 0 });
+        }, { presales: 0, presalesAmount: 0, orders: 0, orderAmount: 0, invoices: 0, deliveryNotes: 0 });
     }, [clientSales]);
+
+    const presalesQuotes = useMemo(() => (
+        clientSales.filter(sale => ['DRAFT', 'SENT', 'CANCELLED'].includes(sale.status))
+    ), [clientSales]);
+
+    const executionOrders = useMemo(() => (
+        clientSales.filter(sale => !['DRAFT', 'SENT', 'CANCELLED'].includes(sale.status))
+    ), [clientSales]);
 
     const statusLabel = (sale) => {
         if (sale.status === 'DRAFT') return 'À envoyer';
@@ -90,6 +106,17 @@ export default function CRMClientsDashboard() {
         if (sale.status === 'READY_FOR_PROD') return 'Prêt atelier';
         if (sale.status === 'IN_PRODUCTION') return 'En production';
         return sale.status || 'Inconnu';
+    };
+
+    const statusClassName = (status) => {
+        if (status === 'DRAFT') return 'border-slate-200 bg-slate-50 text-slate-600';
+        if (status === 'SENT') return 'border-blue-200 bg-blue-50 text-blue-700';
+        if (status === 'CANCELLED') return 'border-red-200 bg-red-50 text-red-700';
+        if (status === 'VALIDATED') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+        if (['IN_DESIGN', 'READY_FOR_PROD'].includes(status)) return 'border-amber-200 bg-amber-50 text-amber-700';
+        if (status === 'IN_PRODUCTION') return 'border-orange-200 bg-orange-50 text-orange-700';
+        if (status === 'DELIVERED') return 'border-teal-200 bg-teal-50 text-teal-700';
+        return 'border-slate-200 bg-slate-50 text-slate-600';
     };
 
     const createQuoteForClient = () => {
@@ -187,16 +214,16 @@ export default function CRMClientsDashboard() {
                                     </div>
                                     <div className="grid grid-cols-3 gap-3 w-full xl:w-auto">
                                         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
-                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Devis</p>
-                                            <p className="text-2xl font-black text-slate-900">{clientSales.length}</p>
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Avant-vente</p>
+                                            <p className="text-2xl font-black text-slate-900">{totals.presales}</p>
                                         </div>
                                         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
-                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Factures</p>
-                                            <p className="text-2xl font-black text-slate-900">{totals.invoices}</p>
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Commandes</p>
+                                            <p className="text-2xl font-black text-slate-900">{totals.orders}</p>
                                         </div>
                                         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
-                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">CA devis HT</p>
-                                            <p className="text-2xl font-black text-slate-900">{formatMoney(totals.quoteAmount)}</p>
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">CA signé HT</p>
+                                            <p className="text-2xl font-black text-slate-900">{formatMoney(totals.orderAmount)}</p>
                                         </div>
                                     </div>
                                 </div>
@@ -207,47 +234,79 @@ export default function CRMClientsDashboard() {
                                 </div>
                             </section>
 
+                            <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                                <div className="px-5 py-4 bg-blue-50 border-b border-blue-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Avant-vente client</p>
+                                        <p className="text-sm font-bold text-blue-950">Opportunités et devis non conclus à traiter côté client.</p>
+                                    </div>
+                                    <button
+                                        onClick={createQuoteForClient}
+                                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white shadow-md shadow-blue-500/20 hover:bg-blue-500"
+                                    >
+                                        <Plus className="w-4 h-4" />
+                                        Créer une proposition
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 p-5 border-b border-slate-100">
+                                    <PipelineStep label="Brouillons" count={presalesQuotes.filter(sale => sale.status === 'DRAFT').length} amount={formatMoney(presalesQuotes.filter(sale => sale.status === 'DRAFT').reduce((sum, sale) => sum + saleAmount(sale), 0))} tone="slate" />
+                                    <PipelineStep label="Envoyés" count={presalesQuotes.filter(sale => sale.status === 'SENT').length} amount={formatMoney(presalesQuotes.filter(sale => sale.status === 'SENT').reduce((sum, sale) => sum + saleAmount(sale), 0))} tone="blue" />
+                                    <PipelineStep label="Perdus / annulés" count={presalesQuotes.filter(sale => sale.status === 'CANCELLED').length} amount={formatMoney(presalesQuotes.filter(sale => sale.status === 'CANCELLED').reduce((sum, sale) => sum + saleAmount(sale), 0))} tone="red" />
+                                </div>
+
+                                <div className="divide-y divide-slate-100">
+                                    {presalesQuotes.map(sale => (
+                                        <SaleRow
+                                            key={sale.id}
+                                            sale={sale}
+                                            total={saleAmount(sale)}
+                                            statusLabel={statusLabel(sale)}
+                                            statusClassName={statusClassName(sale.status)}
+                                            formatDate={formatDate}
+                                            formatMoney={formatMoney}
+                                            onOpen={() => openSale(sale.id)}
+                                        />
+                                    ))}
+                                    {presalesQuotes.length === 0 && (
+                                        <div className="p-10 text-center">
+                                            <FileText className="w-12 h-12 mx-auto text-blue-200 mb-3" />
+                                            <p className="text-sm font-black text-slate-600">Aucun devis en avant-vente pour ce client.</p>
+                                            <button onClick={createQuoteForClient} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-black text-white hover:bg-blue-500">
+                                                <Plus className="w-4 h-4" />
+                                                Créer le premier devis
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </section>
+
                             <section className="grid grid-cols-[1fr_320px] gap-6 items-start">
                                 <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                                     <div className="px-5 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                                         <div>
-                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Devis & ventes</p>
-                                            <p className="text-sm font-bold text-slate-600">Historique commercial lié au client.</p>
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Commandes & exécution</p>
+                                            <p className="text-sm font-bold text-slate-600">Devis signés, production, livraisons et facturation.</p>
                                         </div>
-                                        <ClipboardList className="w-5 h-5 text-slate-400" />
+                                        <CheckCircle2 className="w-5 h-5 text-emerald-500" />
                                     </div>
                                     <div className="divide-y divide-slate-100">
-                                        {clientSales.map(sale => {
-                                            const total = (sale.lines || []).reduce(
-                                                (sum, line) => sum + (Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100)),
-                                                0
-                                            );
-                                            return (
-                                                <button
-                                                    key={sale.id}
-                                                    onClick={() => openSale(sale.id)}
-                                                    className="w-full grid grid-cols-[1fr_150px_130px_40px] gap-4 px-5 py-4 items-center text-left hover:bg-blue-50/40 transition-colors"
-                                                >
-                                                    <div className="min-w-0">
-                                                        <p className="font-black text-slate-900 truncate">{sale.reference}</p>
-                                                        <p className="text-xs font-bold text-slate-500">{formatDate(sale.created_at)} · {sale.lines?.length || 0} ligne(s)</p>
-                                                    </div>
-                                                    <span className="justify-self-start rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-slate-600">
-                                                        {statusLabel(sale)}
-                                                    </span>
-                                                    <p className="text-right font-black text-slate-900">{formatMoney(total)}</p>
-                                                    <ArrowRight className="w-4 h-4 text-slate-400" />
-                                                </button>
-                                            );
-                                        })}
-                                        {clientSales.length === 0 && (
+                                        {executionOrders.map(sale => (
+                                            <SaleRow
+                                                key={sale.id}
+                                                sale={sale}
+                                                total={saleAmount(sale)}
+                                                statusLabel={statusLabel(sale)}
+                                                statusClassName={statusClassName(sale.status)}
+                                                formatDate={formatDate}
+                                                formatMoney={formatMoney}
+                                                onOpen={() => openSale(sale.id)}
+                                            />
+                                        ))}
+                                        {executionOrders.length === 0 && (
                                             <div className="p-10 text-center">
-                                                <FileText className="w-12 h-12 mx-auto text-slate-200 mb-3" />
-                                                <p className="text-sm font-black text-slate-500">Aucun devis lié à ce client.</p>
-                                                <button onClick={createQuoteForClient} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-black text-white hover:bg-blue-500">
-                                                    <Plus className="w-4 h-4" />
-                                                    Créer le premier devis
-                                                </button>
+                                                <ClipboardList className="w-12 h-12 mx-auto text-slate-200 mb-3" />
+                                                <p className="text-sm font-black text-slate-500">Aucune commande signée pour ce client.</p>
                                             </div>
                                         )}
                                     </div>
@@ -286,6 +345,43 @@ function InfoLine({ icon: Icon, label, value }) {
             </div>
             <p className="text-sm font-black text-slate-800 truncate">{value || 'Non renseigné'}</p>
         </div>
+    );
+}
+
+function PipelineStep({ label, count, amount, tone }) {
+    const toneClasses = {
+        slate: 'border-slate-200 bg-slate-50 text-slate-700',
+        blue: 'border-blue-200 bg-blue-50 text-blue-700',
+        red: 'border-red-200 bg-red-50 text-red-700',
+    };
+
+    return (
+        <div className={`rounded-2xl border p-4 ${toneClasses[tone] || toneClasses.slate}`}>
+            <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{label}</p>
+            <div className="mt-3 flex items-end justify-between gap-3">
+                <p className="text-3xl font-black">{count}</p>
+                <p className="text-sm font-black">{amount}</p>
+            </div>
+        </div>
+    );
+}
+
+function SaleRow({ sale, total, statusLabel, statusClassName, formatDate, formatMoney, onOpen }) {
+    return (
+        <button
+            onClick={onOpen}
+            className="w-full grid grid-cols-[1fr_170px_130px_40px] gap-4 px-5 py-4 items-center text-left hover:bg-blue-50/40 transition-colors"
+        >
+            <div className="min-w-0">
+                <p className="font-black text-slate-900 truncate">{sale.reference}</p>
+                <p className="text-xs font-bold text-slate-500">{formatDate(sale.created_at)} · {sale.lines?.length || 0} ligne(s)</p>
+            </div>
+            <span className={`justify-self-start rounded-lg border px-3 py-1.5 text-[10px] font-black uppercase tracking-widest ${statusClassName}`}>
+                {statusLabel}
+            </span>
+            <p className="text-right font-black text-slate-900">{formatMoney(total)}</p>
+            <ArrowRight className="w-4 h-4 text-slate-400" />
+        </button>
     );
 }
 
