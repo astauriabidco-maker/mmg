@@ -16,6 +16,7 @@ export default function CRMClientsDashboard() {
     const navigate = useNavigate();
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedClientId, setSelectedClientId] = useState(null);
+    const [showProposalStarter, setShowProposalStarter] = useState(false);
 
     const { data: clients = [] } = useQuery({
         queryKey: ['partners', 'clients'],
@@ -51,6 +52,12 @@ export default function CRMClientsDashboard() {
 
     const createQuoteForClient = () => {
         if (!selectedClient) return;
+        setShowProposalStarter(true);
+    };
+
+    const composeQuoteForClient = () => {
+        if (!selectedClient) return;
+        setShowProposalStarter(false);
         navigate('/manager?view=sales', {
             state: {
                 view: 'sales',
@@ -496,6 +503,45 @@ export default function CRMClientsDashboard() {
                     )}
                 </main>
             </div>
+
+            {showProposalStarter && selectedClient && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6">
+                    <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+                        <div className="bg-slate-900 px-6 py-5 text-white">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">Nouvelle proposition CRM</p>
+                            <h3 className="mt-2 text-2xl font-black">Préparer une proposition</h3>
+                            <p className="mt-1 text-sm font-bold text-slate-300">{selectedClient.name}</p>
+                        </div>
+                        <div className="space-y-4 p-6">
+                            <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                                <p className="text-sm font-black text-blue-950">On reste dans le CRM.</p>
+                                <p className="mt-1 text-sm font-bold text-blue-800">
+                                    Le client est déjà sélectionné. L'étape suivante ouvre seulement le compositeur de devis avec ce client prérempli.
+                                </p>
+                            </div>
+                            <div className="grid grid-cols-1 gap-3 text-sm font-bold text-slate-700">
+                                <InfoLine icon={Phone} label="Téléphone" value={selectedClient.phone} />
+                                <InfoLine icon={Mail} label="Email" value={selectedClient.email} />
+                                <InfoLine icon={MapPin} label="Adresse" value={selectedClient.address} />
+                            </div>
+                        </div>
+                        <div className="flex items-center justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
+                            <button
+                                onClick={() => setShowProposalStarter(false)}
+                                className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-600 hover:bg-slate-100"
+                            >
+                                Rester sur la fiche
+                            </button>
+                            <button
+                                onClick={composeQuoteForClient}
+                                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500"
+                            >
+                                Composer le devis
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
