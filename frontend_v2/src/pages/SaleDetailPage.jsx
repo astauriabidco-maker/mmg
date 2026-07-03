@@ -28,15 +28,19 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
 
     const isCreditNote = (invoice) => {
         const status = String(invoice?.status || '').toUpperCase();
+        const invoiceType = String(invoice?.invoice_type || '').toUpperCase();
         const reference = String(invoice?.reference || '').toUpperCase();
-        return status === 'AVOIR' || status === 'CREDIT_NOTE' || reference.startsWith('AV-') || Number(invoice?.total || 0) < 0;
+        return status === 'AVOIR' || status === 'CREDIT_NOTE' || invoiceType === 'CREDIT_NOTE' || reference.startsWith('AV-') || Number(invoice?.total || 0) < 0;
     };
+    const isDepositInvoice = (invoice) => String(invoice?.invoice_type || '').toUpperCase() === 'DEPOSIT';
 
     const trace = useMemo(() => {
         const reservations = sale?.reservations || [];
         const deliveryNotes = sale?.delivery_notes || [];
         const invoices = sale?.invoices || [];
         const billableInvoices = invoices.filter(invoice => !isCreditNote(invoice) && !['DRAFT', 'CANCELLED', 'VOID'].includes(invoice.status));
+        const depositInvoices = billableInvoices.filter(isDepositInvoice);
+        const finalInvoices = billableInvoices.filter(invoice => !isDepositInvoice(invoice));
         const creditNotes = [
             ...(sale?.credit_notes || []),
             ...(sale?.creditNotes || []),
@@ -55,6 +59,8 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
             reservations,
             deliveryNotes,
             billableInvoices,
+            depositInvoices,
+            finalInvoices,
             creditNotes,
             activeReservations,
             returnedDeliveryNotes,
@@ -63,7 +69,8 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
             isReserved,
             isReturned,
             isDelivered,
-            isInvoiced: billableInvoices.length > 0,
+            hasDepositInvoice: depositInvoices.length > 0,
+            isInvoiced: finalInvoices.length > 0,
             hasCreditNote: creditNotes.length > 0,
         };
     }, [sale]);
@@ -140,7 +147,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     };
 
     const createCreditNote = () => {
-        const invoice = trace.billableInvoices[0];
+        const invoice = trace.finalInvoices[0] || trace.billableInvoices[0];
         const deliveryNote = trace.returnedDeliveryNotes[0];
         if (!invoice) return;
         if (!window.confirm(`Créer un avoir pour la facture ${invoice.reference} ?`)) return;
@@ -149,6 +156,13 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                 `/v2/accounting/invoices/${invoice.id}/credit-note-from-return`,
                 deliveryNote?.id ? { delivery_note_id: deliveryNote.id } : undefined
             );
+        });
+    };
+
+    const createFinalInvoice = () => {
+        if (!window.confirm("Créer la facture finale / solde pour ce devis livré ?")) return;
+        runAction('final-invoice', async () => {
+            await api.post(`/v2/sales/${sale.id}/create-final-invoice`);
         });
     };
 
@@ -166,15 +180,17 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
 
     const isFreeSale = (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE';
     const canDeliver = isFreeSale && sale.status === 'VALIDATED' && trace.activeReservations.length > 0;
+    const canCreateFinalInvoice = trace.isDelivered && !trace.isInvoiced && !trace.isReturned;
     const canReturn = trace.isDelivered;
     const canCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote;
     const timeline = [
         { label: 'Brouillon', done: true, detail: formatDate(sale.created_at) },
         { label: 'Envoyé', done: ['SENT', 'VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale.status), detail: sale.status === 'DRAFT' ? 'À envoyer' : 'Client notifié' },
         { label: 'Signé', done: trace.isSigned, detail: sale.signed_at ? formatDate(sale.signed_at) : (trace.isSigned ? 'Validation interne' : 'En attente') },
+        { label: 'Acompte', done: trace.hasDepositInvoice || isFreeSale, detail: trace.hasDepositInvoice ? `${trace.depositInvoices.length} facture(s)` : (isFreeSale ? 'Non requis' : 'À émettre') },
         { label: 'Réservé', done: trace.isReserved, detail: trace.isReserved ? `${activeReservedQty.toLocaleString('fr-FR')} réservé` : (trace.hasStockLines ? 'À réserver' : 'Sans stock') },
         { label: 'Livré', done: trace.isDelivered || trace.isReturned, detail: trace.isReturned ? 'Retourné' : (trace.isDelivered ? 'BL généré' : 'À livrer') },
-        { label: 'Facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.billableInvoices.length} facture(s)` : 'À facturer' },
+        { label: 'Solde facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.finalInvoices.length} facture(s)` : 'À facturer' },
         { label: 'Avoir', done: trace.hasCreditNote, detail: trace.hasCreditNote ? `${trace.creditNotes.length} avoir(s)` : (trace.isReturned ? 'À décider' : 'Non requis') },
     ];
 
@@ -228,12 +244,13 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                         <div>
                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Prochaine action</p>
                             <p className="text-sm font-bold text-slate-700">
-                                {sale.status === 'DRAFT' && "Envoyer le devis au client."}
-                                {sale.status === 'SENT' && "Attendre la signature ou valider manuellement."}
-                                {canDeliver && "Sortir les articles réservés quand ils sont remis au client."}
-                                {canReturn && "Le client a été livré. Un retour reste possible si erreur."}
-                                {canCreditNote && "Retour facturé détecté: créer un avoir si la régularisation est confirmée."}
-                                {!['DRAFT', 'SENT'].includes(sale.status) && !canDeliver && !canReturn && !canCreditNote && "Le devis est à jour. Consultez le cycle et les documents liés."}
+                                {sale.status === 'DRAFT' ? "Envoyer le devis au client."
+                                    : sale.status === 'SENT' ? "Attendre la signature ou valider manuellement."
+                                    : canDeliver ? "Sortir les articles réservés quand ils sont remis au client."
+                                    : canCreateFinalInvoice ? "Livraison faite: générer la facture finale / solde."
+                                    : canCreditNote ? "Retour facturé détecté: créer un avoir si la régularisation est confirmée."
+                                    : canReturn ? "Le client a été livré. Un retour reste possible si erreur."
+                                    : "Le devis est à jour. Consultez le cycle et les documents liés."}
                             </p>
                         </div>
                         <div className="flex flex-wrap gap-3">
@@ -250,6 +267,11 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                             {canDeliver && (
                                 <button onClick={deliverFreeSale} disabled={busyAction === 'deliver'} className="px-5 py-3 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500 disabled:bg-slate-300 inline-flex items-center gap-2">
                                     <Truck className="w-4 h-4" /> Sortie client
+                                </button>
+                            )}
+                            {canCreateFinalInvoice && (
+                                <button onClick={createFinalInvoice} disabled={busyAction === 'final-invoice'} className="px-5 py-3 rounded-xl bg-blue-600 text-white font-black hover:bg-blue-500 disabled:bg-slate-300 inline-flex items-center gap-2">
+                                    <FileText className="w-4 h-4" /> Facture finale
                                 </button>
                             )}
                             {canReturn && (
@@ -271,7 +293,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                     </div>
                 </section>
 
-                <section className="grid grid-cols-7 gap-3">
+                <section className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
                     {timeline.map((step, index) => (
                         <div key={step.label} className={`rounded-2xl border p-4 ${step.done ? 'bg-emerald-50 border-emerald-100' : 'bg-white border-slate-200'}`}>
                             <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-3 ${step.done ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
@@ -334,9 +356,14 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                                 <a href={`${api.defaults.baseURL}/v2/pdf/quote/${sale.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm font-black text-slate-800 hover:bg-slate-100">
                                     <span>Devis PDF</span><FileText className="w-4 h-4" />
                                 </a>
-                                {trace.billableInvoices.map(invoice => (
+                                {trace.depositInvoices.map(invoice => (
+                                    <a key={invoice.id} href={`${api.defaults.baseURL}/v2/pdf/invoice/${invoice.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm font-black text-amber-900 hover:bg-amber-100">
+                                        <span>Acompte {invoice.reference} · {formatMoney(invoice.total)}</span><FileText className="w-4 h-4" />
+                                    </a>
+                                ))}
+                                {trace.finalInvoices.map(invoice => (
                                     <a key={invoice.id} href={`${api.defaults.baseURL}/v2/pdf/invoice/${invoice.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm font-black text-blue-900 hover:bg-blue-100">
-                                        <span>{invoice.reference} · {formatMoney(invoice.total)}</span><FileText className="w-4 h-4" />
+                                        <span>Facture finale {invoice.reference} · {formatMoney(invoice.total)}</span><FileText className="w-4 h-4" />
                                     </a>
                                 ))}
                                 {trace.creditNotes.map(creditNote => (

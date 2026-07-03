@@ -35,6 +35,7 @@ router = APIRouter(
 AUTH_DEPENDENCIES = [Depends(get_current_user)]
 SALE_WORKFLOW_TYPES = {"FREE_SALE", "FABRICATION_ESTIMATE", "FABRICATION_FROM_MEASURE"}
 SALE_LINE_TYPES = {"STOCK_ITEM", "SERVICE"}
+FABRICATION_DEPOSIT_RATE = 0.50
 
 
 def _normalise_sale_workflow_type(value: Optional[str]) -> str:
@@ -117,6 +118,94 @@ def _sale_total_amount(sale: models.SaleOrder) -> float:
             (line.quantity or 0) * (line.unit_price or 0) * (1 - (line.discount_pct or 0) / 100)
             for line in sale.lines
         )
+    )
+
+
+def _sale_tax_rate(sale: models.SaleOrder) -> float:
+    return float(getattr(sale, "tax_rate", None) or 20.0)
+
+
+def _is_free_sale(sale: models.SaleOrder) -> bool:
+    return (sale.workflow_type or "FREE_SALE") == "FREE_SALE"
+
+
+def _invoice_is_credit_note(invoice: models.Invoice) -> bool:
+    invoice_type = (invoice.invoice_type or "").upper()
+    reference = (invoice.reference or "").upper()
+    return invoice.status == "AVOIR" or invoice_type == "CREDIT_NOTE" or reference.startswith("AV-") or float(invoice.total or 0) < 0
+
+
+def _non_cancelled_invoice_query(db: Session, sale_id: int, invoice_type: str):
+    return (
+        db.query(models.Invoice)
+        .filter(
+            models.Invoice.sale_order_id == sale_id,
+            models.Invoice.invoice_type == invoice_type,
+            models.Invoice.status.notin_(["DRAFT", "CANCELLED", "VOID", "AVOIR"]),
+        )
+    )
+
+
+def _create_sale_invoice(
+    db: Session,
+    sale: models.SaleOrder,
+    invoice_type: str,
+    subtotal: float,
+    description: Optional[str] = None,
+) -> models.Invoice:
+    tax_rate = _sale_tax_rate(sale)
+    tax_amount = subtotal * (tax_rate / 100.0)
+    invoice = models.Invoice(
+        reference=generate_invoice_reference(db),
+        sale_order_id=sale.id,
+        client_name=sale.client_name,
+        client_address=sale.client_address or sale.client_email,
+        client_siret="",
+        due_date=datetime.utcnow() + timedelta(days=30),
+        status="UNPAID",
+        invoice_type=invoice_type,
+        subtotal=subtotal,
+        tax_rate=tax_rate,
+        tax_amount=tax_amount,
+        total=subtotal + tax_amount,
+    )
+    db.add(invoice)
+    db.flush()
+
+    if description:
+        db.add(models.InvoiceLine(
+            invoice_id=invoice.id,
+            description=description,
+            quantity=1,
+            unit_price=subtotal,
+            tax_rate=tax_rate,
+        ))
+    else:
+        for line in sale.lines:
+            db.add(models.InvoiceLine(
+                invoice_id=invoice.id,
+                description=line.description,
+                quantity=line.quantity,
+                unit_price=(line.unit_price or 0) * (1 - (line.discount_pct or 0) / 100),
+                tax_rate=tax_rate,
+            ))
+
+    invoice.qr_code_hash = compute_qr_seal(invoice)
+    return invoice
+
+
+def _create_signature_invoice(db: Session, sale: models.SaleOrder) -> models.Invoice:
+    subtotal = _sale_total_amount(sale)
+    if _is_free_sale(sale):
+        return _create_sale_invoice(db, sale, "FINAL", subtotal)
+
+    deposit_subtotal = round(subtotal * FABRICATION_DEPOSIT_RATE, 2)
+    return _create_sale_invoice(
+        db,
+        sale,
+        "DEPOSIT",
+        deposit_subtotal,
+        description=f"Acompte {int(FABRICATION_DEPOSIT_RATE * 100)}% sur devis {sale.reference}",
     )
 
 
@@ -796,45 +885,15 @@ def sign_quote(token: str, request: Request, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
     
-    # --- AUTO-GENERATE NF525 INVOICE ---
-    # Calculate Totals from Sale Order Lines
-    subtotal = sum((l.unit_price or 0) * (l.quantity or 0) * (1 - (l.discount_pct or 0) / 100) for l in order.lines)
-    tax_rate = order.tax_rate if hasattr(order, 'tax_rate') and order.tax_rate else 20.0
-    tax_amount = subtotal * (tax_rate / 100.0)
-    total = subtotal + tax_amount
-    
-    new_invoice = models.Invoice(
-        reference=generate_invoice_reference(db),
-        sale_order_id=order.id,
-        client_name=order.client_name,
-        client_address=order.client_address or order.client_email,
-        client_siret="", # Not in sale order currently
-        due_date=current_time + timedelta(days=30), # Default 30 days
-        status="UNPAID",
-        subtotal=subtotal,
-        tax_rate=tax_rate,
-        tax_amount=tax_amount,
-        total=total
-    )
-    db.add(new_invoice)
-    db.flush()
-    
-    for line in order.lines:
-        db_inv_line = models.InvoiceLine(
-            invoice_id=new_invoice.id,
-            description=line.description,
-            quantity=line.quantity,
-            unit_price=line.unit_price,
-            tax_rate=tax_rate
-        )
-        db.add(db_inv_line)
-        
-    new_invoice.qr_code_hash = compute_qr_seal(new_invoice)
+    invoice = _create_signature_invoice(db, order)
     
     db.commit()
+    invoice_label = "facture finale" if invoice.invoice_type == "FINAL" else "facture d'acompte"
     return {
-        "message": "Devis signé avec succès et Facture d'acompte/définitive générée !",
+        "message": f"Devis signé avec succès et {invoice_label} générée.",
         "commercial_reservation_id": reservation.id if reservation else None,
+        "invoice_id": invoice.id,
+        "invoice_type": invoice.invoice_type,
     }
 
 
@@ -920,6 +979,69 @@ def deliver_free_sale_order(
         "delivery_note_id": delivery_note.id,
         "delivery_note_reference": delivery_note.reference,
         **stats,
+    }
+
+
+@router.post("/{order_id}/create-final-invoice", dependencies=AUTH_DEPENDENCIES)
+def create_final_invoice(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut créer la facture finale.")
+
+    sale = (
+        db.query(models.SaleOrder)
+        .options(joinedload(models.SaleOrder.lines))
+        .filter(models.SaleOrder.id == order_id)
+        .first()
+    )
+    if not sale:
+        raise HTTPException(status_code=404, detail="Devis introuvable.")
+
+    final_invoice = _non_cancelled_invoice_query(db, sale.id, "FINAL").first()
+    if final_invoice:
+        return {
+            "message": f"Facture finale déjà créée: {final_invoice.reference}.",
+            "invoice_id": final_invoice.id,
+            "invoice_reference": final_invoice.reference,
+        }
+
+    delivery_note = (
+        db.query(models.DeliveryNote)
+        .filter(
+            models.DeliveryNote.sale_order_id == sale.id,
+            models.DeliveryNote.status == "DELIVERED",
+        )
+        .first()
+    )
+    if sale.status != "DELIVERED" and not delivery_note:
+        raise HTTPException(status_code=400, detail="La facture finale nécessite une livraison client validée.")
+
+    sale_subtotal = _sale_total_amount(sale)
+    deposit_subtotal = sum(
+        float(invoice.subtotal or 0)
+        for invoice in _non_cancelled_invoice_query(db, sale.id, "DEPOSIT").all()
+        if not _invoice_is_credit_note(invoice)
+    )
+    final_subtotal = round(max(sale_subtotal - deposit_subtotal, 0), 2)
+    if final_subtotal <= 0:
+        raise HTTPException(status_code=400, detail="Aucun solde positif à facturer pour ce devis.")
+
+    invoice = _create_sale_invoice(
+        db,
+        sale,
+        "FINAL",
+        final_subtotal,
+        description=f"Solde facture finale devis {sale.reference}",
+    )
+    sale.notes = (sale.notes or "") + f"\n[FACTURE FINALE] {invoice.reference} générée après livraison."
+    db.commit()
+    return {
+        "message": "Facture finale générée.",
+        "invoice_id": invoice.id,
+        "invoice_reference": invoice.reference,
     }
 
 

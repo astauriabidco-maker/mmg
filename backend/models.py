@@ -73,6 +73,10 @@ def ensure_schema_compatibility(engine):
                 connection.execute(text("ALTER TABLE invoices ADD COLUMN delivery_note_id INTEGER"))
             if "return_move_id" not in invoice_columns:
                 connection.execute(text("ALTER TABLE invoices ADD COLUMN return_move_id INTEGER"))
+            if "invoice_type" not in invoice_columns:
+                connection.execute(text("ALTER TABLE invoices ADD COLUMN invoice_type VARCHAR DEFAULT 'FINAL'"))
+                invoice_columns.add("invoice_type")
+            connection.execute(text("UPDATE invoices SET invoice_type = 'FINAL' WHERE invoice_type IS NULL OR invoice_type = ''"))
 
 class MaterialType(str, enum.Enum):
     PVC = "PVC"
@@ -588,6 +592,7 @@ class Invoice(Base):
     issue_date = Column(DateTime, default=datetime.utcnow)
     due_date = Column(DateTime)
     status = Column(String, default="DRAFT") # DRAFT, UNPAID, PARTIAL, PAID, AVOIR
+    invoice_type = Column(String, default="FINAL", index=True) # DEPOSIT, FINAL, CREDIT_NOTE
     source_invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=True)
     delivery_note_id = Column(Integer, ForeignKey("delivery_notes.id"), nullable=True)
     return_move_id = Column(Integer, ForeignKey("stock_moves.id"), nullable=True)

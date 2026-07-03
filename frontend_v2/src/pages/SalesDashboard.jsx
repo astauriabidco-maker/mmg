@@ -21,6 +21,7 @@ export default function SalesDashboard() {
     const [isDeliveringFreeSale, setIsDeliveringFreeSale] = useState(false);
     const [isReturningFreeSale, setIsReturningFreeSale] = useState(false);
     const [isCreatingCreditNote, setIsCreatingCreditNote] = useState(false);
+    const [isCreatingFinalInvoice, setIsCreatingFinalInvoice] = useState(false);
     const [workshopPrepFiles, setWorkshopPrepFiles] = useState([]);
     const [workshopPrepPreview, setWorkshopPrepPreview] = useState(null);
     const [isWorkshopPreparing, setIsWorkshopPreparing] = useState(false);
@@ -296,6 +297,23 @@ export default function SalesDashboard() {
         }
     };
 
+    const createFinalInvoice = async () => {
+        if (!selectedSale) return;
+        if (!window.confirm("Créer la facture finale / solde pour ce devis livré ?")) return;
+        setIsCreatingFinalInvoice(true);
+        try {
+            const res = await api.post(`/v2/sales/${selectedSale.id}/create-final-invoice`);
+            await queryClient.invalidateQueries(['sales']);
+            await openSaleDetails(selectedSale.id);
+            alert(res.data?.message || "Facture finale générée.");
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de la création de la facture finale.");
+        } finally {
+            setIsCreatingFinalInvoice(false);
+        }
+    };
+
     const handleDragStart = (e, id) => {
         e.dataTransfer.setData("saleId", id.toString());
     };
@@ -491,8 +509,9 @@ export default function SalesDashboard() {
     };
     const isCreditNote = (invoice) => {
         const status = String(invoice?.status || '').toUpperCase();
+        const invoiceType = String(invoice?.invoice_type || '').toUpperCase();
         const reference = String(invoice?.reference || '').toUpperCase();
-        return status === 'AVOIR' || status === 'CREDIT_NOTE' || reference.startsWith('AV-') || Number(invoice?.total || 0) < 0;
+        return status === 'AVOIR' || status === 'CREDIT_NOTE' || invoiceType === 'CREDIT_NOTE' || reference.startsWith('AV-') || Number(invoice?.total || 0) < 0;
     };
     const getSaleCreditNotes = (sale) => {
         const exposedCreditNotes = [
@@ -511,10 +530,15 @@ export default function SalesDashboard() {
     const getSaleBillableInvoices = (sale) => (
         (sale?.invoices || []).filter(invoice => !isCreditNote(invoice) && !['DRAFT', 'CANCELLED', 'VOID'].includes(invoice.status))
     );
+    const isDepositInvoice = (invoice) => String(invoice?.invoice_type || '').toUpperCase() === 'DEPOSIT';
+    const getSaleDepositInvoices = (sale) => getSaleBillableInvoices(sale).filter(isDepositInvoice);
+    const getSaleFinalInvoices = (sale) => getSaleBillableInvoices(sale).filter(invoice => !isDepositInvoice(invoice));
     const getFreeSaleTraceability = (sale) => {
         const reservations = sale?.reservations || [];
         const invoices = sale?.invoices || [];
         const billableInvoices = getSaleBillableInvoices(sale);
+        const depositInvoices = getSaleDepositInvoices(sale);
+        const finalInvoices = getSaleFinalInvoices(sale);
         const creditNotes = getSaleCreditNotes(sale);
         const deliveryNotes = sale?.delivery_notes || [];
         const activeReservations = reservations.filter(reservation => reservation.status === 'reserved');
@@ -533,7 +557,8 @@ export default function SalesDashboard() {
         const isReserved = activeReservations.length > 0 || (sale?.lines || []).some(line => Number(line.reserved_quantity || 0) > 0);
         const isReturned = returnedReservations.length > 0 || returnedDeliveryNotes.length > 0;
         const isDelivered = !isReturned && (sale?.status === 'DELIVERED' || deliveryNotes.some(note => note.status === 'DELIVERED' || note.signed_at));
-        const isInvoiced = billableInvoices.length > 0;
+        const hasDepositInvoice = depositInvoices.length > 0;
+        const isInvoiced = finalInvoices.length > 0;
         const hasCreditNote = creditNotes.length > 0;
 
         return {
@@ -541,6 +566,7 @@ export default function SalesDashboard() {
             isReserved,
             isDelivered,
             isReturned,
+            hasDepositInvoice,
             isInvoiced,
             hasCreditNote,
             hasStockLines,
@@ -549,11 +575,15 @@ export default function SalesDashboard() {
             returnedReservations,
             returnedDeliveryNotes,
             billableInvoices,
+            depositInvoices,
+            finalInvoices,
             creditNotes,
             reservedQuantity,
             reservationsCount: reservations.length,
             invoicesCount: invoices.length,
             billableInvoicesCount: billableInvoices.length,
+            depositInvoicesCount: depositInvoices.length,
+            finalInvoicesCount: finalInvoices.length,
             creditNotesCount: creditNotes.length,
             deliveryNotesCount: deliveryNotes.length,
         };
@@ -920,9 +950,10 @@ export default function SalesDashboard() {
         { key: 'draft', label: 'CRM brouillon', statuses: ['DRAFT'] },
         { key: 'sent', label: 'CRM envoyé', statuses: ['SENT'] },
         { key: 'validated', label: 'Signé / validé', statuses: ['VALIDATED', 'IN_DESIGN'] },
+        { key: 'deposit', label: 'Acompte', statuses: [] },
         { key: 'reserved', label: 'Réservé', statuses: ['READY_FOR_PROD', 'IN_PRODUCTION'] },
         { key: 'delivered', label: 'Livré', statuses: ['DELIVERED'] },
-        { key: 'billed', label: 'Facturé', statuses: [] }
+        { key: 'billed', label: 'Solde facturé', statuses: [] }
     ];
 
     const getSaleCycleState = (sale) => {
@@ -937,14 +968,17 @@ export default function SalesDashboard() {
         if (trace.isSigned) {
             activeIndex = Math.max(activeIndex, 2);
         }
-        if (hasReservedLines || trace.isReserved || ['READY_FOR_PROD', 'IN_PRODUCTION'].includes(sale.status)) {
+        if (trace.hasDepositInvoice || (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE') {
             activeIndex = Math.max(activeIndex, 3);
         }
+        if (hasReservedLines || trace.isReserved || ['READY_FOR_PROD', 'IN_PRODUCTION'].includes(sale.status)) {
+            activeIndex = Math.max(activeIndex, 4);
+        }
         if (trace.isDelivered) {
-            activeIndex = 4;
+            activeIndex = 5;
         }
         if (trace.isInvoiced) {
-            activeIndex = 5;
+            activeIndex = 6;
         }
 
         return {
@@ -961,13 +995,17 @@ export default function SalesDashboard() {
         if (cycle.isCancelled) return "Cycle interrompu";
         if (stepKey === 'reserved') {
             if (!cycle.hasStockLines) return "Sans stock";
-            return cycle.hasReservedLines || cycle.activeIndex >= 3 ? "Stock bloqué" : "À réserver";
+            return cycle.hasReservedLines || cycle.activeIndex >= 4 ? "Stock bloqué" : "À réserver";
+        }
+        if (stepKey === 'deposit') {
+            if ((sale?.workflow_type || 'FREE_SALE') === 'FREE_SALE') return "Non requis";
+            return cycle.trace?.hasDepositInvoice ? "Acompte émis" : "À émettre";
         }
         if (stepKey === 'delivered') {
             return cycle.trace?.isDelivered ? "BL généré" : "À livrer";
         }
         if (stepKey === 'billed') {
-            return cycle.trace?.isInvoiced ? "Facture liée" : "À facturer";
+            return cycle.trace?.isInvoiced ? "Solde lié" : "À facturer";
         }
         if (stepKey === 'validated' && cycle.trace?.isSigned) return sale?.signed_at ? "Signature client" : "Validation";
         return cycle.activeIndex >= saleCycleSteps.findIndex(step => step.key === stepKey) ? "OK" : "À venir";
@@ -1049,10 +1087,11 @@ export default function SalesDashboard() {
             0
         );
         const isFreeSale = (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE';
-        const billableInvoice = trace.billableInvoices?.[0];
+        const billableInvoice = trace.finalInvoices?.[0] || trace.billableInvoices?.[0];
         const returnedDeliveryNote = trace.returnedDeliveryNotes?.[0];
         const canCreateCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote && billableInvoice;
         const canDeliverFreeSale = isFreeSale && sale.status === 'VALIDATED' && reservationSummary.count > 0;
+        const canCreateFinalInvoice = trace.isDelivered && !trace.isInvoiced && !trace.isReturned;
 
         const renderPrimaryAction = () => {
             if (sale.status === 'DRAFT') {
@@ -1073,6 +1112,13 @@ export default function SalesDashboard() {
                 return (
                     <button onClick={deliverFreeSale} disabled={isDeliveringFreeSale} className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20">
                         <Truck className="w-4 h-4" /> {isDeliveringFreeSale ? "Sortie..." : "Sortie client"}
+                    </button>
+                );
+            }
+            if (canCreateFinalInvoice) {
+                return (
+                    <button onClick={createFinalInvoice} disabled={isCreatingFinalInvoice} className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-500/20">
+                        <FileText className="w-4 h-4" /> {isCreatingFinalInvoice ? "Création..." : "Créer facture finale"}
                     </button>
                 );
             }
@@ -1108,9 +1154,10 @@ export default function SalesDashboard() {
             { label: 'CRM brouillon', done: true, detail: formatDate(sale.created_at) },
             { label: 'CRM envoyé', done: ['SENT', 'VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale.status), detail: sale.status === 'DRAFT' ? 'Avant-vente' : 'Client notifié' },
             { label: 'Signé / validé', done: trace.isSigned, detail: sale.signed_at ? formatDate(sale.signed_at) : (trace.isSigned ? 'Validation interne' : 'En attente') },
+            { label: 'Acompte', done: trace.hasDepositInvoice || isFreeSale, detail: trace.hasDepositInvoice ? `${trace.depositInvoicesCount} facture(s)` : (isFreeSale ? 'Non requis' : 'À émettre') },
             { label: 'Réservé', done: trace.isReserved, detail: trace.isReserved ? `${reservationSummary.totalReserved.toLocaleString('fr-FR')} réservé` : (trace.hasStockLines ? 'À réserver' : 'Sans stock') },
             { label: 'Livré', done: trace.isDelivered || trace.isReturned, detail: trace.isReturned ? 'Retourné' : (trace.isDelivered ? 'BL généré' : 'À livrer') },
-            { label: 'Facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.billableInvoicesCount} facture(s)` : 'À facturer' },
+            { label: 'Solde facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.finalInvoicesCount} facture(s)` : 'À facturer' },
             { label: 'Avoir', done: trace.hasCreditNote, detail: trace.hasCreditNote ? `${trace.creditNotesCount} avoir(s)` : (trace.isReturned ? 'À décider' : 'Non requis') },
         ];
 
@@ -1193,7 +1240,7 @@ export default function SalesDashboard() {
 
                         <div>
                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Cycle métier</p>
-                            <div className="grid grid-cols-7 gap-2">
+                            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
                                 {timeline.map((step, index) => (
                                     <div key={step.label} className={`rounded-xl border p-3 min-w-0 ${step.done ? 'bg-emerald-50 border-emerald-100' : 'bg-slate-50 border-slate-200'}`}>
                                         <div className={`w-7 h-7 rounded-full flex items-center justify-center mb-2 ${step.done ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
@@ -1225,9 +1272,14 @@ export default function SalesDashboard() {
                                                 <span>Lien signature client</span><Copy className="w-4 h-4" />
                                             </button>
                                         )}
-                                        {trace.billableInvoices.map(invoice => (
+                                        {trace.depositInvoices.map(invoice => (
+                                            <a key={invoice.id} href={`${api.defaults.baseURL}/v2/pdf/invoice/${invoice.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm font-black text-amber-900 hover:bg-amber-100">
+                                                <span>Acompte {invoice.reference} · {formatMoney(invoice.total)}</span><FileText className="w-4 h-4" />
+                                            </a>
+                                        ))}
+                                        {trace.finalInvoices.map(invoice => (
                                             <a key={invoice.id} href={`${api.defaults.baseURL}/v2/pdf/invoice/${invoice.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm font-black text-blue-900 hover:bg-blue-100">
-                                                <span>{invoice.reference} · {formatMoney(invoice.total)}</span><FileText className="w-4 h-4" />
+                                                <span>Facture finale {invoice.reference} · {formatMoney(invoice.total)}</span><FileText className="w-4 h-4" />
                                             </a>
                                         ))}
                                         {trace.creditNotes.map(creditNote => (
@@ -1321,6 +1373,7 @@ export default function SalesDashboard() {
         if (sale?.status === 'DRAFT') return { label: 'Avant-vente CRM', tone: 'blue' };
         if (sale?.status === 'SENT') return { label: 'Signature CRM', tone: 'amber' };
         if (isFreeSale && sale?.status === 'VALIDATED' && reservationSummary.count > 0) return { label: 'Sortie client à faire', tone: 'emerald' };
+        if (trace.isDelivered && !trace.isReturned && !trace.isInvoiced) return { label: 'Facture finale à créer', tone: 'blue' };
         if (trace.isDelivered && !trace.isReturned) return { label: 'Livré, surveiller retour', tone: 'indigo' };
         if (trace.isReturned && trace.isInvoiced && !trace.hasCreditNote) return { label: 'Avoir à décider', tone: 'rose' };
         if (!isFreeSale && sale?.status === 'VALIDATED') return { label: 'Envoyer au BE', tone: 'emerald' };
@@ -1353,7 +1406,11 @@ export default function SalesDashboard() {
         if (stageId === 'VALIDATED') return sale.status === 'VALIDATED' && !isSaleToDeliver(sale);
         if (stageId === 'DELIVERED') {
             const trace = getFreeSaleTraceability(sale);
-            return sale.status === 'DELIVERED' || trace.isDelivered || trace.isReturned;
+            return (sale.status === 'DELIVERED' || trace.isDelivered || trace.isReturned) && !trace.isInvoiced;
+        }
+        if (stageId === 'INVOICED') {
+            const trace = getFreeSaleTraceability(sale);
+            return trace.isInvoiced;
         }
         return sale.status === stageId;
     };
@@ -1442,7 +1499,8 @@ export default function SalesDashboard() {
         { id: 'READY_FOR_PROD', title: 'Prêts pour production' },
         { id: 'IN_PRODUCTION', title: 'En production' },
         { id: 'TO_DELIVER', title: 'À livrer' },
-        { id: 'DELIVERED', title: 'Livrés / facturés' },
+        { id: 'DELIVERED', title: 'Livrés' },
+        { id: 'INVOICED', title: 'Facturés' },
     ];
 
     return (

@@ -539,6 +539,7 @@ class SaleInvoiceSummary(BaseModel):
     reference: str
     issue_date: datetime
     status: str
+    invoice_type: str = "FINAL"
     total: float
     source_invoice_id: Optional[int] = None
     source_invoice_reference: Optional[str] = None
@@ -608,6 +609,7 @@ class InvoiceBase(BaseModel):
     
 class InvoiceCreate(InvoiceBase):
     sale_order_id: Optional[int] = None
+    invoice_type: str = "FINAL"
     lines: List[InvoiceLineBase]
 
 class CreditNoteCreate(BaseModel):
@@ -621,6 +623,7 @@ class InvoiceResponse(InvoiceBase):
     id: int
     reference: str
     sale_order_id: Optional[int] = None
+    invoice_type: str = "FINAL"
     source_invoice_id: Optional[int] = None
     source_invoice_reference: Optional[str] = None
     delivery_note_id: Optional[int] = None
