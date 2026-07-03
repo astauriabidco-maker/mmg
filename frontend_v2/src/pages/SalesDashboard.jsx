@@ -1425,7 +1425,13 @@ export default function SalesDashboard() {
         .filter(isExecutionSale)
         .reduce((sum, s) => sum + s.lines.reduce((lsum, l) => lsum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0), 0);
 
-    const executionPipelineStages = pipelineStages.filter(col => !['DRAFT', 'SENT'].includes(col.id));
+    const executionPipelineStages = [
+        { id: 'VALIDATED', title: 'Gagnés / signés' },
+        { id: 'IN_DESIGN', title: "Bureau d'études" },
+        { id: 'READY_FOR_PROD', title: 'Prêts pour production' },
+        { id: 'IN_PRODUCTION', title: 'En production' },
+        { id: 'DELIVERED', title: 'Livrés / facturés' },
+    ];
 
     return (
         <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex flex-col overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in relative">
@@ -1546,25 +1552,13 @@ export default function SalesDashboard() {
                                         onDrop={(e) => handleDrop(e, col.id)}
                                         className="w-80 shrink-0 flex flex-col h-full"
                                     >
-                                        <div className="flex items-center justify-between mb-4 px-2 group">
+                                        <div className="flex items-center justify-between mb-4 px-2">
                                             <div className="flex-1 mr-2">
-                                                <input
-                                                    type="text"
-                                                    value={col.title}
-                                                    onChange={(e) => {
-                                                        const newStages = pipelineStages.map(s => s.id === col.id ? { ...s, title: e.target.value } : s);
-                                                        setPipelineStages(newStages);
-                                                    }}
-                                                    onBlur={() => saveStagesToServer(pipelineStages)}
-                                                    className="font-black text-slate-700 text-sm bg-transparent border-none outline-none focus:ring-2 focus:ring-blue-500 rounded px-1 w-full"
-                                                />
+                                                <p className="px-1 text-sm font-black text-slate-700">{col.title}</p>
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <span className="text-xs font-bold text-slate-500">{colValue > 0 ? colValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0}) : ''}</span>
                                                 <span className="text-slate-400 font-bold text-xs bg-slate-200 px-1.5 py-0.5 rounded">{colSales.length}</span>
-                                                <button onClick={() => handleDeleteStage(col.id)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity">
-                                                    <X className="w-4 h-4" />
-                                                </button>
                                             </div>
                                         </div>
 	                                        <div className={`flex-1 overflow-y-auto space-y-3 p-2 rounded-2xl ${isStatusUpdating ? 'opacity-50' : ''} bg-slate-100/50 border border-slate-200/50 min-h-[150px]`}>
@@ -1573,23 +1567,13 @@ export default function SalesDashboard() {
 	                                            ))}
 	                                            {colSales.length === 0 && (
 	                                                <div className="h-32 rounded-2xl border border-dashed border-slate-200 bg-white/60 flex items-center justify-center text-center px-4">
-	                                                    <p className="text-sm font-bold text-slate-400">Aucun devis dans cette étape.</p>
+	                                                    <p className="text-sm font-bold text-slate-400">Aucune commande dans cette étape.</p>
 	                                                </div>
 	                                            )}
 	                                        </div>
                                     </div>
                                 )
                             })}
-
-                            {/* ADD NEW STAGE BUTTON */}
-                            <div className="w-80 shrink-0 flex flex-col h-full opacity-60 hover:opacity-100 transition-opacity">
-                                <button
-                                    onClick={handleAddStage}
-                                    className="flex items-center justify-center gap-2 h-12 border-2 border-dashed border-slate-300 rounded-xl text-slate-500 font-bold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
-                                >
-                                    <Plus className="w-5 h-5" /> Ajouter une étape
-                                </button>
-                            </div>
                         </div>
                     )}
 
