@@ -5,6 +5,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import MMGDossiers from './MMGDossiers';
 import WindowVisualizer from '../components/WindowVisualizer';
+import BusinessTimeline from '../components/BusinessTimeline';
+import { isCreditNote, isDepositInvoice } from '../utils/saleBusinessTimeline';
 
 export default function SalesDashboard() {
     const queryClient = useQueryClient();
@@ -507,12 +509,6 @@ export default function SalesDashboard() {
         );
         return { count: activeReservations.length, totalReserved };
     };
-    const isCreditNote = (invoice) => {
-        const status = String(invoice?.status || '').toUpperCase();
-        const invoiceType = String(invoice?.invoice_type || '').toUpperCase();
-        const reference = String(invoice?.reference || '').toUpperCase();
-        return status === 'AVOIR' || status === 'CREDIT_NOTE' || invoiceType === 'CREDIT_NOTE' || reference.startsWith('AV-') || Number(invoice?.total || 0) < 0;
-    };
     const getSaleCreditNotes = (sale) => {
         const exposedCreditNotes = [
             ...(sale?.credit_notes || []),
@@ -530,7 +526,6 @@ export default function SalesDashboard() {
     const getSaleBillableInvoices = (sale) => (
         (sale?.invoices || []).filter(invoice => !isCreditNote(invoice) && !['DRAFT', 'CANCELLED', 'VOID'].includes(invoice.status))
     );
-    const isDepositInvoice = (invoice) => String(invoice?.invoice_type || '').toUpperCase() === 'DEPOSIT';
     const getSaleDepositInvoices = (sale) => getSaleBillableInvoices(sale).filter(isDepositInvoice);
     const getSaleFinalInvoices = (sale) => getSaleBillableInvoices(sale).filter(invoice => !isDepositInvoice(invoice));
     const getFreeSaleTraceability = (sale) => {
@@ -946,137 +941,8 @@ export default function SalesDashboard() {
             : getStatusColor(sale?.status)
     );
 
-    const saleCycleSteps = [
-        { key: 'draft', label: 'CRM brouillon', statuses: ['DRAFT'] },
-        { key: 'sent', label: 'CRM envoyé', statuses: ['SENT'] },
-        { key: 'validated', label: 'Signé / validé', statuses: ['VALIDATED', 'IN_DESIGN'] },
-        { key: 'deposit', label: 'Acompte', statuses: [] },
-        { key: 'reserved', label: 'Réservé', statuses: ['READY_FOR_PROD', 'IN_PRODUCTION'] },
-        { key: 'delivered', label: 'Livré', statuses: ['DELIVERED'] },
-        { key: 'billed', label: 'Solde facturé', statuses: [] }
-    ];
-
-    const getSaleCycleState = (sale) => {
-        if (!sale) return { activeIndex: 0, isCancelled: false, hasStockLines: false, hasReservedLines: false };
-
-        const hasStockLines = (sale.lines || []).some(line => line.line_type === 'STOCK_ITEM' || line.variant_id);
-        const hasReservedLines = (sale.lines || []).some(line => Number(line.reserved_quantity || 0) > 0);
-        const trace = getFreeSaleTraceability(sale);
-        const statusIndex = saleCycleSteps.findIndex(step => step.statuses.includes(sale.status));
-        let activeIndex = statusIndex >= 0 ? statusIndex : 0;
-
-        if (trace.isSigned) {
-            activeIndex = Math.max(activeIndex, 2);
-        }
-        if (trace.hasDepositInvoice || (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE') {
-            activeIndex = Math.max(activeIndex, 3);
-        }
-        if (hasReservedLines || trace.isReserved || ['READY_FOR_PROD', 'IN_PRODUCTION'].includes(sale.status)) {
-            activeIndex = Math.max(activeIndex, 4);
-        }
-        if (trace.isDelivered) {
-            activeIndex = 5;
-        }
-        if (trace.isInvoiced) {
-            activeIndex = 6;
-        }
-
-        return {
-            activeIndex,
-            isCancelled: sale.status === 'CANCELLED',
-            hasStockLines,
-            hasReservedLines,
-            trace
-        };
-    };
-
-    const getSaleCycleCaption = (sale, stepKey) => {
-        const cycle = getSaleCycleState(sale);
-        if (cycle.isCancelled) return "Cycle interrompu";
-        if (stepKey === 'reserved') {
-            if (!cycle.hasStockLines) return "Sans stock";
-            return cycle.hasReservedLines || cycle.activeIndex >= 4 ? "Stock bloqué" : "À réserver";
-        }
-        if (stepKey === 'deposit') {
-            if ((sale?.workflow_type || 'FREE_SALE') === 'FREE_SALE') return "Non requis";
-            return cycle.trace?.hasDepositInvoice ? "Acompte émis" : "À émettre";
-        }
-        if (stepKey === 'delivered') {
-            return cycle.trace?.isDelivered ? "BL généré" : "À livrer";
-        }
-        if (stepKey === 'billed') {
-            return cycle.trace?.isInvoiced ? "Solde lié" : "À facturer";
-        }
-        if (stepKey === 'validated' && cycle.trace?.isSigned) return sale?.signed_at ? "Signature client" : "Validation";
-        return cycle.activeIndex >= saleCycleSteps.findIndex(step => step.key === stepKey) ? "OK" : "À venir";
-    };
-
     const SaleCycleIndicator = ({ sale, compact = false }) => {
-        const cycle = getSaleCycleState(sale);
-        const activeStep = saleCycleSteps[cycle.activeIndex] || saleCycleSteps[0];
-
-        if (compact) {
-            return (
-                <div className="mt-3">
-                    <div className="flex items-center gap-1.5">
-                        {saleCycleSteps.map((step, idx) => {
-                            const isDone = !cycle.isCancelled && idx <= cycle.activeIndex;
-                            const isActive = idx === cycle.activeIndex;
-                            return (
-                                <div
-                                    key={step.key}
-                                    title={step.label}
-                                    className={`h-1.5 flex-1 rounded-full ${cycle.isCancelled ? 'bg-red-200' : isDone ? (isActive ? 'bg-blue-600' : 'bg-emerald-400') : 'bg-slate-200'}`}
-                                />
-                            );
-                        })}
-                    </div>
-                    <p className={`mt-1 text-[10px] font-black uppercase tracking-widest ${cycle.isCancelled ? 'text-red-500' : 'text-slate-400'}`}>
-                        {cycle.isCancelled ? 'Annulé' : activeStep.label}
-                    </p>
-                </div>
-            );
-        }
-
-        return (
-            <div className="px-8 py-6 border-b border-slate-100 bg-white">
-                <div className="flex items-center justify-between mb-4">
-                    <div>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Cycle vente signée</p>
-                        <p className="text-sm font-bold text-slate-600">Lecture rapide depuis la validation client jusqu'à la réservation, livraison et facturation.</p>
-                    </div>
-                    {cycle.isCancelled && (
-                        <span className="text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg bg-red-100 text-red-700 border border-red-200">
-                            Cycle interrompu
-                        </span>
-                    )}
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
-                    {saleCycleSteps.map((step, idx) => {
-                        const isDone = !cycle.isCancelled && idx < cycle.activeIndex;
-                        const isActive = !cycle.isCancelled && idx === cycle.activeIndex;
-                        const isFuture = !cycle.isCancelled && idx > cycle.activeIndex;
-                        return (
-                            <div
-                                key={step.key}
-                                className={`rounded-2xl border p-3 min-h-[86px] ${isActive ? 'bg-blue-50 border-blue-200 shadow-sm' : isDone ? 'bg-emerald-50 border-emerald-100' : cycle.isCancelled ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-200'}`}
-                            >
-                                <div className="flex items-center gap-2 mb-2">
-                                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black ${isActive ? 'bg-blue-600 text-white' : isDone ? 'bg-emerald-500 text-white' : cycle.isCancelled ? 'bg-red-200 text-red-700' : 'bg-slate-200 text-slate-500'}`}>
-                                        {isDone ? <CheckCircle className="w-3.5 h-3.5" /> : idx + 1}
-                                    </span>
-                                    <span className={`text-[10px] font-black uppercase tracking-widest ${isActive ? 'text-blue-700' : isDone ? 'text-emerald-700' : cycle.isCancelled ? 'text-red-600' : 'text-slate-400'}`}>
-                                        {isActive ? 'En cours' : isDone ? 'Fait' : isFuture ? 'À venir' : 'Arrêt'}
-                                    </span>
-                                </div>
-                                <p className="text-sm font-black text-slate-900 leading-tight">{step.label}</p>
-                                <p className="text-xs font-bold text-slate-500 mt-1">{getSaleCycleCaption(sale, step.key)}</p>
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-        );
+        return <BusinessTimeline sale={sale} compact={compact} title="Cycle vente signée" subtitle="Lecture unique depuis la validation client jusqu'au paiement final." />;
     };
 
     const renderSaleDetailCard = (sale) => {
@@ -1149,17 +1015,6 @@ export default function SalesDashboard() {
                 </span>
             );
         };
-
-        const timeline = [
-            { label: 'CRM brouillon', done: true, detail: formatDate(sale.created_at) },
-            { label: 'CRM envoyé', done: ['SENT', 'VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale.status), detail: sale.status === 'DRAFT' ? 'Avant-vente' : 'Client notifié' },
-            { label: 'Signé / validé', done: trace.isSigned, detail: sale.signed_at ? formatDate(sale.signed_at) : (trace.isSigned ? 'Validation interne' : 'En attente') },
-            { label: 'Acompte', done: trace.hasDepositInvoice || isFreeSale, detail: trace.hasDepositInvoice ? `${trace.depositInvoicesCount} facture(s)` : (isFreeSale ? 'Non requis' : 'À émettre') },
-            { label: 'Réservé', done: trace.isReserved, detail: trace.isReserved ? `${reservationSummary.totalReserved.toLocaleString('fr-FR')} réservé` : (trace.hasStockLines ? 'À réserver' : 'Sans stock') },
-            { label: 'Livré', done: trace.isDelivered || trace.isReturned, detail: trace.isReturned ? 'Retourné' : (trace.isDelivered ? 'BL généré' : 'À livrer') },
-            { label: 'Solde facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.finalInvoicesCount} facture(s)` : 'À facturer' },
-            { label: 'Avoir', done: trace.hasCreditNote, detail: trace.hasCreditNote ? `${trace.creditNotesCount} avoir(s)` : (trace.isReturned ? 'À décider' : 'Non requis') },
-        ];
 
         return (
             <div className="mb-8 mt-4">
@@ -1238,20 +1093,7 @@ export default function SalesDashboard() {
                             </div>
                         )}
 
-                        <div>
-                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Cycle métier</p>
-                            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
-                                {timeline.map((step, index) => (
-                                    <div key={step.label} className={`rounded-xl border p-3 min-w-0 ${step.done ? 'bg-emerald-50 border-emerald-100' : 'bg-slate-50 border-slate-200'}`}>
-                                        <div className={`w-7 h-7 rounded-full flex items-center justify-center mb-2 ${step.done ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
-                                            {step.done ? <CheckCircle className="w-4 h-4" /> : <span className="text-xs font-black">{index + 1}</span>}
-                                        </div>
-                                        <p className="font-black text-slate-900 text-sm truncate">{step.label}</p>
-                                        <p className="text-[11px] font-bold text-slate-500 truncate">{step.detail}</p>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
+                        <BusinessTimeline sale={sale} />
 
                         <div className="grid grid-cols-[1.2fr_0.8fr] gap-4 items-start">
                             <div className="border border-slate-200 rounded-xl p-4 bg-white">

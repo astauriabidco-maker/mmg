@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, BellRing, CalendarClock, CheckCircle2, ClipboardList, FileText, Mail, MapPin, Package, Phone, Plus, Search, Send, Truck, Users, Wrench, X } from 'lucide-react';
 import api from '../services/api';
 import MMGDossiers from './MMGDossiers';
+import BusinessTimeline from '../components/BusinessTimeline';
 
 const saleAmount = (sale) => (sale.lines || []).reduce(
     (sum, line) => sum + (Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100)),
@@ -1442,6 +1443,7 @@ function SaleRow({ sale, total, statusLabel, statusClassName, formatDate, format
             <div className="min-w-0">
                 <p className="font-black text-slate-900 truncate">{sale.reference}</p>
                 <p className="text-xs font-bold text-slate-500">{formatDate(sale.created_at)} · {sale.lines?.length || 0} ligne(s)</p>
+                <BusinessTimeline sale={sale} compact />
             </div>
             <span className={`justify-self-start rounded-lg border px-3 py-1.5 text-[10px] font-black uppercase tracking-widest ${statusClassName}`}>
                 {statusLabel}

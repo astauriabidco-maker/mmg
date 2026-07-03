@@ -3,6 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle, Copy, FileText, Package, Send, Truck, Undo2, Wrench, X } from 'lucide-react';
 import api from '../services/api';
+import BusinessTimeline from '../components/BusinessTimeline';
+import { isCreditNote, isDepositInvoice } from '../utils/saleBusinessTimeline';
 
 export default function SaleDetailPage({ saleId: saleIdProp, embedded = false }) {
     const params = useParams();
@@ -25,14 +27,6 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
 
     const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
     const formatDate = (value) => value ? new Date(value).toLocaleDateString('fr-FR') : '-';
-
-    const isCreditNote = (invoice) => {
-        const status = String(invoice?.status || '').toUpperCase();
-        const invoiceType = String(invoice?.invoice_type || '').toUpperCase();
-        const reference = String(invoice?.reference || '').toUpperCase();
-        return status === 'AVOIR' || status === 'CREDIT_NOTE' || invoiceType === 'CREDIT_NOTE' || reference.startsWith('AV-') || Number(invoice?.total || 0) < 0;
-    };
-    const isDepositInvoice = (invoice) => String(invoice?.invoice_type || '').toUpperCase() === 'DEPOSIT';
 
     const trace = useMemo(() => {
         const reservations = sale?.reservations || [];
@@ -81,11 +75,6 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
             0
         )
     ), [sale]);
-
-    const activeReservedQty = trace.activeReservations.reduce(
-        (sum, reservation) => sum + (reservation.lines || []).reduce((lineSum, line) => lineSum + Number(line.reserved_quantity || 0), 0),
-        0
-    );
 
     const workflowLabel = (workflowType) => {
         if (workflowType === 'FABRICATION_FROM_MEASURE') return 'Fabrication depuis métré';
@@ -183,17 +172,6 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     const canCreateFinalInvoice = trace.isDelivered && !trace.isInvoiced && !trace.isReturned;
     const canReturn = trace.isDelivered;
     const canCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote;
-    const timeline = [
-        { label: 'Brouillon', done: true, detail: formatDate(sale.created_at) },
-        { label: 'Envoyé', done: ['SENT', 'VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale.status), detail: sale.status === 'DRAFT' ? 'À envoyer' : 'Client notifié' },
-        { label: 'Signé', done: trace.isSigned, detail: sale.signed_at ? formatDate(sale.signed_at) : (trace.isSigned ? 'Validation interne' : 'En attente') },
-        { label: 'Acompte', done: trace.hasDepositInvoice || isFreeSale, detail: trace.hasDepositInvoice ? `${trace.depositInvoices.length} facture(s)` : (isFreeSale ? 'Non requis' : 'À émettre') },
-        { label: 'Réservé', done: trace.isReserved, detail: trace.isReserved ? `${activeReservedQty.toLocaleString('fr-FR')} réservé` : (trace.hasStockLines ? 'À réserver' : 'Sans stock') },
-        { label: 'Livré', done: trace.isDelivered || trace.isReturned, detail: trace.isReturned ? 'Retourné' : (trace.isDelivered ? 'BL généré' : 'À livrer') },
-        { label: 'Solde facturé', done: trace.isInvoiced, detail: trace.isInvoiced ? `${trace.finalInvoices.length} facture(s)` : 'À facturer' },
-        { label: 'Avoir', done: trace.hasCreditNote, detail: trace.hasCreditNote ? `${trace.creditNotes.length} avoir(s)` : (trace.isReturned ? 'À décider' : 'Non requis') },
-    ];
-
     return (
         <div className={pageShellClass}>
             <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
@@ -293,17 +271,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                     </div>
                 </section>
 
-                <section className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
-                    {timeline.map((step, index) => (
-                        <div key={step.label} className={`rounded-2xl border p-4 ${step.done ? 'bg-emerald-50 border-emerald-100' : 'bg-white border-slate-200'}`}>
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-3 ${step.done ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
-                                {step.done ? <CheckCircle className="w-4 h-4" /> : <span className="text-xs font-black">{index + 1}</span>}
-                            </div>
-                            <p className="font-black text-slate-900">{step.label}</p>
-                            <p className="text-xs font-bold text-slate-500 mt-1">{step.detail}</p>
-                        </div>
-                    ))}
-                </section>
+                <BusinessTimeline sale={sale} />
 
                 <div className="grid grid-cols-[1fr_360px] gap-6 items-start">
                     <main className="space-y-6">
