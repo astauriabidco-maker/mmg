@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, BellRing, CalendarClock, CheckCircle2, ClipboardList, FileText, Mail, MapPin, Package, Phone, Plus, Search, Send, Truck, Users, Wrench, X } from 'lucide-react';
 import api from '../services/api';
+import MMGDossiers from './MMGDossiers';
 
 const saleAmount = (sale) => (sale.lines || []).reduce(
     (sum, line) => sum + (Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100)),
@@ -329,6 +330,12 @@ export default function CRMClientsDashboard() {
                                 Pipeline avant-vente
                             </button>
                             <button
+                                onClick={() => setCrmView('measures')}
+                                className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${crmView === 'measures' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'}`}
+                            >
+                                Métrés fabrication
+                            </button>
+                            <button
                                 onClick={() => setCrmView('clients')}
                                 className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${crmView === 'clients' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'}`}
                             >
@@ -349,6 +356,13 @@ export default function CRMClientsDashboard() {
                         >
                             <Plus className="w-4 h-4" />
                             Créer une proposition
+                        </button>
+                        <button
+                            onClick={() => setCrmView('measures')}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-500"
+                        >
+                            <ClipboardList className="w-4 h-4" />
+                            Prise de côte
                         </button>
                     </div>
                 </div>
@@ -380,6 +394,13 @@ export default function CRMClientsDashboard() {
                             >
                                 <Users className="w-4 h-4" />
                                 Ouvrir les fiches clients
+                            </button>
+                            <button
+                                onClick={() => setCrmView('measures')}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-500"
+                            >
+                                <ClipboardList className="w-4 h-4" />
+                                Nouvelle prise de côte
                             </button>
                             <button
                                 onClick={createQuoteForClient}
@@ -433,6 +454,30 @@ export default function CRMClientsDashboard() {
                             );
                         })}
                     </div>
+                </div>
+            )}
+
+            {crmView === 'measures' && (
+                <div className="flex-1 min-h-0 overflow-y-auto bg-white">
+                    <div className="border-b border-slate-200 bg-emerald-50 px-8 py-5">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Avant-vente fabrication</p>
+                                <h3 className="mt-1 text-2xl font-black text-slate-900">Prises de côtes & dossiers techniques</h3>
+                                <p className="mt-1 text-sm font-bold text-slate-600">
+                                    Une fabrication MMG démarre ici : métré, dossier technique, puis devis fabrication.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setCrmView('pipeline')}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-sm font-black text-emerald-700 hover:bg-emerald-100"
+                            >
+                                <ArrowRight className="w-4 h-4 rotate-180" />
+                                Retour pipeline CRM
+                            </button>
+                        </div>
+                    </div>
+                    <MMGDossiers isEmbedded={true} />
                 </div>
             )}
 
@@ -522,6 +567,13 @@ export default function CRMClientsDashboard() {
                                             >
                                                 <Plus className="w-4 h-4" />
                                                 Proposition
+                                            </button>
+                                            <button
+                                                onClick={() => setCrmView('measures')}
+                                                className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-100"
+                                            >
+                                                <ClipboardList className="w-4 h-4" />
+                                                Prise de côte
                                             </button>
                                         </div>
                                     </div>
