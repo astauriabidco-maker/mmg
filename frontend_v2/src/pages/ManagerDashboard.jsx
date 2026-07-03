@@ -12,6 +12,7 @@ import CuttingOptimizerModal from '../components/CuttingOptimizerModal';
 import StockDashboard from './StockDashboard';
 import PurchasesDashboard from './PurchasesDashboard';
 import SalesDashboard from './SalesDashboard';
+import CRMClientsDashboard from './CRMClientsDashboard';
 import SaleDetailPage from './SaleDetailPage';
 import ConfigDashboard from './ConfigDashboard';
 import AccountingDashboard from './AccountingDashboard';
@@ -45,10 +46,11 @@ export default function ManagerDashboard() {
                 activeView === 'stock' ? 'Gestion de Stock' :
                     activeView === 'purchases' ? 'Achats & Appro' :
                         activeView === 'sales' || activeView === 'sale-detail' ? 'Ventes & Devis' :
-                            activeView === 'accounting' ? 'Facturation (NF525)' :
-                                activeView === 'logistics' ? 'Logistique & Expéditions' :
-                                    activeView === 'analytics_atelier' ? 'Performance Atelier' :
-                                        activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration';
+                            activeView === 'crm' ? 'CRM Clients' :
+                                activeView === 'accounting' ? 'Facturation (NF525)' :
+                                    activeView === 'logistics' ? 'Logistique & Expéditions' :
+                                        activeView === 'analytics_atelier' ? 'Performance Atelier' :
+                                            activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration';
     const handleViewChange = (view) => {
         setActiveView(view);
         setSearchParams(view === 'dashboard' ? {} : { view });
@@ -192,6 +194,7 @@ export default function ManagerDashboard() {
                     {activeView === 'stock' && <StockDashboard />}
                     {activeView === 'purchases' && <PurchasesDashboard />}
                     {activeView === 'sales' && <SalesDashboard />}
+                    {activeView === 'crm' && <CRMClientsDashboard />}
                     {activeView === 'sale-detail' && <SaleDetailPage saleId={searchParams.get('id')} embedded />}
                     {activeView === 'accounting' && <AccountingDashboard />}
                     {activeView === 'logistics' && <DeliveryDashboard />}

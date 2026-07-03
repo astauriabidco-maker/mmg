@@ -5,13 +5,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import MMGDossiers from './MMGDossiers';
 import WindowVisualizer from '../components/WindowVisualizer';
-import PartnerDirectory from '../components/PartnerDirectory';
 
 export default function SalesDashboard() {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
 
-    const [mainTab, setMainTab] = useState('pipeline'); // 'pipeline' | 'dossiers' | 'partners'
+    const [mainTab, setMainTab] = useState('pipeline'); // 'pipeline' | 'dossiers'
     const [pipelineView, setPipelineView] = useState('kanban'); // 'list' | 'kanban'
     const [searchTerm, setSearchTerm] = useState("");
     const [pipelineFilter, setPipelineFilter] = useState("all");
@@ -1422,12 +1421,6 @@ export default function SalesDashboard() {
                 >
                     <FileText className="w-5 h-5"/> Liste devis
                 </button>
-                <button
-                    onClick={() => setMainTab('clients')}
-                    className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'clients' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
-                >
-                    <Users className="w-5 h-5"/> Annuaire Clients
-                </button>
                 </div>
                 <button
                     onClick={() => setMainTab('dossiers')}
@@ -1436,12 +1429,6 @@ export default function SalesDashboard() {
                     <ListTodo className="w-5 h-5"/> Métrés fabrication
                 </button>
             </div>
-
-            {mainTab === 'clients' && (
-                <div className="flex-1 overflow-hidden">
-                    <PartnerDirectory type="CLIENT" />
-                </div>
-            )}
 
             {mainTab === 'dossiers' && (
                 <div className="flex-1 overflow-hidden">
