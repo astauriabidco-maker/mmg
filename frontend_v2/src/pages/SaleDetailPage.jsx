@@ -98,6 +98,22 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
         return 'Brouillon';
     };
 
+    const workshopStatusMeta = (status) => {
+        const normalized = String(status || 'PENDING').toUpperCase();
+        const map = {
+            PENDING: { label: 'À faire', className: 'bg-slate-100 text-slate-600 border-slate-200' },
+            IN_PROGRESS: { label: 'En cours', className: 'bg-blue-50 text-blue-700 border-blue-100' },
+            PAUSED: { label: 'Pause', className: 'bg-orange-50 text-orange-700 border-orange-100' },
+            ISSUE: { label: 'Bloqué', className: 'bg-red-50 text-red-700 border-red-100' },
+            DONE: { label: 'Terminé', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+        };
+        return map[normalized] || { label: normalized, className: 'bg-slate-100 text-slate-600 border-slate-200' };
+    };
+
+    const formatStationName = (station) => String(station || '')
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, char => char.toUpperCase());
+
     const refreshSale = async () => {
         await Promise.all([
             queryClient.invalidateQueries(['sales']),
@@ -326,6 +342,52 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                     title="Pilotage du dossier"
                     subtitle="Chaque étape expose l'action métier suivante quand elle est possible."
                 />
+
+                {(sale.production_orders || []).length > 0 && (
+                    <section className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+                        <div className="px-5 py-4 bg-slate-50 border-b border-slate-200">
+                            <h2 className="text-sm font-black uppercase tracking-widest text-slate-500">Timeline atelier</h2>
+                            <p className="mt-1 text-sm font-bold text-slate-500">Lecture des postes opérateur liés à ce dossier.</p>
+                        </div>
+                        <div className="divide-y divide-slate-100">
+                            {sale.production_orders.map(order => (
+                                <div key={order.id} className="p-5">
+                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                        <div>
+                                            <p className="text-lg font-black text-slate-900">{order.reference}</p>
+                                            <p className="text-xs font-bold text-slate-500">
+                                                {order.material || '-'} · {order.width || 0} x {order.height || 0} mm · Qté {order.quantity || 1}
+                                                {order.color ? ` · ${order.color}` : ''}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                                        {(order.steps || []).map(step => {
+                                            const meta = workshopStatusMeta(step.status);
+                                            return (
+                                                <div key={step.id} className={`rounded-xl border p-4 ${meta.className}`}>
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div>
+                                                            <p className="text-sm font-black text-slate-900">{formatStationName(step.station)}</p>
+                                                            <p className="mt-1 text-xs font-bold opacity-80">{step.assigned_to ? `Opérateur: ${step.assigned_to}` : 'Non pris en charge'}</p>
+                                                        </div>
+                                                        <span className="rounded-lg bg-white/70 px-2 py-1 text-[10px] font-black uppercase tracking-widest">{meta.label}</span>
+                                                    </div>
+                                                    {step.issue_notes && (
+                                                        <p className="mt-3 rounded-lg bg-white/70 p-2 text-xs font-bold text-red-700">{step.issue_notes}</p>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                        {(order.steps || []).length === 0 && (
+                                            <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-400">Aucune étape atelier créée.</p>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                )}
 
                 <div className="grid grid-cols-[1fr_360px] gap-6 items-start">
                     <main className="space-y-6">

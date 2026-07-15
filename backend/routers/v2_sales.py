@@ -263,6 +263,47 @@ def _attach_sale_traceability(db: Session, sale: models.SaleOrder) -> models.Sal
         .order_by(models.DeliveryNote.id.desc())
         .all()
     )
+    production_orders = (
+        db.query(models.Order)
+        .filter(models.Order.sale_order_id == sale.id)
+        .order_by(models.Order.id.asc())
+        .all()
+    )
+    planning_by_order: Dict[int, List[models.Planning]] = {}
+    if production_orders:
+        planning_steps = (
+            db.query(models.Planning)
+            .filter(models.Planning.order_id.in_([order.id for order in production_orders]))
+            .order_by(models.Planning.order_id.asc(), models.Planning.created_at.asc())
+            .all()
+        )
+        for step in planning_steps:
+            planning_by_order.setdefault(step.order_id, []).append(step)
+    sale.production_orders = [
+        {
+            "id": order.id,
+            "reference": order.reference,
+            "material": order.material.value if hasattr(order.material, "value") else order.material,
+            "width": order.width,
+            "height": order.height,
+            "quantity": order.quantity or 1,
+            "color": order.color,
+            "system_type": order.system_type,
+            "steps": [
+                {
+                    "id": step.id,
+                    "station": step.station,
+                    "status": step.status.value if hasattr(step.status, "value") else step.status,
+                    "priority": step.priority or 0,
+                    "assigned_to": step.assigned_to,
+                    "issue_notes": step.issue_notes,
+                    "created_at": step.created_at,
+                }
+                for step in planning_by_order.get(order.id, [])
+            ],
+        }
+        for order in production_orders
+    ]
     return sale
 
 

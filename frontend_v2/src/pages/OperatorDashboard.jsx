@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Square, Clock, List, LogOut, ChevronDown, Repeat, AlertTriangle, CheckCircle2, Users } from 'lucide-react';
-import api from '../services/api';
+import api, { API_BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 export default function OperatorDashboard() {
@@ -23,6 +23,16 @@ export default function OperatorDashboard() {
     const [showIssueModal, setShowIssueModal] = useState(false);
     const [issueNotes, setIssueNotes] = useState("");
     const ws = useRef(null);
+    const isDebitStation = STATION.includes("DEBIT");
+    const statusMeta = {
+        PENDING: { label: "À faire", helper: "Sélectionnez cette tâche puis démarrez le poste.", badge: "bg-slate-100 text-slate-600", dot: "bg-slate-400" },
+        IN_PROGRESS: { label: "En cours", helper: "Travail en cours sur ce poste.", badge: "bg-blue-100 text-blue-700", dot: "bg-blue-600 animate-ping" },
+        PAUSED: { label: "En pause", helper: "Reprendre quand le poste est disponible.", badge: "bg-orange-100 text-orange-700", dot: "bg-orange-600" },
+        ISSUE: { label: "Bloqué", helper: "Un responsable doit traiter le problème.", badge: "bg-red-100 text-red-700", dot: "bg-red-600" },
+        DONE: { label: "Terminé", helper: "Étape finalisée.", badge: "bg-emerald-100 text-emerald-700", dot: "bg-emerald-600" },
+    };
+
+    const getStatusMeta = (status) => statusMeta[status] || statusMeta.PENDING;
 
     // Fetch Queue
     const fetchQueue = async () => {
@@ -50,12 +60,14 @@ export default function OperatorDashboard() {
     // WebSocket Connection
     useEffect(() => {
         fetchQueue();
-        ws.current = new WebSocket(`ws://${window.location.host.split(':')[0]}:8000/ws/${Math.floor(Math.random() * 1000)}`);
+        const wsBaseUrl = API_BASE_URL.replace(/^http/, 'ws').replace(/\/$/, '');
+        ws.current = new WebSocket(`${wsBaseUrl}/ws/${Math.floor(Math.random() * 1000)}`);
         ws.current.onopen = () => console.log("WS Connected");
         ws.current.onmessage = (event) => {
             if (event.data === "refresh") fetchQueue();
         };
-        return () => ws.current.close();
+        ws.current.onerror = (event) => console.warn("WS error", event);
+        return () => ws.current?.close();
     }, [STATION]); // Re-connect/fetch if station changes
 
     // ... timer logic and handlers ...
@@ -90,10 +102,14 @@ export default function OperatorDashboard() {
     const handleStop = async () => {
         if (!currentTask) return;
         try {
-            await api.post(`/v2/planning/${currentTask.id}/stop`);
+            const res = await api.post(`/v2/planning/${currentTask.id}/stop`);
+            const stock = res.data?.stock;
             setCurrentTask(null);
             setTimer(0);
             setShowConfirm(false);
+            if (isDebitStation && stock?.consumed_lines > 0) {
+                alert(`Débit réel confirmé: ${stock.consumed_lines} ligne(s) de stock consommée(s).`);
+            }
             fetchQueue();
         } catch (e) { console.error(e); }
     };
@@ -209,7 +225,7 @@ export default function OperatorDashboard() {
                                     {item.status !== "PENDING" && item.status !== "IN_PROGRESS" && (
                                         <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${item.status === "PAUSED" ? "bg-orange-500 text-white" : "bg-red-500 text-white"
                                             }`}>
-                                            {item.status === "PAUSED" ? "PAUSE" : "PROBLÈME"}
+                                            {getStatusMeta(item.status).label}
                                         </span>
                                     )}
                                     {item.status === "IN_PROGRESS" && item.assigned_to && (
@@ -247,12 +263,19 @@ export default function OperatorDashboard() {
                                     selectedTask.status === "ISSUE" ? "bg-red-600" :
                                         selectedTask.status === "IN_PROGRESS" ? "bg-blue-600 animate-ping" : "bg-slate-400"
                                     }`}></span>
-                                {selectedTask.status === "PAUSED" ? "EN PAUSE" :
-                                    selectedTask.status === "ISSUE" ? "PROBLÈME SIGNALÉ" :
-                                        selectedTask.status === "IN_PROGRESS" ? "EN PRODUCTION" : "PRÊT À DÉMARRER"}
+                                {getStatusMeta(selectedTask.status).label}
                             </span>
                             <h1 className="text-7xl font-black text-slate-900 mb-2 tracking-tighter">{selectedTask.order_reference}</h1>
                             <p className="text-3xl text-slate-500 font-light tracking-wide">{STATION}</p>
+                            <p className="mt-3 text-lg font-bold text-slate-500">{getStatusMeta(selectedTask.status).helper}</p>
+                            {isDebitStation && (
+                                <div className="mt-5 inline-flex max-w-xl items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-left text-sm font-bold text-amber-900">
+                                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                                    <span>
+                                        Poste de débit : le bouton Terminer confirme le débit réel atelier et consomme la réservation stock liée au dossier.
+                                    </span>
+                                </div>
+                            )}
                             
                             {selectedTask.status === "IN_PROGRESS" && selectedTask.assigned_to && (
                                 <div className="mt-4 inline-flex items-center gap-2 bg-blue-50 border border-blue-100 text-blue-700 px-4 py-2 rounded-full font-bold text-sm">

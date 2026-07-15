@@ -555,6 +555,26 @@ class SaleDeliveryNoteSummary(BaseModel):
     delivery_notes: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
+class SaleWorkshopStepSummary(BaseModel):
+    id: int
+    station: str
+    status: str
+    priority: int = 0
+    assigned_to: Optional[str] = None
+    issue_notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+class SaleProductionOrderSummary(BaseModel):
+    id: int
+    reference: str
+    material: Optional[str] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
+    quantity: int = 1
+    color: Optional[str] = None
+    system_type: Optional[str] = None
+    steps: List[SaleWorkshopStepSummary] = []
+
 class SaleOrderSchema(BaseModel):
     id: int
     reference: str
@@ -579,6 +599,7 @@ class SaleOrderSchema(BaseModel):
     reservations: List[StockReservationResponse] = []
     invoices: List[SaleInvoiceSummary] = []
     delivery_notes: List[SaleDeliveryNoteSummary] = []
+    production_orders: List[SaleProductionOrderSummary] = []
     model_config = ConfigDict(from_attributes=True)
 
 # --- FACTURATION ---
