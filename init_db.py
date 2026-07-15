@@ -30,6 +30,8 @@ def init():
         print("Admin user already exists.")
         
     db.close()
+    from backend.seed_permissions import seed_permissions
+    seed_permissions()
 
 if __name__ == "__main__":
     init()

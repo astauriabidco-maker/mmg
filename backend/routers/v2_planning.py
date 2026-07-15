@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from datetime import datetime, timezone
 from ..database import get_db
 from .. import models, schemas
-from ..core.security import get_current_user, require_roles
+from ..core.security import get_current_user, require_permissions, assert_permission
 
 router = APIRouter(prefix="/v2/planning", tags=["planning"])
 
@@ -36,7 +36,7 @@ def _task_to_overview(task: models.Planning) -> Dict[str, Any]:
     }
 
 @router.get("/overview")
-def get_workshop_overview(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_workshop_overview(db: Session = Depends(get_db), current_user: dict = Depends(require_permissions("PROD_VIEW"))):
     active_statuses = [
         models.PlanningStatus.PENDING,
         models.PlanningStatus.IN_PROGRESS,
@@ -129,7 +129,7 @@ def get_workshop_overview(db: Session = Depends(get_db), current_user: dict = De
     }
 
 @router.get("/{station}", response_model=List[schemas.Planning])
-def get_queue(station: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_queue(station: str, db: Session = Depends(get_db), current_user: dict = Depends(require_permissions("PROD_VIEW"))):
     # Get pending or in_progress items for this station, ordered by priority
     queue = db.query(models.Planning).filter(
         models.Planning.station == station,
@@ -147,7 +147,7 @@ class CuttingRequest(BaseModel):
     bar_length: float = 6000.0 # Standard bar length in mm
 
 @router.post("/optimize-cutting")
-def optimize_cutting_plan(req: CuttingRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def optimize_cutting_plan(req: CuttingRequest, db: Session = Depends(get_db), current_user: dict = Depends(require_permissions("PROD_EDIT"))):
     """
     Simulated "Directeur de Production IA".
     Uses a greedy approach (First Fit Decreasing) for 1D Bin Packing to optimize cuts.
@@ -209,7 +209,7 @@ def optimize_cutting_plan(req: CuttingRequest, db: Session = Depends(get_db), cu
     }
 
 @router.post("/", response_model=schemas.Planning)
-def add_to_planning(item: schemas.PlanningCreate, db: Session = Depends(get_db), role: str = Depends(require_roles("ADMIN", "MANAGER"))):
+def add_to_planning(item: schemas.PlanningCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_permissions("planning:assign"))):
     # Find order
     order = db.query(models.Order).filter(models.Order.reference == item.order_reference).first()
     if not order:
@@ -232,17 +232,23 @@ class PlanningUpdateRequest(BaseModel):
     status: str = None
 
 @router.put("/{planning_id}")
-async def update_planning(planning_id: int, req: PlanningUpdateRequest, db: Session = Depends(get_db), role: str = Depends(require_roles("ADMIN", "MANAGER"))):
+async def update_planning(planning_id: int, req: PlanningUpdateRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     from ..core.websocket import manager
     task = db.query(models.Planning).filter(models.Planning.id == planning_id).first()
     if not task:
         raise HTTPException(404, "Task not found")
         
     if req.priority is not None:
+        assert_permission(db, current_user, "planning:reprioritize")
         task.priority = req.priority
     if req.assigned_to is not None:
+        assert_permission(db, current_user, "planning:assign")
         task.assigned_to = req.assigned_to
     if req.status is not None:
+        if req.status == models.PlanningStatus.PENDING or req.status == "PENDING":
+            assert_permission(db, current_user, "planning:unblock")
+        else:
+            assert_permission(db, current_user, "planning:reprioritize")
         task.status = req.status
         
     db.commit()
@@ -250,7 +256,7 @@ async def update_planning(planning_id: int, req: PlanningUpdateRequest, db: Sess
     return {"status": "updated"}
 
 @router.post("/{planning_id}/start")
-async def start_task(planning_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def start_task(planning_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_permissions("planning:start"))):
     from ..core.websocket import manager
     from datetime import datetime
     
@@ -284,7 +290,7 @@ async def start_task(planning_id: int, db: Session = Depends(get_db), current_us
 # Logic replaced by DB-driven workflow in stop_task
 
 @router.post("/{planning_id}/pause")
-async def pause_task(planning_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def pause_task(planning_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_permissions("planning:pause"))):
     from ..core.websocket import manager
     from datetime import datetime
     
@@ -313,13 +319,15 @@ async def pause_task(planning_id: int, db: Session = Depends(get_db), current_us
     return {"status": "paused"}
 
 @router.post("/{planning_id}/stop")
-async def stop_task(planning_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def stop_task(planning_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_permissions("planning:stop"))):
     from ..core.websocket import manager
     from datetime import datetime
     
     task = db.query(models.Planning).filter(models.Planning.id == planning_id).first()
     if not task:
         raise HTTPException(404, "Task not found")
+    if "DEBIT" in str(task.station or "").upper():
+        assert_permission(db, current_user, "planning:consume_stock")
         
     task.status = models.PlanningStatus.DONE
     
@@ -407,7 +415,7 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db), current_use
     return {"status": "stopped", "next_station": next_station, "stock": stock_result}
 
 @router.post("/{planning_id}/issue")
-async def report_issue(planning_id: int, item: schemas.PlanningIssue, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def report_issue(planning_id: int, item: schemas.PlanningIssue, db: Session = Depends(get_db), current_user: dict = Depends(require_permissions("planning:report_issue"))):
     from ..core.websocket import manager
     from datetime import datetime
     

@@ -107,7 +107,7 @@ export default function RBACMatrix() {
                             {roles.map(role => (
                                 <th key={role.id} className="p-4 text-center font-black text-sm text-slate-700 min-w-[120px] relative group">
                                     {role.name}
-                                    {role.name !== 'ADMIN' && (
+                                    {!['ADMIN', 'SUPER_ADMIN'].includes(role.name) && (
                                         <button onClick={() => deleteRole(role.id)} className="absolute top-2 right-2 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <Trash2 className="w-4 h-4" />
                                         </button>
@@ -137,7 +137,7 @@ export default function RBACMatrix() {
                                         </td>
                                         {roles.map(role => {
                                             const hasPerm = role.permissions.some(p => p.id === perm.id);
-                                            const isAdmin = role.name === 'ADMIN';
+                                            const isAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(role.name);
                                             return (
                                                 <td key={role.id} className="p-4 text-center border-r border-slate-100">
                                                     <button 
@@ -164,7 +164,7 @@ export default function RBACMatrix() {
             </div>
             <div className="p-4 bg-amber-50 text-amber-800 text-sm font-bold flex flex-col sm:flex-row items-center gap-3 border-t border-amber-200">
                 <ShieldAlert className="w-5 h-5" /> 
-                <p>Attention : Les utilisateurs "ADMIN" reçoivent techniquement toutes les permissions par défaut. Cette matrice s'applique immédiatement aux autres rôles dès qu'ils se reconnectent.</p>
+                <p>Attention : Les utilisateurs "ADMIN" et "SUPER_ADMIN" reçoivent techniquement toutes les permissions par défaut. Cette matrice s'applique immédiatement aux autres rôles dès qu'ils se reconnectent.</p>
             </div>
 
             {showRoleModal && (

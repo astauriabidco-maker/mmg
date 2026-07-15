@@ -33,6 +33,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+from ..database import get_db
+from .. import models
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
@@ -58,4 +61,29 @@ def require_roles(*allowed_roles: str):
         if role not in allowed_roles:
             raise HTTPException(status_code=403, detail="Privilèges insuffisants")
         return role
+    return dependency
+
+def user_has_permission(db: Session, role_name: str, permission_code: str) -> bool:
+    if role_name in ["ADMIN", "SUPER_ADMIN"]:
+        return True
+    role = db.query(models.Role).filter(models.Role.name == role_name).first()
+    if not role:
+        return False
+    return any(permission.code == permission_code for permission in role.permissions)
+
+def assert_permission(db: Session, current_user: dict, permission_code: str):
+    role_name = current_user.get("role")
+    if not role_name:
+        raise HTTPException(status_code=401, detail="No role found in token")
+    if not user_has_permission(db, role_name, permission_code):
+        raise HTTPException(status_code=403, detail=f"Permission requise: {permission_code}")
+
+def require_permissions(*permission_codes: str):
+    def dependency(
+        db: Session = Depends(get_db),
+        current_user: dict = Depends(get_current_user),
+    ):
+        for permission_code in permission_codes:
+            assert_permission(db, current_user, permission_code)
+        return current_user
     return dependency

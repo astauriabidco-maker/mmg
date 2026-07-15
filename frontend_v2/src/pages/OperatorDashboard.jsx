@@ -13,6 +13,7 @@ export default function OperatorDashboard() {
     const stations = user?.stations || [];
     const currentStationObj = stations.find(s => s.code === (stationId || stations[0]?.code));
     const STATION = (stationId || stations[0]?.code || "PVC_DEBIT").toUpperCase();
+    const can = (permission) => user?.permissions?.includes('*') || user?.permissions?.includes(permission);
 
     const [queue, setQueue] = useState([]);
     const [selectedTask, setSelectedTask] = useState(null); // The task being viewed
@@ -24,6 +25,7 @@ export default function OperatorDashboard() {
     const [issueNotes, setIssueNotes] = useState("");
     const ws = useRef(null);
     const isDebitStation = STATION.includes("DEBIT");
+    const canFinishTask = can('planning:stop') && (!isDebitStation || can('planning:consume_stock'));
     const statusMeta = {
         PENDING: { label: "À faire", helper: "Sélectionnez cette tâche puis démarrez le poste.", badge: "bg-slate-100 text-slate-600", dot: "bg-slate-400" },
         IN_PROGRESS: { label: "En cours", helper: "Travail en cours sur ce poste.", badge: "bg-blue-100 text-blue-700", dot: "bg-blue-600 animate-ping" },
@@ -351,6 +353,7 @@ export default function OperatorDashboard() {
                             {selectedTask.status !== "IN_PROGRESS" && selectedTask.status !== "PAUSED" ? (
                                 <button
                                     onClick={() => handleStart(selectedTask)}
+                                    disabled={!can('planning:start')}
                                     className="w-full max-w-md bg-emerald-500 hover:bg-emerald-600 text-white rounded-3xl py-10 transition-all flex items-center justify-center gap-6 shadow-2xl shadow-emerald-200 active:scale-95 group"
                                 >
                                     <Clock className="w-16 h-16 group-hover:rotate-12 transition-transform" />
@@ -361,6 +364,7 @@ export default function OperatorDashboard() {
                                     {/* Problem Button */}
                                     <button
                                         onClick={() => setShowIssueModal(true)}
+                                        disabled={!can('planning:report_issue')}
                                         className="col-span-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-3xl py-6 transition-all flex flex-col items-center justify-center gap-2 border-2 border-transparent hover:border-red-200"
                                     >
                                         <AlertTriangle className="w-8 h-8" />
@@ -371,6 +375,7 @@ export default function OperatorDashboard() {
                                     {selectedTask.status === "PAUSED" ? (
                                         <button
                                             onClick={() => handleStart(selectedTask)}
+                                            disabled={!can('planning:start')}
                                             className="col-span-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-3xl py-6 transition-all flex flex-col items-center justify-center gap-2 shadow-lg shadow-emerald-200"
                                         >
                                             <Clock className="w-8 h-8" />
@@ -379,6 +384,7 @@ export default function OperatorDashboard() {
                                     ) : (
                                         <button
                                             onClick={handlePause}
+                                            disabled={!can('planning:pause')}
                                             className="col-span-4 bg-orange-100 hover:bg-orange-200 text-orange-600 rounded-3xl py-6 transition-all flex flex-col items-center justify-center gap-2 border-2 border-transparent hover:border-orange-200"
                                         >
                                             <Clock className="w-8 h-8" />
@@ -389,7 +395,9 @@ export default function OperatorDashboard() {
                                     {/* Finish Button */}
                                     <button
                                         onClick={() => setShowConfirm(true)}
-                                        className="col-span-5 bg-gradient-to-br from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-3xl py-6 transition-all flex items-center justify-center gap-4 shadow-xl shadow-blue-200 active:scale-95"
+                                        disabled={!canFinishTask}
+                                        title={!canFinishTask && isDebitStation ? "Profil non autorisé à consommer le stock au débit" : undefined}
+                                        className="col-span-5 bg-gradient-to-br from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-400 disabled:shadow-none text-white rounded-3xl py-6 transition-all flex items-center justify-center gap-4 shadow-xl shadow-blue-200 active:scale-95"
                                     >
                                         <CheckCircle2 className="w-10 h-10" />
                                         <span className="text-2xl font-black tracking-tighter">TERMINER</span>
@@ -430,7 +438,8 @@ export default function OperatorDashboard() {
                                 </button>
                                 <button
                                     onClick={handleStop}
-                                    className="flex-1 px-8 py-5 bg-blue-500 hover:bg-blue-600 text-white font-black rounded-3xl shadow-xl shadow-blue-200 transition-all tracking-widest uppercase text-xs"
+                                    disabled={!canFinishTask}
+                                    className="flex-1 px-8 py-5 bg-blue-500 hover:bg-blue-600 disabled:bg-slate-300 disabled:shadow-none text-white font-black rounded-3xl shadow-xl shadow-blue-200 transition-all tracking-widest uppercase text-xs"
                                 >
                                     Oui, Terminer
                                 </button>
@@ -487,7 +496,7 @@ export default function OperatorDashboard() {
                                 </button>
                                 <button
                                     onClick={handleReportIssue}
-                                    disabled={!issueNotes.trim()}
+                                    disabled={!issueNotes.trim() || !can('planning:report_issue')}
                                     className="flex-1 px-8 py-5 bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black rounded-3xl shadow-xl shadow-red-200 transition-all tracking-widest uppercase text-xs"
                                 >
                                     Envoyer le Signalement

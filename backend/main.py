@@ -20,6 +20,8 @@ models.ensure_schema_compatibility(database.engine)
 get_db = database.get_db
 from .seed_stations import ensure_default_stations
 ensure_default_stations()
+from .seed_permissions import seed_permissions
+seed_permissions()
 
 app = FastAPI(title="Atelier Menuiserie V1 Pro")
 
@@ -141,17 +143,23 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
     if not user or not security.verify_password(form_data.password, user.pin_hash):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
+    permissions = ["*"]
+    if user.role not in ["ADMIN", "SUPER_ADMIN"]:
+        role = db.query(models.Role).filter(models.Role.name == user.role).first()
+        permissions = [permission.code for permission in role.permissions] if role else []
     
     access_token = security.create_access_token(
         data={
             "sub": user.username, 
             "role": user.role, 
-            "stations": [s.code for s in user.stations]
+            "stations": [s.code for s in user.stations],
+            "permissions": permissions,
         }
     )
     return {
         "access_token": access_token, 
         "token_type": "bearer", 
         "role": user.role, 
-        "stations": [s.code for s in user.stations]
+        "stations": [s.code for s in user.stations],
+        "permissions": permissions,
     }

@@ -847,6 +847,8 @@ const WORKSHOP_STATUS = {
 
 function WorkshopSupervisorView() {
     const navigate = useNavigate();
+    const { user } = useAuth();
+    const can = (permission) => user?.permissions?.includes('*') || user?.permissions?.includes(permission);
     const { data: overview = null, isLoading, refetch } = useQuery({
         queryKey: ['workshop-supervisor-overview'],
         queryFn: async () => {
@@ -952,6 +954,7 @@ function WorkshopSupervisorView() {
                         tone="red"
                         actionLabel="Remettre à faire"
                         onAction={unblockTask}
+                        canAct={can('planning:unblock')}
                         busyTaskId={busyTaskId}
                     />
                     <WorkshopAlertPanel
@@ -961,6 +964,7 @@ function WorkshopSupervisorView() {
                         tone="amber"
                         actionLabel="Priorité haute"
                         onAction={(task) => setPriority(task, Math.max(task.priority || 0, 50))}
+                        canAct={can('planning:reprioritize')}
                         busyTaskId={busyTaskId}
                     />
                 </div>
@@ -1033,6 +1037,9 @@ function WorkshopSupervisorView() {
                                     key={task.id}
                                     task={task}
                                     busy={busyTaskId === task.id}
+                                    canAssign={can('planning:assign')}
+                                    canReprioritize={can('planning:reprioritize')}
+                                    canUnblock={can('planning:unblock')}
                                     onPriority={setPriority}
                                     onAssign={assignTask}
                                     onUnblock={unblockTask}
@@ -1072,7 +1079,7 @@ function MiniCount({ label, value, danger }) {
     );
 }
 
-function WorkshopAlertPanel({ title, empty, tasks, tone, actionLabel, onAction, busyTaskId }) {
+function WorkshopAlertPanel({ title, empty, tasks, tone, actionLabel, onAction, canAct, busyTaskId }) {
     const color = tone === 'red' ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-800';
     return (
         <div className={`rounded-[1.5rem] border p-5 ${color}`}>
@@ -1091,13 +1098,15 @@ function WorkshopAlertPanel({ title, empty, tasks, tone, actionLabel, onAction, 
                                 <p className="font-black text-slate-900">{task.order_reference}</p>
                                 <p className="text-xs font-semibold text-slate-500">{task.station} · {task.client_name || 'Client non renseigné'}</p>
                             </div>
-                            <button
-                                disabled={busyTaskId === task.id}
-                                onClick={() => onAction(task)}
-                                className="px-3 py-2 rounded-lg bg-slate-950 text-white text-xs font-black disabled:opacity-50"
-                            >
-                                {actionLabel}
-                            </button>
+                            {canAct && (
+                                <button
+                                    disabled={busyTaskId === task.id}
+                                    onClick={() => onAction(task)}
+                                    className="px-3 py-2 rounded-lg bg-slate-950 text-white text-xs font-black disabled:opacity-50"
+                                >
+                                    {actionLabel}
+                                </button>
+                            )}
                         </div>
                     ))}
                 </div>
@@ -1106,7 +1115,7 @@ function WorkshopAlertPanel({ title, empty, tasks, tone, actionLabel, onAction, 
     );
 }
 
-function WorkshopTaskRow({ task, busy, onPriority, onAssign, onUnblock, onOpenSale }) {
+function WorkshopTaskRow({ task, busy, canAssign, canReprioritize, canUnblock, onPriority, onAssign, onUnblock, onOpenSale }) {
     const meta = WORKSHOP_STATUS[task.status] || WORKSHOP_STATUS.PENDING;
     const ageLabel = task.age_hours >= 24
         ? `${Math.round(task.age_hours / 24)} j`
@@ -1129,7 +1138,7 @@ function WorkshopTaskRow({ task, busy, onPriority, onAssign, onUnblock, onOpenSa
             </div>
             <div className="flex items-center gap-2">
                 <select
-                    disabled={busy}
+                    disabled={busy || !canAssign}
                     value={task.assigned_to || ''}
                     onChange={(event) => onAssign(task, event.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700"
@@ -1142,13 +1151,13 @@ function WorkshopTaskRow({ task, busy, onPriority, onAssign, onUnblock, onOpenSa
             </div>
             <div className="flex flex-wrap justify-end gap-2">
                 <button
-                    disabled={busy}
+                    disabled={busy || !canReprioritize}
                     onClick={() => onPriority(task, Math.max((task.priority || 0) + 10, 10))}
                     className="px-3 py-2 rounded-xl border border-slate-200 text-slate-700 text-xs font-black hover:bg-slate-50 disabled:opacity-50"
                 >
                     Prioriser
                 </button>
-                {task.status === 'ISSUE' && (
+                {task.status === 'ISSUE' && canUnblock && (
                     <button
                         disabled={busy}
                         onClick={() => onUnblock(task)}

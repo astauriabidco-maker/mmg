@@ -13,7 +13,8 @@ export const AuthProvider = ({ children }) => {
             const username = localStorage.getItem('username') || 'Operator';
             const role = localStorage.getItem('role');
             const stations = JSON.parse(localStorage.getItem('stations') || '[]');
-            setUser({ username, role, stations });
+            const permissions = JSON.parse(localStorage.getItem('permissions') || '[]');
+            setUser({ username, role, stations, permissions });
             api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         }
         setLoading(false);
@@ -35,15 +36,16 @@ export const AuthProvider = ({ children }) => {
 
             const res = await api.post('/token', formData);
 
-            const { access_token, role, stations } = res.data;
+            const { access_token, role, stations, permissions } = res.data;
             if (access_token) {
                 localStorage.setItem('token', access_token);
                 localStorage.setItem('username', username);
                 localStorage.setItem('role', role);
                 localStorage.setItem('stations', JSON.stringify(stations || []));
+                localStorage.setItem('permissions', JSON.stringify(permissions || []));
 
                 api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
-                setUser({ username, role, stations });
+                setUser({ username, role, stations, permissions: permissions || [] });
                 return true;
             }
         } catch (e) {
@@ -57,6 +59,7 @@ export const AuthProvider = ({ children }) => {
         localStorage.removeItem('username');
         localStorage.removeItem('role');
         localStorage.removeItem('stations');
+        localStorage.removeItem('permissions');
         delete api.defaults.headers.common['Authorization'];
         setUser(null);
     };
