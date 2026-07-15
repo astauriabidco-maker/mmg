@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">MMG Atelier</title>
+  <desc id="desc">Icône de l'application MMG Atelier Connecté</desc>
+  <defs>
+    <linearGradient id="bg" x1="64" x2="448" y1="48" y2="464" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="0.55" stop-color="#1d4ed8"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M256 112 374 180v136L256 384 138 316V180l118-68Z" fill="none" stroke="#dbeafe" stroke-width="26" stroke-linejoin="round"/>
+  <path d="m138 180 118 68 118-68M256 248v136" fill="none" stroke="#bfdbfe" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M256 112v72" fill="none" stroke="#93c5fd" stroke-width="20" stroke-linecap="round"/>
+</svg>
