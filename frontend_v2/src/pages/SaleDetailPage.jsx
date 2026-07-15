@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle, Copy, FileText, Package, Send, Truck, Undo2, Wrench, X } from 'lucide-react';
 import api from '../services/api';
@@ -10,8 +10,12 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     const params = useParams();
     const saleId = saleIdProp || params.saleId;
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const queryClient = useQueryClient();
     const [busyAction, setBusyAction] = useState(null);
+    const sourceView = searchParams.get('from') || 'sales';
+    const returnView = sourceView === 'crm' ? 'crm' : 'sales';
+    const returnLabel = sourceView === 'crm' ? 'Retour CRM client' : 'Retour Commandes';
     const pageShellClass = embedded
         ? 'min-h-full bg-slate-100 text-slate-900 font-sans -m-8'
         : 'min-h-screen bg-slate-100 text-slate-900 font-sans';
@@ -219,8 +223,8 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
         <div className={pageShellClass}>
             <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
                 <div className="flex items-center justify-between">
-                    <button onClick={() => navigate('/manager?view=sales')} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-black hover:bg-slate-50">
-                        <ArrowLeft className="w-4 h-4" /> Retour au CRM
+                    <button onClick={() => navigate(`/manager?view=${returnView}`)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-black hover:bg-slate-50">
+                        <ArrowLeft className="w-4 h-4" /> {returnLabel}
                     </button>
                     <div className="flex gap-2">
                         <a href={`${api.defaults.baseURL}/v2/pdf/quote/${sale.id}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-800 font-black hover:bg-slate-50">
@@ -243,6 +247,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                 <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                     <div className="bg-slate-900 text-white px-8 py-7 flex items-start justify-between gap-8">
                         <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-200 mb-2">Dossier métier</p>
                             <div className="flex flex-wrap gap-2 mb-4">
                                 <span className="px-3 py-1.5 rounded-lg bg-blue-100 text-blue-800 text-[10px] font-black uppercase tracking-widest">{businessLabel()}</span>
                                 <span className="px-3 py-1.5 rounded-lg bg-white/90 text-slate-700 text-[10px] font-black uppercase tracking-widest">{workflowLabel(sale.workflow_type)}</span>
@@ -314,7 +319,13 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                     </div>
                 </section>
 
-                <BusinessTimeline sale={sale} actions={timelineActions} busyAction={busyAction} />
+                <BusinessTimeline
+                    sale={sale}
+                    actions={timelineActions}
+                    busyAction={busyAction}
+                    title="Pilotage du dossier"
+                    subtitle="Chaque étape expose l'action métier suivante quand elle est possible."
+                />
 
                 <div className="grid grid-cols-[1fr_360px] gap-6 items-start">
                     <main className="space-y-6">

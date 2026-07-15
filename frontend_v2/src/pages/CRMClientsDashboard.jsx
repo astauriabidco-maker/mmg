@@ -78,7 +78,7 @@ export default function CRMClientsDashboard() {
     };
 
     const openSale = (saleId) => {
-        navigate(`/manager?view=sale-detail&id=${saleId}`);
+        navigate(`/manager?view=sale-detail&id=${saleId}&from=crm`);
     };
 
     const updateClientDraft = (field, value) => {

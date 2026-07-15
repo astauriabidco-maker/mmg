@@ -39,13 +39,17 @@ export default function ManagerDashboard() {
     const [sortConfig, setSortConfig] = useState({ key: 'id', direction: 'desc' });
     const [currentPage, setCurrentPage] = useState(1);
     const ITEMS_PER_PAGE = 10;
-    const sidebarActiveView = activeView === 'sale-detail' ? 'sales' : activeView;
+    const saleDetailSource = searchParams.get('from');
+    const sidebarActiveView = activeView === 'sale-detail'
+        ? (saleDetailSource === 'crm' ? 'crm' : 'sales')
+        : activeView;
     const headerTitle = activeView === 'dashboard' ? 'Vue d\'Ensemble' :
         activeView === 'live' ? 'Atelier Live' :
             activeView === 'orders' ? 'Suivi Commandes' :
                 activeView === 'stock' ? 'Gestion de Stock' :
                     activeView === 'purchases' ? 'Achats & Appro' :
-                        activeView === 'sales' || activeView === 'sale-detail' ? 'Commandes & Exécution Ventes' :
+                        activeView === 'sale-detail' ? 'Dossier métier client' :
+                            activeView === 'sales' ? 'Commandes & Exécution Ventes' :
                             activeView === 'crm' ? 'CRM Clients - Avant-vente' :
                                 activeView === 'accounting' ? 'Facturation (NF525)' :
                                     activeView === 'logistics' ? 'Logistique & Expéditions' :
