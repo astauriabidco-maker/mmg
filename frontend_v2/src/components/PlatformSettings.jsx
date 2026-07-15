@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { 
-    Settings, Users, Network, BrainCircuit, Box, Shield, 
-    Building2, FileText, Database, CreditCard, Save, CheckCircle2 
+import {
+    Settings, Users, Network, BrainCircuit, Box, Shield,
+    Building2, Database, Save, CheckCircle2
 } from 'lucide-react';
 import StationManager from './StationManager';
 import OperatorManager from './OperatorManager';
@@ -10,7 +10,7 @@ import BusinessRulesManager from './BusinessRulesManager';
 import ConfigDashboard from '../pages/ConfigDashboard';
 
 export default function PlatformSettings() {
-    const [activeTab, setActiveTab] = useState('general');
+    const [activeTab, setActiveTab] = useState('users');
     const [isSaving, setIsSaving] = useState(false);
     
     // SMTP Test state
@@ -51,12 +51,12 @@ export default function PlatformSettings() {
     };
 
     const tabs = [
-        { id: 'general', icon: Building2, label: 'Général & Entreprise' },
-        { id: 'ai', icon: BrainCircuit, label: 'Moteurs IA & Intégrations' },
-        { id: 'workflow', icon: Network, label: 'Règles Métier & Atelier' },
-        { id: 'stations', icon: Box, label: 'Postes de Travail' },
-        { id: 'users', icon: Users, label: 'Équipes & Accès' },
-        { id: 'pim', icon: Database, label: 'Référentiels (PIM)' },
+        { id: 'users', icon: Users, label: 'Utilisateurs & profils', helper: 'Créer les comptes, PIN, rôles et droits.' },
+        { id: 'stations', icon: Box, label: 'Postes atelier', helper: 'Configurer les stations PVC/ALU.' },
+        { id: 'workflow', icon: Network, label: 'Règles métier atelier', helper: 'Définir les règles et seuils métier.' },
+        { id: 'pim', icon: Database, label: 'Référentiels catalogue', helper: 'Familles, gammes, données catalogue.' },
+        { id: 'general', icon: Building2, label: 'Entreprise & documents', helper: 'Identité, CGV, mentions et facturation.' },
+        { id: 'ai', icon: BrainCircuit, label: 'IA & intégrations', helper: 'OpenAI, SMTP, WhatsApp et connecteurs.' },
     ];
 
     return (
@@ -70,7 +70,7 @@ export default function PlatformSettings() {
                         </div>
                         <div>
                             <h2 className="text-lg font-black text-slate-800">Paramètres</h2>
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Super Admin</p>
+                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Utilisateurs, atelier, référentiels</p>
                         </div>
                     </div>
                 </div>
@@ -83,14 +83,17 @@ export default function PlatformSettings() {
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id)}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold transition-all ${
+                                className={`w-full flex items-start gap-3 px-4 py-3 rounded-2xl text-sm font-bold transition-all ${
                                     isActive 
                                     ? 'bg-indigo-50 text-indigo-700 shadow-sm' 
                                     : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                                 }`}
                             >
-                                <Icon className={`w-5 h-5 ${isActive ? 'text-indigo-600' : 'text-slate-400'}`} />
-                                {tab.label}
+                                <Icon className={`w-5 h-5 mt-0.5 ${isActive ? 'text-indigo-600' : 'text-slate-400'}`} />
+                                <span className="text-left">
+                                    <span className="block">{tab.label}</span>
+                                    <span className="block text-[11px] leading-snug font-bold text-slate-400 mt-0.5">{tab.helper}</span>
+                                </span>
                             </button>
                         );
                     })}
@@ -326,8 +329,32 @@ export default function PlatformSettings() {
                         {/* 5. USERS & RBAC */}
                         {activeTab === 'users' && (
                             <div className="space-y-12 animate-fade-in">
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                                    <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5">
+                                        <p className="text-[11px] font-black uppercase tracking-widest text-blue-500 mb-2">1. Comptes</p>
+                                        <h3 className="font-black text-slate-900">Créer un utilisateur</h3>
+                                        <p className="text-sm font-semibold text-slate-600 mt-1">Identifiant, PIN ou mot de passe, coordonnées.</p>
+                                    </div>
+                                    <div className="rounded-2xl border border-amber-100 bg-amber-50 p-5">
+                                        <p className="text-[11px] font-black uppercase tracking-widest text-amber-600 mb-2">2. Profil</p>
+                                        <h3 className="font-black text-slate-900">Choisir un rôle métier</h3>
+                                        <p className="text-sm font-semibold text-slate-600 mt-1">Opérateur, Débit, Qualité, Chef d'atelier, Manager.</p>
+                                    </div>
+                                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
+                                        <p className="text-[11px] font-black uppercase tracking-widest text-emerald-600 mb-2">3. Stations</p>
+                                        <h3 className="font-black text-slate-900">Affecter les postes</h3>
+                                        <p className="text-sm font-semibold text-slate-600 mt-1">Le technicien ne voit que ses stations sur tablette atelier.</p>
+                                    </div>
+                                </div>
                                 <OperatorManager />
                                 <div className="border-t border-slate-100 pt-12">
+                                    <div className="mb-6">
+                                        <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">Droits avancés</p>
+                                        <h3 className="text-xl font-black text-slate-900">Matrice des profils et permissions</h3>
+                                        <p className="text-sm font-semibold text-slate-500 mt-1">
+                                            À modifier seulement si un profil métier doit voir ou exécuter une action spécifique.
+                                        </p>
+                                    </div>
                                     <RBACMatrix />
                                 </div>
                             </div>

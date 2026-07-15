@@ -10,6 +10,7 @@ router = APIRouter(
     tags=["config"],
     dependencies=[Depends(security.get_current_user)],
 )
+PIN_ROLES = {"OPERATOR", "DEBIT_OPERATOR", "QUALITY_CONTROLLER", "WORKSHOP_LEAD"}
 
 @router.get("/stations", response_model=List[schemas.Station])
 def get_stations(db: Session = Depends(get_db)):
@@ -74,7 +75,7 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db), role: s
         raise HTTPException(400, "Username already exists")
     
     # PIN/Password validation
-    if user.role == "OPERATOR":
+    if user.role in PIN_ROLES:
         if not user.pin.isdigit() or len(user.pin) != 4:
             raise HTTPException(400, "Le code PIN Opérateur doit être composé de 4 chiffres")
     else:
@@ -121,7 +122,7 @@ def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Dep
     if user_update.role:
         db_user.role = user_update.role
     if user_update.pin:
-        if db_user.role == "OPERATOR" or user_update.role == "OPERATOR":
+        if db_user.role in PIN_ROLES or user_update.role in PIN_ROLES:
             if not user_update.pin.isdigit() or len(user_update.pin) != 4:
                 raise HTTPException(400, "Le code PIN Opérateur doit être composé de 4 chiffres")
         else:

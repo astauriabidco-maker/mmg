@@ -37,7 +37,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
         {
             title: 'Système',
             items: [
-                { id: 'config', label: 'Options & Référentiels', icon: Settings, type: 'internal' },
+                { id: 'config', label: 'Paramètres & Accès', icon: Settings, type: 'internal' },
             ]
         }
     ];

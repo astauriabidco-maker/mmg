@@ -3,6 +3,7 @@ import { UserPlus, Trash2, Shield, Link2, RefreshCw, Edit2, X, Check } from 'luc
 import api from '../services/api';
 
 export default function OperatorManager() {
+    const pinRoles = ['OPERATOR', 'DEBIT_OPERATOR', 'QUALITY_CONTROLLER', 'WORKSHOP_LEAD'];
     const [users, setUsers] = useState([]);
     const [stations, setStations] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -69,6 +70,10 @@ export default function OperatorManager() {
         try {
             const payload = {
                 username: editingUser.username,
+                first_name: editingUser.first_name,
+                last_name: editingUser.last_name,
+                email: editingUser.email,
+                phone: editingUser.phone,
                 role: editingUser.role,
                 station_codes: editingUser.station_codes
             };
@@ -108,7 +113,7 @@ export default function OperatorManager() {
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
                 <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
                     {editingUser ? <Edit2 className="text-indigo-500" /> : <UserPlus className="text-blue-500" />}
-                    {editingUser ? `Modifier ${editingUser.username}` : 'Nouvel Employé'}
+                    {editingUser ? `Modifier ${editingUser.username}` : 'Nouvel utilisateur'}
                 </h3>
 
                 <form onSubmit={editingUser ? handleUpdate : handleCreate} className="space-y-6">
@@ -181,22 +186,25 @@ export default function OperatorManager() {
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-400 uppercase mb-2">
-                                {editingUser ? 'Nouveau Code/Mot de Passe (vide = inchangé)' : ((newUser.role === 'OPERATOR' || (editingUser && editingUser.role === 'OPERATOR')) ? 'Code PIN (4 chiffres)' : 'Mot de passe')}
+                                {editingUser ? 'Nouveau Code/Mot de Passe (vide = inchangé)' : (pinRoles.includes(editingUser ? editingUser.role : newUser.role) ? 'Code PIN (4 chiffres)' : 'Mot de passe')}
                             </label>
                             <input
-                                type={(newUser.role === 'OPERATOR' || (editingUser && editingUser.role === 'OPERATOR')) ? 'text' : 'password'}
-                                maxLength={(newUser.role === 'OPERATOR' || (editingUser && editingUser.role === 'OPERATOR')) ? "4" : "100"}
+                                type={pinRoles.includes(editingUser ? editingUser.role : newUser.role) ? 'text' : 'password'}
+                                maxLength={pinRoles.includes(editingUser ? editingUser.role : newUser.role) ? "4" : "100"}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
-                                placeholder={(newUser.role === 'OPERATOR' || (editingUser && editingUser.role === 'OPERATOR')) ? "1234" : "Mot de passe sécurisé..."}
+                                placeholder={pinRoles.includes(editingUser ? editingUser.role : newUser.role) ? "1234" : "Mot de passe sécurisé..."}
                                 value={editingUser ? (editingUser.pin || '') : newUser.pin}
                                 onChange={e => editingUser ? setEditingUser({ ...editingUser, pin: e.target.value }) : setNewUser({ ...newUser, pin: e.target.value })}
                                 required={!editingUser}
                             />
+                            <p className="mt-2 text-[11px] font-bold text-slate-400">
+                                Les profils atelier utilisent un PIN court sur tablette. Les profils bureau utilisent un mot de passe.
+                            </p>
                         </div>
                     </div>
 
                     <div>
-                        <label className="block text-xs font-bold text-slate-400 uppercase mb-4">Affectation aux Postes PVS/ALU (Pour les Opérateurs Atelier)</label>
+                        <label className="block text-xs font-bold text-slate-400 uppercase mb-4">Affectation aux postes PVC/ALU</label>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                             {stations.map(s => {
                                 const isSelected = editingUser
@@ -227,7 +235,7 @@ export default function OperatorManager() {
                             type="submit"
                             className={`${editingUser ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/20' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/20'} text-white font-bold py-3 px-8 rounded-xl transition-all shadow-lg active:scale-95`}
                         >
-                            {editingUser ? 'Mettre à jour' : 'Ajouter'}
+                            {editingUser ? 'Mettre à jour' : 'Créer l’utilisateur'}
                         </button>
                         {editingUser && (
                             <button
@@ -254,7 +262,7 @@ export default function OperatorManager() {
                 <div className="flex justify-between items-center mb-6">
                     <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                         <Shield className="text-emerald-500" />
-                        Équipe & Collaborateurs
+                        Utilisateurs existants
                     </h3>
                     <button onClick={fetchData} className="p-2 text-slate-400 hover:text-blue-500 transition-colors">
                         <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
@@ -283,7 +291,7 @@ export default function OperatorManager() {
                                             </div>
                                             <div>
                                                 <div className="text-sm font-black">{user.first_name} {user.last_name}</div>
-                                                <div className="text-xs text-slate-400 font-medium">{user.role === 'OPERATOR' ? 'Atelier' : 'Bureau'}</div>
+                                                <div className="text-xs text-slate-400 font-medium">{pinRoles.includes(user.role) ? 'Atelier' : 'Bureau'}</div>
                                             </div>
                                         </div>
                                     </td>
