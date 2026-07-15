@@ -2,11 +2,131 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from pydantic import BaseModel
+from datetime import datetime, timezone
 from ..database import get_db
 from .. import models, schemas
 from ..core.security import get_current_user, require_roles
 
 router = APIRouter(prefix="/v2/planning", tags=["planning"])
+
+def _task_to_overview(task: models.Planning) -> Dict[str, Any]:
+    order = task.order
+    created_at = task.created_at
+    now = datetime.now(timezone.utc)
+    if created_at and created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    age_hours = round((now - created_at).total_seconds() / 3600, 1) if created_at else 0
+    is_late = task.status in [models.PlanningStatus.PENDING, models.PlanningStatus.PAUSED, models.PlanningStatus.ISSUE] and age_hours >= 24
+    return {
+        "id": task.id,
+        "station": task.station,
+        "status": task.status.value if hasattr(task.status, "value") else task.status,
+        "priority": task.priority or 0,
+        "assigned_to": task.assigned_to,
+        "issue_notes": task.issue_notes,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "age_hours": age_hours,
+        "is_late": is_late,
+        "order_id": task.order_id,
+        "order_reference": task.order_reference,
+        "client_name": order.client_name if order else None,
+        "material": order.material.value if order and hasattr(order.material, "value") else (order.material if order else None),
+        "quantity": order.quantity if order else None,
+        "sale_order_id": order.sale_order_id if order else None,
+    }
+
+@router.get("/overview")
+def get_workshop_overview(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    active_statuses = [
+        models.PlanningStatus.PENDING,
+        models.PlanningStatus.IN_PROGRESS,
+        models.PlanningStatus.PAUSED,
+        models.PlanningStatus.ISSUE,
+    ]
+    stations = db.query(models.Station).order_by(models.Station.material.asc(), models.Station.order_index.asc()).all()
+    tasks = (
+        db.query(models.Planning)
+        .filter(models.Planning.status.in_(active_statuses))
+        .order_by(models.Planning.priority.desc(), models.Planning.created_at.asc())
+        .all()
+    )
+    station_map = {
+        station.code: {
+            "code": station.code,
+            "display_name": station.display_name,
+            "material": station.material.value if hasattr(station.material, "value") else station.material,
+            "order_index": station.order_index,
+            "queue": 0,
+            "in_progress": 0,
+            "paused": 0,
+            "issues": 0,
+            "late": 0,
+            "load_score": 0,
+            "tasks": [],
+        }
+        for station in stations
+    }
+    unassigned_station = {
+        "code": "UNCONFIGURED",
+        "display_name": "Stations non configurées",
+        "material": "MIXTE",
+        "order_index": 999,
+        "queue": 0,
+        "in_progress": 0,
+        "paused": 0,
+        "issues": 0,
+        "late": 0,
+        "load_score": 0,
+        "tasks": [],
+    }
+
+    for task in tasks:
+        payload = _task_to_overview(task)
+        station = station_map.get(task.station)
+        if station is None:
+            station = unassigned_station
+        station["tasks"].append(payload)
+        if task.status == models.PlanningStatus.PENDING:
+            station["queue"] += 1
+        elif task.status == models.PlanningStatus.IN_PROGRESS:
+            station["in_progress"] += 1
+        elif task.status == models.PlanningStatus.PAUSED:
+            station["paused"] += 1
+        elif task.status == models.PlanningStatus.ISSUE:
+            station["issues"] += 1
+        if payload["is_late"]:
+            station["late"] += 1
+
+    stations_payload = list(station_map.values())
+    if unassigned_station["tasks"]:
+        stations_payload.append(unassigned_station)
+
+    for station in stations_payload:
+        station["load_score"] = station["queue"] + station["in_progress"] * 2 + station["paused"] * 2 + station["issues"] * 4 + station["late"] * 3
+        station["tasks"].sort(key=lambda item: (item["status"] != "ISSUE", -item["priority"], item["created_at"] or ""))
+
+    blocked_tasks = [task for station in stations_payload for task in station["tasks"] if task["status"] == "ISSUE"]
+    late_tasks = [task for station in stations_payload for task in station["tasks"] if task["is_late"]]
+    priority_tasks = sorted(
+        [task for station in stations_payload for task in station["tasks"]],
+        key=lambda item: (item["status"] != "ISSUE", not item["is_late"], -item["priority"], item["created_at"] or ""),
+    )[:12]
+
+    return {
+        "summary": {
+            "stations": len(stations_payload),
+            "active_tasks": len(tasks),
+            "in_progress": sum(station["in_progress"] for station in stations_payload),
+            "queue": sum(station["queue"] for station in stations_payload),
+            "paused": sum(station["paused"] for station in stations_payload),
+            "blocked": len(blocked_tasks),
+            "late": len(late_tasks),
+        },
+        "stations": stations_payload,
+        "blocked_tasks": blocked_tasks,
+        "late_tasks": late_tasks,
+        "priority_tasks": priority_tasks,
+    }
 
 @router.get("/{station}", response_model=List[schemas.Planning])
 def get_queue(station: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

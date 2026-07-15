@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
 import { TrendingUp, AlertTriangle, Clock, Activity, LogOut, Upload, Menu, Search, Filter, ArrowUpRight, ArrowDownRight, ChevronRight, ChevronLeft, Users, Settings, Box, Banknote, CheckCircle2, Factory, Package, BarChart3, Sparkles, X, Scissors, Download, FileText, FileSpreadsheet, ArrowUpDown } from 'lucide-react';
-import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import StationManager from '../components/StationManager';
 import OperatorManager from '../components/OperatorManager';
 import Sidebar from '../components/Sidebar';
@@ -45,6 +45,7 @@ export default function ManagerDashboard() {
         : activeView;
     const headerTitle = activeView === 'dashboard' ? 'Vue d\'Ensemble' :
         activeView === 'live' ? 'Atelier Live' :
+            activeView === 'workshop_supervisor' ? 'Chef d\'atelier' :
             activeView === 'orders' ? 'Suivi Commandes' :
                 activeView === 'stock' ? 'Gestion de Stock' :
                     activeView === 'purchases' ? 'Achats & Appro' :
@@ -194,6 +195,7 @@ export default function ManagerDashboard() {
                 <div className="p-8">
                     {activeView === 'dashboard' && renderDashboardView()}
                     {activeView === 'live' && renderLiveView()}
+                    {activeView === 'workshop_supervisor' && <WorkshopSupervisorView />}
                     {activeView === 'orders' && renderOrdersView()}
                     {activeView === 'stock' && <StockDashboard />}
                     {activeView === 'purchases' && <PurchasesDashboard />}
@@ -831,6 +833,337 @@ function KpiCard({ icon: Icon, title, value, trend, isUp, color }) {
             {/* Subtle background decoration */}
             <div className="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:scale-110 transition-transform duration-700 origin-center pointer-events-none">
                 <Icon className="w-40 h-40" />
+            </div>
+        </div>
+    );
+}
+
+const WORKSHOP_STATUS = {
+    PENDING: { label: 'À faire', color: 'bg-slate-100 text-slate-700 border-slate-200' },
+    IN_PROGRESS: { label: 'En cours', color: 'bg-blue-50 text-blue-700 border-blue-200' },
+    PAUSED: { label: 'En pause', color: 'bg-amber-50 text-amber-700 border-amber-200' },
+    ISSUE: { label: 'Bloqué', color: 'bg-red-50 text-red-700 border-red-200' },
+};
+
+function WorkshopSupervisorView() {
+    const navigate = useNavigate();
+    const { data: overview = null, isLoading, refetch } = useQuery({
+        queryKey: ['workshop-supervisor-overview'],
+        queryFn: async () => {
+            const { data } = await api.get('/v2/planning/overview');
+            return data;
+        },
+        refetchInterval: 5000,
+    });
+    const [selectedStation, setSelectedStation] = useState('ALL');
+    const [busyTaskId, setBusyTaskId] = useState(null);
+
+    const stations = overview?.stations || [];
+    const selectedStationData = selectedStation === 'ALL'
+        ? null
+        : stations.find(station => station.code === selectedStation);
+    const visibleTasks = selectedStationData
+        ? selectedStationData.tasks
+        : (overview?.priority_tasks || []);
+
+    const setPriority = async (task, priority) => {
+        setBusyTaskId(task.id);
+        try {
+            await api.put(`/v2/planning/${task.id}`, { priority });
+            await refetch();
+        } finally {
+            setBusyTaskId(null);
+        }
+    };
+
+    const assignTask = async (task, assignedTo) => {
+        setBusyTaskId(task.id);
+        try {
+            await api.put(`/v2/planning/${task.id}`, { assigned_to: assignedTo || null });
+            await refetch();
+        } finally {
+            setBusyTaskId(null);
+        }
+    };
+
+    const unblockTask = async (task) => {
+        if (!window.confirm(`Remettre ${task.order_reference} en file d'attente ?`)) return;
+        setBusyTaskId(task.id);
+        try {
+            await api.put(`/v2/planning/${task.id}`, { status: 'PENDING' });
+            await refetch();
+        } finally {
+            setBusyTaskId(null);
+        }
+    };
+
+    const openSaleDetail = (task) => {
+        if (!task.sale_order_id) return;
+        navigate(`/manager?view=sale-detail&id=${task.sale_order_id}&from=orders`);
+    };
+
+    if (isLoading && !overview) {
+        return (
+            <div className="max-w-7xl mx-auto p-10 rounded-3xl border border-slate-200 bg-white text-slate-500 font-bold">
+                Chargement du cockpit atelier...
+            </div>
+        );
+    }
+
+    const summary = overview?.summary || {};
+    const blockedTasks = overview?.blocked_tasks || [];
+    const lateTasks = overview?.late_tasks || [];
+
+    return (
+        <div className="max-w-7xl mx-auto space-y-6">
+            <div className="bg-slate-950 text-white rounded-[2rem] p-8 shadow-xl overflow-hidden">
+                <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-6">
+                    <div>
+                        <p className="text-[11px] font-black tracking-[0.25em] uppercase text-blue-300 mb-3">Pilotage atelier</p>
+                        <h2 className="text-3xl font-black tracking-tight">Vue chef d'atelier</h2>
+                        <p className="text-slate-300 font-semibold mt-2 max-w-2xl">
+                            Priorités, retards, blocages, charge par station et réaffectation des tâches opérateur.
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => refetch()}
+                        className="px-5 py-3 rounded-xl bg-white text-slate-950 font-black hover:bg-blue-50 transition-colors flex items-center justify-center gap-2"
+                    >
+                        <Activity className="w-4 h-4" />
+                        Actualiser
+                    </button>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 mt-8">
+                    <WorkshopKpi label="Actives" value={summary.active_tasks || 0} tone="slate" />
+                    <WorkshopKpi label="En cours" value={summary.in_progress || 0} tone="blue" />
+                    <WorkshopKpi label="À faire" value={summary.queue || 0} tone="slate" />
+                    <WorkshopKpi label="En pause" value={summary.paused || 0} tone="amber" />
+                    <WorkshopKpi label="Bloquées" value={summary.blocked || 0} tone="red" />
+                    <WorkshopKpi label="Retards" value={summary.late || 0} tone="orange" />
+                </div>
+            </div>
+
+            {(blockedTasks.length > 0 || lateTasks.length > 0) && (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <WorkshopAlertPanel
+                        title="Blocages à traiter"
+                        empty="Aucun blocage atelier"
+                        tasks={blockedTasks}
+                        tone="red"
+                        actionLabel="Remettre à faire"
+                        onAction={unblockTask}
+                        busyTaskId={busyTaskId}
+                    />
+                    <WorkshopAlertPanel
+                        title="Retards probables"
+                        empty="Aucun retard détecté"
+                        tasks={lateTasks}
+                        tone="amber"
+                        actionLabel="Priorité haute"
+                        onAction={(task) => setPriority(task, Math.max(task.priority || 0, 50))}
+                        busyTaskId={busyTaskId}
+                    />
+                </div>
+            )}
+
+            <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-6">
+                <div className="bg-white border border-slate-200 rounded-[1.5rem] p-5 shadow-sm">
+                    <div className="flex items-center justify-between mb-4">
+                        <div>
+                            <h3 className="font-black text-slate-900">Charge par station</h3>
+                            <p className="text-xs font-semibold text-slate-500">Cliquez une station pour filtrer.</p>
+                        </div>
+                        <button
+                            onClick={() => setSelectedStation('ALL')}
+                            className={`px-3 py-2 rounded-lg text-xs font-black border ${selectedStation === 'ALL' ? 'bg-slate-950 text-white border-slate-950' : 'bg-white text-slate-600 border-slate-200'}`}
+                        >
+                            Toutes
+                        </button>
+                    </div>
+                    <div className="space-y-3">
+                        {stations.map(station => (
+                            <button
+                                key={station.code}
+                                onClick={() => setSelectedStation(station.code)}
+                                className={`w-full text-left p-4 rounded-2xl border transition-all ${selectedStation === station.code ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-200'}`}
+                            >
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <p className="font-black text-slate-900">{station.display_name || station.code}</p>
+                                        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">{station.material} · {station.code}</p>
+                                    </div>
+                                    <span className={`px-2 py-1 rounded-lg text-[11px] font-black ${station.issues ? 'bg-red-100 text-red-700' : station.load_score > 6 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                        Charge {station.load_score}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-4 gap-2 mt-4">
+                                    <MiniCount label="File" value={station.queue} />
+                                    <MiniCount label="Cours" value={station.in_progress} />
+                                    <MiniCount label="Pause" value={station.paused} />
+                                    <MiniCount label="Bloc" value={station.issues} danger={station.issues > 0} />
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-[1.5rem] shadow-sm overflow-hidden">
+                    <div className="px-6 py-5 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                        <div>
+                            <h3 className="font-black text-xl text-slate-900">
+                                {selectedStationData ? selectedStationData.display_name || selectedStationData.code : 'Tâches à piloter'}
+                            </h3>
+                            <p className="text-sm font-semibold text-slate-500">
+                                {selectedStationData ? 'File détaillée de la station sélectionnée.' : 'Priorité automatique : blocages, retards, priorité atelier.'}
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs font-black text-slate-500 uppercase tracking-widest">
+                            <Clock className="w-4 h-4" />
+                            Retard si tâche ouverte depuis 24h+
+                        </div>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                        {visibleTasks.length === 0 ? (
+                            <div className="p-12 text-center text-slate-400 font-bold">
+                                Aucune tâche active sur ce périmètre.
+                            </div>
+                        ) : (
+                            visibleTasks.map(task => (
+                                <WorkshopTaskRow
+                                    key={task.id}
+                                    task={task}
+                                    busy={busyTaskId === task.id}
+                                    onPriority={setPriority}
+                                    onAssign={assignTask}
+                                    onUnblock={unblockTask}
+                                    onOpenSale={openSaleDetail}
+                                />
+                            ))
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function WorkshopKpi({ label, value, tone }) {
+    const colors = {
+        slate: 'bg-white/10 text-white border-white/10',
+        blue: 'bg-blue-500/20 text-blue-100 border-blue-400/20',
+        amber: 'bg-amber-500/20 text-amber-100 border-amber-400/20',
+        orange: 'bg-orange-500/20 text-orange-100 border-orange-400/20',
+        red: 'bg-red-500/20 text-red-100 border-red-400/20',
+    };
+    return (
+        <div className={`rounded-2xl border p-4 ${colors[tone] || colors.slate}`}>
+            <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{label}</p>
+            <p className="text-3xl font-black mt-1">{value}</p>
+        </div>
+    );
+}
+
+function MiniCount({ label, value, danger }) {
+    return (
+        <div className={`rounded-xl px-2 py-2 text-center ${danger ? 'bg-red-50 text-red-700' : 'bg-slate-50 text-slate-700'}`}>
+            <p className="text-[9px] font-black uppercase tracking-widest opacity-60">{label}</p>
+            <p className="font-black truncate">{value || 0}</p>
+        </div>
+    );
+}
+
+function WorkshopAlertPanel({ title, empty, tasks, tone, actionLabel, onAction, busyTaskId }) {
+    const color = tone === 'red' ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-800';
+    return (
+        <div className={`rounded-[1.5rem] border p-5 ${color}`}>
+            <div className="flex items-center gap-2 mb-4">
+                <AlertTriangle className="w-5 h-5" />
+                <h3 className="font-black">{title}</h3>
+                <span className="ml-auto text-xs font-black">{tasks.length}</span>
+            </div>
+            {tasks.length === 0 ? (
+                <p className="text-sm font-semibold opacity-70">{empty}</p>
+            ) : (
+                <div className="space-y-2">
+                    {tasks.slice(0, 4).map(task => (
+                        <div key={task.id} className="bg-white/70 rounded-xl p-3 flex items-center justify-between gap-3">
+                            <div>
+                                <p className="font-black text-slate-900">{task.order_reference}</p>
+                                <p className="text-xs font-semibold text-slate-500">{task.station} · {task.client_name || 'Client non renseigné'}</p>
+                            </div>
+                            <button
+                                disabled={busyTaskId === task.id}
+                                onClick={() => onAction(task)}
+                                className="px-3 py-2 rounded-lg bg-slate-950 text-white text-xs font-black disabled:opacity-50"
+                            >
+                                {actionLabel}
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function WorkshopTaskRow({ task, busy, onPriority, onAssign, onUnblock, onOpenSale }) {
+    const meta = WORKSHOP_STATUS[task.status] || WORKSHOP_STATUS.PENDING;
+    const ageLabel = task.age_hours >= 24
+        ? `${Math.round(task.age_hours / 24)} j`
+        : `${Math.max(0, Math.round(task.age_hours))} h`;
+    return (
+        <div className={`p-5 grid grid-cols-1 2xl:grid-cols-[1.5fr_1fr_1fr_auto] gap-4 items-center ${task.status === 'ISSUE' ? 'bg-red-50/40' : task.is_late ? 'bg-amber-50/40' : 'bg-white'}`}>
+            <div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-black text-slate-900">{task.order_reference}</p>
+                    <span className={`px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${meta.color}`}>{meta.label}</span>
+                    {task.is_late && <span className="px-2 py-1 rounded-lg bg-amber-100 text-amber-700 text-[10px] font-black uppercase tracking-widest">Retard</span>}
+                </div>
+                <p className="text-sm font-semibold text-slate-500 mt-1">{task.client_name || 'Client non renseigné'} · {task.material || 'Matière ?'} · {task.quantity || 1} unité(s)</p>
+                {task.issue_notes && <p className="text-xs font-bold text-red-700 mt-2">Blocage : {task.issue_notes}</p>}
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+                <MiniCount label="Station" value={task.station?.replace('_', ' ')} />
+                <MiniCount label="Priorité" value={task.priority || 0} />
+                <MiniCount label="Âge" value={ageLabel} danger={task.is_late} />
+            </div>
+            <div className="flex items-center gap-2">
+                <select
+                    disabled={busy}
+                    value={task.assigned_to || ''}
+                    onChange={(event) => onAssign(task, event.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700"
+                >
+                    <option value="">Affectation auto</option>
+                    <option value="admin">Admin</option>
+                    <option value="john">John</option>
+                    <option value="atelier">Atelier</option>
+                </select>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+                <button
+                    disabled={busy}
+                    onClick={() => onPriority(task, Math.max((task.priority || 0) + 10, 10))}
+                    className="px-3 py-2 rounded-xl border border-slate-200 text-slate-700 text-xs font-black hover:bg-slate-50 disabled:opacity-50"
+                >
+                    Prioriser
+                </button>
+                {task.status === 'ISSUE' && (
+                    <button
+                        disabled={busy}
+                        onClick={() => onUnblock(task)}
+                        className="px-3 py-2 rounded-xl bg-red-600 text-white text-xs font-black hover:bg-red-500 disabled:opacity-50"
+                    >
+                        Débloquer
+                    </button>
+                )}
+                <button
+                    disabled={!task.sale_order_id}
+                    onClick={() => onOpenSale(task)}
+                    className="px-3 py-2 rounded-xl bg-slate-950 text-white text-xs font-black hover:bg-slate-800 disabled:opacity-40"
+                >
+                    Dossier
+                </button>
             </div>
         </div>
     );

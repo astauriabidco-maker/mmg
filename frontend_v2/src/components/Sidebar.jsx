@@ -12,6 +12,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
             items: [
                 { id: 'dashboard', label: 'Tableau de Bord', icon: LayoutDashboard, type: 'internal' },
                 { id: 'orders', label: 'Suivi Commandes', icon: ClipboardList, type: 'internal' },
+                { id: 'workshop_supervisor', label: "Chef d'atelier", icon: Users, type: 'internal' },
                 { id: 'live', label: 'Atelier Live', icon: Activity, type: 'internal' },
                 { id: 'analytics_atelier', label: 'Analyse & Perf.', icon: BarChart3, type: 'internal' },
             ]
