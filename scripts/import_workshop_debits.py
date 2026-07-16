@@ -31,6 +31,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from backend import models
 from backend.database import SessionLocal
+from backend.services.stock_service import InventoryService
 
 
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
@@ -397,39 +398,22 @@ def apply_debits(records: list[DebitRecord], source_location: str, dest_location
                 stats["skipped_missing"] += 1
                 continue
 
-            src_quant = db.query(models.StockQuant).filter_by(variant_id=variant.id, location_id=source.id).first()
-            if not src_quant:
-                src_quant = models.StockQuant(variant_id=variant.id, location_id=source.id, quantity=0)
-                db.add(src_quant)
-                db.flush()
-
-            if src_quant.quantity < record.quantity and not allow_shortage:
-                raise RuntimeError(f"Stock insuffisant pour {variant.reference}: {src_quant.quantity} < {record.quantity}")
-
-            dest_quant = db.query(models.StockQuant).filter_by(variant_id=variant.id, location_id=dest.id).first()
-            if not dest_quant:
-                dest_quant = models.StockQuant(variant_id=variant.id, location_id=dest.id, quantity=0)
-                db.add(dest_quant)
-                db.flush()
-
-            src_quant.quantity -= record.quantity
-            dest_quant.quantity += record.quantity
-            variant.quantity_in_stock = (variant.quantity_in_stock or 0) - record.quantity
-            stats["updated_source_quants"] += 1
-            stats["updated_dest_quants"] += 1
-
-            db.add(
-                models.StockMove(
-                    reference=f"DEBIT-ATELIER-{now_ref}",
+            try:
+                InventoryService.move_stock(
+                    db,
                     variant_id=variant.id,
-                    location_id=source.id,
-                    location_dest_id=dest.id,
+                    source_location_id=source.id,
+                    dest_location_id=dest.id,
                     quantity=record.quantity,
-                    state="done",
+                    reference=f"DEBIT-ATELIER-{now_ref}",
                     notes=f"Débit atelier {record.source} - {record.project_reference or 'sans affaire'}",
                     author="Import débit atelier",
+                    allow_negative_source=allow_shortage,
                 )
-            )
+            except ValueError as exc:
+                raise RuntimeError(f"Stock insuffisant pour {variant.reference}: {exc}") from exc
+            stats["updated_source_quants"] += 1
+            stats["updated_dest_quants"] += 1
             stats["created_moves"] += 1
 
         db.commit()

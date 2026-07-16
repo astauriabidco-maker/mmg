@@ -9,6 +9,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from .. import models
+from .stock_service import InventoryService
 from scripts.import_workshop_debits import DebitRecord, StockMatch, build_summary, consolidate_records
 
 
@@ -440,43 +441,25 @@ def consume_reservation(
     for line in reservation.lines:
         if line.status != ACTIVE_RESERVATION_STATUS or not line.variant_id or (line.reserved_quantity or 0) <= 0:
             continue
-        src_quant = db.query(models.StockQuant).filter_by(variant_id=line.variant_id, location_id=source.id).first()
-        current_qty = float(src_quant.quantity if src_quant else 0)
-        if current_qty < line.reserved_quantity:
-            raise ValueError(
-                f"Stock insuffisant au débit réel pour {line.supplier_reference}: {current_qty:g} < {line.reserved_quantity:g}"
-            )
-        if not src_quant:
-            src_quant = models.StockQuant(variant_id=line.variant_id, location_id=source.id, quantity=0)
-            db.add(src_quant)
-            db.flush()
-
-        dest_quant = db.query(models.StockQuant).filter_by(variant_id=line.variant_id, location_id=dest.id).first()
-        if not dest_quant:
-            dest_quant = models.StockQuant(variant_id=line.variant_id, location_id=dest.id, quantity=0)
-            db.add(dest_quant)
-            db.flush()
-
-        src_quant.quantity -= line.reserved_quantity
-        dest_quant.quantity += line.reserved_quantity
         line.consumed_quantity = line.reserved_quantity
         line.status = "consumed"
-        if line.variant:
-            line.variant.quantity_in_stock = (line.variant.quantity_in_stock or 0) - line.reserved_quantity
 
         context_reference = reservation.order_reference or reservation.project_reference or "sans contexte"
-        db.add(
-            models.StockMove(
-                reference=f"DEBIT-ATELIER-{now_ref}",
+        try:
+            InventoryService.move_stock(
+                db,
                 variant_id=line.variant_id,
-                location_id=source.id,
-                location_dest_id=dest.id,
+                source_location_id=source.id,
+                dest_location_id=dest.id,
                 quantity=line.reserved_quantity,
-                state="done",
+                reference=f"DEBIT-ATELIER-{now_ref}",
                 notes=f"Débit atelier réel | Réservation {reservation.reference} | Contexte {context_reference}",
                 author=author,
             )
-        )
+        except ValueError as exc:
+            raise ValueError(
+                f"Stock insuffisant au débit réel pour {line.supplier_reference}: {exc}"
+            ) from exc
         stats["created_moves"] += 1
         stats["consumed_lines"] += 1
 
@@ -507,43 +490,25 @@ def consume_commercial_reservation(
         if line.status != ACTIVE_RESERVATION_STATUS or not line.variant_id or (line.reserved_quantity or 0) <= 0:
             continue
 
-        src_quant = db.query(models.StockQuant).filter_by(variant_id=line.variant_id, location_id=source.id).first()
-        current_qty = float(src_quant.quantity if src_quant else 0)
-        if current_qty < line.reserved_quantity:
-            raise ValueError(
-                f"Stock insuffisant à la sortie client pour {line.supplier_reference}: {current_qty:g} < {line.reserved_quantity:g}"
-            )
-        if not src_quant:
-            src_quant = models.StockQuant(variant_id=line.variant_id, location_id=source.id, quantity=0)
-            db.add(src_quant)
-            db.flush()
-
-        dest_quant = db.query(models.StockQuant).filter_by(variant_id=line.variant_id, location_id=dest.id).first()
-        if not dest_quant:
-            dest_quant = models.StockQuant(variant_id=line.variant_id, location_id=dest.id, quantity=0)
-            db.add(dest_quant)
-            db.flush()
-
-        src_quant.quantity -= line.reserved_quantity
-        dest_quant.quantity += line.reserved_quantity
         line.consumed_quantity = line.reserved_quantity
         line.status = "consumed"
-        if line.variant:
-            line.variant.quantity_in_stock = (line.variant.quantity_in_stock or 0) - line.reserved_quantity
 
         context_reference = reservation.order_reference or reservation.project_reference or "sans contexte"
-        move = models.StockMove(
-            reference=f"SORTIE-CLIENT-{now_ref}",
-            variant_id=line.variant_id,
-            location_id=source.id,
-            location_dest_id=dest.id,
-            quantity=line.reserved_quantity,
-            state="done",
-            notes=f"Sortie client devis libre | Réservation {reservation.reference} | Devis {context_reference}",
-            author=author,
-        )
-        db.add(move)
-        db.flush()
+        try:
+            result = InventoryService.move_stock(
+                db,
+                variant_id=line.variant_id,
+                source_location_id=source.id,
+                dest_location_id=dest.id,
+                quantity=line.reserved_quantity,
+                reference=f"SORTIE-CLIENT-{now_ref}",
+                notes=f"Sortie client devis libre | Réservation {reservation.reference} | Devis {context_reference}",
+                author=author,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"Stock insuffisant à la sortie client pour {line.supplier_reference}: {exc}"
+            ) from exc
         db.add(
             models.ChatterMessage(
                 model_name="variant",
@@ -586,38 +551,24 @@ def return_commercial_reservation(
         if line.status != "consumed" or not line.variant_id or returned_quantity <= 0:
             continue
 
-        src_quant = db.query(models.StockQuant).filter_by(variant_id=line.variant_id, location_id=source.id).first()
-        current_qty = float(src_quant.quantity if src_quant else 0)
-        if current_qty < returned_quantity:
-            raise ValueError(
-                f"Stock client insuffisant pour le retour de {line.supplier_reference}: {current_qty:g} < {returned_quantity:g}"
-            )
-
-        dest_quant = db.query(models.StockQuant).filter_by(variant_id=line.variant_id, location_id=dest.id).first()
-        if not dest_quant:
-            dest_quant = models.StockQuant(variant_id=line.variant_id, location_id=dest.id, quantity=0)
-            db.add(dest_quant)
-            db.flush()
-
-        src_quant.quantity -= returned_quantity
-        dest_quant.quantity += returned_quantity
         line.status = "returned"
-        if line.variant:
-            line.variant.quantity_in_stock = (line.variant.quantity_in_stock or 0) + returned_quantity
 
         context_reference = reservation.order_reference or reservation.project_reference or "sans contexte"
-        move = models.StockMove(
-            reference=f"RETOUR-CLIENT-{now_ref}",
-            variant_id=line.variant_id,
-            location_id=source.id,
-            location_dest_id=dest.id,
-            quantity=returned_quantity,
-            state="done",
-            notes=f"Retour client devis libre | Réservation {reservation.reference} | Devis {context_reference}",
-            author=author,
-        )
-        db.add(move)
-        db.flush()
+        try:
+            result = InventoryService.move_stock(
+                db,
+                variant_id=line.variant_id,
+                source_location_id=source.id,
+                dest_location_id=dest.id,
+                quantity=returned_quantity,
+                reference=f"RETOUR-CLIENT-{now_ref}",
+                notes=f"Retour client devis libre | Réservation {reservation.reference} | Devis {context_reference}",
+                author=author,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"Stock client insuffisant pour le retour de {line.supplier_reference}: {exc}"
+            ) from exc
         db.add(
             models.ChatterMessage(
                 model_name="variant",

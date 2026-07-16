@@ -6,6 +6,7 @@ from typing import List
 from ..database import get_db
 from .. import models, schemas
 from ..core.security import get_current_user
+from ..services.stock_service import InventoryService
 from .v2_accounting import generate_invoice_reference, compute_qr_seal
 
 router = APIRouter(
@@ -266,6 +267,9 @@ def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db))
     db.flush()
     
     global_location = db.query(models.StockLocation).filter(models.StockLocation.id == 1).first() # Default location 1
+    if not global_location:
+        global_location = InventoryService.get_or_create_location(db, "WH/Stock", "internal")
+    customer_location = InventoryService.get_or_create_location(db, "Partner/Customer", "customer")
     
     for item in req.items:
         ol = models.POSOrderLine(
@@ -277,39 +281,20 @@ def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db))
         )
         db.add(ol)
         
-        # Deduct stock
-        quant = db.query(models.StockQuant).filter(
-            models.StockQuant.variant_id == item.variant_id,
-            models.StockQuant.location_id == global_location.id
-        ).first()
-        
-        if quant:
-            quant.quantity -= item.quantity
-        else:
-            new_quant = models.StockQuant(
+        try:
+            InventoryService.move_stock(
+                db,
                 variant_id=item.variant_id,
-                location_id=global_location.id,
-                quantity=-item.quantity
+                source_location_id=global_location.id,
+                dest_location_id=customer_location.id,
+                quantity=item.quantity,
+                reference=f"POS Out - {ref}",
+                author="POS System",
+                notes=f"Vente Caisse Ticket {ref}",
             )
-            db.add(new_quant)
-            
-        # Deduct global variant fallback
-        variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == item.variant_id).first()
-        if variant:
-            variant.quantity_in_stock -= item.quantity
-            
-        # Log stock move
-        mv = models.StockMove(
-            reference=f"POS Out - {ref}",
-            variant_id=item.variant_id,
-            location_id=global_location.id,
-            location_dest_id=8, # Virtual Customer Location if exists, 
-            quantity=item.quantity,
-            state="done",
-            author="POS System",
-            notes=f"Vente Caisse Ticket {ref}"
-        )
-        db.add(mv)
+        except ValueError as exc:
+            status_code = 423 if "Zone gelée" in str(exc) else 400
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
         
         # Log to Chatter
         audit_log = models.ChatterMessage(

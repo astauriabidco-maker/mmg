@@ -21,6 +21,7 @@ from ..services.stock_reservations import (
     consume_reservation,
     create_reservation,
 )
+from ..services.stock_service import InventoryService
 from scripts.import_workshop_debits import parse_file
 
 router = APIRouter(
@@ -335,38 +336,31 @@ def validate_inventory_session(
         if abs(variance) <= 0.000001:
             continue
 
-        internal_quant = _get_or_create_quant(db, line.variant_id, line.location_id)
-        inventory_quant = _get_or_create_quant(db, line.variant_id, inventory_location.id)
         if variance > 0:
-            internal_quant.quantity += variance
-            inventory_quant.quantity -= variance
             source_id = inventory_location.id
             dest_id = line.location_id
             quantity = variance
         else:
             adjustment = abs(variance)
-            if internal_quant.quantity < adjustment:
-                raise HTTPException(status_code=400, detail="Ajustement impossible: stock physique insuffisant.")
-            internal_quant.quantity -= adjustment
-            inventory_quant.quantity += adjustment
             source_id = line.location_id
             dest_id = inventory_location.id
             quantity = adjustment
 
-        move = models.StockMove(
-            reference=f"INV/{session.reference}/{line.id}",
-            variant_id=line.variant_id,
-            location_id=source_id,
-            location_dest_id=dest_id,
-            quantity=quantity,
-            state="done",
-            notes=f"Ajustement inventaire physique {session.reference}. Motif: {line.reason or 'Non renseigné'}",
-            author=author,
-        )
-        db.add(move)
-        db.flush()
-        line.adjustment_move_id = move.id
-        _sync_variant_internal_stock(db, line.variant_id)
+        try:
+            result = InventoryService.move_stock(
+                db,
+                variant_id=line.variant_id,
+                source_location_id=source_id,
+                dest_location_id=dest_id,
+                quantity=quantity,
+                reference=f"INV/{session.reference}/{line.id}",
+                notes=f"Ajustement inventaire physique {session.reference}. Motif: {line.reason or 'Non renseigné'}",
+                author=author,
+                enforce_zone_lock=False,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Ajustement impossible: {exc}") from exc
+        line.adjustment_move_id = result.move.id
         line.status = "validated"
 
     for line in session.lines:
@@ -579,63 +573,45 @@ def create_transaction(tx: schemas.StockMoveCreate, background_tasks: Background
     variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == tx.variant_id).first()
     if not variant: raise HTTPException(404, "Variant not found")
 
-    if tx.location_id:
-        _assert_location_not_locked(db, tx.location_id)
-    if tx.location_dest_id:
-        _assert_location_not_locked(db, tx.location_dest_id)
-    
     qty = abs(tx.quantity)
-    is_in = tx.quantity > 0
-    
-    # 1. Update source quant
-    if tx.location_id:
-        src_quant = db.query(models.StockQuant).filter_by(variant_id=tx.variant_id, location_id=tx.location_id).first()
-        if not src_quant:
-            src_quant = models.StockQuant(variant_id=tx.variant_id, location_id=tx.location_id, quantity=0)
-            db.add(src_quant)
-            
-        previous_qty = src_quant.quantity
-        src_quant.quantity -= qty
-        
-        # --- INTERNAL AUTOMATION TRIGGER ---
-        if previous_qty > variant.min_threshold and src_quant.quantity <= variant.min_threshold:
-            EventBus.on_stock_alert(variant.reference, src_quant.quantity, background_tasks)
-        src_loc = db.query(models.StockLocation).filter_by(id=tx.location_id).first()
-        if src_loc and src_loc.usage == 'internal': pass # Stock total is dynamic now
+    try:
+        result = InventoryService.move_stock(
+            db,
+            variant_id=tx.variant_id,
+            source_location_id=tx.location_id,
+            dest_location_id=tx.location_dest_id,
+            quantity=qty,
+            reference=f"WH/MOVE-{int(time.time()*1000)}",
+            notes=tx.notes,
+            author=user.get("sub", "Admin"),
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 423 if "Zone gelée" in detail else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
-    # 2. Update dest quant
-    if tx.location_dest_id:
-        dest_quant = db.query(models.StockQuant).filter_by(variant_id=tx.variant_id, location_id=tx.location_dest_id).first()
-        if not dest_quant:
-            dest_quant = models.StockQuant(variant_id=tx.variant_id, location_id=tx.location_dest_id, quantity=0)
-            db.add(dest_quant)
-        dest_quant.quantity += qty
-        dest_loc = db.query(models.StockLocation).filter_by(id=tx.location_dest_id).first()
-        if dest_loc and dest_loc.usage == 'internal': pass # Stock total is dynamic now
-
-    new_move = models.StockMove(
-        reference=f"WH/MOVE-{int(time.time()*1000)}",
-        variant_id=tx.variant_id,
-        location_id=tx.location_id,
-        location_dest_id=tx.location_dest_id,
-        quantity=qty,
-        notes=tx.notes,
-        author=user.get("sub", "Admin")
-    )
-    db.add(new_move)
+    src_loc = db.query(models.StockLocation).filter_by(id=tx.location_id).first() if tx.location_id else None
+    dest_loc = db.query(models.StockLocation).filter_by(id=tx.location_dest_id).first() if tx.location_dest_id else None
+    if (
+        src_loc
+        and src_loc.usage == 'internal'
+        and result.previous_source_quantity is not None
+        and result.new_source_quantity is not None
+        and result.previous_source_quantity > variant.min_threshold
+        and result.new_source_quantity <= variant.min_threshold
+    ):
+        EventBus.on_stock_alert(variant.reference, result.new_source_quantity, background_tasks)
     
     # --- LOG CHATTER (AUDIT) ---
     src_name = "Externe"
     if tx.location_id:
-        src_loc = db.query(models.StockLocation).filter_by(id=tx.location_id).first()
         src_name = src_loc.name if src_loc else "Inconnu"
         
     dest_name = "Externe"
     if tx.location_dest_id:
-        dest_loc = db.query(models.StockLocation).filter_by(id=tx.location_dest_id).first()
         dest_name = dest_loc.name if dest_loc else "Inconnu"
 
-    msg = f"Mouvement de {qty} unité(s): {src_name} ➔ {dest_name} (Mvmt: {new_move.reference})"
+    msg = f"Mouvement de {qty} unité(s): {src_name} ➔ {dest_name} (Mvmt: {result.move.reference})"
     
     # Enrichment for Suppliers / Clients traceability
     variant_db = db.query(models.ProductVariant).filter(models.ProductVariant.id == tx.variant_id).first()
@@ -1436,11 +1412,7 @@ async def import_bom_for_sale_order(sale_order_id: int, background_tasks: Backgr
     if not bom_items:
         raise HTTPException(400, "Le fichier est vide ou le format n'est pas reconnu.")
 
-    prod_loc = db.query(models.StockLocation).filter(models.StockLocation.name == "Production Ateliers", models.StockLocation.usage == "production").first()
-    if not prod_loc:
-        prod_loc = models.StockLocation(name="Production Ateliers", usage="production", type="virtual")
-        db.add(prod_loc)
-        db.flush()
+    prod_loc = InventoryService.get_or_create_location(db, "Production Ateliers", "production")
 
     wh_loc = db.query(models.StockLocation).filter(models.StockLocation.usage == "internal").first()
     if not wh_loc:
@@ -1465,38 +1437,36 @@ async def import_bom_for_sale_order(sale_order_id: int, background_tasks: Backgr
             continue
             
         src_quant = db.query(models.StockQuant).filter_by(variant_id=variant.id, location_id=wh_loc.id).first()
-        if not src_quant:
-            src_quant = models.StockQuant(variant_id=variant.id, location_id=wh_loc.id, quantity=0)
-            db.add(src_quant)
-            
-        dest_quant = db.query(models.StockQuant).filter_by(variant_id=variant.id, location_id=prod_loc.id).first()
-        if not dest_quant:
-            dest_quant = models.StockQuant(variant_id=variant.id, location_id=prod_loc.id, quantity=0)
-            db.add(dest_quant)
+        current_source_qty = float(src_quant.quantity if src_quant else 0)
 
         # Check for stock warnings (Non-blocking)
-        if src_quant.quantity < qty:
-            shortage = qty - src_quant.quantity
+        if current_source_qty < qty:
+            shortage = qty - current_source_qty
             stock_warnings.append(f"{variant.reference} : manque {shortage} {variant.product.unit if variant.product else 'unités'} en stock.")
 
-        previous_qty = src_quant.quantity
-        src_quant.quantity -= qty
-        
-        # --- INTERNAL AUTOMATION TRIGGER ---
-        if previous_qty > variant.min_threshold and src_quant.quantity <= variant.min_threshold:
-            EventBus.on_stock_alert(variant.reference, src_quant.quantity, background_tasks)
-        dest_quant.quantity += qty
+        try:
+            result = InventoryService.move_stock(
+                db,
+                variant_id=variant.id,
+                source_location_id=wh_loc.id,
+                dest_location_id=prod_loc.id,
+                quantity=qty,
+                reference=f"PROD-{sale.reference}-BOM",
+                notes=f"Débit BOM auto ({file.filename})",
+                author="Système / Admin",
+                allow_negative_source=True,
+            )
+        except ValueError as exc:
+            status_code = 423 if "Zone gelée" in str(exc) else 400
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
-        new_move = models.StockMove(
-            reference=f"PROD-{sale.reference}-BOM",
-            variant_id=variant.id,
-            location_id=wh_loc.id,
-            location_dest_id=prod_loc.id,
-            quantity=qty,
-            notes=f"Débit BOM auto ({file.filename})",
-            author="Système / Admin"
-        )
-        db.add(new_move)
+        if (
+            result.previous_source_quantity is not None
+            and result.new_source_quantity is not None
+            and result.previous_source_quantity > variant.min_threshold
+            and result.new_source_quantity <= variant.min_threshold
+        ):
+            EventBus.on_stock_alert(variant.reference, result.new_source_quantity, background_tasks)
         
         # Log to Chatter
         audit_log = models.ChatterMessage(

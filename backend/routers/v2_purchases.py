@@ -8,6 +8,7 @@ import uuid
 from backend.database import get_db
 from backend import models
 from backend.core import security
+from backend.services.stock_service import InventoryService
 
 router = APIRouter(
     prefix="/v2/purchases",
@@ -159,31 +160,21 @@ def receive_purchase_order(po_id: int, data: PurchaseOrderReceiveInput, db: Sess
     for line in po.lines:
         remaining = line.quantity - line.quantity_received
         if remaining > 0:
-            # Create StockMove
             ref_move = f"IN/{po.reference}/{line.id}"
-            move = models.StockMove(
-                reference=ref_move,
-                variant_id=line.variant_id,
-                location_id=supplier_loc.id,
-                location_dest_id=data.target_location_id,
-                quantity=remaining,
-                state="done",
-                notes=f"Réception auto depuis {po.reference}",
-                author=po.author
-            )
-            db.add(move)
-            
-            # Update Quant
-            quant = db.query(models.StockQuant).filter(
-                models.StockQuant.variant_id == line.variant_id,
-                models.StockQuant.location_id == data.target_location_id
-            ).first()
-            if not quant:
-                quant = models.StockQuant(variant_id=line.variant_id, location_id=data.target_location_id, quantity=0)
-                db.add(quant)
-            quant.quantity += remaining
-            if line.variant:
-                line.variant.quantity_in_stock = (line.variant.quantity_in_stock or 0) + remaining
+            try:
+                InventoryService.move_stock(
+                    db,
+                    variant_id=line.variant_id,
+                    source_location_id=supplier_loc.id,
+                    dest_location_id=data.target_location_id,
+                    quantity=remaining,
+                    reference=ref_move,
+                    notes=f"Réception auto depuis {po.reference}",
+                    author=po.author,
+                )
+            except ValueError as exc:
+                status_code = 423 if "Zone gelée" in str(exc) else 400
+                raise HTTPException(status_code=status_code, detail=str(exc)) from exc
             
             line.quantity_received = line.quantity
             
