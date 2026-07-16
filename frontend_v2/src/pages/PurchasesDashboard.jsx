@@ -50,6 +50,7 @@ export default function PurchasesDashboard() {
     
     // Receive form
     const [receiveTargetLoc, setReceiveTargetLoc] = useState('');
+    const [receiveLines, setReceiveLines] = useState([]);
 
     const queryClient = useQueryClient();
 
@@ -162,15 +163,22 @@ export default function PurchasesDashboard() {
             alert("Veuillez sélectionner un emplacement de destination.");
             return;
         }
+        const lines = receiveLines
+            .map(line => ({ line_id: line.line_id, quantity: parseFloat(line.quantity || 0) }))
+            .filter(line => line.quantity > 0);
+        if (lines.length === 0) {
+            alert("Veuillez saisir au moins une quantité à réceptionner.");
+            return;
+        }
         try {
-            await api.post(`/v2/purchases/${selectedPO.id}/receive`, { target_location_id: parseInt(receiveTargetLoc) });
+            await api.post(`/v2/purchases/${selectedPO.id}/receive`, { target_location_id: parseInt(receiveTargetLoc), lines });
             setShowReceiveModal(false);
-            setSelectedPO(null);
             queryClient.invalidateQueries(['purchases']);
+            await openPODetails(selectedPO.id);
             alert("Réception effectuée avec succès et stock mis à jour !");
         } catch (err) {
             console.error(err);
-            alert("Erreur lors de la réception.");
+            alert(err.response?.data?.detail || "Erreur lors de la réception.");
         }
     };
 
@@ -204,6 +212,36 @@ export default function PurchasesDashboard() {
         newLines.splice(index, 1);
         setNewPO({ ...newPO, lines: newLines });
     };
+
+    const openReceiveModal = () => {
+        const lines = (selectedPO?.lines || [])
+            .map(line => {
+                const remaining = Math.max((line.quantity || 0) - (line.quantity_received || 0), 0);
+                return {
+                    line_id: line.id,
+                    product_name: line.product_name,
+                    variant_ref: line.variant_ref,
+                    ordered: line.quantity || 0,
+                    received: line.quantity_received || 0,
+                    remaining,
+                    quantity: remaining,
+                };
+            })
+            .filter(line => line.remaining > 0);
+        setReceiveTargetLoc('');
+        setReceiveLines(lines);
+        setShowReceiveModal(true);
+    };
+
+    const updateReceiveLine = (lineId, value) => {
+        setReceiveLines(lines => lines.map(line => (
+            line.line_id === lineId
+                ? { ...line, quantity: Math.min(Math.max(parseFloat(value || 0), 0), line.remaining) }
+                : line
+        )));
+    };
+
+    const receiveQuantityTotal = receiveLines.reduce((sum, line) => sum + (parseFloat(line.quantity || 0) || 0), 0);
 
 
     const filteredPurchases = purchases.filter(p => 
@@ -441,7 +479,7 @@ export default function PurchasesDashboard() {
 
                                 {(selectedPO.status === 'DRAFT' || selectedPO.status === 'SENT' || selectedPO.status === 'PARTIAL') && (
                                     <div className="mt-8 flex justify-end">
-                                        <button onClick={() => setShowReceiveModal(true)} className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/30 transition-all font-black flex items-center gap-2">
+                                        <button onClick={openReceiveModal} className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/30 transition-all font-black flex items-center gap-2">
                                             <PackageOpen className="w-5 h-5"/> Réceptionner les Articles
                                         </button>
                                     </div>
@@ -642,28 +680,93 @@ export default function PurchasesDashboard() {
             {/* RECEIVE MODAL */}
             {showReceiveModal && selectedPO && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full border border-slate-100">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-black text-2xl flex items-center gap-3">
-                                <Truck className="w-6 h-6 text-emerald-600"/> Réceptionner
-                            </h3>
-                            <button onClick={()=>setShowReceiveModal(false)} className="text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full border border-slate-100 overflow-hidden">
+                        <div className="px-8 py-6 bg-slate-900 text-white flex justify-between items-start">
+                            <div>
+                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-300/20 text-emerald-200 text-[10px] font-black uppercase tracking-widest mb-3">
+                                    <Truck className="w-3.5 h-3.5"/> Réception fournisseur
+                                </div>
+                                <h3 className="font-black text-3xl">Réception partielle</h3>
+                                <p className="text-sm font-medium text-slate-300 mt-1">{selectedPO.reference} · {selectedPO.supplier}</p>
+                            </div>
+                            <button onClick={()=>setShowReceiveModal(false)} className="text-slate-300 hover:bg-white/10 p-2 rounded-full"><X className="w-5 h-5"/></button>
                         </div>
-                        <p className="text-sm font-bold text-slate-500 mb-6">
-                            La réception complète ajoutera les stocks en attente du Bon de Commande <span className="text-slate-900">{selectedPO.reference}</span> vers l'entrepôt physique choisi.
-                        </p>
-                        <div className="mb-6">
-                            <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Emplacement de Destination</label>
-                            <select value={receiveTargetLoc} onChange={e=>setReceiveTargetLoc(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500">
-                                <option value="">-- Choisir un entrepôt --</option>
-                                {locations.map(l => (
-                                    <option key={l.id} value={l.id}>{l.name}</option>
-                                ))}
-                            </select>
+
+                        <div className="p-8 space-y-6 bg-slate-50">
+                            <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-4">
+                                <div className="bg-white rounded-2xl border border-slate-200 p-5">
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Emplacement de destination</label>
+                                    <select value={receiveTargetLoc} onChange={e=>setReceiveTargetLoc(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500">
+                                        <option value="">Choisir un entrepôt</option>
+                                        {locations.map(l => (
+                                            <option key={l.id} value={l.id}>{l.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="bg-emerald-600 text-white rounded-2xl p-5 shadow-lg">
+                                    <p className="text-[10px] font-black text-emerald-100 uppercase tracking-widest">Total à recevoir</p>
+                                    <p className="text-3xl font-black mt-2">{receiveQuantityTotal.toLocaleString('fr-FR')}</p>
+                                    <p className="text-xs font-bold text-emerald-100 mt-1">{receiveLines.filter(l => parseFloat(l.quantity || 0) > 0).length} ligne(s)</p>
+                                </div>
+                            </div>
+
+                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                                    <div>
+                                        <h4 className="font-black text-slate-900">Lignes à réceptionner</h4>
+                                        <p className="text-xs font-medium text-slate-500">Saisissez uniquement les quantités réellement arrivées.</p>
+                                    </div>
+                                    <button
+                                        onClick={() => setReceiveLines(lines => lines.map(line => ({ ...line, quantity: line.remaining })))}
+                                        className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm font-black hover:bg-slate-50"
+                                    >
+                                        Tout recevoir
+                                    </button>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {receiveLines.map(line => (
+                                        <div key={line.line_id} className="grid grid-cols-[1fr_110px_110px_130px] gap-4 items-center px-5 py-4">
+                                            <div>
+                                                <p className="font-black text-slate-900">{line.product_name}</p>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{line.variant_ref}</p>
+                                            </div>
+                                            <div className="text-center">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Commandé</p>
+                                                <p className="font-black text-slate-800">{Number(line.ordered || 0).toLocaleString('fr-FR')}</p>
+                                            </div>
+                                            <div className="text-center">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Reste</p>
+                                                <p className="font-black text-orange-600">{Number(line.remaining || 0).toLocaleString('fr-FR')}</p>
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Reçu maintenant</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    max={line.remaining}
+                                                    step="0.01"
+                                                    value={line.quantity}
+                                                    onChange={e => updateReceiveLine(line.line_id, e.target.value)}
+                                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-center font-black text-emerald-600 outline-none focus:ring-2 focus:ring-emerald-500"
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {receiveLines.length === 0 && (
+                                        <div className="p-10 text-center text-slate-400 font-black">
+                                            Toutes les lignes de ce bon sont déjà réceptionnées.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
-                        <button onClick={handleReceivePO} disabled={!receiveTargetLoc} className="w-full py-4 bg-emerald-600 disabled:bg-slate-300 hover:bg-emerald-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
-                            Confirmer la Réception
-                        </button>
+
+                        <div className="px-8 py-5 bg-white border-t border-slate-100 flex justify-between items-center">
+                            <button onClick={()=>setShowReceiveModal(false)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50">Annuler</button>
+                            <button onClick={handleReceivePO} disabled={!receiveTargetLoc || receiveQuantityTotal <= 0} className="px-8 py-4 bg-emerald-600 disabled:bg-slate-300 hover:bg-emerald-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
+                                Valider la réception
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

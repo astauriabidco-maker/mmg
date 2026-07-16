@@ -88,7 +88,12 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
             json={"target_location_id": target_location_id},
         )
         assert receive_response.status_code == 200, receive_response.text
-        assert receive_response.json() == {"status": "success", "po_status": "RECEIVED"}
+        assert receive_response.json() == {
+            "status": "success",
+            "po_status": "RECEIVED",
+            "received_lines": 1,
+            "received_quantity": 7.0,
+        }
 
         details_response = client.get(f"/v2/purchases/{po_id}", headers=headers)
         assert details_response.status_code == 200, details_response.text
@@ -127,7 +132,7 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
         assert transactions[0]["quantity_change"] == 7.0
         assert transactions[0]["transaction_type"] == "Fournisseurs \u2794 WH/Test Achats"
         assert transactions[0]["author"] == "purchase-tester"
-        assert transactions[0]["notes"] == f"R\u00e9ception auto depuis {details['reference']}"
+        assert transactions[0]["notes"] == f"R\u00e9ception fournisseur depuis {details['reference']}"
 
         with TestingSessionLocal() as db:
             variant = db.query(models.ProductVariant).filter_by(id=variant_id).one()
@@ -137,6 +142,121 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
         assert move.location_dest_id == target_location_id
         assert move.quantity == 7.0
         assert move.state == "done"
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_purchase_order_can_be_received_partially_then_completed():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        client = TestClient(app)
+        token = security.create_access_token({"sub": "purchase-tester", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
+
+        product_response = client.post(
+            "/v2/stock/products",
+            headers=headers,
+            json={
+                "reference_base": "TEST-PARTIAL-PO",
+                "name": "Profil réception partielle",
+                "material_type": "PVC",
+                "unit": "barre",
+                "supplier": "Fournisseur test",
+                "variants": [
+                    {
+                        "reference": "TEST-PARTIAL-PO-001",
+                        "quantity_in_stock": 0,
+                    }
+                ],
+            },
+        )
+        assert product_response.status_code == 200, product_response.text
+        variant_id = product_response.json()["variants"][0]["id"]
+
+        location_response = client.post(
+            "/v2/stock/locations",
+            headers=headers,
+            json={"name": "WH/Réception partielle", "usage": "internal"},
+        )
+        assert location_response.status_code == 200, location_response.text
+        target_location_id = location_response.json()["id"]
+
+        purchase_response = client.post(
+            "/v2/purchases/",
+            headers=headers,
+            json={
+                "supplier": "Fournisseur test",
+                "lines": [{"variant_id": variant_id, "quantity": 7, "unit_price": 10}],
+            },
+        )
+        assert purchase_response.status_code == 200, purchase_response.text
+        po_id = purchase_response.json()["id"]
+
+        details_response = client.get(f"/v2/purchases/{po_id}", headers=headers)
+        line_id = details_response.json()["lines"][0]["id"]
+
+        partial_response = client.post(
+            f"/v2/purchases/{po_id}/receive",
+            headers=headers,
+            json={
+                "target_location_id": target_location_id,
+                "lines": [{"line_id": line_id, "quantity": 3}],
+            },
+        )
+        assert partial_response.status_code == 200, partial_response.text
+        assert partial_response.json()["po_status"] == "PARTIAL"
+        assert partial_response.json()["received_quantity"] == 3.0
+
+        details_response = client.get(f"/v2/purchases/{po_id}", headers=headers)
+        details = details_response.json()
+        assert details["status"] == "PARTIAL"
+        assert details["lines"][0]["quantity_received"] == 3.0
+
+        over_receive_response = client.post(
+            f"/v2/purchases/{po_id}/receive",
+            headers=headers,
+            json={
+                "target_location_id": target_location_id,
+                "lines": [{"line_id": line_id, "quantity": 5}],
+            },
+        )
+        assert over_receive_response.status_code == 400, over_receive_response.text
+        assert "supérieure au reste" in over_receive_response.json()["detail"]
+
+        complete_response = client.post(
+            f"/v2/purchases/{po_id}/receive",
+            headers=headers,
+            json={
+                "target_location_id": target_location_id,
+                "lines": [{"line_id": line_id, "quantity": 4}],
+            },
+        )
+        assert complete_response.status_code == 200, complete_response.text
+        assert complete_response.json()["po_status"] == "RECEIVED"
+
+        with TestingSessionLocal() as db:
+            quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=target_location_id).one()
+            moves = db.query(models.StockMove).filter_by(variant_id=variant_id).all()
+
+        assert quant.quantity == 7.0
+        assert sorted(move.quantity for move in moves) == [3.0, 4.0]
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)

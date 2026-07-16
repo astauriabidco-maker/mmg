@@ -29,8 +29,13 @@ class PurchaseOrderCreate(BaseModel):
     notes: Optional[str] = None
     lines: List[PurchaseOrderLineInput] = []
 
+class PurchaseOrderReceiveLineInput(BaseModel):
+    line_id: int
+    quantity: float
+
 class PurchaseOrderReceiveInput(BaseModel):
     target_location_id: int
+    lines: Optional[List[PurchaseOrderReceiveLineInput]] = None
 
 @router.get("/ai-recommendations")
 def get_ai_recommendations(db: Session = Depends(get_db)):
@@ -165,11 +170,31 @@ def receive_purchase_order(po_id: int, data: PurchaseOrderReceiveInput, db: Sess
         db.add(supplier_loc)
         db.flush()
         
-    all_received = True
+    requested_lines = {line.line_id: float(line.quantity or 0) for line in (data.lines or [])}
+    if data.lines:
+        po_line_ids = {line.id for line in po.lines}
+        unknown_line_ids = sorted(set(requested_lines.keys()) - po_line_ids)
+        if unknown_line_ids:
+            raise HTTPException(status_code=400, detail=f"Ligne(s) inconnue(s): {unknown_line_ids}")
+
+    received_lines = 0
+    received_quantity = 0.0
     
     for line in po.lines:
         remaining = line.quantity - line.quantity_received
-        if remaining > 0:
+        if remaining <= 0:
+            continue
+
+        receive_qty = remaining if not data.lines else requested_lines.get(line.id, 0)
+        if receive_qty <= 0:
+            continue
+        if receive_qty > remaining:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Quantité reçue supérieure au reste à recevoir pour la ligne {line.id}.",
+            )
+
+        if receive_qty > 0:
             ref_move = f"IN/{po.reference}/{line.id}"
             try:
                 InventoryService.move_stock(
@@ -177,9 +202,9 @@ def receive_purchase_order(po_id: int, data: PurchaseOrderReceiveInput, db: Sess
                     variant_id=line.variant_id,
                     source_location_id=supplier_loc.id,
                     dest_location_id=data.target_location_id,
-                    quantity=remaining,
+                    quantity=receive_qty,
                     reference=ref_move,
-                    notes=f"Réception auto depuis {po.reference}",
+                    notes=f"Réception fournisseur depuis {po.reference}",
                     author=po.author,
                     source_screen="purchases.receipt",
                     document_type="purchase_order",
@@ -190,10 +215,22 @@ def receive_purchase_order(po_id: int, data: PurchaseOrderReceiveInput, db: Sess
                 status_code = 423 if "Zone gelée" in str(exc) else 400
                 raise HTTPException(status_code=status_code, detail=str(exc)) from exc
             
-            line.quantity_received = line.quantity
+            line.quantity_received += receive_qty
+            received_lines += 1
+            received_quantity += receive_qty
             
-    if all_received:
+    if received_lines == 0:
+        raise HTTPException(status_code=400, detail="Aucune quantité à réceptionner.")
+
+    if all((line.quantity_received or 0) >= (line.quantity or 0) for line in po.lines):
         po.status = models.PurchaseOrderStatus.RECEIVED
+    elif any((line.quantity_received or 0) > 0 for line in po.lines):
+        po.status = models.PurchaseOrderStatus.PARTIAL
         
     db.commit()
-    return {"status": "success", "po_status": po.status}
+    return {
+        "status": "success",
+        "po_status": po.status,
+        "received_lines": received_lines,
+        "received_quantity": received_quantity,
+    }
