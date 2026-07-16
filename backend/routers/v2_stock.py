@@ -964,6 +964,41 @@ def create_location(loc: schemas.StockLocationCreate, db: Session = Depends(get_
     db.refresh(db_loc)
     return db_loc
 
+@router.put("/locations/{loc_id}", response_model=schemas.StockLocationResponse)
+def update_location(loc_id: int, payload: schemas.StockLocationUpdate, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
+    if role not in ["ADMIN"]:
+        raise HTTPException(status_code=403, detail="Seul un Administrateur peut structurer les entrepôts.")
+
+    loc = db.query(models.StockLocation).filter(models.StockLocation.id == loc_id).first()
+    if not loc:
+        raise HTTPException(status_code=404, detail="Emplacement introuvable.")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data:
+        name = (data["name"] or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Nom d'emplacement obligatoire.")
+        existing = (
+            db.query(models.StockLocation)
+            .filter(models.StockLocation.name == name, models.StockLocation.id != loc_id)
+            .first()
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="Un emplacement porte déjà ce nom.")
+        loc.name = name
+    if "usage" in data and data["usage"]:
+        loc.usage = data["usage"]
+    if "parent_id" in data:
+        if data["parent_id"] == loc_id:
+            raise HTTPException(status_code=400, detail="Un emplacement ne peut pas être son propre parent.")
+        loc.parent_id = data["parent_id"]
+    if "is_active" in data and data["is_active"] is not None:
+        loc.is_active = data["is_active"]
+
+    db.commit()
+    db.refresh(loc)
+    return loc
+
 @router.delete("/locations/{loc_id}")
 def delete_location(loc_id: int, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
     if role not in ["ADMIN", "SUPER_ADMIN"]:

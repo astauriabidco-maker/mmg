@@ -328,6 +328,12 @@ class StockLocationBase(BaseModel):
 class StockLocationCreate(StockLocationBase):
     pass
 
+class StockLocationUpdate(BaseModel):
+    name: Optional[str] = None
+    usage: Optional[str] = None
+    parent_id: Optional[int] = None
+    is_active: Optional[bool] = None
+
 class StockLocationResponse(StockLocationBase):
     id: int
     model_config = ConfigDict(from_attributes=True)

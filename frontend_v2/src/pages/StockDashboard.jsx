@@ -47,6 +47,7 @@ export default function StockDashboard() {
     
     const [showNewProductModal, setShowNewProductModal] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
+    const [showLocationManagerModal, setShowLocationManagerModal] = useState(false);
     const [massImportFile, setMassImportFile] = useState(null);
     const [draftCatalogFile, setDraftCatalogFile] = useState(null);
     const [draftCatalogImporting, setDraftCatalogImporting] = useState(false);
@@ -56,6 +57,9 @@ export default function StockDashboard() {
     const [workshopPreview, setWorkshopPreview] = useState(null);
     const [workshopLoading, setWorkshopLoading] = useState(false);
     const [reservationActionId, setReservationActionId] = useState(null);
+    const [locationForm, setLocationForm] = useState({ name: '', usage: 'internal', parent_id: '' });
+    const [editingLocationId, setEditingLocationId] = useState(null);
+    const [editingLocationName, setEditingLocationName] = useState('');
     const [newProductForm, setNewProductForm] = useState({
         reference_base: '', name: '', material_type: 'PVC', unit: 'pce', supplier: '', product_type: 'stockable', available_in_pos: false, image_url: '', technical_doc_url: '', compatible_series: '',
         variant_ref: '', barcode: '', color: '', length_per_unit: '', supplier_reference: '', cost_price: '', min_threshold: 10, location: ''
@@ -160,7 +164,7 @@ export default function StockDashboard() {
     };
 
     const handleDeleteLocation = async (id, e) => {
-        e.stopPropagation();
+        if (e?.stopPropagation) e.stopPropagation();
         if (!window.confirm("Action critique. Souhaitez-vous retirer ce lieu ?")) return;
         try {
             const res = await api.delete(`/v2/stock/locations/${id}`);
@@ -176,6 +180,39 @@ export default function StockDashboard() {
             console.error(error);
             const errDetail = error.response?.data?.detail || error.message || "Impossible de traiter la demande.";
             alert("Erreur : " + errDetail);
+        }
+    };
+
+    const handleCreateManagedLocation = async (event) => {
+        event.preventDefault();
+        if (!locationForm.name.trim()) return;
+        try {
+            await api.post('/v2/stock/locations', {
+                name: locationForm.name.trim(),
+                usage: locationForm.usage,
+                parent_id: locationForm.parent_id ? Number(locationForm.parent_id) : null,
+            });
+            setLocationForm({ name: '', usage: 'internal', parent_id: '' });
+            await queryClient.invalidateQueries({ queryKey: ['locations'] });
+        } catch (error) {
+            alert(error.response?.data?.detail || "Création de zone impossible.");
+        }
+    };
+
+    const startEditLocation = (location) => {
+        setEditingLocationId(location.id);
+        setEditingLocationName(location.name);
+    };
+
+    const saveLocationName = async (locationId) => {
+        if (!editingLocationName.trim()) return;
+        try {
+            await api.put(`/v2/stock/locations/${locationId}`, { name: editingLocationName.trim() });
+            setEditingLocationId(null);
+            setEditingLocationName('');
+            await queryClient.invalidateQueries({ queryKey: ['locations'] });
+        } catch (error) {
+            alert(error.response?.data?.detail || "Renommage impossible.");
         }
     };
 
@@ -660,6 +697,85 @@ export default function StockDashboard() {
         );
     };
 
+    const renderManagedLocationTree = (parentLoc, depth = 0) => {
+        const children = locations.filter(l => l.parent_id === parentLoc.id);
+        const isEditing = editingLocationId === parentLoc.id;
+        const usageLabel = {
+            internal: 'Stock interne',
+            production: 'Production',
+            supplier: 'Fournisseur',
+            customer: 'Client',
+            inventory: 'Inventaire virtuel',
+        }[parentLoc.usage] || parentLoc.usage;
+
+        return (
+            <div key={parentLoc.id} className="space-y-2">
+                <div className="rounded-2xl border border-slate-200 bg-white p-3 flex items-center justify-between gap-3" style={{ marginLeft: `${depth * 18}px` }}>
+                    <div className="flex items-center gap-3 min-w-0">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${parentLoc.usage === 'internal' ? 'bg-blue-50 text-blue-600' : parentLoc.usage === 'production' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                            {parentLoc.usage === 'internal' ? <FolderOpen className="w-4 h-4" /> : <MapPin className="w-4 h-4" />}
+                        </div>
+                        <div className="min-w-0">
+                            {isEditing ? (
+                                <input
+                                    autoFocus
+                                    value={editingLocationName}
+                                    onChange={event => setEditingLocationName(event.target.value)}
+                                    onKeyDown={event => {
+                                        if (event.key === 'Enter') saveLocationName(parentLoc.id);
+                                        if (event.key === 'Escape') setEditingLocationId(null);
+                                    }}
+                                    className="w-full rounded-lg border border-blue-200 px-3 py-2 text-sm font-black outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                            ) : (
+                                <p className="font-black text-slate-900 truncate">{parentLoc.name}</p>
+                            )}
+                            <p className="text-[11px] font-bold text-slate-400">
+                                {usageLabel} {parentLoc.parent_id ? `- sous ${locations.find(l => l.id === parentLoc.parent_id)?.name || 'zone'}` : '- zone principale'}
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setActiveLocationId(parentLoc.id);
+                                setInventoryFocus('stock');
+                                setShowDraftOnly(false);
+                                setSearchTerm('');
+                                setShowLocationManagerModal(false);
+                            }}
+                            className="px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-black"
+                        >
+                            Voir stock
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setLocationForm({ name: '', usage: parentLoc.usage, parent_id: String(parentLoc.id) })}
+                            className="px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-black inline-flex items-center gap-1"
+                        >
+                            <Plus className="w-3.5 h-3.5" />
+                            Sous-zone
+                        </button>
+                        {isEditing ? (
+                            <button type="button" onClick={() => saveLocationName(parentLoc.id)} className="px-3 py-2 rounded-xl bg-slate-900 text-white text-xs font-black">
+                                Enregistrer
+                            </button>
+                        ) : (
+                            <button type="button" onClick={() => startEditLocation(parentLoc)} className="px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-black">
+                                Renommer
+                            </button>
+                        )}
+                        <button type="button" onClick={(event) => handleDeleteLocation(parentLoc.id, event)} className="p-2 rounded-xl border border-red-100 bg-red-50 hover:bg-red-100 text-red-600" title="Archiver ou supprimer">
+                            <Trash2 className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
+                {children.map(child => renderManagedLocationTree(child, depth + 1))}
+            </div>
+        );
+    };
+
     const toggleExpand = (id) => {
         setExpandedProducts(prev => ({ ...prev, [id]: !prev[id] }));
     };
@@ -929,8 +1045,22 @@ export default function StockDashboard() {
                     <div className="pt-2 border-t border-white/5">
                         <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-3 flex justify-between items-center">
                             Filtres par Emplacements
-                            {isAdmin && <button onClick={(e) => setAddingSubLocTo('root')} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors" title="Créer un Entrepôt Principal"><Plus className="w-3.5 h-3.5"/></button>}
+                            {isAdmin && (
+                                <button onClick={(e) => setAddingSubLocTo('root')} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors" title="Créer rapidement une zone">
+                                    <Plus className="w-3.5 h-3.5"/>
+                                </button>
+                            )}
                         </div>
+
+                        {isAdmin && (
+                            <button
+                                onClick={() => setShowLocationManagerModal(true)}
+                                className="w-full mb-3 px-3 py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white font-black text-sm flex items-center justify-center gap-2 transition-all"
+                            >
+                                <MapPin className="w-4 h-4" />
+                                Gérer les zones
+                            </button>
+                        )}
 
                         <div 
                             onClick={() => {
@@ -1357,6 +1487,118 @@ export default function StockDashboard() {
             </>
             )}
             </div>
+            {/* -------- LOCATION MANAGER POPUP -------- */}
+            {showLocationManagerModal && (
+                <div className="fixed inset-0 bg-slate-950/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] border border-slate-100 overflow-hidden flex flex-col">
+                        <div className="px-6 py-5 bg-slate-900 text-white flex items-start justify-between gap-4">
+                            <div>
+                                <p className="text-[10px] uppercase font-black tracking-widest text-blue-200 mb-2">Entrepôt & rangement</p>
+                                <h3 className="text-2xl font-black flex items-center gap-3">
+                                    <MapPin className="w-6 h-6 text-blue-300" />
+                                    Gestion des zones
+                                </h3>
+                                <p className="text-sm font-bold text-slate-300 mt-1">
+                                    Les zones servent à ranger, transférer, compter et geler le stock pendant inventaire.
+                                </p>
+                            </div>
+                            <button onClick={() => setShowLocationManagerModal(false)} className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] overflow-hidden">
+                            <form onSubmit={handleCreateManagedLocation} className="p-6 border-r border-slate-100 bg-slate-50 space-y-4">
+                                <div>
+                                    <p className="text-xs uppercase tracking-widest font-black text-slate-400">Créer une zone</p>
+                                    <p className="text-sm font-bold text-slate-600 mt-1">
+                                        Créez une zone principale ou une sous-zone directement exploitable par réception, transfert et inventaire.
+                                    </p>
+                                </div>
+                                <label className="block space-y-1">
+                                    <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Nom</span>
+                                    <input
+                                        value={locationForm.name}
+                                        onChange={event => setLocationForm(prev => ({ ...prev, name: event.target.value }))}
+                                        placeholder="Ex: Rack ALU A"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-black outline-none focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </label>
+                                <label className="block space-y-1">
+                                    <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Parent</span>
+                                    <select
+                                        value={locationForm.parent_id}
+                                        onChange={event => {
+                                            const parent = locations.find(location => String(location.id) === event.target.value);
+                                            setLocationForm(prev => ({ ...prev, parent_id: event.target.value, usage: parent?.usage || prev.usage }));
+                                        }}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="">Zone principale</option>
+                                        {locations.map(location => (
+                                            <option key={location.id} value={location.id}>{getFullLocationName(location)}</option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className="block space-y-1">
+                                    <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Type</span>
+                                    <select
+                                        value={locationForm.usage}
+                                        onChange={event => setLocationForm(prev => ({ ...prev, usage: event.target.value }))}
+                                        disabled={Boolean(locationForm.parent_id)}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
+                                    >
+                                        <option value="internal">Stock interne</option>
+                                        <option value="production">Production atelier</option>
+                                        <option value="supplier">Fournisseur virtuel</option>
+                                        <option value="customer">Client virtuel</option>
+                                        <option value="inventory">Inventaire virtuel</option>
+                                    </select>
+                                    {locationForm.parent_id && (
+                                        <p className="text-xs font-bold text-slate-400">Une sous-zone hérite du type de son parent.</p>
+                                    )}
+                                </label>
+                                <button
+                                    type="submit"
+                                    disabled={!locationForm.name.trim()}
+                                    className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black"
+                                >
+                                    Créer la zone
+                                </button>
+                                <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm font-bold text-amber-800">
+                                    Conseil : nommez les zones comme l’atelier parle réellement. Un opérateur doit pouvoir trouver la zone sans interprétation.
+                                </div>
+                            </form>
+
+                            <div className="p-6 overflow-y-auto max-h-[70vh] space-y-4">
+                                <div className="flex items-center justify-between gap-4">
+                                    <div>
+                                        <p className="text-xs uppercase tracking-widest font-black text-slate-400">Arborescence</p>
+                                        <h4 className="text-xl font-black text-slate-900">Zones actives</h4>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => queryClient.invalidateQueries({ queryKey: ['locations'] })}
+                                        className="px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-black inline-flex items-center gap-2"
+                                    >
+                                        <RefreshCw className="w-4 h-4" />
+                                        Actualiser
+                                    </button>
+                                </div>
+                                <div className="space-y-2">
+                                    {locations.filter(location => !location.parent_id).map(location => renderManagedLocationTree(location))}
+                                    {locations.length === 0 && (
+                                        <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center">
+                                            <MapPin className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                                            <p className="font-black text-slate-500">Aucune zone active.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             {/* -------- TRANSFER POPUP -------- */}
             {showTransferModal && (
                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">

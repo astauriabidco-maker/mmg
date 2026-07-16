@@ -63,6 +63,14 @@ def test_physical_inventory_validation_creates_adjustment_move():
         assert location_response.status_code == 200, location_response.text
         location_id = location_response.json()["id"]
 
+        rename_response = client.put(
+            f"/v2/stock/locations/{location_id}",
+            headers=headers,
+            json={"name": "WH/Inventaire Test Renommé"},
+        )
+        assert rename_response.status_code == 200, rename_response.text
+        assert rename_response.json()["name"] == "WH/Inventaire Test Renommé"
+
         initial_move = client.post(
             "/v2/stock/transaction",
             headers=headers,
