@@ -101,6 +101,13 @@ export default function PurchasesDashboard() {
 
     const availableVariants = variantsData;
     const locations = locationsData;
+    const selectedSupplier = suppliers.find(s => s.name === newPO.supplier);
+    const poSubtotal = newPO.lines.reduce((sum, line) => {
+        const qty = parseFloat(line.quantity || 0);
+        const price = parseFloat(line.unit_price || 0);
+        return sum + (Number.isFinite(qty) && Number.isFinite(price) ? qty * price : 0);
+    }, 0);
+    const validLines = newPO.lines.filter(line => line.variant_id && parseFloat(line.quantity || 0) > 0).length;
 
     const handleCreateSupplier = async () => {
         try {
@@ -120,7 +127,9 @@ export default function PurchasesDashboard() {
 
     const handleCreatePO = async () => {
         try {
-            const lines = newPO.lines.map(l => ({
+            const lines = newPO.lines
+                .filter(l => l.variant_id && parseFloat(l.quantity || 0) > 0)
+                .map(l => ({
                 variant_id: l.variant_id,
                 quantity: parseFloat(l.quantity),
                 unit_price: parseFloat(l.unit_price)
@@ -168,6 +177,12 @@ export default function PurchasesDashboard() {
     const updateLine = (index, field, value) => {
         const newLines = [...newPO.lines];
         newLines[index][field] = value;
+        if (field === 'variant_id') {
+            const variant = availableVariants.find(v => String(v.id) === String(value));
+            if (variant && (!newLines[index].unit_price || parseFloat(newLines[index].unit_price) === 0)) {
+                newLines[index].unit_price = variant.cost_price || 0;
+            }
+        }
         setNewPO({ ...newPO, lines: newLines });
     };
 
@@ -430,68 +445,148 @@ export default function PurchasesDashboard() {
             {/* CREATE MODAL */}
             {showCreateModal && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-4xl w-full border border-slate-100 max-h-[90vh] flex flex-col">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-black text-2xl flex items-center gap-3">
-                                <Plus className="w-6 h-6 text-blue-600"/> Nouveau Bon de Commande
-                            </h3>
-                            <button onClick={()=>setShowCreateModal(false)} className="text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
-                        </div>
-                        
-                        <div className="grid grid-cols-2 gap-4 mb-6 shrink-0">
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-6xl w-full border border-slate-100 max-h-[92vh] flex flex-col overflow-hidden">
+                        <div className="px-8 py-6 bg-slate-900 text-white flex justify-between items-start">
                             <div>
-                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Fournisseur</label>
-                                <select value={newPO.supplier} onChange={e=>setNewPO({...newPO, supplier: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500">
-                                    <option value="">-- Choisir dans le catalogue --</option>
-                                    {suppliers.map(s => (
-                                        <option key={s.id} value={s.name}>{s.name}</option>
-                                    ))}
-                                </select>
+                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-300/20 text-blue-200 text-[10px] font-black uppercase tracking-widest mb-3">
+                                    <Plus className="w-3.5 h-3.5" /> Achat fournisseur
+                                </div>
+                                <h3 className="font-black text-3xl">Nouveau bon de commande</h3>
+                                <p className="text-sm font-medium text-slate-300 mt-1">Sélection fournisseur, articles, prix et conditions avant validation.</p>
                             </div>
-                            <div>
-                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Date de Livraison Prévue</label>
-                                <input type="date" value={newPO.expected_date} onChange={e=>setNewPO({...newPO, expected_date: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"/>
+                            <button onClick={()=>setShowCreateModal(false)} className="text-slate-300 hover:bg-white/10 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto bg-slate-50">
+                            <div className="grid grid-cols-1 xl:grid-cols-[1.45fr_0.75fr] gap-6 p-8">
+                                <div className="space-y-6">
+                                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Fournisseur</label>
+                                                <select value={newPO.supplier} onChange={e=>setNewPO({...newPO, supplier: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500">
+                                                    <option value="">Choisir un fournisseur</option>
+                                                    {suppliers.map(s => (
+                                                        <option key={s.id} value={s.name}>{s.name}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Livraison prévue</label>
+                                                <input type="date" value={newPO.expected_date} onChange={e=>setNewPO({...newPO, expected_date: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"/>
+                                            </div>
+                                        </div>
+                                        {selectedSupplier && (
+                                            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                                                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contact</p>
+                                                    <p className="font-black text-slate-800 truncate">{selectedSupplier.contact_name || selectedSupplier.email || 'Non renseigné'}</p>
+                                                </div>
+                                                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Délai moyen</p>
+                                                    <p className="font-black text-slate-800">{selectedSupplier.lead_time_days ? `${selectedSupplier.lead_time_days} jours` : 'Non renseigné'}</p>
+                                                </div>
+                                                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Paiement</p>
+                                                    <p className="font-black text-slate-800 truncate">{selectedSupplier.payment_terms || 'Non renseigné'}</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                                        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                                            <div>
+                                                <h4 className="font-black text-slate-900">Articles commandés</h4>
+                                                <p className="text-xs font-medium text-slate-500">{validLines}/{newPO.lines.length} ligne(s) prêtes</p>
+                                            </div>
+                                            <button type="button" onClick={addLineToPO} className="text-sm bg-blue-600 text-white px-4 py-2 rounded-xl font-black hover:bg-blue-500 flex items-center gap-2 shadow-sm">
+                                                <Plus className="w-4 h-4"/> Ajouter une ligne
+                                            </button>
+                                        </div>
+                                        <div className="p-4 space-y-3">
+                                            {newPO.lines.map((line, idx) => {
+                                                const variant = availableVariants.find(v => String(v.id) === String(line.variant_id));
+                                                const lineTotal = (parseFloat(line.quantity || 0) || 0) * (parseFloat(line.unit_price || 0) || 0);
+                                                return (
+                                                    <div key={idx} className="grid grid-cols-[1fr_96px_120px_120px_40px] gap-3 items-center bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                                        <div>
+                                                            <select value={line.variant_id} onChange={e=>updateLine(idx, 'variant_id', e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                                                                <option value="">Sélectionner un article du catalogue</option>
+                                                                {availableVariants.map(v => (
+                                                                    <option key={v.id} value={v.id}>{v.product_name} - {v.reference}</option>
+                                                                ))}
+                                                            </select>
+                                                            {variant && (
+                                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                                                                    {variant.reference} · stock actuel {variant.quantity_in_stock ?? 0}
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                        <input type="number" min="0" placeholder="Qté" value={line.quantity} onChange={e=>updateLine(idx, 'quantity', e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-center font-black text-blue-600 outline-none focus:ring-2 focus:ring-blue-500"/>
+                                                        <input type="number" min="0" step="0.01" placeholder="Prix U." value={line.unit_price} onChange={e=>updateLine(idx, 'unit_price', e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-center font-mono font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"/>
+                                                        <div className="text-right pr-2">
+                                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</p>
+                                                            <p className="font-black text-slate-900">{lineTotal.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</p>
+                                                        </div>
+                                                        <button onClick={() => removeLine(idx)} className="p-2 text-red-400 hover:bg-red-50 rounded-lg"><X className="w-4 h-4"/></button>
+                                                    </div>
+                                                );
+                                            })}
+                                            {newPO.lines.length === 0 && (
+                                                <button onClick={addLineToPO} className="w-full border-2 border-dashed border-slate-200 rounded-2xl py-10 text-slate-400 hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50 font-black">
+                                                    Ajouter le premier article
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Notes internes / conditions</label>
+                                        <textarea value={newPO.notes} onChange={e=>setNewPO({...newPO, notes: e.target.value})} className="w-full min-h-[90px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500 resize-none" placeholder="Référence fournisseur, urgence, consigne de livraison, conditions négociées..."/>
+                                    </div>
+                                </div>
+
+                                <aside className="space-y-4">
+                                    <div className="bg-slate-900 text-white rounded-2xl p-6 shadow-xl">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total commande HT</p>
+                                        <p className="text-4xl font-black">{poSubtotal.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</p>
+                                        <div className="mt-5 grid grid-cols-2 gap-3">
+                                            <div className="bg-white/10 rounded-xl p-3">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lignes</p>
+                                                <p className="text-xl font-black">{newPO.lines.length}</p>
+                                            </div>
+                                            <div className="bg-white/10 rounded-xl p-3">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Prêtes</p>
+                                                <p className="text-xl font-black">{validLines}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                                        <h4 className="font-black text-slate-900 mb-3">Contrôles avant validation</h4>
+                                        <div className="space-y-3 text-sm font-bold">
+                                            <div className={`flex items-center gap-2 ${newPO.supplier ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                <CheckCircle className="w-4 h-4" /> Fournisseur sélectionné
+                                            </div>
+                                            <div className={`flex items-center gap-2 ${validLines > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                <CheckCircle className="w-4 h-4" /> Au moins une ligne exploitable
+                                            </div>
+                                            <div className={`flex items-center gap-2 ${poSubtotal >= 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                <CheckCircle className="w-4 h-4" /> Montant calculé
+                                            </div>
+                                        </div>
+                                    </div>
+                                </aside>
                             </div>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto mb-6 bg-slate-50 border border-slate-200 rounded-2xl p-4">
-                            <h4 className="font-black text-sm text-slate-500 uppercase tracking-widest mb-4 flex justify-between items-center">
-                                Lignes (<span className="text-blue-600">{newPO.lines.length}</span>)
-                                <button type="button" onClick={addLineToPO} className="text-xs bg-white border border-slate-200 px-3 py-1.5 rounded-lg text-blue-600 hover:bg-blue-50 flex items-center gap-1 shadow-sm">
-                                    <Plus className="w-3 h-3"/> Ajouter Ligne
-                                </button>
-                            </h4>
-                            <div className="space-y-3">
-                                {newPO.lines.map((line, idx) => (
-                                    <div key={idx} className="flex gap-3 items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                                        <div className="flex-1">
-                                            <select value={line.variant_id} onChange={e=>updateLine(idx, 'variant_id', e.target.value)} className="w-full bg-transparent font-bold text-slate-800 text-sm outline-none">
-                                                <option value="">-- Sélectionner Article --</option>
-                                                {availableVariants.map(v => (
-                                                    <option key={v.id} value={v.id}>{v.product_name} - {v.reference}</option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                        <div className="w-24">
-                                            <input type="number" placeholder="Qté" value={line.quantity} onChange={e=>updateLine(idx, 'quantity', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-center font-black text-blue-600"/>
-                                        </div>
-                                        <div className="w-24">
-                                            <input type="number" placeholder="Prix U." value={line.unit_price} onChange={e=>updateLine(idx, 'unit_price', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-center font-mono text-slate-600"/>
-                                        </div>
-                                        <button onClick={() => removeLine(idx)} className="p-2 text-red-400 hover:bg-red-50 rounded-lg"><X className="w-4 h-4"/></button>
-                                    </div>
-                                ))}
-                                {newPO.lines.length === 0 && (
-                                    <div className="text-center py-6 text-slate-400 font-bold text-sm">
-                                        Cliquez sur "Ajouter Ligne" pour commencer.
-                                    </div>
-                                )}
-                            </div>
+                        <div className="px-8 py-5 bg-white border-t border-slate-100 flex justify-between items-center">
+                            <button onClick={()=>setShowCreateModal(false)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50">Annuler</button>
+                            <button onClick={handleCreatePO} disabled={!newPO.supplier || validLines === 0} className="px-8 py-4 bg-blue-600 disabled:bg-slate-300 hover:bg-blue-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg shrink-0">
+                                Valider la commande
+                            </button>
                         </div>
-
-                        <button onClick={handleCreatePO} disabled={!newPO.supplier || newPO.lines.length === 0} className="w-full py-4 bg-blue-600 disabled:bg-slate-300 hover:bg-blue-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg shrink-0">
-                            Valider la Commande
-                        </button>
                     </div>
                 </div>
             )}
