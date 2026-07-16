@@ -47,6 +47,7 @@ class ClientBase(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    country: Optional[str] = None
     tax_id: Optional[str] = None
     customer_type: str = "B2B"
     is_active: bool = True

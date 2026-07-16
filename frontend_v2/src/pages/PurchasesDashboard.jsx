@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShoppingCart, Plus, FileText, Search, ArrowRight, CheckCircle, PackageOpen, X, Truck, Users, Phone, Mail, MapPin, Sparkles, BrainCircuit, Building2 } from 'lucide-react';
+import { ShoppingCart, Plus, FileText, Search, ArrowRight, CheckCircle, PackageOpen, X, Truck, Users, Phone, Mail, MapPin, Sparkles, BrainCircuit, Building2, Globe2 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 const getStatusColor = (status) => {
@@ -36,6 +36,7 @@ export default function PurchasesDashboard() {
         email: '',
         phone: '',
         address: '',
+        country: 'France',
         tax_id: '',
         website: '',
         payment_terms: '',
@@ -1028,9 +1029,24 @@ export default function PurchasesDashboard() {
                                         <input type="text" value={newSupplier.website} onChange={e=>setNewSupplier({...newSupplier, website: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="https://..."/>
                                     </div>
                                 </div>
-                                <div>
-                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Adresse fournisseur</label>
-                                    <input type="text" value={newSupplier.address} onChange={e=>setNewSupplier({...newSupplier, address: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Adresse complète"/>
+                                <div className="grid grid-cols-[1fr_180px] gap-4">
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Adresse fournisseur</label>
+                                        <input type="text" value={newSupplier.address} onChange={e=>setNewSupplier({...newSupplier, address: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Adresse complète"/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Pays</label>
+                                        <input list="supplier-country-options" type="text" value={newSupplier.country} onChange={e=>setNewSupplier({...newSupplier, country: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="France"/>
+                                        <datalist id="supplier-country-options">
+                                            <option value="France" />
+                                            <option value="Espagne" />
+                                            <option value="Italie" />
+                                            <option value="Allemagne" />
+                                            <option value="Portugal" />
+                                            <option value="Belgique" />
+                                            <option value="Cameroun" />
+                                        </datalist>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1121,7 +1137,12 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
                             <div className="flex items-center gap-6 text-slate-300 font-medium">
                                 {sup.tax_id && (
                                     <div className="flex items-center gap-2">
-                                        <Building2 className="w-4 h-4 text-slate-500" /> SIRET: {sup.tax_id}
+                                        <Building2 className="w-4 h-4 text-slate-500" /> TVA/SIRET: {sup.tax_id}
+                                    </div>
+                                )}
+                                {sup.country && (
+                                    <div className="flex items-center gap-2">
+                                        <Globe2 className="w-4 h-4 text-slate-500" /> {sup.country}
                                     </div>
                                 )}
                                 {sup.contact_name && (
@@ -1282,6 +1303,10 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
                                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Site</p>
                                                 <p className="font-black text-slate-800 truncate">{sup.website || 'Non renseigné'}</p>
                                             </div>
+                                            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Pays</p>
+                                                <p className="font-black text-slate-800">{sup.country || 'Non renseigné'}</p>
+                                            </div>
                                         </div>
                                         <div className="text-center p-6 bg-slate-50 rounded-2xl border border-slate-100 mb-6">
                                             <MapPin className="w-8 h-8 text-slate-300 mx-auto mb-3" />
@@ -1293,6 +1318,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
                                                 <div>
                                                     <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Numéro SIRET / TVA</p>
                                                     <p className="font-black text-emerald-900">{sup.tax_id}</p>
+                                                    {sup.country && <p className="text-xs font-bold text-emerald-700 mt-1">Pays fiscal : {sup.country}</p>}
                                                 </div>
                                             </div>
                                         )}

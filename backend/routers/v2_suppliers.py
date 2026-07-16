@@ -19,6 +19,7 @@ class SupplierBase(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    country: Optional[str] = None
     tax_id: Optional[str] = None
     website: Optional[str] = None
     payment_terms: Optional[str] = None
