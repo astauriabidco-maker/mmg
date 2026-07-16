@@ -228,6 +228,40 @@ def test_purchase_order_can_be_received_partially_then_completed():
         details = details_response.json()
         assert details["status"] == "PARTIAL"
         assert details["lines"][0]["quantity_received"] == 3.0
+        assert details["lines"][0]["quantity_invoiceable"] == 3.0
+
+        over_invoice_response = client.post(
+            f"/v2/purchases/{po_id}/supplier-invoices",
+            headers=headers,
+            json={
+                "supplier_reference": "FAC-OVER",
+                "lines": [{"purchase_order_line_id": line_id, "quantity": 4}],
+            },
+        )
+        assert over_invoice_response.status_code == 400, over_invoice_response.text
+        assert "supérieure au reçu non facturé" in over_invoice_response.json()["detail"]
+
+        invoice_response = client.post(
+            f"/v2/purchases/{po_id}/supplier-invoices",
+            headers=headers,
+            json={
+                "supplier_reference": "FAC-PARTIAL",
+                "lines": [{"purchase_order_line_id": line_id, "quantity": 2}],
+            },
+        )
+        assert invoice_response.status_code == 200, invoice_response.text
+        supplier_invoice = invoice_response.json()
+        assert supplier_invoice["reference"].startswith("FF-")
+        assert supplier_invoice["supplier_reference"] == "FAC-PARTIAL"
+        assert supplier_invoice["total_amount"] == 20.0
+
+        details_response = client.get(f"/v2/purchases/{po_id}", headers=headers)
+        details = details_response.json()
+        assert details["supplier_invoice_status"] == "PARTIAL"
+        assert details["quantity_invoiced"] == 2.0
+        assert details["lines"][0]["quantity_invoiced"] == 2.0
+        assert details["lines"][0]["quantity_invoiceable"] == 1.0
+        assert len(details["supplier_invoices"]) == 1
 
         over_receive_response = client.post(
             f"/v2/purchases/{po_id}/receive",
@@ -251,12 +285,31 @@ def test_purchase_order_can_be_received_partially_then_completed():
         assert complete_response.status_code == 200, complete_response.text
         assert complete_response.json()["po_status"] == "RECEIVED"
 
+        final_invoice_response = client.post(
+            f"/v2/purchases/{po_id}/supplier-invoices",
+            headers=headers,
+            json={
+                "supplier_reference": "FAC-BALANCE",
+                "lines": [{"purchase_order_line_id": line_id, "quantity": 5}],
+            },
+        )
+        assert final_invoice_response.status_code == 200, final_invoice_response.text
+
+        details_response = client.get(f"/v2/purchases/{po_id}", headers=headers)
+        details = details_response.json()
+        assert details["supplier_invoice_status"] == "FULL"
+        assert details["quantity_received"] == 7.0
+        assert details["quantity_invoiced"] == 7.0
+        assert details["lines"][0]["quantity_invoiceable"] == 0.0
+
         with TestingSessionLocal() as db:
             quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=target_location_id).one()
             moves = db.query(models.StockMove).filter_by(variant_id=variant_id).all()
+            supplier_invoices = db.query(models.SupplierInvoice).filter_by(purchase_order_id=po_id).all()
 
         assert quant.quantity == 7.0
         assert sorted(move.quantity for move in moves) == [3.0, 4.0]
+        assert len(supplier_invoices) == 2
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)

@@ -37,6 +37,64 @@ class PurchaseOrderReceiveInput(BaseModel):
     target_location_id: int
     lines: Optional[List[PurchaseOrderReceiveLineInput]] = None
 
+class SupplierInvoiceLineInput(BaseModel):
+    purchase_order_line_id: int
+    quantity: float
+
+class SupplierInvoiceCreate(BaseModel):
+    supplier_reference: Optional[str] = None
+    issue_date: Optional[datetime] = None
+    due_date: Optional[datetime] = None
+    notes: Optional[str] = None
+    lines: List[SupplierInvoiceLineInput]
+
+def _supplier_invoice_reference(db: Session) -> str:
+    current_year = datetime.now().year
+    count = db.query(models.SupplierInvoice).filter(models.SupplierInvoice.reference.like(f"FF-{current_year}-%")).count() + 1
+    return f"FF-{current_year}-{count:04d}"
+
+def _invoiced_quantities_by_po_line(db: Session, po_id: int) -> dict[int, float]:
+    invoice_lines = (
+        db.query(models.SupplierInvoiceLine)
+        .join(models.SupplierInvoice, models.SupplierInvoiceLine.invoice_id == models.SupplierInvoice.id)
+        .filter(
+            models.SupplierInvoice.purchase_order_id == po_id,
+            models.SupplierInvoice.status != "CANCELLED",
+        )
+        .all()
+    )
+    quantities: dict[int, float] = {}
+    for line in invoice_lines:
+        quantities[line.purchase_order_line_id] = quantities.get(line.purchase_order_line_id, 0.0) + float(line.quantity or 0)
+    return quantities
+
+def _serialize_supplier_invoice(invoice: models.SupplierInvoice) -> dict:
+    return {
+        "id": invoice.id,
+        "reference": invoice.reference,
+        "supplier_reference": invoice.supplier_reference,
+        "issue_date": invoice.issue_date,
+        "due_date": invoice.due_date,
+        "status": invoice.status,
+        "subtotal": invoice.subtotal,
+        "discount_amount": invoice.discount_amount,
+        "total_amount": invoice.total_amount,
+        "notes": invoice.notes,
+        "lines": [
+            {
+                "id": line.id,
+                "purchase_order_line_id": line.purchase_order_line_id,
+                "variant_id": line.variant_id,
+                "description": line.description,
+                "quantity": line.quantity,
+                "unit_price": line.unit_price,
+                "discount_percent": line.discount_percent,
+                "line_total": line.line_total,
+            }
+            for line in invoice.lines
+        ],
+    }
+
 @router.get("/ai-recommendations")
 def get_ai_recommendations(db: Session = Depends(get_db)):
     variants = db.query(models.ProductVariant).all()
@@ -64,6 +122,9 @@ def get_purchase_orders(db: Session = Depends(get_db)):
     pos = db.query(models.PurchaseOrder).order_by(models.PurchaseOrder.order_date.desc()).all()
     result = []
     for po in pos:
+        invoiced_quantities = _invoiced_quantities_by_po_line(db, po.id)
+        total_received = sum(float(line.quantity_received or 0) for line in po.lines)
+        total_invoiced = sum(float(invoiced_quantities.get(line.id, 0)) for line in po.lines)
         result.append({
             "id": po.id,
             "reference": po.reference,
@@ -73,6 +134,10 @@ def get_purchase_orders(db: Session = Depends(get_db)):
             "status": po.status,
             "total_amount": po.total_amount,
             "lines_count": len(po.lines)
+            ,
+            "supplier_invoice_status": "FULL" if total_received > 0 and total_invoiced >= total_received else "PARTIAL" if total_invoiced > 0 else "NONE",
+            "quantity_received": total_received,
+            "quantity_invoiced": total_invoiced,
         })
     return result
 
@@ -126,8 +191,11 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
     if not po:
         raise HTTPException(status_code=404, detail="PO not found")
         
+    invoiced_quantities = _invoiced_quantities_by_po_line(db, po.id)
     lines = []
     for line in po.lines:
+        quantity_invoiced = float(invoiced_quantities.get(line.id, 0))
+        quantity_invoiceable = max(float(line.quantity_received or 0) - quantity_invoiced, 0)
         lines.append({
             "id": line.id,
             "variant_id": line.variant_id,
@@ -135,10 +203,15 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
             "product_name": line.variant.product.name if line.variant and line.variant.product else "Inconnu",
             "quantity": line.quantity,
             "quantity_received": line.quantity_received,
+            "quantity_invoiced": quantity_invoiced,
+            "quantity_invoiceable": quantity_invoiceable,
             "unit_price": line.unit_price,
             "discount_percent": line.discount_percent or 0,
             "line_total": (line.quantity or 0) * (line.unit_price or 0) * (1 - float(line.discount_percent or 0) / 100),
         })
+
+    total_received = sum(float(line.quantity_received or 0) for line in po.lines)
+    total_invoiced = sum(float(invoiced_quantities.get(line.id, 0)) for line in po.lines)
         
     return {
         "id": po.id,
@@ -151,7 +224,11 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
         "notes": po.notes,
         "author": po.author,
         "global_discount_percent": po.global_discount_percent or 0,
-        "lines": lines
+        "supplier_invoice_status": "FULL" if total_received > 0 and total_invoiced >= total_received else "PARTIAL" if total_invoiced > 0 else "NONE",
+        "quantity_received": total_received,
+        "quantity_invoiced": total_invoiced,
+        "lines": lines,
+        "supplier_invoices": [_serialize_supplier_invoice(invoice) for invoice in po.supplier_invoices],
     }
 
 @router.post("/{po_id}/receive")
@@ -234,3 +311,82 @@ def receive_purchase_order(po_id: int, data: PurchaseOrderReceiveInput, db: Sess
         "received_lines": received_lines,
         "received_quantity": received_quantity,
     }
+
+@router.post("/{po_id}/supplier-invoices")
+def create_supplier_invoice(
+    po_id: int,
+    data: SupplierInvoiceCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po_id).first()
+    if not po:
+        raise HTTPException(status_code=404, detail="PO not found")
+    if not data.lines:
+        raise HTTPException(status_code=400, detail="La facture fournisseur doit contenir au moins une ligne.")
+
+    po_lines = {line.id: line for line in po.lines}
+    requested = {}
+    for line in data.lines:
+        if line.purchase_order_line_id not in po_lines:
+            raise HTTPException(status_code=400, detail=f"Ligne d'achat inconnue: {line.purchase_order_line_id}.")
+        quantity = float(line.quantity or 0)
+        if quantity <= 0:
+            continue
+        requested[line.purchase_order_line_id] = requested.get(line.purchase_order_line_id, 0.0) + quantity
+
+    if not requested:
+        raise HTTPException(status_code=400, detail="Aucune quantité positive à facturer.")
+
+    already_invoiced = _invoiced_quantities_by_po_line(db, po.id)
+    for line_id, quantity in requested.items():
+        po_line = po_lines[line_id]
+        invoiceable = max(float(po_line.quantity_received or 0) - float(already_invoiced.get(line_id, 0)), 0)
+        if quantity > invoiceable:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Facture fournisseur impossible: quantité facturée ({quantity:g}) "
+                    f"supérieure au reçu non facturé ({invoiceable:g}) pour la ligne {line_id}."
+                ),
+            )
+
+    invoice = models.SupplierInvoice(
+        reference=_supplier_invoice_reference(db),
+        supplier_reference=data.supplier_reference,
+        purchase_order_id=po.id,
+        supplier=po.supplier,
+        issue_date=data.issue_date or datetime.utcnow(),
+        due_date=data.due_date,
+        status="TO_PAY",
+        notes=data.notes,
+        author=current_user.get("sub", "unknown"),
+    )
+    db.add(invoice)
+    db.flush()
+
+    subtotal_before_global = 0.0
+    for line_id, quantity in requested.items():
+        po_line = po_lines[line_id]
+        discount_percent = max(0, min(float(po_line.discount_percent or 0), 100))
+        line_total = quantity * float(po_line.unit_price or 0) * (1 - discount_percent / 100)
+        description = po_line.variant.product.name if po_line.variant and po_line.variant.product else po_line.variant.reference if po_line.variant else "Article fournisseur"
+        db.add(models.SupplierInvoiceLine(
+            invoice_id=invoice.id,
+            purchase_order_line_id=po_line.id,
+            variant_id=po_line.variant_id,
+            description=description,
+            quantity=quantity,
+            unit_price=po_line.unit_price,
+            discount_percent=discount_percent,
+            line_total=line_total,
+        ))
+        subtotal_before_global += line_total
+
+    global_discount_percent = max(0, min(float(po.global_discount_percent or 0), 100))
+    invoice.subtotal = subtotal_before_global
+    invoice.discount_amount = subtotal_before_global * (global_discount_percent / 100)
+    invoice.total_amount = invoice.subtotal - invoice.discount_amount
+    db.commit()
+    db.refresh(invoice)
+    return _serialize_supplier_invoice(invoice)

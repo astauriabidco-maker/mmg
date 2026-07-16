@@ -21,6 +21,7 @@ export default function PurchasesDashboard() {
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [selectedPO, setSelectedPO] = useState(null);
     const [showReceiveModal, setShowReceiveModal] = useState(false);
+    const [showSupplierInvoiceModal, setShowSupplierInvoiceModal] = useState(false);
     
     // Suppliers state
     const [selectedSupplierId, setSelectedSupplierId] = useState(null);
@@ -51,6 +52,10 @@ export default function PurchasesDashboard() {
     // Receive form
     const [receiveTargetLoc, setReceiveTargetLoc] = useState('');
     const [receiveLines, setReceiveLines] = useState([]);
+    const [supplierInvoiceRef, setSupplierInvoiceRef] = useState('');
+    const [supplierInvoiceDueDate, setSupplierInvoiceDueDate] = useState('');
+    const [supplierInvoiceNotes, setSupplierInvoiceNotes] = useState('');
+    const [supplierInvoiceLines, setSupplierInvoiceLines] = useState([]);
 
     const queryClient = useQueryClient();
 
@@ -242,6 +247,60 @@ export default function PurchasesDashboard() {
     };
 
     const receiveQuantityTotal = receiveLines.reduce((sum, line) => sum + (parseFloat(line.quantity || 0) || 0), 0);
+
+    const openSupplierInvoiceModal = () => {
+        const lines = (selectedPO?.lines || [])
+            .map(line => ({
+                line_id: line.id,
+                product_name: line.product_name,
+                variant_ref: line.variant_ref,
+                received: line.quantity_received || 0,
+                invoiced: line.quantity_invoiced || 0,
+                invoiceable: line.quantity_invoiceable || 0,
+                quantity: line.quantity_invoiceable || 0,
+            }))
+            .filter(line => line.invoiceable > 0);
+        setSupplierInvoiceRef('');
+        setSupplierInvoiceDueDate('');
+        setSupplierInvoiceNotes('');
+        setSupplierInvoiceLines(lines);
+        setShowSupplierInvoiceModal(true);
+    };
+
+    const updateSupplierInvoiceLine = (lineId, value) => {
+        setSupplierInvoiceLines(lines => lines.map(line => (
+            line.line_id === lineId
+                ? { ...line, quantity: Math.min(Math.max(parseFloat(value || 0), 0), line.invoiceable) }
+                : line
+        )));
+    };
+
+    const supplierInvoiceQuantityTotal = supplierInvoiceLines.reduce((sum, line) => sum + (parseFloat(line.quantity || 0) || 0), 0);
+
+    const handleCreateSupplierInvoice = async () => {
+        const lines = supplierInvoiceLines
+            .map(line => ({ purchase_order_line_id: line.line_id, quantity: parseFloat(line.quantity || 0) }))
+            .filter(line => line.quantity > 0);
+        if (lines.length === 0) {
+            alert("Veuillez saisir au moins une quantité facturée.");
+            return;
+        }
+        try {
+            await api.post(`/v2/purchases/${selectedPO.id}/supplier-invoices`, {
+                supplier_reference: supplierInvoiceRef,
+                due_date: supplierInvoiceDueDate || null,
+                notes: supplierInvoiceNotes,
+                lines,
+            });
+            setShowSupplierInvoiceModal(false);
+            queryClient.invalidateQueries(['purchases']);
+            await openPODetails(selectedPO.id);
+            alert("Facture fournisseur rapprochée avec les réceptions.");
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors du rapprochement facture fournisseur.");
+        }
+    };
 
 
     const filteredPurchases = purchases.filter(p => 
@@ -443,10 +502,28 @@ export default function PurchasesDashboard() {
                                 <div className="relative z-10 text-right flex flex-col justify-end items-end gap-2">
                                     <span className="text-sm font-bold text-slate-400">Total Commande</span>
                                     <span className="text-4xl font-black tracking-tight text-emerald-400">{selectedPO.total_amount.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
+                                    <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-md ${selectedPO.supplier_invoice_status === 'FULL' ? 'bg-emerald-100 text-emerald-700' : selectedPO.supplier_invoice_status === 'PARTIAL' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-600'}`}>
+                                        Facture fournisseur {selectedPO.supplier_invoice_status === 'FULL' ? 'rapprochée' : selectedPO.supplier_invoice_status === 'PARTIAL' ? 'partielle' : 'à rapprocher'}
+                                    </span>
                                 </div>
                             </div>
                             
                             <div className="p-8">
+                                <div className="grid grid-cols-3 gap-4 mb-8">
+                                    <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4">
+                                        <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Commandé</p>
+                                        <p className="text-2xl font-black text-blue-700">{(selectedPO.lines || []).reduce((sum, line) => sum + Number(line.quantity || 0), 0).toLocaleString('fr-FR')}</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4">
+                                        <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Réceptionné</p>
+                                        <p className="text-2xl font-black text-emerald-700">{Number(selectedPO.quantity_received || 0).toLocaleString('fr-FR')}</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-orange-50 border border-orange-100 p-4">
+                                        <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Facturé fournisseur</p>
+                                        <p className="text-2xl font-black text-orange-700">{Number(selectedPO.quantity_invoiced || 0).toLocaleString('fr-FR')}</p>
+                                    </div>
+                                </div>
+
                                 <h4 className="font-black text-sm text-slate-400 uppercase tracking-widest mb-4">Lignes de Commande</h4>
                                 <table className="w-full text-left border-collapse">
                                     <thead className="bg-slate-50 border-b border-slate-200">
@@ -455,6 +532,7 @@ export default function PurchasesDashboard() {
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Prix Unitaire</th>
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Commandé</th>
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Reçu</th>
+                                            <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Facturé</th>
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Total Ligne</th>
                                         </tr>
                                     </thead>
@@ -471,11 +549,52 @@ export default function PurchasesDashboard() {
                                                 </td>
                                                 <td className="py-4 px-4 text-center font-black text-blue-600 text-lg">{line.quantity}</td>
                                                 <td className="py-4 px-4 text-center font-black text-emerald-600 text-lg">{line.quantity_received}</td>
+                                                <td className="py-4 px-4 text-center">
+                                                    <span className={`inline-flex px-2.5 py-1 rounded-lg text-sm font-black ${line.quantity_invoiced >= line.quantity_received && line.quantity_received > 0 ? 'bg-emerald-50 text-emerald-700' : line.quantity_invoiced > 0 ? 'bg-orange-50 text-orange-700' : 'bg-slate-50 text-slate-500'}`}>
+                                                        {line.quantity_invoiced || 0}
+                                                    </span>
+                                                </td>
                                                 <td className="py-4 px-4 text-right font-black text-slate-800 text-sm">{(line.line_total ?? line.quantity * line.unit_price).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}</td>
                                             </tr>
                                         ))}
                                     </tbody>
                                 </table>
+
+                                <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div>
+                                                <h4 className="font-black text-slate-900">Factures fournisseur rapprochées</h4>
+                                                <p className="text-xs font-bold text-slate-500">Contrôle : une facture ne peut pas dépasser les quantités réceptionnées.</p>
+                                            </div>
+                                            <span className="text-xs font-black text-slate-400">{selectedPO.supplier_invoices?.length || 0} facture(s)</span>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {(selectedPO.supplier_invoices || []).map(invoice => (
+                                                <div key={invoice.id} className="bg-white border border-slate-200 rounded-xl p-3 flex items-center justify-between">
+                                                    <div>
+                                                        <p className="font-black text-slate-900">{invoice.supplier_reference || invoice.reference}</p>
+                                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{invoice.reference} · {new Date(invoice.issue_date).toLocaleDateString('fr-FR')}</p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="font-black text-slate-900">{Number(invoice.total_amount || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}</p>
+                                                        <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest">{invoice.status}</p>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {(selectedPO.supplier_invoices || []).length === 0 && (
+                                                <div className="text-sm font-bold text-slate-400">Aucune facture fournisseur rapprochée pour ce bon.</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="rounded-2xl border border-orange-100 bg-orange-50 p-5">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-orange-500 mb-2">Reste facturable</p>
+                                        <p className="text-3xl font-black text-orange-700">{Math.max(Number(selectedPO.quantity_received || 0) - Number(selectedPO.quantity_invoiced || 0), 0).toLocaleString('fr-FR')}</p>
+                                        <button onClick={openSupplierInvoiceModal} disabled={Math.max(Number(selectedPO.quantity_received || 0) - Number(selectedPO.quantity_invoiced || 0), 0) <= 0} className="mt-4 w-full px-4 py-3 rounded-xl bg-orange-600 disabled:bg-slate-300 text-white font-black hover:bg-orange-500">
+                                            Rapprocher facture
+                                        </button>
+                                    </div>
+                                </div>
 
                                 {(selectedPO.status === 'DRAFT' || selectedPO.status === 'SENT' || selectedPO.status === 'PARTIAL') && (
                                     <div className="mt-8 flex justify-end">
@@ -765,6 +884,104 @@ export default function PurchasesDashboard() {
                             <button onClick={()=>setShowReceiveModal(false)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50">Annuler</button>
                             <button onClick={handleReceivePO} disabled={!receiveTargetLoc || receiveQuantityTotal <= 0} className="px-8 py-4 bg-emerald-600 disabled:bg-slate-300 hover:bg-emerald-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
                                 Valider la réception
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* SUPPLIER INVOICE MODAL */}
+            {showSupplierInvoiceModal && selectedPO && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full border border-slate-100 overflow-hidden">
+                        <div className="px-8 py-6 bg-slate-900 text-white flex justify-between items-start">
+                            <div>
+                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-500/10 border border-orange-300/20 text-orange-200 text-[10px] font-black uppercase tracking-widest mb-3">
+                                    <FileText className="w-3.5 h-3.5"/> Facture fournisseur
+                                </div>
+                                <h3 className="font-black text-3xl">Rapprocher une facture</h3>
+                                <p className="text-sm font-medium text-slate-300 mt-1">{selectedPO.reference} · {selectedPO.supplier}</p>
+                            </div>
+                            <button onClick={()=>setShowSupplierInvoiceModal(false)} className="text-slate-300 hover:bg-white/10 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                        </div>
+
+                        <div className="p-8 space-y-6 bg-slate-50">
+                            <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_180px] gap-4">
+                                <div className="bg-white rounded-2xl border border-slate-200 p-5">
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Référence facture fournisseur</label>
+                                    <input value={supplierInvoiceRef} onChange={e=>setSupplierInvoiceRef(e.target.value)} placeholder="Ex: FAC-CORTIZO-2026-0716" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-orange-500"/>
+                                </div>
+                                <div className="bg-white rounded-2xl border border-slate-200 p-5">
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Échéance</label>
+                                    <input type="date" value={supplierInvoiceDueDate} onChange={e=>setSupplierInvoiceDueDate(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-orange-500"/>
+                                </div>
+                                <div className="bg-orange-600 text-white rounded-2xl p-5 shadow-lg">
+                                    <p className="text-[10px] font-black text-orange-100 uppercase tracking-widest">Quantité facturée</p>
+                                    <p className="text-3xl font-black mt-2">{supplierInvoiceQuantityTotal.toLocaleString('fr-FR')}</p>
+                                    <p className="text-xs font-bold text-orange-100 mt-1">{supplierInvoiceLines.filter(l => parseFloat(l.quantity || 0) > 0).length} ligne(s)</p>
+                                </div>
+                            </div>
+
+                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                                    <div>
+                                        <h4 className="font-black text-slate-900">Lignes reçues à facturer</h4>
+                                        <p className="text-xs font-medium text-slate-500">Le maximum correspond au réceptionné moins le déjà facturé.</p>
+                                    </div>
+                                    <button
+                                        onClick={() => setSupplierInvoiceLines(lines => lines.map(line => ({ ...line, quantity: line.invoiceable })))}
+                                        className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm font-black hover:bg-slate-50"
+                                    >
+                                        Tout facturer
+                                    </button>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {supplierInvoiceLines.map(line => (
+                                        <div key={line.line_id} className="grid grid-cols-[1fr_110px_110px_130px] gap-4 items-center px-5 py-4">
+                                            <div>
+                                                <p className="font-black text-slate-900">{line.product_name}</p>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{line.variant_ref}</p>
+                                            </div>
+                                            <div className="text-center">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Reçu</p>
+                                                <p className="font-black text-emerald-700">{Number(line.received || 0).toLocaleString('fr-FR')}</p>
+                                            </div>
+                                            <div className="text-center">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Facturable</p>
+                                                <p className="font-black text-orange-600">{Number(line.invoiceable || 0).toLocaleString('fr-FR')}</p>
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Facturé</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    max={line.invoiceable}
+                                                    step="0.01"
+                                                    value={line.quantity}
+                                                    onChange={e => updateSupplierInvoiceLine(line.line_id, e.target.value)}
+                                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-center font-black text-orange-600 outline-none focus:ring-2 focus:ring-orange-500"
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {supplierInvoiceLines.length === 0 && (
+                                        <div className="p-10 text-center text-slate-400 font-black">
+                                            Rien à facturer : aucune réception non facturée.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Notes rapprochement</label>
+                                <textarea value={supplierInvoiceNotes} onChange={e=>setSupplierInvoiceNotes(e.target.value)} className="w-full min-h-[80px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-orange-500 resize-none" placeholder="Écart de prix, frais de port, remarque comptable..."/>
+                            </div>
+                        </div>
+
+                        <div className="px-8 py-5 bg-white border-t border-slate-100 flex justify-between items-center">
+                            <button onClick={()=>setShowSupplierInvoiceModal(false)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50">Annuler</button>
+                            <button onClick={handleCreateSupplierInvoice} disabled={supplierInvoiceQuantityTotal <= 0} className="px-8 py-4 bg-orange-600 disabled:bg-slate-300 hover:bg-orange-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
+                                Valider le rapprochement
                             </button>
                         </div>
                     </div>

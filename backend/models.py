@@ -620,6 +620,7 @@ class PurchaseOrder(Base):
     author = Column(String, default="Système")
     
     lines = relationship("PurchaseOrderLine", back_populates="order", cascade="all, delete-orphan")
+    supplier_invoices = relationship("SupplierInvoice", back_populates="purchase_order", cascade="all, delete-orphan")
 
 class PurchaseOrderLine(Base):
     __tablename__ = "purchase_order_lines"
@@ -632,6 +633,41 @@ class PurchaseOrderLine(Base):
     discount_percent = Column(Float, default=0.0)
     
     order = relationship("PurchaseOrder", back_populates="lines")
+    variant = relationship("ProductVariant")
+
+class SupplierInvoice(Base):
+    __tablename__ = "supplier_invoices"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, index=True)
+    supplier_reference = Column(String, nullable=True)
+    purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), index=True)
+    supplier = Column(String)
+    issue_date = Column(DateTime, default=datetime.utcnow)
+    due_date = Column(DateTime, nullable=True)
+    status = Column(String, default="TO_PAY", index=True) # TO_PAY, PARTIAL, PAID, CANCELLED
+    subtotal = Column(Float, default=0.0)
+    discount_amount = Column(Float, default=0.0)
+    total_amount = Column(Float, default=0.0)
+    notes = Column(Text, nullable=True)
+    author = Column(String, default="Système")
+
+    purchase_order = relationship("PurchaseOrder", back_populates="supplier_invoices")
+    lines = relationship("SupplierInvoiceLine", back_populates="invoice", cascade="all, delete-orphan")
+
+class SupplierInvoiceLine(Base):
+    __tablename__ = "supplier_invoice_lines"
+    id = Column(Integer, primary_key=True, index=True)
+    invoice_id = Column(Integer, ForeignKey("supplier_invoices.id"))
+    purchase_order_line_id = Column(Integer, ForeignKey("purchase_order_lines.id"), index=True)
+    variant_id = Column(Integer, ForeignKey("product_variants.id"))
+    description = Column(String)
+    quantity = Column(Float, default=0.0)
+    unit_price = Column(Float, default=0.0)
+    discount_percent = Column(Float, default=0.0)
+    line_total = Column(Float, default=0.0)
+
+    invoice = relationship("SupplierInvoice", back_populates="lines")
+    purchase_order_line = relationship("PurchaseOrderLine")
     variant = relationship("ProductVariant")
 
 # --- FACTURATION (FRANCE NF525) ---
