@@ -590,6 +590,11 @@ class Supplier(Base):
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
     tax_id = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    payment_terms = Column(String, nullable=True)
+    lead_time_days = Column(Integer, nullable=True)
+    preferred_contact_method = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

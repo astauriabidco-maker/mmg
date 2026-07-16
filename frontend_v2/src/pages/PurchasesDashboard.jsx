@@ -29,7 +29,20 @@ export default function PurchasesDashboard() {
     
     // Suppliers state
     const [showSupplierModal, setShowSupplierModal] = useState(false);
-    const [newSupplier, setNewSupplier] = useState({ name: '', contact_name: '', email: '', phone: '', address: '', tax_id: '' });
+    const emptySupplierForm = {
+        name: '',
+        contact_name: '',
+        email: '',
+        phone: '',
+        address: '',
+        tax_id: '',
+        website: '',
+        payment_terms: '',
+        lead_time_days: '',
+        preferred_contact_method: 'email',
+        notes: '',
+    };
+    const [newSupplier, setNewSupplier] = useState(emptySupplierForm);
     
     // Create form
     const [newPO, setNewPO] = useState({ supplier: '', expected_date: '', notes: '', lines: [] });
@@ -91,9 +104,13 @@ export default function PurchasesDashboard() {
 
     const handleCreateSupplier = async () => {
         try {
-            await api.post('/v2/partners/suppliers', newSupplier);
+            const payload = {
+                ...newSupplier,
+                lead_time_days: newSupplier.lead_time_days === '' ? null : parseInt(newSupplier.lead_time_days, 10),
+            };
+            await api.post('/v2/partners/suppliers', payload);
             setShowSupplierModal(false);
-            setNewSupplier({ name: '', contact_name: '', email: '', phone: '', address: '', tax_id: '' });
+            setNewSupplier(emptySupplierForm);
             queryClient.invalidateQueries(['suppliers', 'v2']);
         } catch (err) {
             console.error(err);
@@ -511,38 +528,87 @@ export default function PurchasesDashboard() {
             {/* SUPPLIER MODAL */}
             {showSupplierModal && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-slate-100">
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full border border-slate-100 overflow-hidden">
                         <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-black text-2xl flex items-center gap-3">
-                                <Truck className="w-6 h-6 text-emerald-600"/> Nouveau Fournisseur
-                            </h3>
-                            <button onClick={()=>setShowSupplierModal(false)} className="text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                            <div className="px-8 pt-8">
+                                <h3 className="font-black text-2xl flex items-center gap-3">
+                                    <Truck className="w-6 h-6 text-emerald-600"/> Nouveau Fournisseur
+                                </h3>
+                                <p className="text-sm font-medium text-slate-500 mt-1">Créez une fiche exploitable pour achats, réception et suivi fournisseur.</p>
+                            </div>
+                            <button onClick={()=>setShowSupplierModal(false)} className="mr-6 mt-6 text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
                         </div>
                         
-                        <div className="space-y-4 mb-6">
-                            <div>
-                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Nom d'Entreprise (Requis)</label>
-                                <input type="text" value={newSupplier.name} onChange={e=>setNewSupplier({...newSupplier, name: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Ex: CORTIZO SA"/>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
+                        <div className="px-8 pb-8 grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6">
+                            <div className="space-y-4">
                                 <div>
-                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Contact Principal</label>
-                                    <input type="text" value={newSupplier.contact_name} onChange={e=>setNewSupplier({...newSupplier, contact_name: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Nom prénom"/>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Nom d'entreprise requis</label>
+                                    <input type="text" value={newSupplier.name} onChange={e=>setNewSupplier({...newSupplier, name: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Ex: CORTIZO SA"/>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Contact principal</label>
+                                        <input type="text" value={newSupplier.contact_name} onChange={e=>setNewSupplier({...newSupplier, contact_name: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Nom prénom"/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Téléphone</label>
+                                        <input type="text" value={newSupplier.phone} onChange={e=>setNewSupplier({...newSupplier, phone: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="+33..."/>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Email achats</label>
+                                        <input type="email" value={newSupplier.email} onChange={e=>setNewSupplier({...newSupplier, email: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="contact@..."/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Site web / portail</label>
+                                        <input type="text" value={newSupplier.website} onChange={e=>setNewSupplier({...newSupplier, website: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="https://..."/>
+                                    </div>
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Téléphone</label>
-                                    <input type="text" value={newSupplier.phone} onChange={e=>setNewSupplier({...newSupplier, phone: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="+33..."/>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Adresse fournisseur</label>
+                                    <input type="text" value={newSupplier.address} onChange={e=>setNewSupplier({...newSupplier, address: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Adresse complète"/>
                                 </div>
                             </div>
-                            <div>
-                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Email</label>
-                                <input type="email" value={newSupplier.email} onChange={e=>setNewSupplier({...newSupplier, email: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="contact@..."/>
+
+                            <div className="space-y-4">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">SIRET / TVA</label>
+                                        <input type="text" value={newSupplier.tax_id} onChange={e=>setNewSupplier({...newSupplier, tax_id: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="FR..."/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Délai moyen</label>
+                                        <input type="number" min="0" value={newSupplier.lead_time_days} onChange={e=>setNewSupplier({...newSupplier, lead_time_days: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="jours"/>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Paiement</label>
+                                        <input type="text" value={newSupplier.payment_terms} onChange={e=>setNewSupplier({...newSupplier, payment_terms: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="30j fin de mois"/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Contact préféré</label>
+                                        <select value={newSupplier.preferred_contact_method} onChange={e=>setNewSupplier({...newSupplier, preferred_contact_method: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500">
+                                            <option value="email">Email</option>
+                                            <option value="phone">Téléphone</option>
+                                            <option value="portal">Portail fournisseur</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Notes achats</label>
+                                    <textarea value={newSupplier.notes} onChange={e=>setNewSupplier({...newSupplier, notes: e.target.value})} className="w-full min-h-[94px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 resize-none" placeholder="Conditions, gamme, interlocuteur, contraintes livraison..."/>
+                                </div>
                             </div>
                         </div>
 
-                        <button onClick={handleCreateSupplier} disabled={!newSupplier.name} className="w-full py-4 bg-emerald-600 disabled:bg-slate-300 hover:bg-emerald-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
-                            Enregistrer au Catalogue
-                        </button>
+                        <div className="px-8 py-5 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
+                            <p className="text-xs font-bold text-slate-500">La fiche sera disponible pour les bons de commande et le suivi fournisseur.</p>
+                            <button onClick={handleCreateSupplier} disabled={!newSupplier.name} className="px-8 py-4 bg-emerald-600 disabled:bg-slate-300 hover:bg-emerald-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
+                                Enregistrer la fiche
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -562,6 +628,11 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
     
     // Average order value
     const avgOrderValue = totalOrders > 0 ? (totalSpent / totalOrders) : 0;
+    const openWebsite = () => {
+        if (!sup.website) return;
+        const url = sup.website.startsWith('http') ? sup.website : `https://${sup.website}`;
+        window.open(url, '_blank', 'noopener,noreferrer');
+    };
 
     return (
         <div className="flex flex-col h-full bg-slate-50 relative overflow-hidden animate-fade-in">
@@ -598,10 +669,10 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
                             </div>
                         </div>
                         <div className="text-right mt-2 flex flex-col items-end">
-                            <button className="bg-white/10 hover:bg-white/20 border border-white/10 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-lg flex items-center gap-2">
+                            <button onClick={() => setCurrentTab('orders')} className="bg-white/10 hover:bg-white/20 border border-white/10 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-lg flex items-center gap-2">
                                 <FileText className="w-4 h-4" /> Nouveau Bon
                             </button>
-                            <span className="text-xs text-slate-400 mt-3 font-medium">Créé le {new Date().toLocaleDateString('fr-FR')}</span>
+                            <span className="text-xs text-slate-400 mt-3 font-medium">Créé le {new Date(sup.created_at || Date.now()).toLocaleDateString('fr-FR')}</span>
                         </div>
                     </div>
 
@@ -670,12 +741,26 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
                             </div>
 
                             {/* Contact & Info */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <div className="grid grid-cols-1 md:grid-cols-[1fr_0.8fr] gap-8">
                                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                                     <div className="p-6 border-b border-slate-100 bg-slate-50">
-                                        <h3 className="font-black text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-slate-400"/> Informations de Contact</h3>
+                                        <h3 className="font-black text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-slate-400"/> Contact & raccourcis</h3>
                                     </div>
                                     <div className="p-6 space-y-6">
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <a href={sup.phone ? `tel:${sup.phone}` : undefined} className={`px-4 py-3 rounded-xl border text-sm font-black flex items-center justify-center gap-2 ${sup.phone ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'border-slate-100 bg-slate-50 text-slate-300 pointer-events-none'}`}>
+                                                <Phone className="w-4 h-4" /> Appeler
+                                            </a>
+                                            <a href={sup.email ? `mailto:${sup.email}` : undefined} className={`px-4 py-3 rounded-xl border text-sm font-black flex items-center justify-center gap-2 ${sup.email ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100' : 'border-slate-100 bg-slate-50 text-slate-300 pointer-events-none'}`}>
+                                                <Mail className="w-4 h-4" /> Écrire
+                                            </a>
+                                            <button onClick={openWebsite} disabled={!sup.website} className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 disabled:text-slate-300 disabled:bg-slate-50 text-sm font-black flex items-center justify-center gap-2 hover:bg-slate-50">
+                                                <Building2 className="w-4 h-4" /> Portail
+                                            </button>
+                                            <a href={sup.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(sup.address)}` : undefined} target="_blank" rel="noreferrer" className={`px-4 py-3 rounded-xl border text-sm font-black flex items-center justify-center gap-2 ${sup.address ? 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50' : 'border-slate-100 bg-slate-50 text-slate-300 pointer-events-none'}`}>
+                                                <MapPin className="w-4 h-4" /> Itinéraire
+                                            </a>
+                                        </div>
                                         <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-4">
                                                 <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
@@ -714,9 +799,27 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
 
                                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
                                     <div className="p-6 border-b border-slate-100 bg-slate-50">
-                                        <h3 className="font-black text-slate-800 flex items-center gap-2"><MapPin className="w-5 h-5 text-slate-400"/> Adresse & Légal</h3>
+                                        <h3 className="font-black text-slate-800 flex items-center gap-2"><MapPin className="w-5 h-5 text-slate-400"/> Conditions achats</h3>
                                     </div>
-                                    <div className="p-6 flex-1 flex flex-col justify-center">
+                                    <div className="p-6 flex-1">
+                                        <div className="grid grid-cols-2 gap-4 mb-6">
+                                            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Délai moyen</p>
+                                                <p className="font-black text-slate-800">{sup.lead_time_days ? `${sup.lead_time_days} j` : 'Non renseigné'}</p>
+                                            </div>
+                                            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Paiement</p>
+                                                <p className="font-black text-slate-800">{sup.payment_terms || 'Non renseigné'}</p>
+                                            </div>
+                                            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Contact</p>
+                                                <p className="font-black text-slate-800">{sup.preferred_contact_method || 'Non renseigné'}</p>
+                                            </div>
+                                            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Site</p>
+                                                <p className="font-black text-slate-800 truncate">{sup.website || 'Non renseigné'}</p>
+                                            </div>
+                                        </div>
                                         <div className="text-center p-6 bg-slate-50 rounded-2xl border border-slate-100 mb-6">
                                             <MapPin className="w-8 h-8 text-slate-300 mx-auto mb-3" />
                                             <p className="font-bold text-slate-600">{sup.address || 'Aucune adresse renseignée.'}</p>
@@ -728,6 +831,12 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
                                                     <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Numéro SIRET / TVA</p>
                                                     <p className="font-black text-emerald-900">{sup.tax_id}</p>
                                                 </div>
+                                            </div>
+                                        )}
+                                        {sup.notes && (
+                                            <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 mt-4">
+                                                <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest mb-2">Notes achats</p>
+                                                <p className="font-bold text-amber-950 whitespace-pre-wrap">{sup.notes}</p>
                                             </div>
                                         )}
                                     </div>

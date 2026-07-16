@@ -66,6 +66,11 @@ class SupplierBase(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     tax_id: Optional[str] = None
+    website: Optional[str] = None
+    payment_terms: Optional[str] = None
+    lead_time_days: Optional[int] = None
+    preferred_contact_method: Optional[str] = None
+    notes: Optional[str] = None
     is_active: bool = True
 
 class SupplierCreate(SupplierBase):
