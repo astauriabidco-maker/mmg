@@ -82,6 +82,41 @@ def _get_or_create_inventory_location(db: Session) -> models.StockLocation:
     return location
 
 
+def _line_status_from_variance(variance: float) -> str:
+    return "ok" if abs(float(variance or 0)) <= 0.000001 else "variance"
+
+
+def _locked_inventory_session_for_location(db: Session, location_id: int) -> Optional[models.InventorySession]:
+    location = db.query(models.StockLocation).filter_by(id=location_id, is_active=True).first()
+    if not location or location.usage != "internal":
+        return None
+    return (
+        db.query(models.InventorySession)
+        .filter(
+            models.InventorySession.zone_locked == True,
+            models.InventorySession.status.in_(["draft", "counting"]),
+            or_(
+                models.InventorySession.location_id == None,
+                models.InventorySession.location_id == location_id,
+            ),
+        )
+        .order_by(models.InventorySession.created_at.desc())
+        .first()
+    )
+
+
+def _assert_location_not_locked(db: Session, location_id: int) -> None:
+    locked_session = _locked_inventory_session_for_location(db, location_id)
+    if locked_session:
+        raise HTTPException(
+            status_code=423,
+            detail=(
+                f"Zone gelée par la campagne d'inventaire {locked_session.reference}. "
+                "Validez ou annulez la campagne avant de créer un mouvement stock."
+            ),
+        )
+
+
 def _sync_variant_internal_stock(db: Session, variant_id: int) -> None:
     variant = db.query(models.ProductVariant).filter_by(id=variant_id).first()
     if not variant:
@@ -133,6 +168,9 @@ def create_inventory_session(
         location_id=payload.location_id,
         notes=payload.notes,
         status="draft",
+        zone_locked=payload.zone_locked,
+        locked_at=datetime.utcnow() if payload.zone_locked else None,
+        unlocked_at=None if payload.zone_locked else datetime.utcnow(),
         created_by=user.get("sub", "Admin"),
     )
     if not session.name:
@@ -207,11 +245,47 @@ def upsert_inventory_count_line(
     line.expected_quantity = expected
     line.counted_quantity = counted
     line.variance_quantity = counted - expected
+    line.status = _line_status_from_variance(line.variance_quantity)
     line.reason = payload.reason
     line.notes = payload.notes
+    line.recount_requested_by = None
+    line.recount_requested_at = None
+    line.recount_notes = None
     line.counted_by = user.get("sub", "Admin")
     line.counted_at = datetime.utcnow()
     session.status = "counting"
+    db.commit()
+    db.refresh(line)
+    return line
+
+
+@router.post("/inventory-sessions/{session_id}/lines/{line_id}/recount", response_model=schemas.InventoryCountLineResponse)
+def request_inventory_line_recount(
+    session_id: int,
+    line_id: int,
+    payload: schemas.InventoryRecountRequest,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_stock_manager(user)
+    session = db.query(models.InventorySession).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+    if session.status in ["validated", "cancelled"]:
+        raise HTTPException(status_code=400, detail="Campagne clôturée.")
+    line = (
+        db.query(models.InventoryCountLine)
+        .filter_by(id=line_id, session_id=session_id)
+        .first()
+    )
+    if not line:
+        raise HTTPException(status_code=404, detail="Ligne de comptage introuvable.")
+    if abs(float(line.variance_quantity or 0)) <= 0.000001:
+        raise HTTPException(status_code=400, detail="Cette ligne est déjà conforme.")
+    line.status = "recount"
+    line.recount_requested_by = user.get("sub", "Admin")
+    line.recount_requested_at = datetime.utcnow()
+    line.recount_notes = payload.notes
     db.commit()
     db.refresh(line)
     return line
@@ -238,6 +312,12 @@ def validate_inventory_session(
         raise HTTPException(status_code=400, detail="Campagne annulée.")
     if not session.lines:
         raise HTTPException(status_code=400, detail="Aucune ligne comptée à valider.")
+    recount_lines = [line for line in session.lines if line.status == "recount"]
+    if recount_lines:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{len(recount_lines)} ligne(s) sont en attente de recompte.",
+        )
 
     inventory_location = _get_or_create_inventory_location(db)
     author = user.get("sub", "Admin")
@@ -287,10 +367,16 @@ def validate_inventory_session(
         db.flush()
         line.adjustment_move_id = move.id
         _sync_variant_internal_stock(db, line.variant_id)
+        line.status = "validated"
+
+    for line in session.lines:
+        line.status = "validated"
 
     session.status = "validated"
     session.validated_by = author
     session.validated_at = datetime.utcnow()
+    session.zone_locked = False
+    session.unlocked_at = datetime.utcnow()
     db.commit()
     db.refresh(session)
     return get_inventory_session(session.id, db, user)
@@ -309,9 +395,88 @@ def cancel_inventory_session(
     if session.status == "validated":
         raise HTTPException(status_code=400, detail="Campagne déjà validée.")
     session.status = "cancelled"
+    session.zone_locked = False
+    session.unlocked_at = datetime.utcnow()
     db.commit()
     db.refresh(session)
     return session
+
+
+@router.get("/inventory-sessions/{session_id}/export")
+def export_inventory_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    session = (
+        db.query(models.InventorySession)
+        .options(
+            joinedload(models.InventorySession.location),
+            joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.variant).joinedload(models.ProductVariant.product),
+            joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.location),
+        )
+        .filter(models.InventorySession.id == session_id)
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Inventaire physique"
+    sheet.append(["Campagne", session.reference, session.name])
+    sheet.append(["Statut", session.status, "Zone gelée" if session.zone_locked else "Zone libérée"])
+    sheet.append(["Emplacement", session.location.name if session.location else "Tous emplacements internes"])
+    sheet.append([])
+    headers = [
+        "Référence",
+        "Produit",
+        "Emplacement",
+        "Système",
+        "Compté",
+        "Écart",
+        "Statut ligne",
+        "Motif",
+        "Recompte demandé par",
+        "Note recompte",
+        "Mouvement ajustement",
+    ]
+    sheet.append(headers)
+    header_row = sheet.max_row
+    for cell in sheet[header_row]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1E293B")
+
+    for line in session.lines:
+        variant = line.variant
+        product = variant.product if variant else None
+        sheet.append([
+            variant.reference if variant else f"Variante #{line.variant_id}",
+            product.name if product else "",
+            line.location.name if line.location else f"Lieu #{line.location_id}",
+            float(line.expected_quantity or 0),
+            float(line.counted_quantity or 0),
+            float(line.variance_quantity or 0),
+            line.status,
+            line.reason or "",
+            line.recount_requested_by or "",
+            line.recount_notes or "",
+            line.adjustment_move_id or "",
+        ])
+
+    for column in sheet.columns:
+        max_length = max(len(str(cell.value or "")) for cell in column)
+        sheet.column_dimensions[column[0].column_letter].width = min(max(max_length + 2, 12), 44)
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    filename = f"{session.reference}-rapport-inventaire.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 @router.get("/products", response_model=List[schemas.ProductResponse])
 def get_products(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -413,6 +578,11 @@ def create_transaction(tx: schemas.StockMoveCreate, background_tasks: Background
         
     variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == tx.variant_id).first()
     if not variant: raise HTTPException(404, "Variant not found")
+
+    if tx.location_id:
+        _assert_location_not_locked(db, tx.location_id)
+    if tx.location_dest_id:
+        _assert_location_not_locked(db, tx.location_dest_id)
     
     qty = abs(tx.quantity)
     is_in = tx.quantity > 0

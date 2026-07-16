@@ -322,6 +322,9 @@ class InventorySession(Base):
     status = Column(String, default="draft", index=True) # draft, counting, validated, cancelled
     location_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True, index=True)
     notes = Column(Text, nullable=True)
+    zone_locked = Column(Boolean, default=True)
+    locked_at = Column(DateTime, default=datetime.utcnow)
+    unlocked_at = Column(DateTime, nullable=True)
     created_by = Column(String, default="Système")
     created_at = Column(DateTime, default=datetime.utcnow)
     validated_by = Column(String, nullable=True)
@@ -340,8 +343,12 @@ class InventoryCountLine(Base):
     expected_quantity = Column(Float, default=0.0)
     counted_quantity = Column(Float, default=0.0)
     variance_quantity = Column(Float, default=0.0)
+    status = Column(String, default="ok", index=True) # ok, variance, recount, validated
     reason = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
+    recount_requested_by = Column(String, nullable=True)
+    recount_requested_at = Column(DateTime, nullable=True)
+    recount_notes = Column(Text, nullable=True)
     counted_by = Column(String, default="Système")
     counted_at = Column(DateTime, default=datetime.utcnow)
     adjustment_move_id = Column(Integer, ForeignKey("stock_moves.id"), nullable=True)

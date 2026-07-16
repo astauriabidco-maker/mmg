@@ -87,6 +87,7 @@ def test_physical_inventory_validation_creates_adjustment_move():
         assert session_response.status_code == 200, session_response.text
         session_id = session_response.json()["id"]
         assert session_response.json()["status"] == "draft"
+        assert session_response.json()["zone_locked"] is True
 
         line_response = client.post(
             f"/v2/stock/inventory-sessions/{session_id}/lines",
@@ -103,6 +104,7 @@ def test_physical_inventory_validation_creates_adjustment_move():
         assert line["expected_quantity"] == 10.0
         assert line["counted_quantity"] == 7.0
         assert line["variance_quantity"] == -3.0
+        assert line["status"] == "variance"
 
         validate_response = client.post(
             f"/v2/stock/inventory-sessions/{session_id}/validate",
@@ -112,6 +114,8 @@ def test_physical_inventory_validation_creates_adjustment_move():
         validated = validate_response.json()
         assert validated["status"] == "validated"
         assert validated["validated_by"] == "inventory-tester"
+        assert validated["zone_locked"] is False
+        assert validated["lines"][0]["status"] == "validated"
         assert validated["lines"][0]["adjustment_move_id"] is not None
 
         with TestingSessionLocal() as db:
@@ -141,7 +145,7 @@ def test_physical_inventory_validation_creates_adjustment_move():
         models.Base.metadata.drop_all(bind=engine)
 
 
-def test_physical_inventory_validation_blocks_if_stock_changed_after_count():
+def test_physical_inventory_session_locks_zone_until_cancelled():
     client, TestingSessionLocal, engine, headers = _client_with_db()
     try:
         product_response = client.post(
@@ -187,18 +191,118 @@ def test_physical_inventory_validation_blocks_if_stock_changed_after_count():
             json={"variant_id": variant_id, "location_id": location_id, "counted_quantity": 4},
         ).status_code == 200
 
-        assert client.post(
+        locked_move = client.post(
             "/v2/stock/transaction",
             headers=headers,
             json={"variant_id": variant_id, "location_dest_id": location_id, "quantity": 1},
+        )
+        assert locked_move.status_code == 423, locked_move.text
+        assert "Zone gelée" in locked_move.json()["detail"]
+
+        cancel_response = client.post(
+            f"/v2/stock/inventory-sessions/{session_id}/cancel",
+            headers=headers,
+        )
+        assert cancel_response.status_code == 200, cancel_response.text
+        assert cancel_response.json()["status"] == "cancelled"
+        assert cancel_response.json()["zone_locked"] is False
+
+        unlocked_move = client.post(
+            "/v2/stock/transaction",
+            headers=headers,
+            json={"variant_id": variant_id, "location_dest_id": location_id, "quantity": 1},
+        )
+        assert unlocked_move.status_code == 200, unlocked_move.text
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_physical_inventory_recount_blocks_validation_and_export_report():
+    client, TestingSessionLocal, engine, headers = _client_with_db()
+    try:
+        product_response = client.post(
+            "/v2/stock/products",
+            headers=headers,
+            json={
+                "reference_base": "INV-RECOUNT-PROD",
+                "name": "Profil recompte",
+                "material_type": "ALU",
+                "unit": "barre",
+                "supplier": "MMG",
+                "variants": [{"reference": "INV-RECOUNT-PROD-001", "quantity_in_stock": 0}],
+            },
+        )
+        assert product_response.status_code == 200, product_response.text
+        variant_id = product_response.json()["variants"][0]["id"]
+
+        location_response = client.post(
+            "/v2/stock/locations",
+            headers=headers,
+            json={"name": "WH/Inventaire Recompte", "usage": "internal"},
+        )
+        assert location_response.status_code == 200, location_response.text
+        location_id = location_response.json()["id"]
+
+        assert client.post(
+            "/v2/stock/transaction",
+            headers=headers,
+            json={"variant_id": variant_id, "location_dest_id": location_id, "quantity": 5},
         ).status_code == 200
+
+        session_response = client.post(
+            "/v2/stock/inventory-sessions",
+            headers=headers,
+            json={"name": "Comptage recompte", "location_id": location_id},
+        )
+        assert session_response.status_code == 200, session_response.text
+        session_id = session_response.json()["id"]
+
+        line_response = client.post(
+            f"/v2/stock/inventory-sessions/{session_id}/lines",
+            headers=headers,
+            json={"variant_id": variant_id, "location_id": location_id, "counted_quantity": 4, "reason": "Écart à confirmer"},
+        )
+        assert line_response.status_code == 200, line_response.text
+        line_id = line_response.json()["id"]
+
+        recount_response = client.post(
+            f"/v2/stock/inventory-sessions/{session_id}/lines/{line_id}/recount",
+            headers=headers,
+            json={"notes": "Deuxième opérateur requis"},
+        )
+        assert recount_response.status_code == 200, recount_response.text
+        assert recount_response.json()["status"] == "recount"
+
+        blocked_validate = client.post(
+            f"/v2/stock/inventory-sessions/{session_id}/validate",
+            headers=headers,
+        )
+        assert blocked_validate.status_code == 400, blocked_validate.text
+        assert "attente de recompte" in blocked_validate.json()["detail"]
+
+        export_response = client.get(
+            f"/v2/stock/inventory-sessions/{session_id}/export",
+            headers=headers,
+        )
+        assert export_response.status_code == 200, export_response.text
+        assert export_response.content.startswith(b"PK")
+        assert "spreadsheetml.sheet" in export_response.headers["content-type"]
+
+        recount_line = client.post(
+            f"/v2/stock/inventory-sessions/{session_id}/lines",
+            headers=headers,
+            json={"variant_id": variant_id, "location_id": location_id, "counted_quantity": 5},
+        )
+        assert recount_line.status_code == 200, recount_line.text
+        assert recount_line.json()["status"] == "ok"
 
         validate_response = client.post(
             f"/v2/stock/inventory-sessions/{session_id}/validate",
             headers=headers,
         )
-        assert validate_response.status_code == 409, validate_response.text
-        assert "Stock modifié depuis le comptage" in validate_response.json()["detail"]
+        assert validate_response.status_code == 200, validate_response.text
+        assert validate_response.json()["status"] == "validated"
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)

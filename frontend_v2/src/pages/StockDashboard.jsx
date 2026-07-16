@@ -2020,6 +2020,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
     const [selectedSessionId, setSelectedSessionId] = useState(sessions[0]?.id || null);
     const [newSession, setNewSession] = useState({ name: '', location_id: '', notes: '' });
     const [lineForm, setLineForm] = useState({ variant_id: '', location_id: '', counted_quantity: '', reason: '' });
+    const [scanValue, setScanValue] = useState('');
     const [busy, setBusy] = useState(false);
 
     const internalLocations = locations.filter(location => location.usage === 'internal' && location.is_active !== false);
@@ -2042,6 +2043,19 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
         : 0;
     const countedQuantity = lineForm.counted_quantity === '' ? null : Number(lineForm.counted_quantity);
     const variance = countedQuantity === null ? null : countedQuantity - expectedQuantity;
+    const hasRecountLines = Boolean(selectedSession?.lines?.some(line => line.status === 'recount'));
+
+    const matchVariantFromScan = (value) => {
+        const needle = value.trim().toLowerCase();
+        if (!needle) return null;
+        return stockVariants.find(variant => [
+            variant.reference,
+            variant.barcode,
+            variant.supplier_reference,
+            variant.product_name,
+            variant.supplier,
+        ].some(field => String(field || '').toLowerCase().includes(needle)));
+    };
 
     const refreshInventory = async () => {
         await Promise.all([
@@ -2061,6 +2075,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                 name: newSession.name.trim(),
                 location_id: newSession.location_id ? Number(newSession.location_id) : null,
                 notes: newSession.notes || null,
+                zone_locked: true,
             };
             const res = await api.post('/v2/stock/inventory-sessions', payload);
             setSelectedSessionId(res.data.id);
@@ -2088,6 +2103,52 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
             await refreshInventory();
         } catch (error) {
             alert(error.response?.data?.detail || "Saisie de comptage impossible.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleScanSubmit = (event) => {
+        event.preventDefault();
+        const variant = matchVariantFromScan(scanValue);
+        if (!variant) {
+            alert("Référence introuvable dans le catalogue stock.");
+            return;
+        }
+        setLineForm(prev => ({ ...prev, variant_id: String(variant.id) }));
+        setScanValue(variant.reference || scanValue);
+    };
+
+    const requestRecount = async (line) => {
+        if (!selectedSession || busy) return;
+        const notes = window.prompt("Pourquoi demander un recompte ?", line.reason || "");
+        if (notes === null) return;
+        setBusy(true);
+        try {
+            await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/lines/${line.id}/recount`, { notes });
+            await refreshInventory();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Demande de recompte impossible.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const exportSession = async () => {
+        if (!selectedSession || busy) return;
+        setBusy(true);
+        try {
+            const res = await api.get(`/v2/stock/inventory-sessions/${selectedSession.id}/export`, { responseType: 'blob' });
+            const url = window.URL.createObjectURL(new Blob([res.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `${selectedSession.reference}-rapport-inventaire.xlsx`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (error) {
+            alert(error.response?.data?.detail || "Export inventaire impossible.");
         } finally {
             setBusy(false);
         }
@@ -2127,6 +2188,18 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
         validated: 'Validée',
         cancelled: 'Annulée',
     };
+    const lineStatusLabel = {
+        ok: 'OK',
+        variance: 'Écart',
+        recount: 'À recompter',
+        validated: 'Validé',
+    };
+    const lineStatusClass = {
+        ok: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+        variance: 'bg-amber-50 text-amber-700 border-amber-100',
+        recount: 'bg-red-50 text-red-700 border-red-100',
+        validated: 'bg-blue-50 text-blue-700 border-blue-100',
+    };
 
     return (
         <div className="max-w-7xl mx-auto space-y-6">
@@ -2161,6 +2234,9 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                     <aside className="border-r border-slate-100 bg-slate-50/80 p-5 space-y-4">
                         <form onSubmit={createSession} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3">
                             <p className="text-xs font-black uppercase tracking-widest text-slate-400">Nouvelle campagne</p>
+                            <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] font-black text-amber-700">
+                                La zone sélectionnée sera gelée jusqu'à validation ou annulation.
+                            </div>
                             <input
                                 value={newSession.name}
                                 onChange={event => setNewSession(prev => ({ ...prev, name: event.target.value }))}
@@ -2214,6 +2290,11 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                         <p className={`text-xs font-bold mt-2 ${isSelected ? 'text-slate-200' : 'text-slate-500'}`}>
                                             {session.location?.name || 'Tous emplacements'} - {session.lines?.length || 0} ligne(s)
                                         </p>
+                                        {session.zone_locked && ['draft', 'counting'].includes(session.status) && (
+                                            <p className={`text-[10px] font-black uppercase mt-2 ${isSelected ? 'text-amber-200' : 'text-amber-600'}`}>
+                                                Zone gelée
+                                            </p>
+                                        )}
                                     </button>
                                 );
                             })}
@@ -2241,14 +2322,28 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                         <p className="text-sm font-bold text-slate-500 mt-1">
                                             {selectedSession.reference} - {selectedSession.location?.name || 'Tous emplacements internes'}
                                         </p>
+                                        <div className="flex flex-wrap gap-2 mt-3">
+                                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-[10px] uppercase font-black border ${selectedSession.zone_locked && ['draft', 'counting'].includes(selectedSession.status) ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                                                {selectedSession.zone_locked && ['draft', 'counting'].includes(selectedSession.status) ? 'Zone gelée' : 'Zone libérée'}
+                                            </span>
+                                            {hasRecountLines && (
+                                                <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] uppercase font-black border bg-red-50 text-red-700 border-red-100">
+                                                    Recompte requis
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                     <div className="flex gap-2">
+                                        <button onClick={exportSession} disabled={busy || !selectedSession.lines?.length} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm inline-flex items-center gap-2">
+                                            <Download className="w-4 h-4" />
+                                            Rapport
+                                        </button>
                                         {['draft', 'counting'].includes(selectedSession.status) && (
                                             <>
                                                 <button onClick={cancelSession} disabled={!isManager || busy} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm">
                                                     Annuler
                                                 </button>
-                                                <button onClick={validateSession} disabled={!isManager || busy || !selectedSession.lines?.length} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
+                                                <button onClick={validateSession} disabled={!isManager || busy || !selectedSession.lines?.length || hasRecountLines} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
                                                     Valider les écarts
                                                 </button>
                                             </>
@@ -2257,7 +2352,23 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                 </div>
 
                                 {['draft', 'counting'].includes(selectedSession.status) && (
-                                    <form onSubmit={submitLine} className="rounded-3xl border border-blue-100 bg-blue-50/40 p-5 grid grid-cols-1 lg:grid-cols-[1.5fr_1fr_160px_1fr_auto] gap-3 items-end">
+                                    <form onSubmit={submitLine} className="rounded-3xl border border-blue-100 bg-blue-50/40 p-5 grid grid-cols-1 lg:grid-cols-[1.1fr_1.5fr_1fr_160px_1fr_auto] gap-3 items-end">
+                                        <label className="space-y-1">
+                                            <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Scan / recherche tablette</span>
+                                            <input
+                                                value={scanValue}
+                                                onChange={event => setScanValue(event.target.value)}
+                                                onKeyDown={event => {
+                                                    if (event.key === 'Enter') {
+                                                        event.preventDefault();
+                                                        handleScanSubmit(event);
+                                                    }
+                                                }}
+                                                placeholder="Scanner ou taper une réf."
+                                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                                disabled={!isManager || busy}
+                                            />
+                                        </label>
                                         <label className="space-y-1">
                                             <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Article compté</span>
                                             <select
@@ -2316,7 +2427,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                             Ajouter
                                         </button>
                                         {selectedVariant && selectedLocation && (
-                                            <div className="lg:col-span-5 grid grid-cols-3 gap-3 text-sm">
+                                            <div className="lg:col-span-6 grid grid-cols-3 gap-3 text-sm">
                                                 <div className="rounded-xl bg-white border border-slate-200 p-3">
                                                     <p className="text-[10px] uppercase font-black text-slate-400">Système</p>
                                                     <p className="text-xl font-black text-slate-900">{expectedQuantity.toLocaleString('fr-FR')}</p>
@@ -2343,7 +2454,9 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                 <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400 text-right">Système</th>
                                                 <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400 text-right">Compté</th>
                                                 <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400 text-right">Écart</th>
+                                                <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400">Statut</th>
                                                 <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400">Motif</th>
+                                                <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400 text-right">Action</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
@@ -2359,12 +2472,32 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                     <td className={`px-5 py-4 text-right font-black ${line.variance_quantity === 0 ? 'text-emerald-600' : line.variance_quantity > 0 ? 'text-blue-600' : 'text-amber-700'}`}>
                                                         {line.variance_quantity > 0 ? '+' : ''}{line.variance_quantity.toLocaleString('fr-FR')}
                                                     </td>
+                                                    <td className="px-5 py-4">
+                                                        <span className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-[10px] uppercase font-black ${lineStatusClass[line.status] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                                            {lineStatusLabel[line.status] || line.status || 'OK'}
+                                                        </span>
+                                                        {line.recount_notes && (
+                                                            <p className="text-[11px] font-bold text-red-500 mt-1">{line.recount_notes}</p>
+                                                        )}
+                                                    </td>
                                                     <td className="px-5 py-4 text-sm font-bold text-slate-500">{line.reason || '-'}</td>
+                                                    <td className="px-5 py-4 text-right">
+                                                        {['draft', 'counting'].includes(selectedSession.status) && line.status !== 'recount' && line.status !== 'validated' && Math.abs(Number(line.variance_quantity || 0)) > 0.000001 && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => requestRecount(line)}
+                                                                disabled={!isManager || busy}
+                                                                className="px-3 py-2 rounded-lg border border-red-100 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50 text-xs font-black"
+                                                            >
+                                                                Demander recompte
+                                                            </button>
+                                                        )}
+                                                    </td>
                                                 </tr>
                                             ))}
                                             {(!selectedSession.lines || selectedSession.lines.length === 0) && (
                                                 <tr>
-                                                    <td colSpan="6" className="py-12 text-center text-sm font-bold text-slate-400">
+                                                    <td colSpan="8" className="py-12 text-center text-sm font-bold text-slate-400">
                                                         Aucune ligne comptée. Ajoutez les références réellement vérifiées.
                                                     </td>
                                                 </tr>

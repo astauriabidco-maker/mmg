@@ -404,6 +404,7 @@ class InventorySessionCreate(BaseModel):
     name: str
     location_id: Optional[int] = None
     notes: Optional[str] = None
+    zone_locked: bool = True
 
 class InventoryCountLineUpsert(BaseModel):
     variant_id: int
@@ -420,8 +421,12 @@ class InventoryCountLineResponse(BaseModel):
     expected_quantity: float
     counted_quantity: float
     variance_quantity: float
+    status: str = "ok"
     reason: Optional[str] = None
     notes: Optional[str] = None
+    recount_requested_by: Optional[str] = None
+    recount_requested_at: Optional[datetime] = None
+    recount_notes: Optional[str] = None
     counted_by: str
     counted_at: datetime
     adjustment_move_id: Optional[int] = None
@@ -436,6 +441,9 @@ class InventorySessionResponse(BaseModel):
     status: str
     location_id: Optional[int] = None
     notes: Optional[str] = None
+    zone_locked: bool = True
+    locked_at: Optional[datetime] = None
+    unlocked_at: Optional[datetime] = None
     created_by: str
     created_at: datetime
     validated_by: Optional[str] = None
@@ -443,6 +451,9 @@ class InventorySessionResponse(BaseModel):
     location: Optional[StockLocationResponse] = None
     lines: List[InventoryCountLineResponse] = []
     model_config = ConfigDict(from_attributes=True)
+
+class InventoryRecountRequest(BaseModel):
+    notes: Optional[str] = None
 
 # --- REGLAGES & REFERENTIELS (CONFIG) ---
 class AppConfigBase(BaseModel):
