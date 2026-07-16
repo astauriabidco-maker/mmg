@@ -615,6 +615,7 @@ class PurchaseOrder(Base):
     expected_date = Column(DateTime, nullable=True)
     status = Column(SAEnum(PurchaseOrderStatus), default=PurchaseOrderStatus.DRAFT)
     total_amount = Column(Float, default=0.0)
+    global_discount_percent = Column(Float, default=0.0)
     notes = Column(Text, nullable=True)
     author = Column(String, default="Système")
     
@@ -628,6 +629,7 @@ class PurchaseOrderLine(Base):
     quantity = Column(Float, default=1.0)
     quantity_received = Column(Float, default=0.0)
     unit_price = Column(Float, default=0.0)
+    discount_percent = Column(Float, default=0.0)
     
     order = relationship("PurchaseOrder", back_populates="lines")
     variant = relationship("ProductVariant")

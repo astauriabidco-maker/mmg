@@ -20,10 +20,12 @@ class PurchaseOrderLineInput(BaseModel):
     variant_id: int
     quantity: float
     unit_price: float
+    discount_percent: float = 0.0
 
 class PurchaseOrderCreate(BaseModel):
     supplier: str
     expected_date: Optional[datetime] = None
+    global_discount_percent: float = 0.0
     notes: Optional[str] = None
     lines: List[PurchaseOrderLineInput] = []
 
@@ -84,6 +86,7 @@ def create_purchase_order(
         reference=ref,
         supplier=data.supplier,
         expected_date=data.expected_date,
+        global_discount_percent=max(0, min(float(data.global_discount_percent or 0), 100)),
         notes=data.notes,
         status=models.PurchaseOrderStatus.DRAFT,
         author=current_user.get("sub", "unknown")
@@ -93,17 +96,21 @@ def create_purchase_order(
     
     total = 0
     for line in data.lines:
+        quantity = max(float(line.quantity or 0), 0)
+        unit_price = max(float(line.unit_price or 0), 0)
+        discount_percent = max(0, min(float(line.discount_percent or 0), 100))
         new_line = models.PurchaseOrderLine(
             order_id=po.id,
             variant_id=line.variant_id,
-            quantity=line.quantity,
-            unit_price=line.unit_price,
+            quantity=quantity,
+            unit_price=unit_price,
+            discount_percent=discount_percent,
             quantity_received=0
         )
         db.add(new_line)
-        total += line.quantity * line.unit_price
+        total += quantity * unit_price * (1 - discount_percent / 100)
         
-    po.total_amount = total
+    po.total_amount = total * (1 - po.global_discount_percent / 100)
     db.commit()
     db.refresh(po)
     return {"id": po.id, "reference": po.reference}
@@ -123,7 +130,9 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
             "product_name": line.variant.product.name if line.variant and line.variant.product else "Inconnu",
             "quantity": line.quantity,
             "quantity_received": line.quantity_received,
-            "unit_price": line.unit_price
+            "unit_price": line.unit_price,
+            "discount_percent": line.discount_percent or 0,
+            "line_total": (line.quantity or 0) * (line.unit_price or 0) * (1 - float(line.discount_percent or 0) / 100),
         })
         
     return {
@@ -136,6 +145,7 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
         "total_amount": po.total_amount,
         "notes": po.notes,
         "author": po.author,
+        "global_discount_percent": po.global_discount_percent or 0,
         "lines": lines
     }
 

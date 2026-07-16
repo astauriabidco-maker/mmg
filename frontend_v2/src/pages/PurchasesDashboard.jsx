@@ -45,7 +45,8 @@ export default function PurchasesDashboard() {
     const [newSupplier, setNewSupplier] = useState(emptySupplierForm);
     
     // Create form
-    const [newPO, setNewPO] = useState({ supplier: '', expected_date: '', notes: '', lines: [] });
+    const emptyPOForm = { supplier: '', expected_date: '', notes: '', global_discount_percent: 0, lines: [] };
+    const [newPO, setNewPO] = useState(emptyPOForm);
     
     // Receive form
     const [receiveTargetLoc, setReceiveTargetLoc] = useState('');
@@ -102,11 +103,22 @@ export default function PurchasesDashboard() {
     const availableVariants = variantsData;
     const locations = locationsData;
     const selectedSupplier = suppliers.find(s => s.name === newPO.supplier);
-    const poSubtotal = newPO.lines.reduce((sum, line) => {
+    const poGrossTotal = newPO.lines.reduce((sum, line) => {
         const qty = parseFloat(line.quantity || 0);
         const price = parseFloat(line.unit_price || 0);
         return sum + (Number.isFinite(qty) && Number.isFinite(price) ? qty * price : 0);
     }, 0);
+    const poLineDiscountTotal = newPO.lines.reduce((sum, line) => {
+        const qty = parseFloat(line.quantity || 0);
+        const price = parseFloat(line.unit_price || 0);
+        const discount = Math.max(0, Math.min(parseFloat(line.discount_percent || 0), 100));
+        const gross = Number.isFinite(qty) && Number.isFinite(price) ? qty * price : 0;
+        return sum + gross * (discount / 100);
+    }, 0);
+    const poAfterLineDiscount = poGrossTotal - poLineDiscountTotal;
+    const poGlobalDiscountPercent = Math.max(0, Math.min(parseFloat(newPO.global_discount_percent || 0), 100));
+    const poGlobalDiscountAmount = poAfterLineDiscount * (poGlobalDiscountPercent / 100);
+    const poSubtotal = poAfterLineDiscount - poGlobalDiscountAmount;
     const validLines = newPO.lines.filter(line => line.variant_id && parseFloat(line.quantity || 0) > 0).length;
 
     const handleCreateSupplier = async () => {
@@ -132,11 +144,12 @@ export default function PurchasesDashboard() {
                 .map(l => ({
                 variant_id: l.variant_id,
                 quantity: parseFloat(l.quantity),
-                unit_price: parseFloat(l.unit_price)
+                unit_price: parseFloat(l.unit_price),
+                discount_percent: Math.max(0, Math.min(parseFloat(l.discount_percent || 0), 100)),
             }));
             await api.post('/v2/purchases/', { ...newPO, lines });
             setShowCreateModal(false);
-            setNewPO({ supplier: '', expected_date: '', notes: '', lines: [] });
+            setNewPO(emptyPOForm);
             queryClient.invalidateQueries(['purchases']);
         } catch (err) {
             console.error(err);
@@ -171,7 +184,7 @@ export default function PurchasesDashboard() {
     };
 
     const addLineToPO = () => {
-        setNewPO({ ...newPO, lines: [...newPO.lines, { variant_id: '', quantity: 1, unit_price: 0 }] });
+        setNewPO({ ...newPO, lines: [...newPO.lines, { variant_id: '', quantity: 1, unit_price: 0, discount_percent: 0 }] });
     };
     
     const updateLine = (index, field, value) => {
@@ -341,7 +354,7 @@ export default function PurchasesDashboard() {
                                             
                                             <button 
                                                 onClick={() => {
-                                                    setNewPO({ supplier: '', expected_date: '', notes: 'Généré par IA SCM', lines: [{variant_id: rec.variant_id, quantity: rec.suggested_quantity, unit_price: 0}] });
+                                                    setNewPO({ ...emptyPOForm, notes: 'Généré par IA SCM', lines: [{variant_id: rec.variant_id, quantity: rec.suggested_quantity, unit_price: 0, discount_percent: 0}] });
                                                     setShowCreateModal(true);
                                                 }}
                                                 className="mt-3 w-full py-2 bg-white border border-indigo-200 hover:bg-indigo-100 text-indigo-700 text-xs font-black rounded-lg transition-colors"
@@ -408,16 +421,19 @@ export default function PurchasesDashboard() {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {selectedPO.lines && selectedPO.lines.map((line, idx) => (
+                                            {selectedPO.lines && selectedPO.lines.map((line, idx) => (
                                             <tr key={idx} className="hover:bg-slate-50 transition-colors">
                                                 <td className="py-4 px-4">
                                                     <span className="font-bold text-slate-800 block text-sm">{line.product_name}</span>
                                                     <span className="text-[10px] font-black text-slate-400 uppercase">{line.variant_ref}</span>
                                                 </td>
-                                                <td className="py-4 px-4 text-right font-mono text-sm">{line.unit_price} €</td>
+                                                <td className="py-4 px-4 text-right font-mono text-sm">
+                                                    {line.unit_price} €
+                                                    {(line.discount_percent || 0) > 0 && <div className="text-[10px] text-emerald-600 font-black">-{line.discount_percent}%</div>}
+                                                </td>
                                                 <td className="py-4 px-4 text-center font-black text-blue-600 text-lg">{line.quantity}</td>
                                                 <td className="py-4 px-4 text-center font-black text-emerald-600 text-lg">{line.quantity_received}</td>
-                                                <td className="py-4 px-4 text-right font-black text-slate-800 text-sm">{(line.quantity * line.unit_price).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}</td>
+                                                <td className="py-4 px-4 text-right font-black text-slate-800 text-sm">{(line.line_total ?? line.quantity * line.unit_price).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}</td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -507,9 +523,13 @@ export default function PurchasesDashboard() {
                                         <div className="p-4 space-y-3">
                                             {newPO.lines.map((line, idx) => {
                                                 const variant = availableVariants.find(v => String(v.id) === String(line.variant_id));
-                                                const lineTotal = (parseFloat(line.quantity || 0) || 0) * (parseFloat(line.unit_price || 0) || 0);
+                                                const quantity = parseFloat(line.quantity || 0) || 0;
+                                                const unitPrice = parseFloat(line.unit_price || 0) || 0;
+                                                const lineDiscount = Math.max(0, Math.min(parseFloat(line.discount_percent || 0), 100));
+                                                const grossLineTotal = quantity * unitPrice;
+                                                const lineTotal = grossLineTotal * (1 - lineDiscount / 100);
                                                 return (
-                                                    <div key={idx} className="grid grid-cols-[1fr_96px_120px_120px_40px] gap-3 items-center bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                                    <div key={idx} className="grid grid-cols-[1fr_90px_120px_96px_128px_40px] gap-3 items-center bg-slate-50 p-3 rounded-xl border border-slate-200">
                                                         <div>
                                                             <select value={line.variant_id} onChange={e=>updateLine(idx, 'variant_id', e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 text-sm outline-none focus:ring-2 focus:ring-blue-500">
                                                                 <option value="">Sélectionner un article du catalogue</option>
@@ -523,10 +543,21 @@ export default function PurchasesDashboard() {
                                                                 </p>
                                                             )}
                                                         </div>
-                                                        <input type="number" min="0" placeholder="Qté" value={line.quantity} onChange={e=>updateLine(idx, 'quantity', e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-center font-black text-blue-600 outline-none focus:ring-2 focus:ring-blue-500"/>
-                                                        <input type="number" min="0" step="0.01" placeholder="Prix U." value={line.unit_price} onChange={e=>updateLine(idx, 'unit_price', e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-center font-mono font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"/>
+                                                        <div>
+                                                            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Qté</label>
+                                                            <input type="number" min="0" placeholder="Qté" value={line.quantity} onChange={e=>updateLine(idx, 'quantity', e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-center font-black text-blue-600 outline-none focus:ring-2 focus:ring-blue-500"/>
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Prix négocié</label>
+                                                            <input type="number" min="0" step="0.01" placeholder="Prix U." value={line.unit_price} onChange={e=>updateLine(idx, 'unit_price', e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-center font-mono font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"/>
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Remise %</label>
+                                                            <input type="number" min="0" max="100" step="0.1" value={line.discount_percent || 0} onChange={e=>updateLine(idx, 'discount_percent', e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-center font-black text-emerald-600 outline-none focus:ring-2 focus:ring-emerald-500"/>
+                                                        </div>
                                                         <div className="text-right pr-2">
-                                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</p>
+                                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Net ligne</p>
+                                                            {lineDiscount > 0 && <p className="text-[10px] text-slate-400 line-through">{grossLineTotal.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</p>}
                                                             <p className="font-black text-slate-900">{lineTotal.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</p>
                                                         </div>
                                                         <button onClick={() => removeLine(idx)} className="p-2 text-red-400 hover:bg-red-50 rounded-lg"><X className="w-4 h-4"/></button>
@@ -549,8 +580,25 @@ export default function PurchasesDashboard() {
 
                                 <aside className="space-y-4">
                                     <div className="bg-slate-900 text-white rounded-2xl p-6 shadow-xl">
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total commande HT</p>
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Net commande HT</p>
                                         <p className="text-4xl font-black">{poSubtotal.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</p>
+                                        <div className="mt-5">
+                                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Remise globale %</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                max="100"
+                                                step="0.1"
+                                                value={newPO.global_discount_percent}
+                                                onChange={e=>setNewPO({...newPO, global_discount_percent: e.target.value})}
+                                                className="w-full bg-white/10 border border-white/10 rounded-xl p-3 text-white font-black outline-none focus:ring-2 focus:ring-blue-400"
+                                            />
+                                        </div>
+                                        <div className="mt-5 space-y-2 text-sm font-bold text-slate-300">
+                                            <div className="flex justify-between"><span>Brut articles</span><span>{poGrossTotal.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span></div>
+                                            <div className="flex justify-between"><span>Remises lignes</span><span>-{poLineDiscountTotal.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span></div>
+                                            <div className="flex justify-between"><span>Remise globale</span><span>-{poGlobalDiscountAmount.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span></div>
+                                        </div>
                                         <div className="mt-5 grid grid-cols-2 gap-3">
                                             <div className="bg-white/10 rounded-xl p-3">
                                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lignes</p>

@@ -68,11 +68,13 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
             json={
                 "supplier": "Fournisseur test",
                 "notes": "Commande e2e achat stock",
+                "global_discount_percent": 5,
                 "lines": [
                     {
                         "variant_id": variant_id,
                         "quantity": 7,
                         "unit_price": 12.5,
+                        "discount_percent": 10,
                     }
                 ],
             },
@@ -92,6 +94,10 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
         assert details_response.status_code == 200, details_response.text
         details = details_response.json()
         assert details["status"] == "RECEIVED"
+        assert details["global_discount_percent"] == 5
+        assert details["total_amount"] == 74.8125
+        assert details["lines"][0]["discount_percent"] == 10
+        assert details["lines"][0]["line_total"] == 78.75
         assert details["lines"][0]["quantity_received"] == 7
 
         quants_response = client.get("/v2/stock/quants", headers=headers)
