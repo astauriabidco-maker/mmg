@@ -455,6 +455,10 @@ def consume_reservation(
                 reference=f"DEBIT-ATELIER-{now_ref}",
                 notes=f"Débit atelier réel | Réservation {reservation.reference} | Contexte {context_reference}",
                 author=author,
+                source_screen="atelier.debit_reel",
+                document_type="stock_reservation",
+                document_reference=reservation.reference,
+                business_reason=f"Débit réel atelier pour {context_reference}",
             )
         except ValueError as exc:
             raise ValueError(
@@ -504,6 +508,10 @@ def consume_commercial_reservation(
                 reference=f"SORTIE-CLIENT-{now_ref}",
                 notes=f"Sortie client devis libre | Réservation {reservation.reference} | Devis {context_reference}",
                 author=author,
+                source_screen="sales.customer_delivery",
+                document_type="stock_reservation",
+                document_reference=reservation.reference,
+                business_reason=f"Sortie client devis libre {context_reference}",
             )
         except ValueError as exc:
             raise ValueError(
@@ -564,6 +572,10 @@ def return_commercial_reservation(
                 reference=f"RETOUR-CLIENT-{now_ref}",
                 notes=f"Retour client devis libre | Réservation {reservation.reference} | Devis {context_reference}",
                 author=author,
+                source_screen="sales.customer_return",
+                document_type="stock_reservation",
+                document_reference=reservation.reference,
+                business_reason=f"Retour client devis libre {context_reference}",
             )
         except ValueError as exc:
             raise ValueError(

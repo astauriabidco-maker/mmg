@@ -2762,6 +2762,17 @@ function AuditLogs({ transactions }) {
     const filteredTransactions = movementFilter === 'workshop_debit'
         ? transactions.filter(tx => tx.movement_kind === 'workshop_debit' || tx.reference?.startsWith('DEBIT-ATELIER'))
         : transactions;
+    const exportAudit = async () => {
+        const res = await api.get('/v2/stock/transactions/export', { responseType: 'blob' });
+        const url = window.URL.createObjectURL(new Blob([res.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', 'stock-audit.xlsx');
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+    };
 
     return (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden w-full max-w-5xl mx-auto mt-4">
@@ -2773,18 +2784,27 @@ function AuditLogs({ transactions }) {
                     </h3>
                     <p className="text-xs font-medium text-slate-500 mt-1">Traçabilité complète des entrées, sorties et transferts (100 derniers mouvements).</p>
                 </div>
-                <div className="flex bg-white border border-slate-200 rounded-xl p-1 shadow-sm">
+                <div className="flex items-center gap-3">
+                    <div className="flex bg-white border border-slate-200 rounded-xl p-1 shadow-sm">
+                        <button
+                            onClick={() => setMovementFilter('all')}
+                            className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${movementFilter === 'all' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                            Tous
+                        </button>
+                        <button
+                            onClick={() => setMovementFilter('workshop_debit')}
+                            className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${movementFilter === 'workshop_debit' ? 'bg-amber-500 text-white' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                            Débits atelier
+                        </button>
+                    </div>
                     <button
-                        onClick={() => setMovementFilter('all')}
-                        className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${movementFilter === 'all' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-800'}`}
+                        onClick={exportAudit}
+                        className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-black inline-flex items-center gap-2 shadow-sm hover:bg-slate-800"
                     >
-                        Tous
-                    </button>
-                    <button
-                        onClick={() => setMovementFilter('workshop_debit')}
-                        className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${movementFilter === 'workshop_debit' ? 'bg-amber-500 text-white' : 'text-slate-500 hover:text-slate-800'}`}
-                    >
-                        Débits atelier
+                        <Download className="w-4 h-4" />
+                        Export audit
                     </button>
                 </div>
             </div>
@@ -2812,6 +2832,13 @@ function AuditLogs({ transactions }) {
                                     <td className="px-6 py-4 text-sm font-mono text-slate-500 font-bold">{tx.reference || `TX-#${tx.id}`}</td>
                                     <td className="px-6 py-4">
                                         <span className="font-bold text-slate-800 text-[13px] block">{tx.item_name}</span>
+                                        {(tx.document_reference || tx.business_reason) && (
+                                            <span className="text-[10px] text-slate-500 block mt-1">
+                                                {tx.document_reference && <b>{tx.document_reference}</b>}
+                                                {tx.document_reference && tx.business_reason && ' · '}
+                                                {tx.business_reason}
+                                            </span>
+                                        )}
                                         {tx.notes && <span className="text-[10px] italic text-slate-400 line-clamp-1">{tx.notes}</span>}
                                     </td>
                                     <td className="px-6 py-4 text-center">

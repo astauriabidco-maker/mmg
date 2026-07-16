@@ -335,6 +335,14 @@ def validate_inventory_session(
         variance = float(line.variance_quantity or 0)
         if abs(variance) <= 0.000001:
             continue
+        if not (line.reason or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Motif obligatoire pour valider un écart d'inventaire. "
+                    f"Ligne {line.id}: renseignez la raison du comptage."
+                ),
+            )
 
         if variance > 0:
             source_id = inventory_location.id
@@ -356,6 +364,10 @@ def validate_inventory_session(
                 reference=f"INV/{session.reference}/{line.id}",
                 notes=f"Ajustement inventaire physique {session.reference}. Motif: {line.reason or 'Non renseigné'}",
                 author=author,
+                source_screen="stock.physical_inventory",
+                document_type="inventory_session",
+                document_reference=session.reference,
+                business_reason=line.reason,
                 enforce_zone_lock=False,
             )
         except ValueError as exc:
@@ -574,6 +586,17 @@ def create_transaction(tx: schemas.StockMoveCreate, background_tasks: Background
     if not variant: raise HTTPException(404, "Variant not found")
 
     qty = abs(tx.quantity)
+    src_loc = db.query(models.StockLocation).filter_by(id=tx.location_id).first() if tx.location_id else None
+    dest_loc = db.query(models.StockLocation).filter_by(id=tx.location_dest_id).first() if tx.location_dest_id else None
+    is_manual_inventory_adjustment = bool(
+        (src_loc and src_loc.usage == "inventory")
+        or (dest_loc and dest_loc.usage == "inventory")
+    )
+    if is_manual_inventory_adjustment and not (tx.reason or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Motif obligatoire pour un ajustement manuel d'inventaire.",
+        )
     try:
         result = InventoryService.move_stock(
             db,
@@ -584,14 +607,16 @@ def create_transaction(tx: schemas.StockMoveCreate, background_tasks: Background
             reference=f"WH/MOVE-{int(time.time()*1000)}",
             notes=tx.notes,
             author=user.get("sub", "Admin"),
+            source_screen=tx.source_screen or "stock.manual_transaction",
+            document_type=tx.document_type or ("manual_inventory_adjustment" if is_manual_inventory_adjustment else "manual_stock_move"),
+            document_reference=tx.document_reference,
+            business_reason=tx.reason or tx.notes,
         )
     except ValueError as exc:
         detail = str(exc)
         status_code = 423 if "Zone gelée" in detail else 400
         raise HTTPException(status_code=status_code, detail=detail) from exc
 
-    src_loc = db.query(models.StockLocation).filter_by(id=tx.location_id).first() if tx.location_id else None
-    dest_loc = db.query(models.StockLocation).filter_by(id=tx.location_dest_id).first() if tx.location_dest_id else None
     if (
         src_loc
         and src_loc.usage == 'internal'
@@ -665,9 +690,88 @@ def get_recent_transactions(db: Session = Depends(get_db)):
             "movement_kind": "workshop_debit" if is_workshop_debit else "stock_move",
             "created_at": m.date,
             "author": m.author or "Admin",
-            "notes": m.notes
+            "notes": m.notes,
+            "source_screen": m.source_screen,
+            "document_type": m.document_type,
+            "document_reference": m.document_reference,
+            "business_reason": m.business_reason,
         })
     return result
+
+
+@router.get("/transactions/export")
+def export_stock_audit_xlsx(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    if user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut exporter le journal stock.")
+
+    moves = (
+        db.query(models.StockMove)
+        .options(
+            joinedload(models.StockMove.variant).joinedload(models.ProductVariant.product),
+            joinedload(models.StockMove.source_location),
+            joinedload(models.StockMove.dest_location),
+        )
+        .order_by(models.StockMove.date.desc())
+        .limit(5000)
+        .all()
+    )
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Audit stock"
+    headers = [
+        "Date",
+        "Reference mouvement",
+        "Source ecran",
+        "Type document",
+        "Reference document",
+        "Motif",
+        "Auteur",
+        "Article",
+        "Reference variante",
+        "Source",
+        "Destination",
+        "Quantite",
+        "Notes",
+    ]
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="E2E8F0")
+
+    for move in moves:
+        product_name = move.variant.product.name if move.variant and move.variant.product else "Inconnu"
+        variant_ref = move.variant.reference if move.variant else ""
+        ws.append(
+            [
+                move.date.strftime("%Y-%m-%d %H:%M:%S") if move.date else "",
+                move.reference or "",
+                move.source_screen or "",
+                move.document_type or "",
+                move.document_reference or "",
+                move.business_reason or "",
+                move.author or "",
+                product_name,
+                variant_ref,
+                move.source_location.name if move.source_location else "Externe",
+                move.dest_location.name if move.dest_location else "Externe",
+                float(move.quantity or 0),
+                move.notes or "",
+            ]
+        )
+
+    for column_cells in ws.columns:
+        max_length = max(len(str(cell.value or "")) for cell in column_cells)
+        ws.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, 12), 42)
+
+    stream = io.BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = StreamingResponse(
+        iter([stream.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response.headers["Content-Disposition"] = "attachment; filename=stock-audit.xlsx"
+    return response
 
 @router.post("/workshop-debits/preview", response_model=schemas.WorkshopDebitPreviewResponse)
 async def preview_workshop_debits(
@@ -1454,6 +1558,10 @@ async def import_bom_for_sale_order(sale_order_id: int, background_tasks: Backgr
                 reference=f"PROD-{sale.reference}-BOM",
                 notes=f"Débit BOM auto ({file.filename})",
                 author="Système / Admin",
+                source_screen="stock.legacy_bom_import",
+                document_type="sale_order",
+                document_reference=sale.reference,
+                business_reason="Import BOM historique vers production",
                 allow_negative_source=True,
             )
         except ValueError as exc:

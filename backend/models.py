@@ -270,6 +270,10 @@ class StockMove(Base):
     state = Column(String, default="done")
     notes = Column(String, nullable=True)
     author = Column(String, default="Système")
+    source_screen = Column(String, nullable=True)
+    document_type = Column(String, nullable=True)
+    document_reference = Column(String, nullable=True)
+    business_reason = Column(String, nullable=True)
 
     variant = relationship("ProductVariant")
     source_location = relationship("StockLocation", foreign_keys=[location_id])

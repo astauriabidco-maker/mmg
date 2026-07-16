@@ -408,6 +408,10 @@ def apply_debits(records: list[DebitRecord], source_location: str, dest_location
                     reference=f"DEBIT-ATELIER-{now_ref}",
                     notes=f"Débit atelier {record.source} - {record.project_reference or 'sans affaire'}",
                     author="Import débit atelier",
+                    source_screen="script.import_workshop_debits",
+                    document_type="workshop_debit_file",
+                    document_reference=record.project_reference or record.source,
+                    business_reason="Import débit atelier",
                     allow_negative_source=allow_shortage,
                 )
             except ValueError as exc:

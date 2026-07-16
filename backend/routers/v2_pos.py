@@ -291,6 +291,10 @@ def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db))
                 reference=f"POS Out - {ref}",
                 author="POS System",
                 notes=f"Vente Caisse Ticket {ref}",
+                source_screen="pos.checkout",
+                document_type="pos_order",
+                document_reference=ref,
+                business_reason="Vente comptoir",
             )
         except ValueError as exc:
             status_code = 423 if "Zone gelée" in str(exc) else 400

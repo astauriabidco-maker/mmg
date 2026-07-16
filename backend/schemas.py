@@ -354,6 +354,10 @@ class StockMoveCreate(BaseModel):
     location_dest_id: Optional[int] = None # Dest
     quantity: float
     notes: Optional[str] = None
+    reason: Optional[str] = None
+    source_screen: Optional[str] = None
+    document_type: Optional[str] = None
+    document_reference: Optional[str] = None
 
 class StockMoveResponse(BaseModel):
     id: int
@@ -366,6 +370,10 @@ class StockMoveResponse(BaseModel):
     location_id: Optional[int] = None
     location_dest_id: Optional[int] = None
     notes: Optional[str] = None
+    source_screen: Optional[str] = None
+    document_type: Optional[str] = None
+    document_reference: Optional[str] = None
+    business_reason: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 class StockReservationLineResponse(BaseModel):

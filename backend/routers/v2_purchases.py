@@ -171,6 +171,10 @@ def receive_purchase_order(po_id: int, data: PurchaseOrderReceiveInput, db: Sess
                     reference=ref_move,
                     notes=f"Réception auto depuis {po.reference}",
                     author=po.author,
+                    source_screen="purchases.receipt",
+                    document_type="purchase_order",
+                    document_reference=po.reference,
+                    business_reason="Réception fournisseur",
                 )
             except ValueError as exc:
                 status_code = 423 if "Zone gelée" in str(exc) else 400

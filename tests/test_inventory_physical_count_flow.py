@@ -148,6 +148,10 @@ def test_physical_inventory_validation_creates_adjustment_move():
         assert adjustment_move.location_dest_id == inventory_location.id
         assert adjustment_move.quantity == 3.0
         assert "Casse atelier constatée" in adjustment_move.notes
+        assert adjustment_move.source_screen == "stock.physical_inventory"
+        assert adjustment_move.document_type == "inventory_session"
+        assert adjustment_move.document_reference == validated["reference"]
+        assert adjustment_move.business_reason == "Casse atelier constatée"
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)
@@ -221,6 +225,90 @@ def test_physical_inventory_session_locks_zone_until_cancelled():
             json={"variant_id": variant_id, "location_dest_id": location_id, "quantity": 1},
         )
         assert unlocked_move.status_code == 200, unlocked_move.text
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_manual_inventory_adjustment_requires_reason_and_exports_audit():
+    client, TestingSessionLocal, engine, headers = _client_with_db()
+    try:
+        product_response = client.post(
+            "/v2/stock/products",
+            headers=headers,
+            json={
+                "reference_base": "INV-AUDIT-PROD",
+                "name": "Profil audit",
+                "material_type": "ALU",
+                "unit": "barre",
+                "supplier": "MMG",
+                "variants": [{"reference": "INV-AUDIT-PROD-001", "quantity_in_stock": 0}],
+            },
+        )
+        assert product_response.status_code == 200, product_response.text
+        variant_id = product_response.json()["variants"][0]["id"]
+
+        location_response = client.post(
+            "/v2/stock/locations",
+            headers=headers,
+            json={"name": "WH/Audit", "usage": "internal"},
+        )
+        assert location_response.status_code == 200, location_response.text
+        location_id = location_response.json()["id"]
+
+        inventory_location_response = client.post(
+            "/v2/stock/locations",
+            headers=headers,
+            json={"name": "Virtual/Audit", "usage": "inventory"},
+        )
+        assert inventory_location_response.status_code == 200, inventory_location_response.text
+        inventory_location_id = inventory_location_response.json()["id"]
+
+        assert client.post(
+            "/v2/stock/transaction",
+            headers=headers,
+            json={"variant_id": variant_id, "location_dest_id": location_id, "quantity": 5},
+        ).status_code == 200
+
+        blocked_response = client.post(
+            "/v2/stock/transaction",
+            headers=headers,
+            json={
+                "variant_id": variant_id,
+                "location_id": location_id,
+                "location_dest_id": inventory_location_id,
+                "quantity": 1,
+            },
+        )
+        assert blocked_response.status_code == 400, blocked_response.text
+        assert "Motif obligatoire" in blocked_response.json()["detail"]
+
+        adjustment_response = client.post(
+            "/v2/stock/transaction",
+            headers=headers,
+            json={
+                "variant_id": variant_id,
+                "location_id": location_id,
+                "location_dest_id": inventory_location_id,
+                "quantity": 1,
+                "reason": "Casse constatée au comptoir",
+                "document_reference": "AJUST-001",
+            },
+        )
+        assert adjustment_response.status_code == 200, adjustment_response.text
+
+        transactions_response = client.get("/v2/stock/transactions", headers=headers)
+        assert transactions_response.status_code == 200, transactions_response.text
+        latest_move = transactions_response.json()[0]
+        assert latest_move["source_screen"] == "stock.manual_transaction"
+        assert latest_move["document_type"] == "manual_inventory_adjustment"
+        assert latest_move["document_reference"] == "AJUST-001"
+        assert latest_move["business_reason"] == "Casse constatée au comptoir"
+
+        export_response = client.get("/v2/stock/transactions/export", headers=headers)
+        assert export_response.status_code == 200, export_response.text
+        assert export_response.content.startswith(b"PK")
+        assert "spreadsheetml.sheet" in export_response.headers["content-type"]
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)

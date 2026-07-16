@@ -92,6 +92,10 @@ class InventoryService:
         reference: str,
         notes: Optional[str] = None,
         author: str = "Système",
+        source_screen: Optional[str] = None,
+        document_type: Optional[str] = None,
+        document_reference: Optional[str] = None,
+        business_reason: Optional[str] = None,
         state: str = "done",
         allow_negative_source: bool = False,
         enforce_zone_lock: bool = True,
@@ -148,6 +152,10 @@ class InventoryService:
             state=state,
             notes=notes,
             author=author,
+            source_screen=source_screen,
+            document_type=document_type,
+            document_reference=document_reference,
+            business_reason=business_reason,
         )
         db.add(move)
         db.flush()
