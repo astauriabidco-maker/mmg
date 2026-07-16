@@ -400,6 +400,50 @@ class WorkshopDebitPreviewResponse(BaseModel):
     records: list
     stock_matches: list
 
+class InventorySessionCreate(BaseModel):
+    name: str
+    location_id: Optional[int] = None
+    notes: Optional[str] = None
+
+class InventoryCountLineUpsert(BaseModel):
+    variant_id: int
+    location_id: int
+    counted_quantity: float
+    reason: Optional[str] = None
+    notes: Optional[str] = None
+
+class InventoryCountLineResponse(BaseModel):
+    id: int
+    session_id: int
+    variant_id: int
+    location_id: int
+    expected_quantity: float
+    counted_quantity: float
+    variance_quantity: float
+    reason: Optional[str] = None
+    notes: Optional[str] = None
+    counted_by: str
+    counted_at: datetime
+    adjustment_move_id: Optional[int] = None
+    variant: Optional[ProductVariantResponse] = None
+    location: Optional[StockLocationResponse] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class InventorySessionResponse(BaseModel):
+    id: int
+    reference: str
+    name: str
+    status: str
+    location_id: Optional[int] = None
+    notes: Optional[str] = None
+    created_by: str
+    created_at: datetime
+    validated_by: Optional[str] = None
+    validated_at: Optional[datetime] = None
+    location: Optional[StockLocationResponse] = None
+    lines: List[InventoryCountLineResponse] = []
+    model_config = ConfigDict(from_attributes=True)
+
 # --- REGLAGES & REFERENTIELS (CONFIG) ---
 class AppConfigBase(BaseModel):
     category: str

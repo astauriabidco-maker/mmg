@@ -9,6 +9,7 @@ import time
 import io
 import tempfile
 from pathlib import Path
+from datetime import datetime
 import openpyxl
 from openpyxl.styles import Font, PatternFill
 from sqlalchemy import or_
@@ -51,6 +52,266 @@ async def _parse_workshop_uploads(files: List[UploadFile]):
         finally:
             tmp_path.unlink(missing_ok=True)
     return records, issues, source_names
+
+
+def _require_stock_manager(user: dict) -> None:
+    if user.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Seul un manager peut gérer l'inventaire physique.")
+
+
+def _get_quant_quantity(db: Session, variant_id: int, location_id: int) -> float:
+    quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=location_id).first()
+    return float(quant.quantity if quant else 0)
+
+
+def _get_or_create_quant(db: Session, variant_id: int, location_id: int) -> models.StockQuant:
+    quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=location_id).first()
+    if not quant:
+        quant = models.StockQuant(variant_id=variant_id, location_id=location_id, quantity=0)
+        db.add(quant)
+        db.flush()
+    return quant
+
+
+def _get_or_create_inventory_location(db: Session) -> models.StockLocation:
+    location = db.query(models.StockLocation).filter_by(name="Virtual/Inventory", usage="inventory").first()
+    if not location:
+        location = models.StockLocation(name="Virtual/Inventory", usage="inventory", is_active=True)
+        db.add(location)
+        db.flush()
+    return location
+
+
+def _sync_variant_internal_stock(db: Session, variant_id: int) -> None:
+    variant = db.query(models.ProductVariant).filter_by(id=variant_id).first()
+    if not variant:
+        return
+    internal_quants = (
+        db.query(models.StockQuant)
+        .join(models.StockLocation, models.StockQuant.location_id == models.StockLocation.id)
+        .filter(
+            models.StockQuant.variant_id == variant_id,
+            models.StockLocation.usage == "internal",
+            models.StockLocation.is_active == True,
+        )
+        .all()
+    )
+    variant.quantity_in_stock = sum(float(quant.quantity or 0) for quant in internal_quants)
+
+
+@router.get("/inventory-sessions", response_model=List[schemas.InventorySessionResponse])
+def list_inventory_sessions(
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    query = db.query(models.InventorySession).options(
+        joinedload(models.InventorySession.location),
+        joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.variant),
+        joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.location),
+    ).order_by(models.InventorySession.created_at.desc())
+    if status:
+        query = query.filter(models.InventorySession.status == status)
+    return query.limit(50).all()
+
+
+@router.post("/inventory-sessions", response_model=schemas.InventorySessionResponse)
+def create_inventory_session(
+    payload: schemas.InventorySessionCreate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_stock_manager(user)
+    if payload.location_id:
+        location = db.query(models.StockLocation).filter_by(id=payload.location_id, is_active=True).first()
+        if not location:
+            raise HTTPException(status_code=404, detail="Emplacement introuvable.")
+    reference = f"INV-{int(time.time() * 1000)}"
+    session = models.InventorySession(
+        reference=reference,
+        name=payload.name.strip(),
+        location_id=payload.location_id,
+        notes=payload.notes,
+        status="draft",
+        created_by=user.get("sub", "Admin"),
+    )
+    if not session.name:
+        raise HTTPException(status_code=400, detail="Nom de campagne obligatoire.")
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@router.get("/inventory-sessions/{session_id}", response_model=schemas.InventorySessionResponse)
+def get_inventory_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    session = (
+        db.query(models.InventorySession)
+        .options(
+            joinedload(models.InventorySession.location),
+            joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.variant).joinedload(models.ProductVariant.product),
+            joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.location),
+        )
+        .filter(models.InventorySession.id == session_id)
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+    return session
+
+
+@router.post("/inventory-sessions/{session_id}/lines", response_model=schemas.InventoryCountLineResponse)
+def upsert_inventory_count_line(
+    session_id: int,
+    payload: schemas.InventoryCountLineUpsert,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_stock_manager(user)
+    session = db.query(models.InventorySession).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+    if session.status in ["validated", "cancelled"]:
+        raise HTTPException(status_code=400, detail="Campagne clôturée.")
+    variant = db.query(models.ProductVariant).filter_by(id=payload.variant_id).first()
+    if not variant:
+        raise HTTPException(status_code=404, detail="Variante introuvable.")
+    location = db.query(models.StockLocation).filter_by(id=payload.location_id, is_active=True).first()
+    if not location:
+        raise HTTPException(status_code=404, detail="Emplacement introuvable.")
+    if location.usage != "internal":
+        raise HTTPException(status_code=400, detail="Le comptage physique doit viser un emplacement interne.")
+    if session.location_id and session.location_id != payload.location_id:
+        raise HTTPException(status_code=400, detail="Cette campagne est limitée à un autre emplacement.")
+    if payload.counted_quantity < 0:
+        raise HTTPException(status_code=400, detail="La quantité comptée ne peut pas être négative.")
+
+    expected = _get_quant_quantity(db, payload.variant_id, payload.location_id)
+    counted = float(payload.counted_quantity)
+    line = (
+        db.query(models.InventoryCountLine)
+        .filter_by(session_id=session_id, variant_id=payload.variant_id, location_id=payload.location_id)
+        .first()
+    )
+    if not line:
+        line = models.InventoryCountLine(
+            session_id=session_id,
+            variant_id=payload.variant_id,
+            location_id=payload.location_id,
+        )
+        db.add(line)
+    line.expected_quantity = expected
+    line.counted_quantity = counted
+    line.variance_quantity = counted - expected
+    line.reason = payload.reason
+    line.notes = payload.notes
+    line.counted_by = user.get("sub", "Admin")
+    line.counted_at = datetime.utcnow()
+    session.status = "counting"
+    db.commit()
+    db.refresh(line)
+    return line
+
+
+@router.post("/inventory-sessions/{session_id}/validate", response_model=schemas.InventorySessionResponse)
+def validate_inventory_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_stock_manager(user)
+    session = (
+        db.query(models.InventorySession)
+        .options(joinedload(models.InventorySession.lines))
+        .filter(models.InventorySession.id == session_id)
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+    if session.status == "validated":
+        raise HTTPException(status_code=400, detail="Campagne déjà validée.")
+    if session.status == "cancelled":
+        raise HTTPException(status_code=400, detail="Campagne annulée.")
+    if not session.lines:
+        raise HTTPException(status_code=400, detail="Aucune ligne comptée à valider.")
+
+    inventory_location = _get_or_create_inventory_location(db)
+    author = user.get("sub", "Admin")
+    for line in session.lines:
+        current_qty = _get_quant_quantity(db, line.variant_id, line.location_id)
+        if abs(current_qty - float(line.expected_quantity or 0)) > 0.000001:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Stock modifié depuis le comptage. "
+                    f"Relancez la ligne {line.variant_id} avant validation."
+                ),
+            )
+        variance = float(line.variance_quantity or 0)
+        if abs(variance) <= 0.000001:
+            continue
+
+        internal_quant = _get_or_create_quant(db, line.variant_id, line.location_id)
+        inventory_quant = _get_or_create_quant(db, line.variant_id, inventory_location.id)
+        if variance > 0:
+            internal_quant.quantity += variance
+            inventory_quant.quantity -= variance
+            source_id = inventory_location.id
+            dest_id = line.location_id
+            quantity = variance
+        else:
+            adjustment = abs(variance)
+            if internal_quant.quantity < adjustment:
+                raise HTTPException(status_code=400, detail="Ajustement impossible: stock physique insuffisant.")
+            internal_quant.quantity -= adjustment
+            inventory_quant.quantity += adjustment
+            source_id = line.location_id
+            dest_id = inventory_location.id
+            quantity = adjustment
+
+        move = models.StockMove(
+            reference=f"INV/{session.reference}/{line.id}",
+            variant_id=line.variant_id,
+            location_id=source_id,
+            location_dest_id=dest_id,
+            quantity=quantity,
+            state="done",
+            notes=f"Ajustement inventaire physique {session.reference}. Motif: {line.reason or 'Non renseigné'}",
+            author=author,
+        )
+        db.add(move)
+        db.flush()
+        line.adjustment_move_id = move.id
+        _sync_variant_internal_stock(db, line.variant_id)
+
+    session.status = "validated"
+    session.validated_by = author
+    session.validated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(session)
+    return get_inventory_session(session.id, db, user)
+
+
+@router.post("/inventory-sessions/{session_id}/cancel", response_model=schemas.InventorySessionResponse)
+def cancel_inventory_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_stock_manager(user)
+    session = db.query(models.InventorySession).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+    if session.status == "validated":
+        raise HTTPException(status_code=400, detail="Campagne déjà validée.")
+    session.status = "cancelled"
+    db.commit()
+    db.refresh(session)
+    return session
 
 @router.get("/products", response_model=List[schemas.ProductResponse])
 def get_products(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):

@@ -4,7 +4,7 @@ import api from '../services/api';
 import { 
     Package, MapPin, Search, Plus, Trash2, Layers, 
     ArrowRight, Box, Hash, ChevronRight, ChevronDown, 
-    Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download, TrendingUp
+    Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download, TrendingUp, ClipboardCheck
 } from 'lucide-react';
 import ChatterWidget from '../components/ChatterWidget';
 import StockValuationView from '../components/StockValuationView';
@@ -23,6 +23,7 @@ export default function StockDashboard() {
     const { data: transactions = [], isLoading: loadingTransactions } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const res = await api.get('/v2/stock/transactions'); return res.data; }});
     const { data: reservations = [] } = useQuery({ queryKey: ['workshop-reservations'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/reservations?status=reserved'); return res.data; }});
     const { data: workshopContexts = { sales: [], production_orders: [] } } = useQuery({ queryKey: ['workshop-debit-contexts'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/contexts'); return res.data; }});
+    const { data: inventorySessions = [] } = useQuery({ queryKey: ['inventory-sessions'], queryFn: async () => { const res = await api.get('/v2/stock/inventory-sessions'); return res.data; }});
     
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
@@ -833,6 +834,12 @@ export default function StockDashboard() {
                         >
                             <Layers className="w-4 h-4"/> Historique Mouvements
                         </button>
+                        <button 
+                            onClick={() => setCurrentMenu('physical-inventory')}
+                            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold transition-all text-sm mt-1 ${currentMenu === 'physical-inventory' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
+                        >
+                            <ClipboardCheck className="w-4 h-4"/> Inventaire Physique
+                        </button>
                         {isAdmin && (
                             <button 
                                 onClick={() => setCurrentMenu('valuation')}
@@ -1009,6 +1016,17 @@ export default function StockDashboard() {
                 {currentMenu === 'audit' ? (
                     <div className="flex-1 overflow-y-auto w-full relative p-6">
                         <AuditLogs transactions={transactions} locations={locations} />
+                    </div>
+                ) : currentMenu === 'physical-inventory' ? (
+                    <div className="flex-1 overflow-y-auto w-full relative p-6 bg-slate-50">
+                        <PhysicalInventoryView
+                            sessions={inventorySessions}
+                            products={products}
+                            locations={locations}
+                            quants={quants}
+                            isManager={isManager}
+                            queryClient={queryClient}
+                        />
                     </div>
                 ) : currentMenu === 'valuation' ? (
                     <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
@@ -1994,6 +2012,371 @@ export default function StockDashboard() {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+function PhysicalInventoryView({ sessions, products, locations, quants, isManager, queryClient }) {
+    const [selectedSessionId, setSelectedSessionId] = useState(sessions[0]?.id || null);
+    const [newSession, setNewSession] = useState({ name: '', location_id: '', notes: '' });
+    const [lineForm, setLineForm] = useState({ variant_id: '', location_id: '', counted_quantity: '', reason: '' });
+    const [busy, setBusy] = useState(false);
+
+    const internalLocations = locations.filter(location => location.usage === 'internal' && location.is_active !== false);
+    const selectedSession = sessions.find(session => session.id === selectedSessionId) || sessions[0] || null;
+    const selectedLocationId = selectedSession?.location_id || lineForm.location_id;
+    const stockVariants = products
+        .filter(product => (product.product_type || 'stockable') !== 'service')
+        .flatMap(product => (product.variants || []).map(variant => ({
+            ...variant,
+            product_name: product.name,
+            supplier: product.supplier,
+            unit: product.unit,
+        })));
+    const selectedVariant = stockVariants.find(variant => String(variant.id) === String(lineForm.variant_id));
+    const selectedLocation = internalLocations.find(location => String(location.id) === String(selectedLocationId));
+    const expectedQuantity = selectedVariant && selectedLocation
+        ? quants
+            .filter(quant => quant.variant_id === selectedVariant.id && quant.location_id === selectedLocation.id)
+            .reduce((sum, quant) => sum + Number(quant.quantity || 0), 0)
+        : 0;
+    const countedQuantity = lineForm.counted_quantity === '' ? null : Number(lineForm.counted_quantity);
+    const variance = countedQuantity === null ? null : countedQuantity - expectedQuantity;
+
+    const refreshInventory = async () => {
+        await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['inventory-sessions'] }),
+            queryClient.invalidateQueries({ queryKey: ['quants'] }),
+            queryClient.invalidateQueries({ queryKey: ['products'] }),
+            queryClient.invalidateQueries({ queryKey: ['transactions'] }),
+        ]);
+    };
+
+    const createSession = async (event) => {
+        event.preventDefault();
+        if (!newSession.name.trim() || busy) return;
+        setBusy(true);
+        try {
+            const payload = {
+                name: newSession.name.trim(),
+                location_id: newSession.location_id ? Number(newSession.location_id) : null,
+                notes: newSession.notes || null,
+            };
+            const res = await api.post('/v2/stock/inventory-sessions', payload);
+            setSelectedSessionId(res.data.id);
+            setNewSession({ name: '', location_id: '', notes: '' });
+            await refreshInventory();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Création de campagne impossible.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const submitLine = async (event) => {
+        event.preventDefault();
+        if (!selectedSession || !lineForm.variant_id || !selectedLocationId || lineForm.counted_quantity === '' || busy) return;
+        setBusy(true);
+        try {
+            await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/lines`, {
+                variant_id: Number(lineForm.variant_id),
+                location_id: Number(selectedLocationId),
+                counted_quantity: Number(lineForm.counted_quantity),
+                reason: lineForm.reason || null,
+            });
+            setLineForm({ variant_id: '', location_id: selectedSession.location_id || '', counted_quantity: '', reason: '' });
+            await refreshInventory();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Saisie de comptage impossible.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const validateSession = async () => {
+        if (!selectedSession || busy) return;
+        if (!window.confirm(`Valider ${selectedSession.reference} ? Les écarts créeront des mouvements d'ajustement stock.`)) return;
+        setBusy(true);
+        try {
+            await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/validate`);
+            await refreshInventory();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Validation impossible.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const cancelSession = async () => {
+        if (!selectedSession || busy) return;
+        if (!window.confirm(`Annuler ${selectedSession.reference} ? Aucun mouvement de stock ne sera créé.`)) return;
+        setBusy(true);
+        try {
+            await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/cancel`);
+            await refreshInventory();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Annulation impossible.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const statusLabel = {
+        draft: 'Brouillon',
+        counting: 'Comptage',
+        validated: 'Validée',
+        cancelled: 'Annulée',
+    };
+
+    return (
+        <div className="max-w-7xl mx-auto space-y-6">
+            <div className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden">
+                <div className="px-8 py-6 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                    <div>
+                        <h3 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+                            <ClipboardCheck className="w-6 h-6 text-blue-600" />
+                            Inventaire physique
+                        </h3>
+                        <p className="text-sm font-bold text-slate-500 mt-1">
+                            Comptez le réel, justifiez les écarts, puis validez pour créer les ajustements stock.
+                        </p>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div className="px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200">
+                            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">Campagnes</p>
+                            <p className="text-xl font-black text-slate-900">{sessions.length}</p>
+                        </div>
+                        <div className="px-4 py-3 rounded-2xl bg-amber-50 border border-amber-100">
+                            <p className="text-[10px] uppercase font-black tracking-widest text-amber-500">En cours</p>
+                            <p className="text-xl font-black text-amber-700">{sessions.filter(s => ['draft', 'counting'].includes(s.status)).length}</p>
+                        </div>
+                        <div className="px-4 py-3 rounded-2xl bg-emerald-50 border border-emerald-100">
+                            <p className="text-[10px] uppercase font-black tracking-widest text-emerald-500">Validées</p>
+                            <p className="text-xl font-black text-emerald-700">{sessions.filter(s => s.status === 'validated').length}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] min-h-[620px]">
+                    <aside className="border-r border-slate-100 bg-slate-50/80 p-5 space-y-4">
+                        <form onSubmit={createSession} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3">
+                            <p className="text-xs font-black uppercase tracking-widest text-slate-400">Nouvelle campagne</p>
+                            <input
+                                value={newSession.name}
+                                onChange={event => setNewSession(prev => ({ ...prev, name: event.target.value }))}
+                                placeholder="Ex: Comptage WH semaine 29"
+                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                disabled={!isManager || busy}
+                            />
+                            <select
+                                value={newSession.location_id}
+                                onChange={event => setNewSession(prev => ({ ...prev, location_id: event.target.value }))}
+                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                disabled={!isManager || busy}
+                            >
+                                <option value="">Tous emplacements internes</option>
+                                {internalLocations.map(location => (
+                                    <option key={location.id} value={location.id}>{location.name}</option>
+                                ))}
+                            </select>
+                            <input
+                                value={newSession.notes}
+                                onChange={event => setNewSession(prev => ({ ...prev, notes: event.target.value }))}
+                                placeholder="Note optionnelle"
+                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                disabled={!isManager || busy}
+                            />
+                            <button
+                                type="submit"
+                                disabled={!isManager || busy || !newSession.name.trim()}
+                                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black text-sm"
+                            >
+                                Créer la campagne
+                            </button>
+                        </form>
+
+                        <div className="space-y-2">
+                            {sessions.map(session => {
+                                const isSelected = selectedSession?.id === session.id;
+                                return (
+                                    <button
+                                        key={session.id}
+                                        onClick={() => setSelectedSessionId(session.id)}
+                                        className={`w-full text-left rounded-2xl border p-4 transition-all ${isSelected ? 'bg-slate-900 text-white border-slate-900 shadow-lg' : 'bg-white text-slate-700 border-slate-200 hover:border-blue-200'}`}
+                                    >
+                                        <div className="flex justify-between gap-3">
+                                            <p className="font-black text-sm">{session.name}</p>
+                                            <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-lg ${session.status === 'validated' ? 'bg-emerald-100 text-emerald-700' : session.status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                {statusLabel[session.status] || session.status}
+                                            </span>
+                                        </div>
+                                        <p className={`text-[11px] font-mono mt-1 ${isSelected ? 'text-slate-300' : 'text-slate-400'}`}>{session.reference}</p>
+                                        <p className={`text-xs font-bold mt-2 ${isSelected ? 'text-slate-200' : 'text-slate-500'}`}>
+                                            {session.location?.name || 'Tous emplacements'} - {session.lines?.length || 0} ligne(s)
+                                        </p>
+                                    </button>
+                                );
+                            })}
+                            {sessions.length === 0 && (
+                                <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm font-bold text-slate-400">
+                                    Aucune campagne créée.
+                                </div>
+                            )}
+                        </div>
+                    </aside>
+
+                    <main className="p-6 space-y-5">
+                        {!selectedSession ? (
+                            <div className="h-full min-h-[420px] flex flex-col items-center justify-center text-center border-2 border-dashed border-slate-200 rounded-3xl">
+                                <ClipboardCheck className="w-12 h-12 text-slate-300 mb-3" />
+                                <p className="font-black text-slate-600">Créez une campagne pour commencer le comptage.</p>
+                                <p className="text-sm text-slate-400 mt-1">Aucun stock n'est modifié avant validation.</p>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="rounded-3xl border border-slate-200 bg-white p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                                    <div>
+                                        <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">Campagne sélectionnée</p>
+                                        <h4 className="text-xl font-black text-slate-900">{selectedSession.name}</h4>
+                                        <p className="text-sm font-bold text-slate-500 mt-1">
+                                            {selectedSession.reference} - {selectedSession.location?.name || 'Tous emplacements internes'}
+                                        </p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        {['draft', 'counting'].includes(selectedSession.status) && (
+                                            <>
+                                                <button onClick={cancelSession} disabled={!isManager || busy} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm">
+                                                    Annuler
+                                                </button>
+                                                <button onClick={validateSession} disabled={!isManager || busy || !selectedSession.lines?.length} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
+                                                    Valider les écarts
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {['draft', 'counting'].includes(selectedSession.status) && (
+                                    <form onSubmit={submitLine} className="rounded-3xl border border-blue-100 bg-blue-50/40 p-5 grid grid-cols-1 lg:grid-cols-[1.5fr_1fr_160px_1fr_auto] gap-3 items-end">
+                                        <label className="space-y-1">
+                                            <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Article compté</span>
+                                            <select
+                                                value={lineForm.variant_id}
+                                                onChange={event => setLineForm(prev => ({ ...prev, variant_id: event.target.value }))}
+                                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                                disabled={!isManager || busy}
+                                            >
+                                                <option value="">Sélectionner une référence</option>
+                                                {stockVariants.map(variant => (
+                                                    <option key={variant.id} value={variant.id}>{variant.reference} - {variant.product_name}</option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label className="space-y-1">
+                                            <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Emplacement</span>
+                                            <select
+                                                value={selectedSession.location_id || lineForm.location_id}
+                                                onChange={event => setLineForm(prev => ({ ...prev, location_id: event.target.value }))}
+                                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                                disabled={!isManager || busy || !!selectedSession.location_id}
+                                            >
+                                                <option value="">Choisir</option>
+                                                {internalLocations.map(location => (
+                                                    <option key={location.id} value={location.id}>{location.name}</option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label className="space-y-1">
+                                            <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Compté</span>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="0.01"
+                                                value={lineForm.counted_quantity}
+                                                onChange={event => setLineForm(prev => ({ ...prev, counted_quantity: event.target.value }))}
+                                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-black outline-none focus:ring-2 focus:ring-blue-500"
+                                                disabled={!isManager || busy}
+                                            />
+                                        </label>
+                                        <label className="space-y-1">
+                                            <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Motif écart</span>
+                                            <input
+                                                value={lineForm.reason}
+                                                onChange={event => setLineForm(prev => ({ ...prev, reason: event.target.value }))}
+                                                placeholder="Casse, erreur, retour..."
+                                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                                disabled={!isManager || busy}
+                                            />
+                                        </label>
+                                        <button
+                                            type="submit"
+                                            disabled={!isManager || busy || !lineForm.variant_id || !selectedLocationId || lineForm.counted_quantity === ''}
+                                            className="px-5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-black text-sm"
+                                        >
+                                            Ajouter
+                                        </button>
+                                        {selectedVariant && selectedLocation && (
+                                            <div className="lg:col-span-5 grid grid-cols-3 gap-3 text-sm">
+                                                <div className="rounded-xl bg-white border border-slate-200 p-3">
+                                                    <p className="text-[10px] uppercase font-black text-slate-400">Système</p>
+                                                    <p className="text-xl font-black text-slate-900">{expectedQuantity.toLocaleString('fr-FR')}</p>
+                                                </div>
+                                                <div className="rounded-xl bg-white border border-slate-200 p-3">
+                                                    <p className="text-[10px] uppercase font-black text-slate-400">Compté</p>
+                                                    <p className="text-xl font-black text-slate-900">{countedQuantity === null ? '-' : countedQuantity.toLocaleString('fr-FR')}</p>
+                                                </div>
+                                                <div className={`rounded-xl border p-3 ${variance === null || variance === 0 ? 'bg-emerald-50 border-emerald-100' : variance > 0 ? 'bg-blue-50 border-blue-100' : 'bg-amber-50 border-amber-100'}`}>
+                                                    <p className="text-[10px] uppercase font-black text-slate-400">Écart</p>
+                                                    <p className="text-xl font-black text-slate-900">{variance === null ? '-' : `${variance > 0 ? '+' : ''}${variance.toLocaleString('fr-FR')}`}</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </form>
+                                )}
+
+                                <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-slate-50 border-b border-slate-100">
+                                            <tr>
+                                                <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400">Référence</th>
+                                                <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400">Emplacement</th>
+                                                <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400 text-right">Système</th>
+                                                <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400 text-right">Compté</th>
+                                                <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400 text-right">Écart</th>
+                                                <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400">Motif</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {(selectedSession.lines || []).map(line => (
+                                                <tr key={line.id} className="hover:bg-slate-50">
+                                                    <td className="px-5 py-4">
+                                                        <p className="font-black text-sm text-slate-900">{line.variant?.reference || `Variante #${line.variant_id}`}</p>
+                                                        <p className="text-xs font-bold text-slate-400">{line.variant?.color || 'Standard'}</p>
+                                                    </td>
+                                                    <td className="px-5 py-4 text-sm font-bold text-slate-600">{line.location?.name || `Lieu #${line.location_id}`}</td>
+                                                    <td className="px-5 py-4 text-right font-black text-slate-700">{line.expected_quantity.toLocaleString('fr-FR')}</td>
+                                                    <td className="px-5 py-4 text-right font-black text-slate-900">{line.counted_quantity.toLocaleString('fr-FR')}</td>
+                                                    <td className={`px-5 py-4 text-right font-black ${line.variance_quantity === 0 ? 'text-emerald-600' : line.variance_quantity > 0 ? 'text-blue-600' : 'text-amber-700'}`}>
+                                                        {line.variance_quantity > 0 ? '+' : ''}{line.variance_quantity.toLocaleString('fr-FR')}
+                                                    </td>
+                                                    <td className="px-5 py-4 text-sm font-bold text-slate-500">{line.reason || '-'}</td>
+                                                </tr>
+                                            ))}
+                                            {(!selectedSession.lines || selectedSession.lines.length === 0) && (
+                                                <tr>
+                                                    <td colSpan="6" className="py-12 text-center text-sm font-bold text-slate-400">
+                                                        Aucune ligne comptée. Ajoutez les références réellement vérifiées.
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </>
+                        )}
+                    </main>
+                </div>
+            </div>
         </div>
     );
 }

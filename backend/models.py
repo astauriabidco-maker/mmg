@@ -313,6 +313,44 @@ class StockReservationLine(Base):
     reservation = relationship("StockReservation", back_populates="lines")
     variant = relationship("ProductVariant")
 
+class InventorySession(Base):
+    __tablename__ = "inventory_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True)
+    name = Column(String, nullable=False)
+    status = Column(String, default="draft", index=True) # draft, counting, validated, cancelled
+    location_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True, index=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, default="Système")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    validated_by = Column(String, nullable=True)
+    validated_at = Column(DateTime, nullable=True)
+
+    location = relationship("StockLocation")
+    lines = relationship("InventoryCountLine", back_populates="session", cascade="all, delete-orphan")
+
+class InventoryCountLine(Base):
+    __tablename__ = "inventory_count_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("inventory_sessions.id"), index=True)
+    variant_id = Column(Integer, ForeignKey("product_variants.id"), index=True)
+    location_id = Column(Integer, ForeignKey("stock_locations.id"), index=True)
+    expected_quantity = Column(Float, default=0.0)
+    counted_quantity = Column(Float, default=0.0)
+    variance_quantity = Column(Float, default=0.0)
+    reason = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    counted_by = Column(String, default="Système")
+    counted_at = Column(DateTime, default=datetime.utcnow)
+    adjustment_move_id = Column(Integer, ForeignKey("stock_moves.id"), nullable=True)
+
+    session = relationship("InventorySession", back_populates="lines")
+    variant = relationship("ProductVariant")
+    location = relationship("StockLocation")
+    adjustment_move = relationship("StockMove")
+
 class MMGStatus(str, enum.Enum):
     SENT = "SENT"
     IN_STUDY = "IN_STUDY"
