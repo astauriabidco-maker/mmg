@@ -51,7 +51,7 @@ export default function CRMClientsDashboard() {
     const { data: dossiers = [] } = useQuery({
         queryKey: ['mmg-dossiers'],
         queryFn: async () => {
-            const res = await api.get('/mmg/list');
+            const res = await api.get('/v2/mmg/');
             return res.data;
         }
     });

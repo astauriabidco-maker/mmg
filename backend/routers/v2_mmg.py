@@ -21,13 +21,59 @@ router = APIRouter(
 def save_base64_image(base64_str: str, folder: str, prefix: str):
     img_data, extension = uploads.decode_base64_upload(base64_str)
     filename = f"{prefix}_{uuid.uuid4().hex[:8]}{extension}"
-    filepath = os.path.join("backend/static/mmg", folder, filename)
+    # /uploads est le seul montage statique de main.py (volume persistant en prod)
+    filepath = os.path.join("uploads", "mmg", folder, filename)
 
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath, "wb") as f:
         f.write(img_data)
 
-    return f"/static/mmg/{folder}/{filename}"
+    return f"/uploads/mmg/{folder}/{filename}"
+
+
+def _serialize_detail(db_item: models.MMG) -> schemas.MMGDetail:
+    status = db_item.status.value if hasattr(db_item.status, "value") else db_item.status
+    return schemas.MMGDetail(
+        id=db_item.id,
+        reference=db_item.reference,
+        client_name=db_item.client_name,
+        status=status,
+        created_at=db_item.created_at,
+        client_contact=db_item.client_contact,
+        client_address=db_item.client_address,
+        site_address=db_item.site_address,
+        client_email=db_item.client_email,
+        client_type=db_item.client_type,
+        width=db_item.width,
+        height=db_item.height,
+        passage_height=db_item.passage_height,
+        sill_height=db_item.sill_height,
+        transom_height=db_item.transom_height,
+        shutter_type=db_item.shutter_type,
+        opening_type=db_item.opening_type,
+        opening_side=db_item.opening_side,
+        sash_count=db_item.sash_count,
+        view_type=db_item.view_type,
+        material=db_item.material,
+        product_series=db_item.product_series,
+        color_ral=db_item.color_ral,
+        is_bicolor=db_item.is_bicolor,
+        texture=db_item.texture,
+        glazing_type=db_item.glazing_type,
+        installation_type=db_item.installation_type,
+        hardware_type=db_item.hardware_type,
+        is_pmr_compliant=db_item.is_pmr_compliant,
+        doublage_thickness=db_item.doublage_thickness,
+        keep_existing_frame=db_item.keep_existing_frame,
+        floor_number=db_item.floor_number or 0,
+        access_difficulty=db_item.access_difficulty,
+        environment=db_item.environment,
+        quote_sent_at=db_item.quote_sent_at,
+        photos=db_item.photos.split(",") if db_item.photos else [],
+        signature=db_item.signature or "",
+        sale_order_id=db_item.sale_order_id,
+        order_id=db_item.order_id,
+    )
 
 def generate_reference(db: Session):
     year = datetime.utcnow().year
@@ -132,56 +178,18 @@ def create_from_sale(sale_id: int, db: Session = Depends(get_db)):
     db.refresh(db_item)
     return db_item
 
-@router.get("/", response_model=List[schemas.MMGResponse])
+@router.get("/", response_model=List[schemas.MMGDetail])
 def list_dossiers(db: Session = Depends(get_db)):
-    return db.query(models.MMG).order_by(models.MMG.created_at.desc()).all()
+    dossiers = db.query(models.MMG).order_by(models.MMG.created_at.desc()).all()
+    return [_serialize_detail(d) for d in dossiers]
 
 @router.get("/{dossier_id}", response_model=schemas.MMGDetail)
 def get_dossier(dossier_id: int, db: Session = Depends(get_db)):
     db_item = db.query(models.MMG).filter(models.MMG.id == dossier_id).first()
     if not db_item:
         raise HTTPException(404, "Dossier not found")
-    
-    return schemas.MMGDetail(
-        id=db_item.id,
-        reference=db_item.reference,
-        client_name=db_item.client_name,
-        status=db_item.status.value if hasattr(db_item.status, 'value') else db_item.status,
-        created_at=db_item.created_at,
-        client_contact=db_item.client_contact,
-        client_address=db_item.client_address,
-        site_address=db_item.site_address,
-        client_email=db_item.client_email,
-        client_type=db_item.client_type,
-        width=db_item.width,
-        height=db_item.height,
-        passage_height=db_item.passage_height,
-        sill_height=db_item.sill_height,
-        transom_height=db_item.transom_height,
-        shutter_type=db_item.shutter_type,
-        opening_type=db_item.opening_type,
-        opening_side=db_item.opening_side,
-        sash_count=db_item.sash_count,
-        view_type=db_item.view_type,
-        material=db_item.material,
-        product_series=db_item.product_series,
-        color_ral=db_item.color_ral,
-        is_bicolor=db_item.is_bicolor,
-        texture=db_item.texture,
-        glazing_type=db_item.glazing_type,
-        installation_type=db_item.installation_type,
-        hardware_type=db_item.hardware_type,
-        is_pmr_compliant=db_item.is_pmr_compliant,
-        doublage_thickness=db_item.doublage_thickness,
-        keep_existing_frame=db_item.keep_existing_frame,
-        floor_number=db_item.floor_number or 0,
-        access_difficulty=db_item.access_difficulty,
-        environment=db_item.environment,
-        quote_sent_at=db_item.quote_sent_at,
-        photos=db_item.photos.split(",") if db_item.photos else [],
-        signature=db_item.signature,
-        sale_order_id=db_item.sale_order_id
-    )
+
+    return _serialize_detail(db_item)
 
 @router.patch("/{dossier_id}/status", response_model=schemas.MMGResponse)
 def update_status(dossier_id: int, update: schemas.MMGStatusUpdate, db: Session = Depends(get_db)):
@@ -257,7 +265,9 @@ def send_quote(dossier_id: int, db: Session = Depends(get_db)):
         db.add(sale_line)
         
         # 0. Forme Spéciale (Plue-value)
-        config = db_item.configuration or {}
+        # Le modèle MMG n'a pas de colonne `configuration` : les options fines
+        # (shape, ventilation, annexes...) ne sont pas persistées aujourd'hui.
+        config = getattr(db_item, "configuration", None) or {}
         shape = config.get("shape", "Rectangulaire")
         if shape != "Rectangulaire":
             shape_markup = 0.40 if shape == "Cintré" else 0.20

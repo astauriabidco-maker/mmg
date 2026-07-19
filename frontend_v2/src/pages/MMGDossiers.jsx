@@ -85,7 +85,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
             frais_pose: 'Aucun',
             livraison: false
         },
-        photos: ["default_agency.jpg"],
+        photos: [],
         signature: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" // Mock signature for agency
     });
 
@@ -105,7 +105,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
 
     const fetchDossiers = async () => {
         try {
-            const res = await api.get('/mmg/list');
+            const res = await api.get('/v2/mmg/');
             setDossiers(res.data);
         } catch (err) {
             console.error("Error fetching dossiers", err);
@@ -117,7 +117,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
     const handleImport = async (id) => {
         setImportingId(id);
         try {
-            await api.post(`/mmg/${id}/update-status`, { status: 'VALIDATED' });
+            await api.patch(`/v2/mmg/${id}/status`, { status: 'VALIDATED' });
             fetchDossiers();
         } catch (err) {
             alert("Erreur lors de l'import");
@@ -129,7 +129,24 @@ const MMGDossiers = ({ isEmbedded = false }) => {
     const handleFormSubmit = async () => {
         setLoading(true);
         try {
-            await api.post('/mmg/submit', formData);
+            // Normalise le payload vers le contrat MMGCreate du backend :
+            // floats requis, '' -> null pour les optionnels (sinon 422).
+            const toFloatOrNull = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+            const payload = {
+                ...formData,
+                measurements: {
+                    width_mm: Number(formData.measurements.width_mm) || 0,
+                    height_mm: Number(formData.measurements.height_mm) || 0,
+                    passage_height_mm: Number(formData.measurements.passage_height_mm) || 0,
+                },
+                options: {
+                    sill_height_mm: toFloatOrNull(formData.options.sill_height_mm),
+                    transom_height_mm: toFloatOrNull(formData.options.transom_height_mm),
+                    shutter_type: formData.options.shutter_type || null,
+                },
+                photos: (formData.photos || []).filter(p => typeof p === 'string' && p.includes('base64,')),
+            };
+            await api.post('/v2/mmg/', payload);
             setIsEntryFormOpen(false);
             fetchDossiers();
             alert("Dossier créé avec succès !");
@@ -242,7 +259,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
 
     const viewDetails = async (id) => {
         try {
-            const res = await api.get(`/mmg/${id}`);
+            const res = await api.get(`/v2/mmg/${id}`);
             setSelectedDossier(res.data);
             setActiveTab('tech'); // Reset to tech tab on view
         } catch (err) {
@@ -253,7 +270,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
     const handleSendQuote = async (id) => {
         setSendingQuote(true);
         try {
-            await api.post(`/mmg/${id}/send-quote`);
+            await api.post(`/v2/mmg/${id}/send-quote`);
             alert("Devis envoyé au client avec succès !");
             fetchDossiers();
             viewDetails(id); // Refresh details
@@ -635,14 +652,14 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                     <div className="grid grid-cols-2 gap-4">
                                         {(selectedDossier.photos || []).map((p, idx) => (
                                             <div key={idx} className="aspect-video bg-slate-100 rounded-2xl overflow-hidden border border-slate-200">
-                                                <img src={`${API_BASE_URL}/static/mmg_uploads/${p}`} alt="Photo Chantier" className="w-full h-full object-cover" />
+                                                <img src={`${API_BASE_URL}${p}`} alt="Photo Chantier" className="w-full h-full object-cover" />
                                             </div>
                                         ))}
                                     </div>
                                     <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100">
                                         <p className="text-[10px] text-slate-400 font-bold uppercase mb-4">Signature Client</p>
                                         {selectedDossier.signature ? (
-                                            <img src={`${API_BASE_URL}/static/mmg_uploads/${selectedDossier.signature}`} alt="Signature" className="max-h-32 mx-auto" />
+                                            <img src={`${API_BASE_URL}${selectedDossier.signature}`} alt="Signature" className="max-h-32 mx-auto" />
                                         ) : (
                                             <p className="text-slate-400 italic text-center">Aucune signature</p>
                                         )}
