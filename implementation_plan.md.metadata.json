@@ -1,5 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
-  "summary": "Plan d'implémentation pour le Backend V1 (FastAPI + SQLite).\nRespect strict des contraintes : Monolithe, Python 3.11, Pas de Docker.\nStructure minimale : main.py, database.py, models.py.",
-  "updatedAt": "2026-02-12T19:19:01.903673Z"
-}

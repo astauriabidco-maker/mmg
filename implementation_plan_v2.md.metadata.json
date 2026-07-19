@@ -1,5 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
-  "summary": "Plan Implémentation V2 (Sprint 2).\nTransition vers une architecture **FastAPI + React**.\nObjectifs : Temps Réel, Tactile, Analytics, Auth.\n\n**Architecture Technique** :\n- **Backend** : FastAPI (REST + WebSockets).\n- **Frontend** : React + Vite + TailwindCSS (pour UI Tactile & Graphiques).\n- **Auth** : JWT (Login Code Pin).\n- **DB** : SQLite (Migration vers PostgreSQL recommandée mais SQLite ok pour dev).\n\n**Modules** :\n1.  **Auth** : Modèle `User` (Code Pin, Rôle).\n2.  **Planning** : Modèle `Planning` (Ordre, Priorité, Statut).\n3.  **RealTime** : WebSocket Manager (`/ws`).\n4.  **Frontend** :\n    -   `LoginScreen` (Pavé numérique).\n    -   `OperatorScreen` (Gros boutons, Liste tâches).\n    -   `ManagerDashboard` (Graphiques Recharts, Gestion Planning).",
-  "updatedAt": "2026-02-12T22:41:17.913500Z"
-}

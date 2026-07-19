@@ -1,5 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_OTHER",
-  "summary": "Rapport Conformité V1 et Anomalies.\n- **Résultat** : VALIDE.\n- **Conformité Stricte** :\n  - stack : RESPECTÉE (Python/FastAPI/SQLite/React/Kotlin).\n  - Interdits : AUCUNE VIOLATION (Pas de Docker, Pas d'infra complexe).\n- **Modules Validés** :\n  1. Extractor (30/30 OK, Fallback OCR OK).\n  2. QR Generator (50x30mm OK).\n  3. Android (Offline/Sync OK, UI Gants OK).\n  4. Dashboard (KPI, Alertes >120% OK).\n- **Anomalies Mineures** :\n  - Timestamps : La synchro Android force Start/Stop séquentiels, le backend prend l'heure de réception. Précision impactée en mode offline (décalage temporel). Acceptable pour V1.\n  - Sécurité : Pas d'auth API (Conforme V1, mais à noter).\n- **Prochaines Étapes** : Déploiement Physique.",
-  "updatedAt": "2026-02-12T19:53:55.792198Z"
-}

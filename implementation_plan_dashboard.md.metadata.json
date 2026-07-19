@@ -1,5 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
-  "summary": "Plan Dashboard Simple.\n- HTML/CSS/JS Pur (Pas de framework JS lourd).\n- Utilisation de Chart.js (via CDN ou local) pour graphiques simples.\n- Fetch API vers `/stats/daily`.\n- Affichage Tableau : Ordres du jour, Temps Moyen par poste.\n- Alerte Rouge si temps > temps_theorique (120%).\n- Pas de React/Vue/Angular (Interdit \"Complexité\").",
-  "updatedAt": "2026-02-12T19:24:30.837802Z"
-}

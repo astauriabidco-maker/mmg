@@ -1,5 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
-  "summary": "Plan Interface Web Jinja2.\n1.  **Prérequis** :\n    -   Installer `jinja2`, `python-multipart`.\n2.  **Templates (`backend/templates/`)** :\n    -   `layout.html` : Structure de base + CSS simple.\n    -   `index.html` : Dashboard (Tableau logs) + Formulaires Start/Stop.\n3.  **Update `backend/main.py`** :\n    -   Config Templates.\n    -   Route `GET /` : Render `index.html` avec logs `db.query(models.ProductionLog)`.\n    -   Route `POST /web/start` : Traitement Formulaire -> Redirect `/`.\n    -   Route `POST /web/stop` : Traitement Formulaire -> Redirect `/`.\n    -   Logique métier : Standards PVC (300) / ALU (600), Alerte > 120%.\n4.  **Base de Données** :\n    -   Utilisation existante `models.ProductionLog`.\n    -   Vérification champs (`duration_seconds`, etc.).\n5.  **Styles** :\n    -   CSS minimaliste dans `<style>` ou `static/style.css` (Row red class pour alertes).",
-  "updatedAt": "2026-02-12T21:56:17.706400Z"
-}

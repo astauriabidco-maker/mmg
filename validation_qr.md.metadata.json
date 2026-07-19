@@ -1,5 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_OTHER",
-  "summary": "Rapport de validation QR Generator.\n- Conformité : ReportLab, PDF 50x30mm, Contenu QR, Simulation Impression.\n- Tests : Validation existence fichier PDF.\n- Architecture : Indépendant + Simulation.",
-  "updatedAt": "2026-02-12T19:44:16.467905Z"
-}

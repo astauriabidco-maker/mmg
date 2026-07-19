@@ -1,5 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
-  "summary": "Plan to integrate OCR order ingestion.\n1. Create `backend/routers/v2_ingest.py` to handle external orders.\n2. Update `extractor.py` to call this API.\n3. Update `watcher.py` to watch a folder `input_orders/`.\n4. Validate with a sample \"Dossier Fabrication\".",
-  "updatedAt": "2026-02-13T18:48:12.496866Z"
-}

@@ -1,5 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
-  "summary": "Plan d'implémentation pour le module de surveillance dossier et extraction PDF.\n- Utilisation de `watchdog` pour surveiller `C:\\Exports_Proges\\Validés\\` (simulé).\n- Extraction regex simplifiée sur le texte PDF.\n- Génération de QR Code PNG.\n- Injection directe dans la DB ou via API locale.",
-  "updatedAt": "2026-02-12T19:21:33.764223Z"
-}

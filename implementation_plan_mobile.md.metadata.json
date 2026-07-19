@@ -1,5 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
-  "summary": "Plan pour l'Application Android V1.\n- Technologie : Flutter (Dart).\n- Architecture : Main.dart unique (ou minimal).\n- Fonctionnalités :\n  - Scan QR (via `mobile_scanner`).\n  - Base locale SQLite (via `sqflite`).\n  - Écran Opérateur : Boutons Start/Pause/Stop.\n  - Sync REST (via `http`).\n- Mode Offline-First (Stockage local, Sync quand online).",
-  "updatedAt": "2026-02-12T19:23:08.690062Z"
-}

@@ -1,5 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
-  "summary": "Plan Dashboard React V1.\n- **Backend** :\n  - Endpoint `GET /dashboard/metrics`.\n  - Calculs :\n    - En cours : Log sans `end_time`.\n    - Temps moyen : Moyenne `duration_seconds` groupé par `station`.\n    - Alertes : Durée > Standard (Hardcodé pour V1 : PVC=300s, ALU=600s exemple).\n- **Frontend** :\n  - Vite + React + Tailwind (via CDN ou build standard, je vais utiliser build standard Vite).\n  - Composants : `KPICard`, `SectionMaterial`, `AlertList`.\n  - Auto-refresh 15s (`setInterval`).\n- **Déploiement** :\n  - `npm run build` -> `backend/static`.\n  - FastAPI sert `index.html`.",
-  "updatedAt": "2026-02-12T19:52:05.056681Z"
-}

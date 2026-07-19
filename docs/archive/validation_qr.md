@@ -1,0 +1,32 @@
+# Rapport Validation - Module QR Generator
+
+## 1. Fonctionnalités
+- [x] Génération PDF 50x30mm Exact
+- [x] Contenu QR : `CMD-XXXX|LxH|MATIERE`
+- [x] Texte lisible : Ref + Dimensions + Matière
+- [x] Simulation Impression (Logs / Commande Système)
+- [x] Alerte Erreur (SMTP Mock)
+
+## 2. Qualité
+- [x] Logging structuré (`QRGenerator`, `Printer`)
+- [x] Gestion d'erreurs (Try/Catch global)
+- [x] Tests Unitaires : Génération PDF validée
+
+## 3. Conformité V1
+- Pas de design complexe.
+- Pas de configuration multi-format.
+- Lisibilité QR validée (Format standard Version 1/2).
+
+## 4. Usage
+```python
+from backend.qr_generator import generate_label
+from backend.printer import print_label
+
+pdf_path = generate_label({
+    "reference": "CMD-1001",
+    "width": 1000,
+    "height": 2000,
+    "material": "PVC"
+})
+print_label(pdf_path)
+```

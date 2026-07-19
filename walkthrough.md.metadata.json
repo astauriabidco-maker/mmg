@@ -1,6 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_WALKTHROUGH",
-  "summary": "Walkthrough Final V1 (Pro).\nDocumente l'état final du système V1 déployé.\nInclut :\n- Architecture technique (FastAPI/Jinja2/SQLite).\n- Fonctionnalités : Dashboard, Alertes, Export CSV.\n- Workflow : OCR -> Dashboard -> CSV.\n- Installation et Démarrage.",
-  "updatedAt": "2026-02-12T22:36:36.105829Z",
-  "version": "1"
-}

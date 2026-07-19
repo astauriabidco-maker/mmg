@@ -1,0 +1,68 @@
+# Walkthrough Final - Atelier Menuiserie V1 (Pro)
+
+Ce document résume l'état final du système V1 déployé.
+
+## 1. Vue d'ensemble
+Le système V1 est une application web monolithique légère pour le suivi de production en atelier. Elle est conçue pour être robuste, simple et fonctionner hors-ligne (réseau local).
+
+**URL d'accès** : `http://localhost:8000/`
+
+## 2. Fonctionnalités Clés
+
+### A. Dashboard de Pilotage (`/`)
+-   **KPIs Temps Réel** : Commandes jour, En cours, Temps moyen, Alertes.
+-   **Tableau de Bord** : Liste des productions du jour avec status coloré.
+    -   🟢 **Vert** : <= 100% du standard.
+    -   🟠 **Orange** : 100% - 120%.
+    -   🔴 **Rouge** : > 120% (Alerte).
+-   **Actions** :
+    -   **Start** : Lancement chrono (Lien avec OCR via Référence).
+    -   **Stop** : Arrêt chrono et calcul performance.
+    -   **Export CSV** : bouton de téléchargement des données brutes.
+
+### B. Gestion des Alertes (`/alertes`)
+-   Vue filtrée affichant uniquement les productions problématiques (>120%).
+-   Tri automatique par gravité (Dépassement décroissant).
+
+### C. Entrée Automatique (OCR)
+-   Service `watcher.py` surveillant le dossier `./input_pdfs`.
+-   Extraction automatique des commandes depuis les plans PDF (Proges/Ogadata).
+-   Création automatique en base (pas de saisie manuelle des dimensions/matières).
+
+## 3. Architecture Technique (V1 Pro)
+
+Le code a été refactorisé pour la maintenabilité :
+
+-   **Backend** : Python 3.11 / FastAPI.
+-   **Base de Données** : SQLite (`atelier.db`).
+-   **Frontend** : Jinja2 Templates (Server-Side Rendering) + CSS Externe (`style.css`).
+-   **Structure** :
+    ```text
+    backend/
+    ├── core/           # Config & Logger
+    ├── routers/        # Routes Web & API
+    ├── services/       # Logique Métier (Production, KPI)
+    ├── templates/      # Vues HTML
+    └── static/         # CSS & Assets
+    ```
+
+## 4. Guide de Démarrage
+
+### Pré-requis
+-   Python 3.11+
+-   Dépendances : `fastapi`, `uvicorn`, `sqlalchemy`, `jinja2`, `python-multipart`.
+
+### Lancer le Serveur (Atelier)
+```bash
+python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
+### Lancer le Watcher (Bureau/Serveur Fichiers)
+```bash
+python3 backend/watcher.py
+```
+
+## 5. Standards de Production
+Les temps standards sont définis dans `backend/core/config.py` :
+-   **PVC** : Debit (35'), Soudure (30'), Assemblage (40'), Vitrage (25'), Controle (15').
+-   **ALU** : Debit (30'), Usinage (35'), Assemblage (45'), Vitrage (30'), Controle (20').

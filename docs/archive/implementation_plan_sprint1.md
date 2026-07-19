@@ -1,0 +1,27 @@
+# Plan Refactoring Sprint 1
+
+## Objectif
+Aligner le backend existant sur les directives strictes du Sprint 1.
+
+## Modifications
+1.  **backend/models.py** :
+    -   Renommer `TimeLog` en `ProductionLog`.
+    -   Renommer table `time_logs` en `production_logs`.
+
+2.  **backend/schemas.py** :
+    -   Adapter `TimeLog...` en `ProductionLog...`.
+    -   Créer schemas spécifiques `ProductionStart` et `ProductionStop`.
+
+3.  **backend/main.py** :
+    -   Supprimer/Modifier endpoints existants.
+    -   Implémenter `POST /production/start`.
+    -   Implémenter `POST /production/stop`.
+    -   Implémenter `GET /dashboard/summary`.
+
+4.  **Tests** :
+    -   Mettre à jour `test_backend.py`.
+
+## Validation Conformité
+-   Stack : Python/FastAPI/SQLite (OK).
+-   Endpoints demandés présents (OK).
+-   Pas de complexité ajoutée (OK).
