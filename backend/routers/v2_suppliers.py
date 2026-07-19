@@ -21,6 +21,11 @@ class SupplierBase(BaseModel):
     address: Optional[str] = None
     country: Optional[str] = None
     tax_id: Optional[str] = None
+    supplier_status: str = "ACTIVE"
+    supplier_category: Optional[str] = None
+    default_currency: str = "EUR"
+    incoterm: Optional[str] = None
+    delivery_terms: Optional[str] = None
     website: Optional[str] = None
     payment_terms: Optional[str] = None
     lead_time_days: Optional[int] = None

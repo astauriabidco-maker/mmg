@@ -47,38 +47,5 @@ def delete_client(client_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "deleted"}
 
-# --- SUPPLIERS ---
-@router.get("/suppliers", response_model=List[schemas.SupplierResponse])
-def get_suppliers(db: Session = Depends(get_db)):
-    return db.query(models.Supplier).all()
+# NOTE: le CRUD fournisseurs est unifié sur /v2/suppliers (routers/v2_suppliers.py).
 
-@router.post("/suppliers", response_model=schemas.SupplierResponse)
-def create_supplier(supplier: schemas.SupplierCreate, db: Session = Depends(get_db)):
-    existing = db.query(models.Supplier).filter(models.Supplier.name == supplier.name).first()
-    if existing:
-        raise HTTPException(400, "Supplier name already exists")
-    db_supplier = models.Supplier(**supplier.model_dump())
-    db.add(db_supplier)
-    db.commit()
-    db.refresh(db_supplier)
-    return db_supplier
-
-@router.put("/suppliers/{supplier_id}", response_model=schemas.SupplierResponse)
-def update_supplier(supplier_id: int, supplier: schemas.SupplierCreate, db: Session = Depends(get_db)):
-    db_supplier = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
-    if not db_supplier:
-        raise HTTPException(404, "Supplier not found")
-    for k, v in supplier.model_dump().items():
-        setattr(db_supplier, k, v)
-    db.commit()
-    db.refresh(db_supplier)
-    return db_supplier
-
-@router.delete("/suppliers/{supplier_id}")
-def delete_supplier(supplier_id: int, db: Session = Depends(get_db)):
-    db_supplier = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
-    if not db_supplier:
-        raise HTTPException(404, "Supplier not found")
-    db.delete(db_supplier)
-    db.commit()
-    return {"status": "deleted"}

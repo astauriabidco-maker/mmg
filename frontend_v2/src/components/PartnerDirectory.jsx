@@ -10,7 +10,7 @@ export default function PartnerDirectory({ type = "CLIENT" }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingPartner, setEditingPartner] = useState(null);
 
-    const endpoint = type === 'CLIENT' ? '/v2/partners/clients' : '/v2/partners/suppliers';
+    const endpoint = type === 'CLIENT' ? '/v2/partners/clients' : '/v2/suppliers';
     const title = type === 'CLIENT' ? 'Annuaire Clients' : 'Annuaire Fournisseurs';
     const queryKey = type === 'CLIENT' ? ['partners', 'clients'] : ['partners', 'suppliers'];
 

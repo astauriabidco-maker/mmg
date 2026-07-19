@@ -38,6 +38,11 @@ export default function PurchasesDashboard() {
         address: '',
         country: 'France',
         tax_id: '',
+        supplier_status: 'ACTIVE',
+        supplier_category: 'ALUMINIUM',
+        default_currency: 'EUR',
+        incoterm: '',
+        delivery_terms: '',
         website: '',
         payment_terms: '',
         lead_time_days: '',
@@ -71,7 +76,7 @@ export default function PurchasesDashboard() {
     const { data: suppliers = [] } = useQuery({
         queryKey: ['suppliers', 'v2'],
         queryFn: async () => {
-            const res = await api.get('/v2/partners/suppliers');
+            const res = await api.get('/v2/suppliers/');
             return res.data;
         }
     });
@@ -128,13 +133,24 @@ export default function PurchasesDashboard() {
     const poSubtotal = poAfterLineDiscount - poGlobalDiscountAmount;
     const validLines = newPO.lines.filter(line => line.variant_id && parseFloat(line.quantity || 0) > 0).length;
 
+    const openCreatePOForSupplier = (supplierName = '') => {
+        setNewPO({
+            ...emptyPOForm,
+            supplier: supplierName,
+            notes: supplierName ? `Commande fournisseur ${supplierName}` : '',
+        });
+        setCurrentTab('orders');
+        setSelectedPO(null);
+        setShowCreateModal(true);
+    };
+
     const handleCreateSupplier = async () => {
         try {
             const payload = {
                 ...newSupplier,
                 lead_time_days: newSupplier.lead_time_days === '' ? null : parseInt(newSupplier.lead_time_days, 10),
             };
-            await api.post('/v2/partners/suppliers', payload);
+            await api.post('/v2/suppliers/', payload);
             setShowSupplierModal(false);
             setNewSupplier(emptySupplierForm);
             queryClient.invalidateQueries(['suppliers', 'v2']);
@@ -353,7 +369,7 @@ export default function PurchasesDashboard() {
                         />
                     </div>
                     {currentTab === 'orders' && (
-                        <button onClick={() => setShowCreateModal(true)} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
+                        <button onClick={() => openCreatePOForSupplier()} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
                             <Plus className="w-5 h-5"/> Créer Commande
                         </button>
                     )}
@@ -480,6 +496,7 @@ export default function PurchasesDashboard() {
                             purchases={purchases} 
                             openPODetails={openPODetails} 
                             setCurrentTab={setCurrentTab} 
+                            openCreatePOForSupplier={openCreatePOForSupplier}
                         />
                     ) : (
                         <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
@@ -1053,18 +1070,56 @@ export default function PurchasesDashboard() {
                             <div className="space-y-4">
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">SIRET / TVA</label>
-                                        <input type="text" value={newSupplier.tax_id} onChange={e=>setNewSupplier({...newSupplier, tax_id: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="FR..."/>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Statut fournisseur</label>
+                                        <select value={newSupplier.supplier_status} onChange={e=>setNewSupplier({...newSupplier, supplier_status: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500">
+                                            <option value="ACTIVE">Actif</option>
+                                            <option value="TO_QUALIFY">À qualifier</option>
+                                            <option value="STRATEGIC">Stratégique</option>
+                                            <option value="BLOCKED">Bloqué</option>
+                                        </select>
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Délai moyen</label>
-                                        <input type="number" min="0" value={newSupplier.lead_time_days} onChange={e=>setNewSupplier({...newSupplier, lead_time_days: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="jours"/>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Catégorie</label>
+                                        <select value={newSupplier.supplier_category} onChange={e=>setNewSupplier({...newSupplier, supplier_category: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500">
+                                            <option value="ALUMINIUM">Aluminium</option>
+                                            <option value="PVC">PVC</option>
+                                            <option value="QUINCAILLERIE">Quincaillerie</option>
+                                            <option value="VITRAGE">Vitrage</option>
+                                            <option value="TRANSPORT">Transport</option>
+                                            <option value="SOUS_TRAITANCE">Sous-traitance</option>
+                                            <option value="AUTRE">Autre</option>
+                                        </select>
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">SIRET / TVA</label>
+                                        <input type="text" value={newSupplier.tax_id} onChange={e=>setNewSupplier({...newSupplier, tax_id: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="FR..."/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Devise</label>
+                                        <select value={newSupplier.default_currency} onChange={e=>setNewSupplier({...newSupplier, default_currency: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500">
+                                            <option value="EUR">EUR</option>
+                                            <option value="XAF">XAF</option>
+                                            <option value="USD">USD</option>
+                                            <option value="GBP">GBP</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Délai moyen</label>
+                                        <input type="number" min="0" value={newSupplier.lead_time_days} onChange={e=>setNewSupplier({...newSupplier, lead_time_days: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="jours"/>
+                                    </div>
+                                    <div>
                                         <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Paiement</label>
                                         <input type="text" value={newSupplier.payment_terms} onChange={e=>setNewSupplier({...newSupplier, payment_terms: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="30j fin de mois"/>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Incoterm</label>
+                                        <input type="text" value={newSupplier.incoterm} onChange={e=>setNewSupplier({...newSupplier, incoterm: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="EXW, DAP, FCA..."/>
                                     </div>
                                     <div>
                                         <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Contact préféré</label>
@@ -1074,6 +1129,10 @@ export default function PurchasesDashboard() {
                                             <option value="portal">Portail fournisseur</option>
                                         </select>
                                     </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Conditions livraison</label>
+                                    <input type="text" value={newSupplier.delivery_terms} onChange={e=>setNewSupplier({...newSupplier, delivery_terms: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Franco, transporteur dédié, dépôt, palette..."/>
                                 </div>
                                 <div>
                                     <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Notes achats</label>
@@ -1096,7 +1155,7 @@ export default function PurchasesDashboard() {
     );
 }
 
-const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
+const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCreatePOForSupplier }) => {
     const [activeTab, setActiveTab] = useState('overview');
 
     const supOrders = purchases.filter(p => p.supplier === sup.name);
@@ -1104,6 +1163,65 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
     const totalOrders = supOrders.length;
     const receivedOrders = supOrders.filter(o => o.status === 'RECEIVED').length;
     const pendingOrders = supOrders.filter(o => o.status !== 'RECEIVED' && o.status !== 'CANCELLED').length;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const openOrders = supOrders.filter(o => !['RECEIVED', 'CANCELLED'].includes(o.status));
+    const toReceiveOrders = supOrders.filter(o => ['DRAFT', 'SENT', 'PARTIAL'].includes(o.status));
+    const toInvoiceOrders = supOrders.filter(o => Number(o.quantity_received || 0) > Number(o.quantity_invoiced || 0));
+    const lateOrders = supOrders.filter(o => {
+        if (!o.expected_date || ['RECEIVED', 'CANCELLED'].includes(o.status)) return false;
+        const expected = new Date(o.expected_date);
+        expected.setHours(0, 0, 0, 0);
+        return expected < today;
+    });
+    const supplierStatus = sup.supplier_status || 'ACTIVE';
+    const canOrder = supplierStatus !== 'BLOCKED';
+    const statusLabels = {
+        ACTIVE: 'Actif',
+        TO_QUALIFY: 'À qualifier',
+        STRATEGIC: 'Stratégique',
+        BLOCKED: 'Bloqué',
+    };
+    const statusTone = supplierStatus === 'BLOCKED'
+        ? 'bg-red-100 text-red-700 border-red-200'
+        : supplierStatus === 'TO_QUALIFY'
+            ? 'bg-amber-100 text-amber-800 border-amber-200'
+            : supplierStatus === 'STRATEGIC'
+                ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
+                : 'bg-emerald-100 text-emerald-700 border-emerald-200';
+    const qualityAlerts = lateOrders.length + toInvoiceOrders.length + supOrders.filter(o => o.status === 'PARTIAL').length;
+    const qualityLabel = qualityAlerts === 0 ? 'Stable' : qualityAlerts <= 2 ? 'À surveiller' : 'Sous tension';
+    const supplierTimeline = supOrders
+        .flatMap(order => {
+            const events = [{
+                key: `${order.id}-created`,
+                date: order.order_date || order.created_at,
+                label: 'Commande fournisseur',
+                detail: `${order.reference} · ${Number(order.total_amount || 0).toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}`,
+                tone: 'blue',
+            }];
+            if (Number(order.quantity_received || 0) > 0) {
+                events.push({
+                    key: `${order.id}-received`,
+                    date: order.expected_date || order.order_date || order.created_at,
+                    label: order.status === 'RECEIVED' ? 'Réception complète' : 'Réception partielle',
+                    detail: `${Number(order.quantity_received || 0).toLocaleString('fr-FR')} unité(s) reçue(s)`,
+                    tone: order.status === 'RECEIVED' ? 'emerald' : 'orange',
+                });
+            }
+            if (Number(order.quantity_invoiced || 0) > 0) {
+                events.push({
+                    key: `${order.id}-invoiced`,
+                    date: order.order_date || order.created_at,
+                    label: 'Facture rapprochée',
+                    detail: `${Number(order.quantity_invoiced || 0).toLocaleString('fr-FR')} unité(s) facturée(s)`,
+                    tone: 'slate',
+                });
+            }
+            return events;
+        })
+        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+        .slice(0, 6);
     
     // Average order value
     const avgOrderValue = totalOrders > 0 ? (totalSpent / totalOrders) : 0;
@@ -1128,9 +1246,12 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
                         <div className="flex-1 mt-2">
                             <div className="flex items-center gap-4 mb-2">
                                 <h2 className="text-4xl font-black tracking-tight">{sup.name}</h2>
-                                {sup.customer_type && (
-                                    <span className="bg-white/10 text-emerald-300 border border-emerald-400/30 px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest">
-                                        {sup.customer_type}
+                                <span className={`border px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest ${statusTone}`}>
+                                    {statusLabels[supplierStatus] || supplierStatus}
+                                </span>
+                                {sup.supplier_category && (
+                                    <span className="bg-white/10 text-slate-200 border border-white/10 px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest">
+                                        {sup.supplier_category}
                                     </span>
                                 )}
                             </div>
@@ -1153,8 +1274,8 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
                             </div>
                         </div>
                         <div className="text-right mt-2 flex flex-col items-end">
-                            <button onClick={() => setCurrentTab('orders')} className="bg-white/10 hover:bg-white/20 border border-white/10 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-lg flex items-center gap-2">
-                                <FileText className="w-4 h-4" /> Nouveau Bon
+                            <button onClick={() => canOrder && openCreatePOForSupplier(sup.name)} disabled={!canOrder} className="bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed border border-white/10 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-lg flex items-center gap-2">
+                                <FileText className="w-4 h-4" /> Créer commande
                             </button>
                             <span className="text-xs text-slate-400 mt-3 font-medium">Créé le {new Date(sup.created_at || Date.now()).toLocaleDateString('fr-FR')}</span>
                         </div>
@@ -1181,6 +1302,43 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
                     
                     {activeTab === 'overview' && (
                         <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            <div className={`mb-8 rounded-3xl border p-6 shadow-sm ${canOrder ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200'}`}>
+                                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-5">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Situation fournisseur</p>
+                                        <h3 className="text-2xl font-black text-slate-900">
+                                            {canOrder ? 'Fournisseur exploitable pour les achats' : 'Fournisseur bloqué'}
+                                        </h3>
+                                        <p className="text-sm font-bold text-slate-500 mt-1">
+                                            {canOrder
+                                                ? 'Contrôlez les commandes ouvertes, les réceptions et les factures à rapprocher.'
+                                                : 'Aucune nouvelle commande ne doit être créée tant que le blocage n’est pas levé.'}
+                                        </p>
+                                    </div>
+                                    <button onClick={() => canOrder && openCreatePOForSupplier(sup.name)} disabled={!canOrder} className="px-6 py-4 rounded-2xl bg-slate-900 disabled:bg-slate-300 text-white font-black shadow-lg flex items-center justify-center gap-2">
+                                        <Plus className="w-5 h-5" /> Créer commande fournisseur
+                                    </button>
+                                </div>
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+                                    <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Commandes ouvertes</p>
+                                        <p className="text-3xl font-black text-slate-900 mt-1">{openOrders.length}</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4">
+                                        <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">À réceptionner</p>
+                                        <p className="text-3xl font-black text-blue-700 mt-1">{toReceiveOrders.length}</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-orange-50 border border-orange-100 p-4">
+                                        <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">À facturer</p>
+                                        <p className="text-3xl font-black text-orange-700 mt-1">{toInvoiceOrders.length}</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-red-50 border border-red-100 p-4">
+                                        <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Retards</p>
+                                        <p className="text-3xl font-black text-red-700 mt-1">{lateOrders.length}</p>
+                                    </div>
+                                </div>
+                            </div>
+
                             {/* KPI Row */}
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                                 <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
@@ -1307,7 +1465,25 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
                                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Pays</p>
                                                 <p className="font-black text-slate-800">{sup.country || 'Non renseigné'}</p>
                                             </div>
+                                            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Catégorie</p>
+                                                <p className="font-black text-slate-800">{sup.supplier_category || 'Non renseigné'}</p>
+                                            </div>
+                                            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Devise</p>
+                                                <p className="font-black text-slate-800">{sup.default_currency || 'EUR'}</p>
+                                            </div>
+                                            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Incoterm</p>
+                                                <p className="font-black text-slate-800">{sup.incoterm || 'Non renseigné'}</p>
+                                            </div>
                                         </div>
+                                        {sup.delivery_terms && (
+                                            <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 mb-6">
+                                                <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">Conditions livraison</p>
+                                                <p className="font-bold text-blue-950">{sup.delivery_terms}</p>
+                                            </div>
+                                        )}
                                         <div className="text-center p-6 bg-slate-50 rounded-2xl border border-slate-100 mb-6">
                                             <MapPin className="w-8 h-8 text-slate-300 mx-auto mb-3" />
                                             <p className="font-bold text-slate-600">{sup.address || 'Aucune adresse renseignée.'}</p>
@@ -1329,6 +1505,60 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab }) => {
                                             </div>
                                         )}
                                     </div>
+                                </div>
+                            </div>
+
+                            <div className="mt-8 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div className="p-6 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                                    <div>
+                                        <h3 className="font-black text-slate-800 flex items-center gap-2"><CheckCircle className="w-5 h-5 text-slate-400"/> Qualité fournisseur</h3>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">Lecture opérationnelle des risques visibles dans MMG.</p>
+                                    </div>
+                                    <span className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest ${qualityAlerts === 0 ? 'bg-emerald-100 text-emerald-700' : qualityAlerts <= 2 ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
+                                        {qualityLabel}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-6">
+                                    <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Réceptions partielles</p>
+                                        <p className="text-2xl font-black text-slate-900 mt-1">{supOrders.filter(o => o.status === 'PARTIAL').length}</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-red-50 border border-red-100 p-4">
+                                        <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Retards ouverts</p>
+                                        <p className="text-2xl font-black text-red-700 mt-1">{lateOrders.length}</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-orange-50 border border-orange-100 p-4">
+                                        <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Factures à rapprocher</p>
+                                        <p className="text-2xl font-black text-orange-700 mt-1">{toInvoiceOrders.length}</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4">
+                                        <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Commandes reçues</p>
+                                        <p className="text-2xl font-black text-emerald-700 mt-1">{receivedOrders}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="mt-8 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div className="p-6 border-b border-slate-100 bg-slate-50">
+                                    <h3 className="font-black text-slate-800 flex items-center gap-2"><FileText className="w-5 h-5 text-slate-400"/> Timeline fournisseur</h3>
+                                    <p className="text-xs font-bold text-slate-500 mt-1">Derniers événements achats, réceptions et rapprochements.</p>
+                                </div>
+                                <div className="p-6 space-y-4">
+                                    {supplierTimeline.map(event => (
+                                        <div key={event.key} className="flex items-start gap-4">
+                                            <div className={`w-3 h-3 rounded-full mt-2 ${event.tone === 'emerald' ? 'bg-emerald-500' : event.tone === 'orange' ? 'bg-orange-500' : event.tone === 'blue' ? 'bg-blue-500' : 'bg-slate-400'}`}></div>
+                                            <div className="flex-1 border-b border-slate-100 pb-4">
+                                                <div className="flex items-center justify-between gap-4">
+                                                    <p className="font-black text-slate-900">{event.label}</p>
+                                                    <p className="text-xs font-bold text-slate-400">{event.date ? new Date(event.date).toLocaleDateString('fr-FR') : '-'}</p>
+                                                </div>
+                                                <p className="text-sm font-bold text-slate-500 mt-1">{event.detail}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {supplierTimeline.length === 0 && (
+                                        <p className="text-sm font-bold text-slate-400">Aucun événement fournisseur pour le moment.</p>
+                                    )}
                                 </div>
                             </div>
                         </div>
