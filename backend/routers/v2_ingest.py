@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from .. import models, schemas
 from ..core import security
+from ..core import uploads
 from datetime import datetime
 
 router = APIRouter(
@@ -75,24 +76,11 @@ def ingest_order(
 async def upload_order_file(file: UploadFile = File(...), role: str = Depends(security.require_roles("ADMIN", "MANAGER"))):
     """
     Receive a manual upload and save it to input_orders for the watcher to process.
+    Les débits atelier TXT sont acceptés sur cet endpoint uniquement.
     """
-    try:
-        INPUT_DIR = "input_orders"
-        if not os.path.exists(INPUT_DIR):
-            os.makedirs(INPUT_DIR)
-            
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No filename provided")
-
-        safe_filename = os.path.basename(file.filename)
-        file_path = os.path.join(INPUT_DIR, safe_filename)
-        
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        return {"filename": safe_filename, "status": "deposited", "message": "File will be processed by OCR shortly."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    INPUT_DIR = "input_orders"
+    file_path = await uploads.save_upload_file(file, INPUT_DIR, extra_extensions={".txt"})
+    return {"filename": os.path.basename(file_path), "status": "deposited", "message": "File will be processed by OCR shortly."}
 @router.get("/recent", response_model=List[schemas.Order])
 def get_recent_orders(db: Session = Depends(get_db)):
     return db.query(models.Order).order_by(models.Order.id.desc()).limit(10).all()

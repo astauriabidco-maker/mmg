@@ -25,22 +25,12 @@ export default function Login() {
 
     const handleSubmit = async (e) => {
         if (e) e.preventDefault();
-        
-        let loginUsername = username;
-        let loginPassword = password;
 
-        if (isKioskMode) {
-            if (pin.length !== 4) return;
-            // Simple PIN mapping for Kiosk mode
-            loginUsername = 'admin'; // Default fallback
-            if (pin === '1111') loginUsername = 'op_debit';
-            if (pin === '2222') loginUsername = 'op_soudure';
-            if (pin === '3333') loginUsername = 'op_assemblage';
-            if (pin === '4444') loginUsername = 'op_vitrage';
-            if (pin === '1234') loginUsername = 'admin';
-            if (pin === '0000') loginUsername = 'manager';
-            loginPassword = pin;
-        }
+        const loginUsername = username.trim();
+        if (!loginUsername) return;
+        if (isKioskMode && pin.length !== 4) return;
+        const loginPassword = isKioskMode ? pin : password;
+        if (!loginPassword) return;
 
         const success = await login(loginUsername, loginPassword);
         if (success) {
@@ -96,6 +86,17 @@ export default function Login() {
 
                 {isKioskMode ? (
                     <>
+                        <div className="mb-6">
+                            <label className="block text-slate-400 text-sm font-bold mb-2">Identifiant</label>
+                            <input
+                                type="text"
+                                value={username}
+                                onChange={(e) => { setUsername(e.target.value); setError(''); }}
+                                className="w-full bg-slate-700 border border-slate-600 text-white rounded-xl p-4 outline-none focus:border-blue-500 transition-colors"
+                                placeholder="ex: op_debit"
+                            />
+                        </div>
+
                         <div className="flex justify-center gap-4 mb-8">
                             {[0, 1, 2, 3].map((i) => (
                                 <div
@@ -135,8 +136,8 @@ export default function Login() {
 
                     <button
                         onClick={() => handleSubmit()}
-                        disabled={pin.length !== 4}
-                        className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${pin.length === 4
+                        disabled={pin.length !== 4 || !username.trim()}
+                        className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${pin.length === 4 && username.trim()
                             ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/30 active:scale-95'
                             : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                             }`}

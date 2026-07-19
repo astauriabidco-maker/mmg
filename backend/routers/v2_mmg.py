@@ -9,6 +9,7 @@ from datetime import datetime
 from ..database import get_db
 from .. import models, schemas
 from ..core import security
+from ..core import uploads
 
 router = APIRouter(
     prefix="/v2/mmg",
@@ -18,22 +19,15 @@ router = APIRouter(
 
 # Helper to save base64 image
 def save_base64_image(base64_str: str, folder: str, prefix: str):
-    try:
-        if "base64," in base64_str:
-            base64_str = base64_str.split("base64,")[1]
-        
-        img_data = base64.b64decode(base64_str)
-        filename = f"{prefix}_{uuid.uuid4().hex[:8]}.png"
-        filepath = os.path.join("backend/static/mmg", folder, filename)
-        
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        with open(filepath, "wb") as f:
-            f.write(img_data)
-        
-        return f"/static/mmg/{folder}/{filename}"
-    except Exception as e:
-        print(f"Error saving image: {e}")
-        return None
+    img_data, extension = uploads.decode_base64_upload(base64_str)
+    filename = f"{prefix}_{uuid.uuid4().hex[:8]}{extension}"
+    filepath = os.path.join("backend/static/mmg", folder, filename)
+
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, "wb") as f:
+        f.write(img_data)
+
+    return f"/static/mmg/{folder}/{filename}"
 
 def generate_reference(db: Session):
     year = datetime.utcnow().year

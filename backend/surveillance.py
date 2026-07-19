@@ -120,6 +120,24 @@ def generate_qr(order_data):
     logger.info(f"QR Saved: {output_path}")
     return output_path
 
+def _get_auth_headers():
+    """
+    Authenticate against the API using service credentials from env vars.
+    """
+    username = os.getenv("SURVEILLANCE_USERNAME")
+    password = os.getenv("SURVEILLANCE_PASSWORD")
+    if not username or not password:
+        logger.warning("SURVEILLANCE_USERNAME/SURVEILLANCE_PASSWORD non définis : l'appel API sera refusé (401).")
+        return {}
+    try:
+        response = requests.post(f"{API_URL}/token", data={"username": username, "password": password}, timeout=10)
+        if response.status_code == 200:
+            return {"Authorization": f"Bearer {response.json()['access_token']}"}
+        logger.error(f"API auth failed: {response.status_code} - {response.text}")
+    except Exception as e:
+        logger.error(f"API auth error: {e}")
+    return {}
+
 def send_to_api(order_data):
     """
     Post data to local API to create order in DB.
@@ -131,7 +149,7 @@ def send_to_api(order_data):
             "height": order_data["height"],
             "material": order_data["material"]
         }
-        response = requests.post(f"{API_URL}/orders/", json=payload)
+        response = requests.post(f"{API_URL}/orders/", json=payload, headers=_get_auth_headers())
         if response.status_code in [200, 201]:
             logger.info(f"Order {order_data['reference']} synced to API.")
         elif response.status_code == 400 and "already exists" in response.text:

@@ -11,7 +11,7 @@ SECRET_KEY = os.environ.get("SECRET_KEY", DEFAULT_SECRET_KEY)
 if APP_ENV == "production" and (SECRET_KEY == DEFAULT_SECRET_KEY or SECRET_KEY.startswith("CHANGE_ME")):
     raise RuntimeError("SECRET_KEY must be set to a unique value when APP_ENV=production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "3000"))
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "720"))
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
@@ -39,18 +39,25 @@ from .. import models
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
+def authenticate_token(token: str, db: Session) -> dict:
+    """Décode le JWT et vérifie que l'utilisateur existe encore et est actif."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=401, detail="Could not validate credentials")
-        return payload
     except JWTError:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
+    username: str = payload.get("sub")
+    if username is None:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    return payload
 
-def get_current_user_role(token: str = Depends(oauth2_scheme)):
-    payload = get_current_user(token)
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    return authenticate_token(token, db)
+
+def get_current_user_role(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    payload = get_current_user(token, db)
     role: str = payload.get("role")
     if role is None:
         raise HTTPException(status_code=401, detail="No role found in token")

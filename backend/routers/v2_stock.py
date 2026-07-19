@@ -527,23 +527,15 @@ def update_product(product_id: int, product_data: schemas.ProductBase, db: Sessi
 import os
 import uuid
 import shutil
+from ..core import uploads
 
 @router.post("/products/upload_image")
 async def upload_product_image(file: UploadFile = File(...), role: str = Depends(get_current_user_role)):
     if role not in ["ADMIN", "MANAGER"]:
         raise HTTPException(status_code=403, detail="Non autorisé.")
-        
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No filename provided")
-    file_ext = os.path.splitext(file.filename)[1]
-    new_filename = f"{uuid.uuid4().hex}{file_ext}"
-    filepath = os.path.join("uploads", "products", new_filename)
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    
-    with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-        
-    return {"image_url": f"/uploads/products/{new_filename}"}
+
+    filepath = await uploads.save_upload_file(file, os.path.join("uploads", "products"))
+    return {"image_url": f"/uploads/products/{os.path.basename(filepath)}"}
 
 
 @router.put("/variants/{variant_id}", response_model=schemas.ProductVariantResponse)

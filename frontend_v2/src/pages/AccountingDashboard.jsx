@@ -4,6 +4,7 @@ import {
     FileText, Download, CheckCircle, Clock, AlertTriangle, Filter, Search, Plus, CreditCard, Banknote, BellRing, Undo2
 } from 'lucide-react';
 import api from '../services/api';
+import { openPdfWithFeedback, downloadFileWithFeedback } from '../services/pdf';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function AccountingDashboard() {
@@ -37,7 +38,7 @@ export default function AccountingDashboard() {
     });
 
     const handleExportFEC = () => {
-        window.open(`${api.defaults.baseURL}/v2/accounting/export/fec`, '_blank');
+        downloadFileWithFeedback('/v2/accounting/export/fec', 'export-fec.txt');
     };
 
     const handlePaymentSubmit = async () => {
@@ -257,7 +258,7 @@ export default function AccountingDashboard() {
                                                     </button>
                                                 )}
                                                 <button 
-                                                    onClick={() => window.open(`${api.defaults.baseURL}/v2/pdf/invoice/${inv.id}`, '_blank')}
+                                                    onClick={() => openPdfWithFeedback(`/v2/pdf/invoice/${inv.id}`)}
                                                     className="p-2 bg-slate-100 text-slate-500 hover:bg-slate-200 rounded-lg transition-colors"
                                                     title="Télécharger la facture PDF"
                                                 >

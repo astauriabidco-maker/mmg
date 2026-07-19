@@ -7,6 +7,7 @@ import uuid
 from . import models, database
 from .routers import api, v2_planning, v2_analytics, v2_printer, v2_ingest, v2_config, v2_mmg, v2_stock, v2_sales, v2_pos, v2_purchases, v2_suppliers, v2_pdf, v2_accounting, v2_logistics, v2_webhook
 from .core.websocket import manager
+from .core import security
 from .core.logger import logger
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -73,6 +74,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] if app_env == "production" else ["*"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"] if app_env == "production" else ["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 # Mount Uploads (Zero UI, API ONLY)
@@ -93,6 +95,7 @@ app.include_router(v2_pos.router)
 app.include_router(v2_purchases.router)
 app.include_router(v2_suppliers.router)
 app.include_router(v2_pdf.router)
+app.include_router(v2_pdf.public_router)
 app.include_router(v2_accounting.router)
 app.include_router(v2_logistics.router)
 app.include_router(v2_webhook.router)
@@ -109,7 +112,15 @@ def readiness_check(db: Session = Depends(database.get_db)):
     return {"status": "ready", "database": "ok"}
 
 @app.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: int):
+async def websocket_endpoint(websocket: WebSocket, client_id: int, token: str = ""):
+    db = database.SessionLocal()
+    try:
+        security.authenticate_token(token, db)
+    except HTTPException:
+        await websocket.close(code=4401)
+        return
+    finally:
+        db.close()
     await manager.connect(websocket)
     try:
         while True:
@@ -121,7 +132,11 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
 
 from . import schemas
 @app.post("/orders/", response_model=schemas.Order)
-def create_order(order: schemas.OrderCreate, db: Session = Depends(database.get_db)):
+def create_order(
+    order: schemas.OrderCreate,
+    db: Session = Depends(database.get_db),
+    role: str = Depends(security.require_roles("ADMIN", "MANAGER")),
+):
     db_order = db.query(models.Order).filter(models.Order.reference == order.reference).first()
     if db_order: raise HTTPException(400, "Exists")
     new_order = models.Order(**order.model_dump())

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api, { API_BASE_URL } from '../services/api';
+import { openPdfWithFeedback, downloadFileWithFeedback } from '../services/pdf';
 import { useAuth } from '../context/AuthContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
@@ -470,8 +471,8 @@ export default function ManagerDashboard() {
             setCurrentPage(1);
         };
 
-        const handleExportCSV = () => window.open(`${API_BASE_URL}/v2/ingest/orders/export/csv`, '_blank');
-        const handleExportPDF = () => window.open(`${API_BASE_URL}/v2/ingest/orders/export/pdf`, '_blank');
+        const handleExportCSV = () => downloadFileWithFeedback('/v2/ingest/orders/export/csv', 'commandes.csv');
+        const handleExportPDF = () => openPdfWithFeedback('/v2/ingest/orders/export/pdf');
 
         // KPI summary
         const kpiInProgress = trackingOrders.filter(o => o.status === 'IN_PROGRESS').length;

@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Users, FileText, Search, ArrowRight, CheckCircle, X, DollarSign, Send, Clock, AlertTriangle, FileCheck, Plus, ListTodo, UploadCloud, Copy, Sparkles, BrainCircuit, Package, Wrench, Tag, RefreshCw, Truck, Undo2 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
+import { openPdfWithFeedback } from '../services/pdf';
 import MMGDossiers from './MMGDossiers';
 import WindowVisualizer from '../components/WindowVisualizer';
 import BusinessTimeline from '../components/BusinessTimeline';
@@ -1129,9 +1130,9 @@ export default function SalesDashboard() {
                             </div>
                             <div className="flex flex-wrap gap-2 justify-end shrink-0">
                                 {renderPrimaryAction()}
-                                <a href={`${api.defaults.baseURL}/v2/pdf/quote/${sale.id}`} target="_blank" rel="noopener noreferrer" className="px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-800 hover:bg-slate-100 font-black text-sm flex items-center justify-center gap-2">
+                                <button type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/quote/${sale.id}`)} className="px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-800 hover:bg-slate-100 font-black text-sm flex items-center justify-center gap-2">
                                     <FileText className="w-4 h-4" /> PDF devis
-                                </a>
+                                </button>
                                 {!['CANCELLED', 'DELIVERED'].includes(sale.status) && (
                                     <button onClick={() => updateStatus('CANCELLED')} className="px-4 py-3 rounded-xl bg-white border border-red-200 text-red-600 hover:bg-red-50 font-black text-sm flex items-center justify-center gap-2">
                                         <X className="w-4 h-4" /> Refuser
@@ -1172,9 +1173,9 @@ export default function SalesDashboard() {
                             <div className="border border-slate-200 rounded-xl p-4 bg-white">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Documents</p>
                                 <div className="space-y-2">
-                                        <a href={`${api.defaults.baseURL}/v2/pdf/quote/${sale.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm font-black text-slate-800 hover:bg-slate-100">
+                                        <button type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/quote/${sale.id}`)} className="w-full flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm font-black text-slate-800 hover:bg-slate-100">
                                             <span>Devis PDF</span><FileText className="w-4 h-4" />
-                                        </a>
+                                        </button>
                                         {sale.signature_token && (
                                             <button
                                                 type="button"
@@ -1188,24 +1189,24 @@ export default function SalesDashboard() {
                                             </button>
                                         )}
                                         {trace.depositInvoices.map(invoice => (
-                                            <a key={invoice.id} href={`${api.defaults.baseURL}/v2/pdf/invoice/${invoice.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm font-black text-amber-900 hover:bg-amber-100">
+                                            <button key={invoice.id} type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/invoice/${invoice.id}`)} className="w-full flex items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm font-black text-amber-900 hover:bg-amber-100">
                                                 <span>Acompte {invoice.reference} · {formatMoney(invoice.total)}</span><FileText className="w-4 h-4" />
-                                            </a>
+                                            </button>
                                         ))}
                                         {trace.finalInvoices.map(invoice => (
-                                            <a key={invoice.id} href={`${api.defaults.baseURL}/v2/pdf/invoice/${invoice.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm font-black text-blue-900 hover:bg-blue-100">
+                                            <button key={invoice.id} type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/invoice/${invoice.id}`)} className="w-full flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm font-black text-blue-900 hover:bg-blue-100">
                                                 <span>Facture finale {invoice.reference} · {formatMoney(invoice.total)}</span><FileText className="w-4 h-4" />
-                                            </a>
+                                            </button>
                                         ))}
                                         {trace.creditNotes.map(creditNote => (
-                                            <a key={creditNote.id || creditNote.reference} href={`${api.defaults.baseURL}/v2/pdf/invoice/${creditNote.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-rose-100 bg-rose-50 p-3 text-sm font-black text-rose-900 hover:bg-rose-100">
+                                            <button key={creditNote.id || creditNote.reference} type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/invoice/${creditNote.id}`)} className="w-full flex items-center justify-between gap-3 rounded-xl border border-rose-100 bg-rose-50 p-3 text-sm font-black text-rose-900 hover:bg-rose-100">
                                                 <span>{creditNote.reference || 'Avoir'} · {formatMoney(creditNote.total)}</span><FileText className="w-4 h-4" />
-                                            </a>
+                                            </button>
                                         ))}
                                         {sale.delivery_notes?.map(note => (
-                                            <a key={note.id} href={`${api.defaults.baseURL}/v2/pdf/delivery-note/${note.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-sm font-black text-emerald-900 hover:bg-emerald-100">
+                                            <button key={note.id} type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/delivery-note/${note.id}`)} className="w-full flex items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-sm font-black text-emerald-900 hover:bg-emerald-100">
                                                 <span>{note.reference} · {note.status}</span><Truck className="w-4 h-4" />
-                                            </a>
+                                            </button>
                                         ))}
                                 </div>
                             </div>

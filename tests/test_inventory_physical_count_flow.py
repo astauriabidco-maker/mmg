@@ -25,6 +25,9 @@ def _client_with_db():
             db.close()
 
     app.dependency_overrides[database.get_db] = override_get_db
+    with TestingSessionLocal() as db:
+        db.add(models.User(username="inventory-tester", pin_hash="test-pin", role="ADMIN", is_active=True))
+        db.commit()
     token = security.create_access_token({"sub": "inventory-tester", "role": "ADMIN"})
     return TestClient(app), TestingSessionLocal, engine, {"Authorization": f"Bearer {token}"}
 

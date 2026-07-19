@@ -42,7 +42,12 @@ def stock_client():
         models.Base.metadata.drop_all(bind=engine)
 
 
-def _admin_headers() -> dict[str, str]:
+def _admin_headers(session_factory) -> dict[str, str]:
+    """Crée l'utilisateur en base si besoin, puis émet un JWT valide pour lui."""
+    with session_factory() as db:
+        if not db.query(models.User).filter(models.User.username == "stock-sales-manager").first():
+            db.add(models.User(username="stock-sales-manager", pin_hash="test-pin", role="ADMIN", is_active=True))
+            db.commit()
     token = security.create_access_token({"sub": "stock-sales-manager", "role": "ADMIN"})
     return {"Authorization": f"Bearer {token}"}
 
@@ -143,7 +148,7 @@ def _sign_and_deliver_free_sale(client: TestClient, sale_id: int, headers: dict[
 
 def test_free_sale_rejects_draft_catalog_product(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, _stock_id, _customer_id = _seed_stock_item(db, catalog_status="DRAFT", quantity=5)
@@ -173,7 +178,7 @@ def test_free_sale_rejects_draft_catalog_product(stock_client):
 
 def test_free_sale_rejects_zero_priced_stock_item(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)
@@ -203,7 +208,7 @@ def test_free_sale_rejects_zero_priced_stock_item(stock_client):
 
 def test_free_sale_validation_blocks_when_stock_is_insufficient(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=1)
@@ -221,7 +226,7 @@ def test_free_sale_validation_blocks_when_stock_is_insufficient(stock_client):
 
 def test_free_sale_validation_reserves_stock_without_physical_debit(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)
@@ -247,7 +252,7 @@ def test_free_sale_validation_reserves_stock_without_physical_debit(stock_client
 
 def test_free_sale_full_signature_flow_reserves_stock_without_debit(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)
@@ -358,7 +363,7 @@ def test_free_sale_full_signature_flow_reserves_stock_without_debit(stock_client
 
 def test_free_sale_delivery_consumes_commercial_reservation(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, stock_id, customer_id = _seed_stock_item(db, quantity=5)
@@ -430,7 +435,7 @@ def test_free_sale_delivery_consumes_commercial_reservation(stock_client):
 
 def test_free_sale_return_recredits_customer_delivery_and_marks_traceability(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, stock_id, customer_id = _seed_stock_item(db, quantity=5)
@@ -510,7 +515,7 @@ def test_free_sale_return_recredits_customer_delivery_and_marks_traceability(sto
 
 def test_free_sale_return_does_not_create_credit_note_automatically(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)
@@ -538,7 +543,7 @@ def test_free_sale_return_does_not_create_credit_note_automatically(stock_client
 
 def test_free_sale_return_credit_note_requires_explicit_post_and_is_idempotent(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)
@@ -613,7 +618,7 @@ def test_free_sale_return_credit_note_requires_explicit_post_and_is_idempotent(s
 
 def test_free_sale_return_cannot_be_applied_twice(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, stock_id, customer_id = _seed_stock_item(db, quantity=5)
@@ -649,7 +654,7 @@ def test_free_sale_return_cannot_be_applied_twice(stock_client):
 
 def test_free_sale_cancellation_releases_commercial_reservation(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)
@@ -691,7 +696,7 @@ def test_free_sale_cancellation_releases_commercial_reservation(stock_client):
 
 def test_customer_delivery_move_is_not_classified_as_workshop_debit(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, stock_id, customer_id = _seed_stock_item(db, quantity=5)
@@ -720,7 +725,7 @@ def test_customer_delivery_move_is_not_classified_as_workshop_debit(stock_client
 
 def test_free_sale_quote_cannot_be_prepared_or_launched_for_workshop(stock_client):
     client, TestingSessionLocal = stock_client
-    headers = _admin_headers()
+    headers = _admin_headers(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         variant_id, _stock_id, _customer_id = _seed_stock_item(db, quantity=5)

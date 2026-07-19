@@ -2,6 +2,7 @@ from io import BytesIO
 from datetime import timedelta
 from typing import Optional
 from xml.sax.saxutils import escape
+import hmac
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
@@ -12,8 +13,13 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 
 from ..database import get_db
 from .. import models
+from ..core.security import get_current_user
 
-router = APIRouter(prefix="/v2/pdf", tags=["PDF"])
+router = APIRouter(prefix="/v2/pdf", tags=["PDF"], dependencies=[Depends(get_current_user)])
+
+# Accès public limité : le portail client (/portal/sign/:token) télécharge le PDF
+# du devis via son token de signature, sans compte utilisateur.
+public_router = APIRouter(prefix="/v2/pdf", tags=["PDF public"])
 
 QUOTE_STATUS_LABELS = {
     "DRAFT": "Brouillon",
@@ -211,6 +217,15 @@ def generate_quote_pdf(sale_id: int, db: Session = Depends(get_db)):
             "Content-Disposition": f"attachment; filename=Devis_{sale.reference}.pdf"
         }
     )
+
+@public_router.get("/portal/quote/{sale_id}")
+def generate_portal_quote_pdf(sale_id: int, token: str, db: Session = Depends(get_db)):
+    """PDF du devis pour le portail client, validé par le token de signature du devis."""
+    sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_id).first()
+    if not sale or not sale.signature_token or not hmac.compare_digest(sale.signature_token, token):
+        raise HTTPException(status_code=404, detail="Lien invalide ou expiré.")
+    return generate_quote_pdf(sale_id, db)
+
 
 @router.get("/invoice/{invoice_id}")
 def generate_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):

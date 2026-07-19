@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle, Copy, FileText, Package, Send, Truck, Undo2, Wrench, X } from 'lucide-react';
 import api from '../services/api';
+import { openPdfWithFeedback } from '../services/pdf';
 import BusinessTimeline from '../components/BusinessTimeline';
 import { isCreditNote, isDepositInvoice } from '../utils/saleBusinessTimeline';
 
@@ -243,9 +244,9 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                         <ArrowLeft className="w-4 h-4" /> {returnLabel}
                     </button>
                     <div className="flex gap-2">
-                        <a href={`${api.defaults.baseURL}/v2/pdf/quote/${sale.id}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-800 font-black hover:bg-slate-50">
+                        <button type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/quote/${sale.id}`)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-800 font-black hover:bg-slate-50">
                             <FileText className="w-4 h-4" /> PDF devis
-                        </a>
+                        </button>
                         {sale.signature_token && (
                             <button
                                 onClick={() => {
@@ -437,28 +438,28 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                         <section className="bg-white border border-slate-200 rounded-2xl p-5">
                             <h2 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4">Documents</h2>
                             <div className="space-y-2">
-                                <a href={`${api.defaults.baseURL}/v2/pdf/quote/${sale.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm font-black text-slate-800 hover:bg-slate-100">
+                                <button type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/quote/${sale.id}`)} className="w-full flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm font-black text-slate-800 hover:bg-slate-100">
                                     <span>Devis PDF</span><FileText className="w-4 h-4" />
-                                </a>
+                                </button>
                                 {trace.depositInvoices.map(invoice => (
-                                    <a key={invoice.id} href={`${api.defaults.baseURL}/v2/pdf/invoice/${invoice.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm font-black text-amber-900 hover:bg-amber-100">
+                                    <button key={invoice.id} type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/invoice/${invoice.id}`)} className="w-full flex items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm font-black text-amber-900 hover:bg-amber-100">
                                         <span>Acompte {invoice.reference} · {formatMoney(invoice.total)}</span><FileText className="w-4 h-4" />
-                                    </a>
+                                    </button>
                                 ))}
                                 {trace.finalInvoices.map(invoice => (
-                                    <a key={invoice.id} href={`${api.defaults.baseURL}/v2/pdf/invoice/${invoice.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm font-black text-blue-900 hover:bg-blue-100">
+                                    <button key={invoice.id} type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/invoice/${invoice.id}`)} className="w-full flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm font-black text-blue-900 hover:bg-blue-100">
                                         <span>Facture finale {invoice.reference} · {formatMoney(invoice.total)}</span><FileText className="w-4 h-4" />
-                                    </a>
+                                    </button>
                                 ))}
                                 {trace.creditNotes.map(creditNote => (
-                                    <a key={creditNote.id || creditNote.reference} href={`${api.defaults.baseURL}/v2/pdf/invoice/${creditNote.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-rose-100 bg-rose-50 p-3 text-sm font-black text-rose-900 hover:bg-rose-100">
+                                    <button key={creditNote.id || creditNote.reference} type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/invoice/${creditNote.id}`)} className="w-full flex items-center justify-between gap-3 rounded-xl border border-rose-100 bg-rose-50 p-3 text-sm font-black text-rose-900 hover:bg-rose-100">
                                         <span>{creditNote.reference || 'Avoir'} · {formatMoney(creditNote.total)}</span><FileText className="w-4 h-4" />
-                                    </a>
+                                    </button>
                                 ))}
                                 {trace.deliveryNotes.map(note => (
-                                    <a key={note.id} href={`${api.defaults.baseURL}/v2/pdf/delivery-note/${note.id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-sm font-black text-emerald-900 hover:bg-emerald-100">
+                                    <button key={note.id} type="button" onClick={() => openPdfWithFeedback(`/v2/pdf/delivery-note/${note.id}`)} className="w-full flex items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-sm font-black text-emerald-900 hover:bg-emerald-100">
                                         <span>{note.reference} · {note.status}</span><Truck className="w-4 h-4" />
-                                    </a>
+                                    </button>
                                 ))}
                             </div>
                         </section>

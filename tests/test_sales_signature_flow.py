@@ -132,6 +132,22 @@ def test_sales_signature_flow_creates_invoice_from_public_portal(client: TestCli
     assert public_quote["status"] == "SENT"
     assert len(public_quote["lines"]) == 2
 
+    unauthenticated_pdf = client.get(f"/v2/pdf/quote/{sale_order['id']}")
+    assert unauthenticated_pdf.status_code == 401
+
+    bad_token_pdf = client.get(
+        f"/v2/pdf/portal/quote/{sale_order['id']}",
+        params={"token": "token-invalide"},
+    )
+    assert bad_token_pdf.status_code == 404
+
+    portal_pdf = client.get(
+        f"/v2/pdf/portal/quote/{sale_order['id']}",
+        params={"token": signature_token},
+    )
+    assert portal_pdf.status_code == 200, portal_pdf.text
+    assert portal_pdf.headers["content-type"] == "application/pdf"
+
     sign_response = client.post(f"/v2/sales/portal/{signature_token}/sign")
     assert sign_response.status_code == 200, sign_response.text
 
@@ -198,7 +214,7 @@ def test_quote_pdf_contains_client_totals_status_and_conditions(client: TestClie
     assert create_response.status_code == 200, create_response.text
     sale = create_response.json()
 
-    pdf_response = client.get(f"/v2/pdf/quote/{sale['id']}")
+    pdf_response = client.get(f"/v2/pdf/quote/{sale['id']}", headers=admin_headers)
     assert pdf_response.status_code == 200, pdf_response.text
     assert pdf_response.headers["content-type"] == "application/pdf"
     assert "Devis_" in pdf_response.headers["content-disposition"]

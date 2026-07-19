@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
+import { downloadFileWithFeedback } from '../services/pdf';
 import { 
     Package, MapPin, Search, Plus, Trash2, Layers, 
     ArrowRight, Box, Hash, ChevronRight, ChevronDown, 
@@ -630,7 +631,7 @@ export default function StockDashboard() {
     };
 
     const handleExportExcel = () => {
-        window.open(`${api.defaults.baseURL}/v2/stock/export/inventory`, '_blank');
+        downloadFileWithFeedback('/v2/stock/export/inventory', 'inventaire.xlsx');
     };
 
     // -------- RENDERERS --------

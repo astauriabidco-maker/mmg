@@ -8,6 +8,16 @@ from backend.core import security
 from backend.main import app
 
 
+def _auth_headers(session_factory, username: str, role: str = "ADMIN") -> dict:
+    """Crée l'utilisateur en base si besoin, puis émet un JWT valide pour lui."""
+    with session_factory() as db:
+        if not db.query(models.User).filter(models.User.username == username).first():
+            db.add(models.User(username=username, pin_hash="test-pin", role=role, is_active=True))
+            db.commit()
+    token = security.create_access_token({"sub": username, "role": role})
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_purchase_order_receipt_creates_stock_move_and_quant():
     engine = create_engine(
         "sqlite:///:memory:",
@@ -28,8 +38,7 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
 
     try:
         client = TestClient(app)
-        token = security.create_access_token({"sub": "purchase-tester", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "purchase-tester")
 
         product_response = client.post(
             "/v2/stock/products",
@@ -167,8 +176,7 @@ def test_purchase_order_can_be_received_partially_then_completed():
 
     try:
         client = TestClient(app)
-        token = security.create_access_token({"sub": "purchase-tester", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "purchase-tester")
 
         product_response = client.post(
             "/v2/stock/products",
@@ -335,8 +343,7 @@ def test_purchase_recommendations_use_real_stock_thresholds_without_fake_fallbac
 
     try:
         client = TestClient(app)
-        token = security.create_access_token({"sub": "purchase-tester", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "purchase-tester")
 
         empty_response = client.get("/v2/purchases/ai-recommendations", headers=headers)
         assert empty_response.status_code == 200, empty_response.text

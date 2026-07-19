@@ -12,6 +12,16 @@ from backend.core import security
 from backend.main import app
 
 
+def _auth_headers(session_factory, username: str, role: str = "ADMIN") -> dict:
+    """Crée l'utilisateur en base si besoin, puis émet un JWT valide pour lui."""
+    with session_factory() as db:
+        if not db.query(models.User).filter(models.User.username == username).first():
+            db.add(models.User(username=username, pin_hash="test-pin", role=role, is_active=True))
+            db.commit()
+    token = security.create_access_token({"sub": username, "role": role})
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
     engine = create_engine(
         "sqlite:///:memory:",
@@ -73,8 +83,7 @@ def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
             sale_id = sale.id
 
         client = TestClient(app)
-        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
         content = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
 
         preview_response = client.post(
@@ -198,8 +207,7 @@ def test_workshop_debit_reservation_can_be_cancelled_without_stock_move():
             sale_id = sale.id
 
         client = TestClient(app)
-        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
         content = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
 
         reserve_response = client.post(
@@ -298,8 +306,7 @@ def test_sale_workshop_preparation_reserves_stock_without_physical_debit():
             sale_id = sale.id
 
         client = TestClient(app)
-        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "sales-manager")
         content = b"CORTIZO GAMME BASE\r\nVER TEST\r\nRAL;2000;PROFIL;4;barre  6,50\r\n"
 
         preview_response = client.post(
@@ -408,8 +415,7 @@ def test_launch_production_is_idempotent_and_links_reservation_to_order():
             line_id = line.id
 
         client = TestClient(app)
-        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "sales-manager")
 
         first_response = client.post(f"/v2/sales/{sale_id}/launch-production", headers=headers)
         assert first_response.status_code == 200, first_response.text
@@ -474,8 +480,7 @@ def test_sale_workshop_preview_rejects_wrong_sales_status():
             sale_id = sale.id
 
         client = TestClient(app)
-        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "sales-manager")
         content = b"CORTIZO GAMME BASE\r\nVER TEST\r\nRAL;2000;PROFIL;4;barre  6,50\r\n"
 
         response = client.post(
@@ -540,8 +545,7 @@ def test_launch_production_requires_active_workshop_reservation():
             sale_id = sale.id
 
         client = TestClient(app)
-        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "sales-manager")
 
         response = client.post(f"/v2/sales/{sale_id}/launch-production", headers=headers)
 
@@ -588,8 +592,7 @@ def test_sale_workshop_preparation_rejects_free_sale_quote():
             sale_id = sale.id
 
         client = TestClient(app)
-        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "sales-manager")
         content = b"CORTIZO GAMME BASE\r\nVER TEST\r\nRAL;2000;PROFIL;4;barre  6,50\r\n"
 
         response = client.post(
@@ -636,8 +639,7 @@ def test_sale_workshop_preparation_requires_measure_for_fabrication_estimate():
             sale_id = sale.id
 
         client = TestClient(app)
-        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "sales-manager")
         content = b"CORTIZO GAMME BASE\r\nVER TEST\r\nRAL;2000;PROFIL;4;barre  6,50\r\n"
 
         response = client.post(
@@ -684,8 +686,7 @@ def test_create_measure_from_free_sale_marks_it_as_fabrication_estimate():
             sale_id = sale.id
 
         client = TestClient(app)
-        token = security.create_access_token({"sub": "sales-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "sales-manager")
         response = client.post(f"/v2/mmg/from-sale/{sale_id}", headers=headers)
         assert response.status_code == 200, response.text
 
@@ -735,8 +736,7 @@ def test_workshop_reservation_requires_validated_and_coherent_sale_order():
             pvc_id = pvc.id
 
         client = TestClient(app)
-        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
         content = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
 
         draft_response = client.post(
@@ -801,8 +801,7 @@ def test_workshop_debit_contexts_include_active_production_orders_without_sales(
             db.commit()
 
         client = TestClient(app)
-        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
 
         response = client.get("/v2/stock/workshop-debits/contexts", headers=headers)
 
@@ -846,8 +845,7 @@ def test_workshop_debit_preview_is_allowed_without_context_but_flags_workflow():
 
     try:
         client = TestClient(app)
-        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
         content = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
 
         response = client.post(
@@ -885,8 +883,7 @@ def test_workshop_unknown_lines_can_create_zero_stock_draft_products():
 
     try:
         client = TestClient(app)
-        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
         content = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
 
         create_response = client.post(
@@ -947,8 +944,7 @@ def test_draft_catalog_can_be_exported_and_reimported():
 
     try:
         client = TestClient(app)
-        token = security.create_access_token({"sub": "atelier-manager", "role": "ADMIN"})
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
         content = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
 
         create_response = client.post(

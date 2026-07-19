@@ -63,7 +63,8 @@ export default function OperatorDashboard() {
     useEffect(() => {
         fetchQueue();
         const wsBaseUrl = API_BASE_URL.replace(/^http/, 'ws').replace(/\/$/, '');
-        ws.current = new WebSocket(`${wsBaseUrl}/ws/${Math.floor(Math.random() * 1000)}`);
+        const wsToken = encodeURIComponent(localStorage.getItem('token') || '');
+        ws.current = new WebSocket(`${wsBaseUrl}/ws/${Math.floor(Math.random() * 1000)}?token=${wsToken}`);
         ws.current.onopen = () => console.log("WS Connected");
         ws.current.onmessage = (event) => {
             if (event.data === "refresh") fetchQueue();

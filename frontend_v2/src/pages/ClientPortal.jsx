@@ -127,7 +127,7 @@ export default function ClientPortal() {
                             <p className="text-sm text-slate-500 font-medium mt-1">Veuillez consulter le devis détaillé avant de signer.</p>
                         </div>
                         <a 
-                            href={`${API_BASE_URL}/v2/pdf/quote/${quote.id}`}
+                            href={`${API_BASE_URL}/v2/pdf/portal/quote/${quote.id}?token=${encodeURIComponent(token)}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="bg-white text-blue-700 border border-blue-200 px-6 py-3 rounded-xl font-bold shadow-sm hover:shadow-md transition-all flex items-center gap-2"
