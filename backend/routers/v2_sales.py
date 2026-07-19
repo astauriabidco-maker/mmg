@@ -25,6 +25,7 @@ from scripts.import_workshop_debits import parse_file
 
 import io
 from .v2_accounting import generate_invoice_reference, compute_qr_seal
+from ..services.document_sequences import next_number
 
 router = APIRouter(
     prefix="/v2/sales",
@@ -190,7 +191,7 @@ def _create_sale_invoice(
                 tax_rate=tax_rate,
             ))
 
-    invoice.qr_code_hash = compute_qr_seal(invoice)
+    invoice.qr_code_hash = compute_qr_seal(db, invoice)
     return invoice
 
 
@@ -308,9 +309,8 @@ def _attach_sale_traceability(db: Session, sale: models.SaleOrder) -> models.Sal
 
 
 def _generate_delivery_note_reference(db: Session) -> str:
-    year = datetime.utcnow().year
-    count = db.query(models.DeliveryNote).filter(models.DeliveryNote.reference.like(f"BL-{year}-%")).count()
-    return f"BL-{year}-{count + 1:04d}"
+    # Format: BL-YYYY-XXXX — séquence transactionnelle inaltérable (NF525)
+    return next_number(db, "delivery_note")
 
 
 def _create_commercial_reservation_if_validated(
@@ -699,8 +699,9 @@ def create_sale_order(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    date_str = datetime.now().strftime("%Y-%m-%d-%H%M")
-    ref = f"DEV-{date_str}"
+    # Format: DEV-YYYY-XXXX — séquence transactionnelle (remplace l'ancien
+    # DEV-{date-minute} qui pouvait entrer en collision sous concurrence)
+    ref = next_number(db, "quote")
     workflow_type = _normalise_sale_workflow_type(order_req.workflow_type)
     
     order = models.SaleOrder(

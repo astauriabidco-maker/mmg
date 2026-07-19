@@ -737,6 +737,7 @@ class InvoiceResponse(InvoiceBase):
     tax_amount: float
     total: float
     qr_code_hash: Optional[str] = None
+    previous_seal: Optional[str] = None
     lines: List[InvoiceLineResponse] = []
     payments: List[PaymentResponse] = []
     model_config = ConfigDict(from_attributes=True)

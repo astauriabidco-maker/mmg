@@ -10,6 +10,7 @@ from ..database import get_db
 from .. import models, schemas
 from ..core import security
 from ..core import uploads
+from ..services.document_sequences import next_number
 
 router = APIRouter(
     prefix="/v2/mmg",
@@ -76,13 +77,8 @@ def _serialize_detail(db_item: models.MMG) -> schemas.MMGDetail:
     )
 
 def generate_reference(db: Session):
-    year = datetime.utcnow().year
-    prefix = f"MMG-{year}-"
-    
-    # Count existing for this year
-    count = db.query(models.MMG).filter(models.MMG.reference.like(f"{prefix}%")).count()
-    new_id = count + 1
-    return f"{prefix}{str(new_id).zfill(5)}"
+    # Format: MMG-YYYY-XXXXX — séquence transactionnelle (NF525)
+    return next_number(db, "mmg")
 
 @router.post("/", response_model=schemas.MMGResponse)
 async def create_dossier(item: schemas.MMGCreate, db: Session = Depends(get_db)):
@@ -230,8 +226,8 @@ def send_quote(dossier_id: int, db: Session = Depends(get_db)):
     existing_sale = db.query(models.SaleOrder).filter(models.SaleOrder.client_name == db_item.client_name, models.SaleOrder.notes.contains(db_item.reference)).first()
     
     if not existing_sale:
-        date_str = datetime.now().strftime("%Y-%m-%d-%H%M")
-        ref = f"DEV-{date_str}"
+        # Même séquence transactionnelle que les devis /v2/sales (DEV-YYYY-XXXX)
+        ref = next_number(db, "quote")
         
         sale = models.SaleOrder(
             reference=ref,

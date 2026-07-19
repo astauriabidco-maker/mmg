@@ -2,14 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import datetime, timedelta
-import hashlib
-import json
 import csv
 import io
 
 from ..database import get_db
 from .. import models, schemas
 from ..core import security
+from ..services.document_sequences import next_number
+from ..services import nf525_seal
 
 router = APIRouter(
     prefix="/v2/accounting",
@@ -20,20 +20,17 @@ router = APIRouter(
 # --- FACTURATION ---
 
 def generate_invoice_reference(db: Session):
-    # Format: F-YYYY-XXXX (Chrono continuous per year)
-    year = datetime.utcnow().year
-    count = db.query(models.Invoice).filter(models.Invoice.reference.like(f"F-{year}-%")).count()
-    return f"F-{year}-{count + 1:04d}"
+    # Format: F-YYYY-XXXX — séquence transactionnelle inaltérable (NF525)
+    return next_number(db, "invoice")
 
 def generate_avoir_reference(db: Session):
-    year = datetime.utcnow().year
-    count = db.query(models.Invoice).filter(models.Invoice.reference.like(f"AV-{year}-%")).count()
-    return f"AV-{year}-{count + 1:04d}"
+    # Format: AV-YYYY-XXXX — séquence transactionnelle inaltérable (NF525)
+    return next_number(db, "credit_note")
 
-def compute_qr_seal(invoice: models.Invoice):
-    # NF525 Anti-fraud signature
-    data = f"{invoice.reference}|{invoice.client_name}|{invoice.issue_date.isoformat()}|{invoice.total}|{invoice.status}"
-    return hashlib.sha256(data.encode()).hexdigest()
+def compute_qr_seal(db: Session, invoice: models.Invoice):
+    # Sceau NF525 : HMAC-SHA256 à clé secrète, chaîné à la pièce précédente,
+    # calculé sur les seules données immuables (pas de status).
+    return nf525_seal.seal_invoice(db, invoice)
 
 def _find_returned_delivery_note(db: Session, invoice: models.Invoice) -> Optional[models.DeliveryNote]:
     if not invoice.sale_order_id:
@@ -161,7 +158,7 @@ def create_invoice(invoice: schemas.InvoiceCreate, db: Session = Depends(get_db)
         db.add(db_line)
         
     # Generate Seal
-    new_invoice.qr_code_hash = compute_qr_seal(new_invoice)
+    new_invoice.qr_code_hash = compute_qr_seal(db, new_invoice)
     
     db.commit()
     db.refresh(new_invoice)
@@ -194,9 +191,10 @@ def add_payment(invoice_id: int, payment: schemas.PaymentCreate, db: Session = D
         invoice.status = "PAID"
     else:
         invoice.status = "PARTIAL"
-        
-    # Re-seal
-    invoice.qr_code_hash = compute_qr_seal(invoice)
+
+    # NF525 : le sceau est immuable — il porte sur les données inaltérables
+    # (référence, client, date, montants), pas sur le status. Un encaissement
+    # ne doit JAMAIS déclencher de re-scellage.
 
     db.commit()
     db.refresh(invoice)
@@ -313,7 +311,7 @@ def create_credit_note(
         )
         db.add(db_line)
         
-    avoir.qr_code_hash = compute_qr_seal(avoir)
+    avoir.qr_code_hash = compute_qr_seal(db, avoir)
     
     db.commit()
     db.refresh(avoir)

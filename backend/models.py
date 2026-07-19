@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text, inspect, text
+from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text, UniqueConstraint, inspect, text
 from sqlalchemy.orm import relationship
 from .database import Base
 import enum
@@ -77,6 +77,8 @@ def ensure_schema_compatibility(engine):
                 connection.execute(text("ALTER TABLE invoices ADD COLUMN invoice_type VARCHAR DEFAULT 'FINAL'"))
                 invoice_columns.add("invoice_type")
             connection.execute(text("UPDATE invoices SET invoice_type = 'FINAL' WHERE invoice_type IS NULL OR invoice_type = ''"))
+            if "previous_seal" not in invoice_columns:
+                connection.execute(text("ALTER TABLE invoices ADD COLUMN previous_seal VARCHAR"))
 
 class MaterialType(str, enum.Enum):
     PVC = "PVC"
@@ -700,7 +702,8 @@ class Invoice(Base):
     tax_amount = Column(Float, default=0.0)
     total = Column(Float, default=0.0)
     
-    qr_code_hash = Column(String, nullable=True) # Anti-fraude seal
+    qr_code_hash = Column(String, nullable=True) # Sceau anti-fraude HMAC-SHA256 (NF525)
+    previous_seal = Column(String, nullable=True) # Sceau de la pièce précédente (chaînage NF525)
     
     lines = relationship("InvoiceLine", back_populates="invoice", cascade="all, delete-orphan")
     payments = relationship("Payment", back_populates="invoice", cascade="all, delete-orphan")
@@ -777,3 +780,21 @@ class BusinessRule(Base):
     value = Column(String, nullable=False)
     value_type = Column(String, nullable=False) # number, string, boolean
     description = Column(String, nullable=True)
+
+class DocumentSequence(Base):
+    """Compteur transactionnel de numérotation des pièces commerciales (NF525).
+
+    Une ligne par (doc_kind, année). L'incrément se fait par verrouillage de
+    ligne (SELECT ... FOR UPDATE) dans la transaction courante — voir
+    backend/services/document_sequences.py.
+    """
+    __tablename__ = "document_sequences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    doc_kind = Column(String, nullable=False) # invoice, credit_note, quote, purchase_order, supplier_invoice, delivery_note, mmg
+    year = Column(Integer, nullable=False)
+    counter = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("doc_kind", "year", name="uq_document_sequences_kind_year"),
+    )

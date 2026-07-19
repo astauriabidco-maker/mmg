@@ -9,6 +9,7 @@ from backend.database import get_db
 from backend import models
 from backend.core import security
 from backend.services.stock_service import InventoryService
+from backend.services.document_sequences import next_number
 
 router = APIRouter(
     prefix="/v2/purchases",
@@ -49,9 +50,8 @@ class SupplierInvoiceCreate(BaseModel):
     lines: List[SupplierInvoiceLineInput]
 
 def _supplier_invoice_reference(db: Session) -> str:
-    current_year = datetime.now().year
-    count = db.query(models.SupplierInvoice).filter(models.SupplierInvoice.reference.like(f"FF-{current_year}-%")).count() + 1
-    return f"FF-{current_year}-{count:04d}"
+    # Format: FF-YYYY-XXXX — séquence transactionnelle inaltérable (NF525)
+    return next_number(db, "supplier_invoice")
 
 def _invoiced_quantities_by_po_line(db: Session, po_id: int) -> dict[int, float]:
     invoice_lines = (
@@ -147,10 +147,8 @@ def create_purchase_order(
     db: Session = Depends(get_db),
     current_user: dict = Depends(security.get_current_user),
 ):
-    # Generate PO reference
-    current_year = datetime.now().year
-    count = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.reference.like(f"PO-{current_year}-%")).count() + 1
-    ref = f"PO-{current_year}-{count:04d}"
+    # Generate PO reference — séquence transactionnelle (NF525)
+    ref = next_number(db, "purchase_order")
     
     po = models.PurchaseOrder(
         reference=ref,
