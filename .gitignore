@@ -39,3 +39,6 @@ brain/
 processed_orders/
 error_orders/
 input_orders/DYNAMIC_TEST.txt
+
+# Sauvegardes locales de la base dev
+atelier.db.bak-*
