@@ -1,84 +1,9 @@
-from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text, UniqueConstraint, inspect, text
+from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from .database import Base
 import enum
 from datetime import datetime
 
-
-def ensure_schema_compatibility(engine):
-    """Patch legacy SQLite schemas that predate the Alembic drift fixes."""
-    with engine.begin() as connection:
-        inspector = inspect(connection)
-
-        if inspector.has_table("products"):
-            product_columns = {column["name"] for column in inspector.get_columns("products")}
-            if "technical_doc_url" not in product_columns:
-                connection.execute(text("ALTER TABLE products ADD COLUMN technical_doc_url VARCHAR"))
-            if "compatible_series" not in product_columns:
-                connection.execute(text("ALTER TABLE products ADD COLUMN compatible_series VARCHAR"))
-            if "catalog_status" not in product_columns:
-                connection.execute(text("ALTER TABLE products ADD COLUMN catalog_status VARCHAR DEFAULT 'ACTIVE'"))
-                product_columns.add("catalog_status")
-            connection.execute(text("UPDATE products SET catalog_status = 'ACTIVE' WHERE catalog_status IS NULL"))
-
-        if inspector.has_table("delivery_notes"):
-            delivery_columns = {column["name"] for column in inspector.get_columns("delivery_notes")}
-            if "sale_order_id" not in delivery_columns:
-                connection.execute(text("ALTER TABLE delivery_notes ADD COLUMN sale_order_id INTEGER"))
-                delivery_columns.add("sale_order_id")
-            if "delivery_notes" not in delivery_columns:
-                connection.execute(text("ALTER TABLE delivery_notes ADD COLUMN delivery_notes TEXT"))
-                delivery_columns.add("delivery_notes")
-            if "notes" in delivery_columns:
-                connection.execute(
-                    text(
-                        "UPDATE delivery_notes "
-                        "SET delivery_notes = notes "
-                        "WHERE delivery_notes IS NULL AND notes IS NOT NULL"
-                    )
-                )
-
-        if inspector.has_table("orders"):
-            order_columns = {column["name"] for column in inspector.get_columns("orders")}
-            if "sale_order_id" not in order_columns:
-                connection.execute(text("ALTER TABLE orders ADD COLUMN sale_order_id INTEGER"))
-            if "sale_order_line_id" not in order_columns:
-                connection.execute(text("ALTER TABLE orders ADD COLUMN sale_order_line_id INTEGER"))
-
-        if inspector.has_table("sale_orders"):
-            sale_columns = {column["name"] for column in inspector.get_columns("sale_orders")}
-            if "workflow_type" not in sale_columns:
-                connection.execute(text("ALTER TABLE sale_orders ADD COLUMN workflow_type VARCHAR DEFAULT 'FREE_SALE'"))
-                sale_columns.add("workflow_type")
-            connection.execute(text("UPDATE sale_orders SET workflow_type = 'FREE_SALE' WHERE workflow_type IS NULL"))
-
-        if inspector.has_table("sale_order_lines"):
-            sale_line_columns = {column["name"] for column in inspector.get_columns("sale_order_lines")}
-            if "line_type" not in sale_line_columns:
-                connection.execute(text("ALTER TABLE sale_order_lines ADD COLUMN line_type VARCHAR DEFAULT 'SERVICE'"))
-                sale_line_columns.add("line_type")
-            connection.execute(
-                text(
-                    "UPDATE sale_order_lines "
-                    "SET line_type = CASE WHEN variant_id IS NOT NULL THEN 'STOCK_ITEM' ELSE 'SERVICE' END "
-                    "WHERE line_type IS NULL OR line_type = ''"
-                )
-            )
-
-        if inspector.has_table("invoices"):
-            invoice_columns = {column["name"] for column in inspector.get_columns("invoices")}
-            if "source_invoice_id" not in invoice_columns:
-                connection.execute(text("ALTER TABLE invoices ADD COLUMN source_invoice_id INTEGER"))
-            if "delivery_note_id" not in invoice_columns:
-                connection.execute(text("ALTER TABLE invoices ADD COLUMN delivery_note_id INTEGER"))
-            if "return_move_id" not in invoice_columns:
-                connection.execute(text("ALTER TABLE invoices ADD COLUMN return_move_id INTEGER"))
-            if "invoice_type" not in invoice_columns:
-                connection.execute(text("ALTER TABLE invoices ADD COLUMN invoice_type VARCHAR DEFAULT 'FINAL'"))
-                invoice_columns.add("invoice_type")
-            connection.execute(text("UPDATE invoices SET invoice_type = 'FINAL' WHERE invoice_type IS NULL OR invoice_type = ''"))
-            if "previous_seal" not in invoice_columns:
-                connection.execute(text("ALTER TABLE invoices ADD COLUMN previous_seal VARCHAR"))
 
 class MaterialType(str, enum.Enum):
     PVC = "PVC"

@@ -379,8 +379,11 @@ def ensure_drift_columns():
 
 
 def main():
+    # Le schéma est géré par Alembic (`alembic upgrade head`, notamment la
+    # migration de rattrapage e5c9f2a8d417) — voir scripts/reset_dev_db.sh.
+    # create_all + ensure_drift_columns restent un filet de sécurité pour les
+    # bases dev historiques non resynchronisées.
     models.Base.metadata.create_all(bind=engine)
-    models.ensure_schema_compatibility(engine)
     ensure_drift_columns()
     ensure_default_stations()
 

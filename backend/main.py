@@ -1,6 +1,7 @@
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 import os
 import time
 import uuid
@@ -15,16 +16,34 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-# Initialize DB
-models.Base.metadata.create_all(bind=database.engine)
-models.ensure_schema_compatibility(database.engine)
-get_db = database.get_db
-from .seed_stations import ensure_default_stations
-ensure_default_stations()
-from .seed_permissions import seed_permissions
-seed_permissions()
+# NOTE schéma : Alembic est la source de vérité unique du schéma
+# (`alembic upgrade head`). Aucune écriture base de données n'a lieu à
+# l'import de ce module : tout ce qui touche la DB est dans le lifespan.
 
-app = FastAPI(title="Atelier Menuiserie V1 Pro")
+get_db = database.get_db
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialisation DB au démarrage (jamais à l'import du module).
+
+    - create_all : simple filet de sécurité en développement (idempotent).
+      Désactivé en production : sur Postgres, Alembic seul gère le schéma et
+      un schéma non migré doit faire échouer le démarrage explicitement
+      plutôt que d'être patché silencieusement.
+    - seeds de données de référence (stations, rôles/permissions) :
+      idempotents, exécutés dans tous les environnements.
+    """
+    if os.environ.get("APP_ENV", "development").lower() != "production":
+        models.Base.metadata.create_all(bind=database.engine)
+    from .seed_stations import ensure_default_stations
+    ensure_default_stations()
+    from .seed_permissions import seed_permissions
+    seed_permissions()
+    yield
+
+
+app = FastAPI(title="Atelier Menuiserie V1 Pro", lifespan=lifespan)
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):

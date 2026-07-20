@@ -93,6 +93,32 @@ signé suivi jusqu'à la facture, une commande fournisseur réceptionnée et un
 dossier MMG. Les mots de passe sont configurables via les variables
 `DEMO_*_PASSWORD` (défauts de dev documentés dans le script).
 
+### Gestion du schéma (Alembic)
+
+Alembic est la **source de vérité unique** du schéma, en dev comme en prod :
+
+- `cd backend && alembic upgrade head` applique les migrations
+  (`DATABASE_URL` prioritaire sur la valeur de `alembic.ini`).
+- Au démarrage, l'application n'écrit **rien** en base à l'import du module :
+  le lifespan FastAPI exécute uniquement les seeds de référence (stations,
+  rôles/permissions) et, **hors production seulement**, un
+  `create_all` idempotent en filet de sécurité dev. En production
+  (`APP_ENV=production`), un schéma non migré fait échouer le démarrage :
+  lancer `alembic upgrade head` avant.
+
+**Resynchroniser la base dev historique.** Les bases `atelier.db` créées avant
+cette unification ont dérivé (table `alembic_version` vide, colonnes patchées
+à la volée) et ne peuvent pas être rattrapées par `alembic upgrade head`.
+La procédure de remise à neuf (sauvegarde incluse) :
+
+```bash
+./scripts/reset_dev_db.sh
+```
+
+Le script sauvegarde `backend/atelier.db` (`atelier.db.bak-<horodatage>`), la
+supprime, puis la recrée via `alembic upgrade head` + `init_db.py` +
+`scripts/seed_demo.py`.
+
 ### Variables d'environnement clés
 
 | Variable | Rôle | Défaut dev |

@@ -1,3 +1,5 @@
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
@@ -67,7 +69,13 @@ def test_legacy_stock_and_delivery_schema_is_patched(tmp_path):
             )
         )
 
-    models.ensure_schema_compatibility(engine)
+    # La base legacy n'a pas de suivi Alembic : on la marque au dernier head
+    # structurel, puis la migration de rattrapage finale (e5c9f2a8d417) rejoue
+    # les correctifs historiques d'ensure_schema_compatibility.
+    alembic_cfg = Config("backend/alembic.ini")
+    alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    command.stamp(alembic_cfg, "d1f3a5b7c924")
+    command.upgrade(alembic_cfg, "head")
 
     inspector = inspect(engine)
     product_columns = {column["name"] for column in inspector.get_columns("products")}

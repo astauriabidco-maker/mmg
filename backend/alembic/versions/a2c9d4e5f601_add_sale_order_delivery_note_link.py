@@ -18,18 +18,21 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("delivery_notes", sa.Column("sale_order_id", sa.Integer(), nullable=True))
-    op.create_foreign_key(
-        "fk_delivery_notes_sale_order_id_sale_orders",
-        "delivery_notes",
-        "sale_orders",
-        ["sale_order_id"],
-        ["id"],
-    )
-    op.alter_column("delivery_notes", "order_id", existing_type=sa.Integer(), nullable=True)
+    # batch_alter_table : recopie de table sur SQLite (pas d'ALTER de
+    # colonne/contrainte), simples ALTER TABLE sur PostgreSQL.
+    with op.batch_alter_table("delivery_notes") as batch_op:
+        batch_op.add_column(sa.Column("sale_order_id", sa.Integer(), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_delivery_notes_sale_order_id_sale_orders",
+            "sale_orders",
+            ["sale_order_id"],
+            ["id"],
+        )
+        batch_op.alter_column("order_id", existing_type=sa.Integer(), nullable=True)
 
 
 def downgrade() -> None:
-    op.alter_column("delivery_notes", "order_id", existing_type=sa.Integer(), nullable=False)
-    op.drop_constraint("fk_delivery_notes_sale_order_id_sale_orders", "delivery_notes", type_="foreignkey")
-    op.drop_column("delivery_notes", "sale_order_id")
+    with op.batch_alter_table("delivery_notes") as batch_op:
+        batch_op.alter_column("order_id", existing_type=sa.Integer(), nullable=False)
+        batch_op.drop_constraint("fk_delivery_notes_sale_order_id_sale_orders", type_="foreignkey")
+        batch_op.drop_column("sale_order_id")

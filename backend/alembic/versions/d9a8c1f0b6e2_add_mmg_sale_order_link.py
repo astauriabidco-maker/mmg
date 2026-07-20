@@ -44,17 +44,25 @@ def upgrade() -> None:
     if not mmg_columns:
         return
 
-    if "sale_order_id" not in mmg_columns:
-        op.add_column("mmg_dossiers", sa.Column("sale_order_id", sa.Integer(), nullable=True))
+    need_column = "sale_order_id" not in mmg_columns
+    need_fk = FK_NAME not in _foreign_key_names("mmg_dossiers")
+    if not (need_column or need_fk):
+        return
 
-    if FK_NAME not in _foreign_key_names("mmg_dossiers"):
-        op.create_foreign_key(FK_NAME, "mmg_dossiers", "sale_orders", ["sale_order_id"], ["id"])
+    # batch_alter_table : recopie de table sur SQLite (pas d'ALTER de
+    # contrainte), simples ALTER TABLE sur PostgreSQL.
+    with op.batch_alter_table("mmg_dossiers") as batch_op:
+        if need_column:
+            batch_op.add_column(sa.Column("sale_order_id", sa.Integer(), nullable=True))
+        if need_fk:
+            batch_op.create_foreign_key(FK_NAME, "sale_orders", ["sale_order_id"], ["id"])
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    if FK_NAME in _foreign_key_names("mmg_dossiers"):
-        op.drop_constraint(FK_NAME, "mmg_dossiers", type_="foreignkey")
+    with op.batch_alter_table("mmg_dossiers") as batch_op:
+        if FK_NAME in _foreign_key_names("mmg_dossiers"):
+            batch_op.drop_constraint(FK_NAME, type_="foreignkey")
 
-    if "sale_order_id" in _columns("mmg_dossiers"):
-        op.drop_column("mmg_dossiers", "sale_order_id")
+        if "sale_order_id" in _columns("mmg_dossiers"):
+            batch_op.drop_column("sale_order_id")

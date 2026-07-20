@@ -7,11 +7,16 @@ from sqlalchemy import pool
 
 from alembic import context
 
+# Rendre le package `backend` importable quel que soit le répertoire courant
+# (la racine du dépôt est le parent du dossier backend/).
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 from backend.database_url import normalize_database_url
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+# Priorité : variable d'environnement DATABASE_URL > valeur de alembic.ini.
 database_url = os.environ.get("DATABASE_URL")
 if database_url:
     config.set_main_option("sqlalchemy.url", normalize_database_url(database_url))
@@ -23,7 +28,6 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from backend import models
 target_metadata = models.Base.metadata
 
