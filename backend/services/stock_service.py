@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -27,12 +28,41 @@ class InventoryService:
         return location
 
     @staticmethod
-    def get_or_create_quant(db: Session, variant_id: int, location_id: int) -> models.StockQuant:
-        quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=location_id).first()
-        if not quant:
-            quant = models.StockQuant(variant_id=variant_id, location_id=location_id, quantity=0)
-            db.add(quant)
-            db.flush()
+    def get_or_create_quant(db: Session, variant_id: int, location_id: int, *, for_update: bool = False) -> models.StockQuant:
+        def _query():
+            query = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=location_id)
+            # Vrai FOR UPDATE sur PostgreSQL ; clause ignorée sans effet sur SQLite.
+            return query.with_for_update() if for_update else query
+
+        quant = _query().first()
+        if quant is not None:
+            return quant
+
+        # Course read-then-create : insertion atomique arbitrée par la
+        # contrainte d'unicité uq_stock_quants_variant_location
+        # (INSERT ... ON CONFLICT DO NOTHING sur SQLite >= 3.24 et
+        # PostgreSQL >= 9.5). Le perdant ne fait rien puis relit (et
+        # verrouille) la ligne gagnante. La session n'est jamais mise en
+        # échec : contrairement au flush dans un savepoint (pattern
+        # document_sequences), aucune IntegrityError n'est levée, ce qui
+        # évite de désactiver la transaction ORM appelante.
+        table = models.StockQuant.__table__
+        values = {"variant_id": variant_id, "location_id": location_id, "quantity": 0}
+        if db.get_bind().dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            stmt = pg_insert(table).values(**values).on_conflict_do_nothing(
+                index_elements=["variant_id", "location_id"]
+            )
+        else:
+            from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+            stmt = sqlite_insert(table).values(**values).on_conflict_do_nothing(
+                index_elements=["variant_id", "location_id"]
+            )
+        db.execute(stmt)
+
+        quant = _query().first()
+        if quant is None:  # défensif : l'insertion ou la ligne concurrente existe forcément
+            raise IntegrityError("INSERT ON CONFLICT DO NOTHING", values, None)
         return quant
 
     @staticmethod
@@ -128,8 +158,17 @@ class InventoryService:
         previous_dest_quantity = None
         new_dest_quantity = None
 
+        # Verrouillage pessimiste des quants touchés (FOR UPDATE sur
+        # PostgreSQL, no-op sur SQLite) dans un ordre déterministe (ids
+        # croissants) pour éviter les interblocages entre transactions.
+        quant_location_ids = sorted({lid for lid in (source_location_id, dest_location_id) if lid})
+        quants = {
+            lid: cls.get_or_create_quant(db, variant_id, lid, for_update=True)
+            for lid in quant_location_ids
+        }
+
         if source_location_id:
-            source_quant = cls.get_or_create_quant(db, variant_id, source_location_id)
+            source_quant = quants[source_location_id]
             previous_source_quantity = float(source_quant.quantity or 0)
             source_can_go_negative = allow_negative_source or (source_location and source_location.usage in {"supplier", "inventory"})
             if previous_source_quantity < qty and not source_can_go_negative:
@@ -138,7 +177,7 @@ class InventoryService:
             new_source_quantity = float(source_quant.quantity or 0)
 
         if dest_location_id:
-            dest_quant = cls.get_or_create_quant(db, variant_id, dest_location_id)
+            dest_quant = quants[dest_location_id]
             previous_dest_quantity = float(dest_quant.quantity or 0)
             dest_quant.quantity = previous_dest_quantity + qty
             new_dest_quantity = float(dest_quant.quantity or 0)

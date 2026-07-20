@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import asdict
 from datetime import datetime
@@ -12,6 +13,9 @@ from .. import models
 from .stock_service import InventoryService
 from scripts.import_workshop_debits import DebitRecord, StockMatch, build_summary, consolidate_records
 from ..core.time import utcnow
+
+
+logger = logging.getLogger(__name__)
 
 
 ACTIVE_RESERVATION_STATUS = "reserved"
@@ -145,6 +149,15 @@ def active_reserved_quantity(db: Session, variant_id: int) -> float:
 
 
 def physical_quantity_all_internal(db: Session, variant: models.ProductVariant) -> float:
+    """Stock physique = Σ des quants internes actifs (source de vérité).
+
+    Divergence détectée (cache ``quantity_in_stock`` > 0 sans aucun quant) :
+    on logue un warning explicite et on retourne la somme des quants (0). Le
+    cache n'est plus utilisé en secours : le masquer faisait croire à un
+    stock disponible inexistant. Les flux existants ne sont pas cassés — la
+    valeur retournée reste un float — mais la divergence devient visible dans
+    les logs et dans les disponibilités affichées.
+    """
     quantity = (
         db.query(models.StockQuant)
         .join(models.StockLocation, models.StockQuant.location_id == models.StockLocation.id)
@@ -157,8 +170,15 @@ def physical_quantity_all_internal(db: Session, variant: models.ProductVariant) 
         .all()
     )
     total = float(sum(row[0] or 0 for row in quantity))
-    if total == 0 and (variant.quantity_in_stock or 0) > 0:
-        return float(variant.quantity_in_stock or 0)
+    cache = float(variant.quantity_in_stock or 0)
+    if total == 0 and cache > 0:
+        logger.warning(
+            "Divergence stock variante #%s (%s) : cache quantity_in_stock=%g mais aucun quant interne. "
+            "La somme des quants (0) fait foi ; lancez un ajustement d'inventaire pour régulariser.",
+            variant.id,
+            variant.reference,
+            cache,
+        )
     return total
 
 

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import List
+import time
 
 from ..database import get_db
 from .. import models, schemas
@@ -104,17 +105,64 @@ def get_pos_items(db: Session = Depends(get_db)):
     return results
 
 @router.put("/items/{variant_id}")
-def update_pos_item(variant_id: int, price: float = None, stock: float = None, db: Session = Depends(get_db)):
+def update_pos_item(variant_id: int, price: float = None, stock: float = None, reason: str = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == variant_id).first()
     if not variant:
         raise HTTPException(status_code=404, detail="Article non trouvé")
-        
+
     if price is not None:
         variant.cost_price = price
     if stock is not None:
-        # Note: simplistic stock update for POS Zero-UI edit. Real ERP should make a stock move.
-        variant.quantity_in_stock = stock
-        
+        # Ajustement d'inventaire tracé : passage par le moteur (StockMove +
+        # quants) au lieu d'écraser le cache quantity_in_stock. Le delta est
+        # calculé entre le stock interne actuel (Σ quants internes) et la
+        # cible, et régularisé via l'emplacement virtuel d'inventaire.
+        target = float(stock)
+        if target < 0:
+            raise HTTPException(status_code=400, detail="Le stock cible ne peut pas être négatif.")
+
+        global_location = db.query(models.StockLocation).filter(models.StockLocation.id == 1).first() # Default location 1
+        if not global_location:
+            global_location = InventoryService.get_or_create_location(db, "WH/Stock", "internal")
+        inventory_location = InventoryService.get_or_create_location(db, "Virtual/Inventory", "inventory")
+
+        internal_quants = (
+            db.query(models.StockQuant)
+            .join(models.StockLocation, models.StockQuant.location_id == models.StockLocation.id)
+            .filter(
+                models.StockQuant.variant_id == variant.id,
+                models.StockLocation.usage == "internal",
+                models.StockLocation.is_active == True,
+            )
+            .all()
+        )
+        current_internal = sum(float(q.quantity or 0) for q in internal_quants)
+        delta = target - current_internal
+
+        if abs(delta) > 1e-9:
+            business_reason = (reason or "").strip() or "Ajustement manuel POS"
+            try:
+                InventoryService.move_stock(
+                    db,
+                    variant_id=variant.id,
+                    quantity=abs(delta),
+                    source_location_id=inventory_location.id if delta > 0 else global_location.id,
+                    dest_location_id=global_location.id if delta > 0 else inventory_location.id,
+                    reference=f"POS-ADJ-{int(time.time()*1000)}",
+                    author=current_user.get("sub", "POS"),
+                    notes=f"Ajustement manuel depuis l'écran Caisse : {current_internal:g} -> {target:g}",
+                    source_screen="pos",
+                    document_type="manual_inventory_adjustment",
+                    business_reason=business_reason,
+                )
+            except ValueError as exc:
+                detail = str(exc)
+                status_code = 423 if "Zone gelée" in detail else 400
+                raise HTTPException(status_code=status_code, detail=detail) from exc
+        else:
+            # Pas de mouvement nécessaire : on resynchronise juste le cache.
+            InventoryService.sync_variant_internal_stock(db, variant.id)
+
     db.commit()
     return {"message": "Article mis à jour", "price": variant.cost_price, "stock": variant.quantity_in_stock}
 

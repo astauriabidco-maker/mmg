@@ -1292,16 +1292,29 @@ async def upload_import_file(file: UploadFile = File(...), db: Session = Depends
 @router.get("/export/inventory")
 def export_inventory_xlsx(db: Session = Depends(get_db)):
     from sqlalchemy.orm import joinedload
-    quants = db.query(models.StockQuant).options(
-        joinedload(models.StockQuant.variant).joinedload(models.ProductVariant.product),
-        joinedload(models.StockQuant.location)
-    ).all()
-    
+    # Document comptable : seul le stock physiquement détenu (emplacements
+    # internes actifs) est exporté. Les emplacements virtuels `customer`
+    # (cumul des ventes), `inventory` (pertes/écarts) et `supplier` sont
+    # exclus — sinon la valorisation additionne stock réel + vendu + pertes.
+    quants = (
+        db.query(models.StockQuant)
+        .join(models.StockLocation, models.StockQuant.location_id == models.StockLocation.id)
+        .options(
+            joinedload(models.StockQuant.variant).joinedload(models.ProductVariant.product),
+            joinedload(models.StockQuant.location)
+        )
+        .filter(
+            models.StockLocation.usage == "internal",
+            models.StockLocation.is_active == True,
+        )
+        .all()
+    )
+
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Inventaire_MMG"
+    ws.title = "Inventaire_Interne_MMG"
     headers = [
-        "Lieu / Magasin", "Reference", "Designation", "Code Barre", "Type", 
+        "Lieu / Magasin (stock interne)", "Reference", "Designation", "Code Barre", "Type",
         "Quantite", "Unite", "Prix Unitaire", "Valeur Totale"
     ]
     ws.append(headers)

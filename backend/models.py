@@ -177,6 +177,11 @@ class StockLocation(Base):
 
 class StockQuant(Base):
     __tablename__ = "stock_quants"
+    __table_args__ = (
+        # Un seul quant par couple (variante, emplacement) : l'unicité arbitre
+        # les créations concurrentes dans get_or_create_quant.
+        UniqueConstraint("variant_id", "location_id", name="uq_stock_quants_variant_location"),
+    )
     id = Column(Integer, primary_key=True, index=True)
     variant_id = Column(Integer, ForeignKey("product_variants.id"))
     location_id = Column(Integer, ForeignKey("stock_locations.id"))
