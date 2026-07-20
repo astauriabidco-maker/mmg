@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime
 import openpyxl
 from openpyxl.styles import Font, PatternFill
-from sqlalchemy import or_
+from sqlalchemy import or_, update
 from ..services.bom_parser import parse_bom_file
 from ..services.stock_reservations import (
     annotate_variant_availability,
@@ -88,6 +88,112 @@ def _line_status_from_variance(variance: float) -> str:
     return "ok" if abs(float(variance or 0)) <= 0.000001 else "variance"
 
 
+def _zone_location_ids(db: Session, location_id: Optional[int]) -> List[int]:
+    """Emplacements de la zone d'inventaire : cible + descendants, ou tous les
+    emplacements internes actifs pour une campagne globale."""
+    if location_id is None:
+        rows = (
+            db.query(models.StockLocation.id)
+            .filter(models.StockLocation.usage == "internal", models.StockLocation.is_active == True)
+            .all()
+        )
+        return [row.id for row in rows]
+    ids = [location_id]
+    frontier = [location_id]
+    while frontier:
+        children = (
+            db.query(models.StockLocation.id)
+            .filter(models.StockLocation.parent_id.in_(frontier))
+            .all()
+        )
+        new_ids = [row.id for row in children if row.id not in ids]
+        ids.extend(new_ids)
+        frontier = new_ids
+    return ids
+
+
+def _prefill_inventory_lines(db: Session, session: models.InventorySession, include_all_variants: bool) -> None:
+    """Pré-remplit les lignes de comptage (statut ``pending``) depuis les quants
+    de la zone, expected figé à la création. ``include_all_variants`` ajoute les
+    variantes actives sans stock dans la zone (espéré 0) pour détecter les oublis."""
+    zone_ids = _zone_location_ids(db, session.location_id)
+    if not zone_ids:
+        return
+    quants = (
+        db.query(models.StockQuant)
+        .filter(models.StockQuant.location_id.in_(zone_ids))
+        .order_by(models.StockQuant.variant_id, models.StockQuant.location_id)
+        .all()
+    )
+    covered_variant_ids = set()
+    for quant in quants:
+        covered_variant_ids.add(quant.variant_id)
+        db.add(models.InventoryCountLine(
+            session_id=session.id,
+            variant_id=quant.variant_id,
+            location_id=quant.location_id,
+            expected_quantity=float(quant.quantity or 0),
+            status="pending",
+        ))
+    if include_all_variants:
+        # Les variantes sans stock dans la zone sont ancrées sur l'emplacement
+        # cible (ou le premier emplacement interne pour une campagne globale) :
+        # l'opérateur constate explicitement le 0 ou corrige l'emplacement au comptage.
+        anchor_location_id = session.location_id or min(zone_ids)
+        active_variants = (
+            db.query(models.ProductVariant)
+            .join(models.Product, models.ProductVariant.product_id == models.Product.id)
+            .filter(models.Product.catalog_status == "ACTIVE")
+            .order_by(models.ProductVariant.id)
+            .all()
+        )
+        for variant in active_variants:
+            if variant.id in covered_variant_ids:
+                continue
+            db.add(models.InventoryCountLine(
+                session_id=session.id,
+                variant_id=variant.id,
+                location_id=anchor_location_id,
+                expected_quantity=0.0,
+                status="pending",
+            ))
+
+
+def _mask_pending_line(line: schemas.InventoryCountLineResponse) -> None:
+    """Une ligne ``pending`` n'a pas encore été comptée : le compté/opérateur
+    ne sont pas exposés (la colonne garde 0 par défaut SQLAlchemy)."""
+    if line.status == "pending":
+        line.counted_quantity = None
+        line.variance_quantity = None
+        line.counted_by = None
+        line.counted_at = None
+
+
+def _serialize_inventory_session(session: models.InventorySession) -> schemas.InventorySessionResponse:
+    """Sérialise une campagne ; en comptage aveugle, l'espéré et l'écart des
+    lignes sont masqués tant que la campagne n'est pas validée/annulée."""
+    response = schemas.InventorySessionResponse.model_validate(session)
+    blind = session.blind_counting and session.status in ["draft", "counting"]
+    for line in response.lines:
+        _mask_pending_line(line)
+        if blind:
+            line.expected_quantity = None
+            line.variance_quantity = None
+    return response
+
+
+def _serialize_count_line(
+    session: models.InventorySession,
+    line: models.InventoryCountLine,
+) -> schemas.InventoryCountLineResponse:
+    response = schemas.InventoryCountLineResponse.model_validate(line)
+    _mask_pending_line(response)
+    if session.blind_counting and session.status in ["draft", "counting"]:
+        response.expected_quantity = None
+        response.variance_quantity = None
+    return response
+
+
 def _locked_inventory_session_for_location(db: Session, location_id: int) -> Optional[models.InventorySession]:
     location = db.query(models.StockLocation).filter_by(id=location_id, is_active=True).first()
     if not location or location.usage != "internal":
@@ -149,7 +255,7 @@ def list_inventory_sessions(
     ).order_by(models.InventorySession.created_at.desc())
     if status:
         query = query.filter(models.InventorySession.status == status)
-    return query.limit(50).all()
+    return [_serialize_inventory_session(session) for session in query.limit(50).all()]
 
 
 @router.post("/inventory-sessions", response_model=schemas.InventorySessionResponse)
@@ -163,6 +269,12 @@ def create_inventory_session(
         location = db.query(models.StockLocation).filter_by(id=payload.location_id, is_active=True).first()
         if not location:
             raise HTTPException(status_code=404, detail="Emplacement introuvable.")
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Nom de campagne obligatoire.")
+    # Gel de zone imposé à True par défaut côté serveur : le client peut
+    # explicitement demander False, la garde anti-dérive 409 à la validation
+    # reste alors le filet (cf. doc du schéma InventorySessionCreate).
+    zone_locked = True if payload.zone_locked is None else bool(payload.zone_locked)
     reference = f"INV-{int(time.time() * 1000)}"
     session = models.InventorySession(
         reference=reference,
@@ -170,17 +282,18 @@ def create_inventory_session(
         location_id=payload.location_id,
         notes=payload.notes,
         status="draft",
-        zone_locked=payload.zone_locked,
-        locked_at=utcnow() if payload.zone_locked else None,
-        unlocked_at=None if payload.zone_locked else utcnow(),
+        zone_locked=zone_locked,
+        blind_counting=bool(payload.blind_counting),
+        locked_at=utcnow() if zone_locked else None,
+        unlocked_at=None if zone_locked else utcnow(),
         created_by=user.get("sub", "Admin"),
     )
-    if not session.name:
-        raise HTTPException(status_code=400, detail="Nom de campagne obligatoire.")
     db.add(session)
+    db.flush()
+    _prefill_inventory_lines(db, session, payload.include_all_variants)
     db.commit()
     db.refresh(session)
-    return session
+    return _serialize_inventory_session(session)
 
 
 @router.get("/inventory-sessions/{session_id}", response_model=schemas.InventorySessionResponse)
@@ -201,7 +314,7 @@ def get_inventory_session(
     )
     if not session:
         raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
-    return session
+    return _serialize_inventory_session(session)
 
 
 @router.post("/inventory-sessions/{session_id}/lines", response_model=schemas.InventoryCountLineResponse)
@@ -225,7 +338,7 @@ def upsert_inventory_count_line(
         raise HTTPException(status_code=404, detail="Emplacement introuvable.")
     if location.usage != "internal":
         raise HTTPException(status_code=400, detail="Le comptage physique doit viser un emplacement interne.")
-    if session.location_id and session.location_id != payload.location_id:
+    if session.location_id and payload.location_id not in _zone_location_ids(db, session.location_id):
         raise HTTPException(status_code=400, detail="Cette campagne est limitée à un autre emplacement.")
     if payload.counted_quantity < 0:
         raise HTTPException(status_code=400, detail="La quantité comptée ne peut pas être négative.")
@@ -258,7 +371,7 @@ def upsert_inventory_count_line(
     session.status = "counting"
     db.commit()
     db.refresh(line)
-    return line
+    return _serialize_count_line(session, line)
 
 
 @router.post("/inventory-sessions/{session_id}/lines/{line_id}/recount", response_model=schemas.InventoryCountLineResponse)
@@ -290,7 +403,7 @@ def request_inventory_line_recount(
     line.recount_notes = payload.notes
     db.commit()
     db.refresh(line)
-    return line
+    return _serialize_count_line(session, line)
 
 
 @router.post("/inventory-sessions/{session_id}/validate", response_model=schemas.InventorySessionResponse)
@@ -309,7 +422,7 @@ def validate_inventory_session(
     if not session:
         raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
     if session.status == "validated":
-        raise HTTPException(status_code=400, detail="Campagne déjà validée.")
+        raise HTTPException(status_code=409, detail="Campagne déjà validée.")
     if session.status == "cancelled":
         raise HTTPException(status_code=400, detail="Campagne annulée.")
     if not session.lines:
@@ -319,6 +432,12 @@ def validate_inventory_session(
         raise HTTPException(
             status_code=400,
             detail=f"{len(recount_lines)} ligne(s) sont en attente de recompte.",
+        )
+    pending_lines = [line for line in session.lines if line.status == "pending"]
+    if pending_lines:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{len(pending_lines)} ligne(s) restent à compter avant validation.",
         )
 
     inventory_location = _get_or_create_inventory_location(db)
@@ -334,9 +453,7 @@ def validate_inventory_session(
                 ),
             )
         variance = float(line.variance_quantity or 0)
-        if abs(variance) <= 0.000001:
-            continue
-        if not (line.reason or "").strip():
+        if abs(variance) > 0.000001 and not (line.reason or "").strip():
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -344,6 +461,25 @@ def validate_inventory_session(
                     f"Ligne {line.id}: renseignez la raison du comptage."
                 ),
             )
+
+    # Verrou anti double validation concurrente : bascule atomique du statut.
+    # Si une requête concurrente a déjà validé la campagne, rowcount vaut 0 et
+    # toute la transaction (ajustements inclus) est annulée avec ce 409.
+    updated_rows = db.execute(
+        update(models.InventorySession)
+        .where(
+            models.InventorySession.id == session.id,
+            models.InventorySession.status.in_(["draft", "counting"]),
+        )
+        .values(status="validated")
+    ).rowcount
+    if not updated_rows:
+        raise HTTPException(status_code=409, detail="Campagne déjà validée par une opération concurrente.")
+
+    for line in session.lines:
+        variance = float(line.variance_quantity or 0)
+        if abs(variance) <= 0.000001:
+            continue
 
         if variance > 0:
             source_id = inventory_location.id

@@ -2261,7 +2261,7 @@ export default function StockDashboard() {
 
 function PhysicalInventoryView({ sessions, products, locations, quants, isManager, queryClient }) {
     const [selectedSessionId, setSelectedSessionId] = useState(sessions[0]?.id || null);
-    const [newSession, setNewSession] = useState({ name: '', location_id: '', notes: '' });
+    const [newSession, setNewSession] = useState({ name: '', location_id: '', notes: '', include_all_variants: false, blind_counting: false });
     const [lineForm, setLineForm] = useState({ variant_id: '', location_id: '', counted_quantity: '', reason: '' });
     const [scanValue, setScanValue] = useState('');
     const [busy, setBusy] = useState(false);
@@ -2287,6 +2287,10 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
     const countedQuantity = lineForm.counted_quantity === '' ? null : Number(lineForm.counted_quantity);
     const variance = countedQuantity === null ? null : countedQuantity - expectedQuantity;
     const hasRecountLines = Boolean(selectedSession?.lines?.some(line => line.status === 'recount'));
+    const hasPendingLines = Boolean(selectedSession?.lines?.some(line => line.status === 'pending'));
+    const isBlindCounting = Boolean(selectedSession?.blind_counting && ['draft', 'counting'].includes(selectedSession?.status));
+    const totalLines = selectedSession?.lines?.length || 0;
+    const countedLines = (selectedSession?.lines || []).filter(line => line.status !== 'pending').length;
 
     const matchVariantFromScan = (value) => {
         const needle = value.trim().toLowerCase();
@@ -2319,10 +2323,12 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                 location_id: newSession.location_id ? Number(newSession.location_id) : null,
                 notes: newSession.notes || null,
                 zone_locked: true,
+                include_all_variants: newSession.include_all_variants,
+                blind_counting: newSession.blind_counting,
             };
             const res = await api.post('/v2/stock/inventory-sessions', payload);
             setSelectedSessionId(res.data.id);
-            setNewSession({ name: '', location_id: '', notes: '' });
+            setNewSession({ name: '', location_id: '', notes: '', include_all_variants: false, blind_counting: false });
             await refreshInventory();
         } catch (error) {
             alert(error.response?.data?.detail || "Création de campagne impossible.");
@@ -2360,6 +2366,11 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
         }
         setLineForm(prev => ({ ...prev, variant_id: String(variant.id) }));
         setScanValue(variant.reference || scanValue);
+    };
+
+    const focusLine = (line) => {
+        setLineForm(prev => ({ ...prev, variant_id: String(line.variant_id), location_id: String(line.location_id) }));
+        setScanValue(line.variant?.reference || '');
     };
 
     const requestRecount = async (line) => {
@@ -2432,12 +2443,14 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
         cancelled: 'Annulée',
     };
     const lineStatusLabel = {
+        pending: 'À compter',
         ok: 'OK',
         variance: 'Écart',
         recount: 'À recompter',
         validated: 'Validé',
     };
     const lineStatusClass = {
+        pending: 'bg-slate-50 text-slate-500 border-slate-200',
         ok: 'bg-emerald-50 text-emerald-700 border-emerald-100',
         variance: 'bg-amber-50 text-amber-700 border-amber-100',
         recount: 'bg-red-50 text-red-700 border-red-100',
@@ -2505,6 +2518,26 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
                                 disabled={!isManager || busy}
                             />
+                            <label className="flex items-start gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={newSession.include_all_variants}
+                                    onChange={event => setNewSession(prev => ({ ...prev, include_all_variants: event.target.checked }))}
+                                    className="mt-0.5"
+                                    disabled={!isManager || busy}
+                                />
+                                <span>Inclure toutes les variantes actives (espéré 0) pour détecter les oublis</span>
+                            </label>
+                            <label className="flex items-start gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={newSession.blind_counting}
+                                    onChange={event => setNewSession(prev => ({ ...prev, blind_counting: event.target.checked }))}
+                                    className="mt-0.5"
+                                    disabled={!isManager || busy}
+                                />
+                                <span>Comptage aveugle (espéré masqué jusqu'à validation)</span>
+                            </label>
                             <button
                                 type="submit"
                                 disabled={!isManager || busy || !newSession.name.trim()}
@@ -2569,12 +2602,31 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                             <span className={`inline-flex items-center px-3 py-1 rounded-full text-[10px] uppercase font-black border ${selectedSession.zone_locked && ['draft', 'counting'].includes(selectedSession.status) ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
                                                 {selectedSession.zone_locked && ['draft', 'counting'].includes(selectedSession.status) ? 'Zone gelée' : 'Zone libérée'}
                                             </span>
+                                            {selectedSession.blind_counting && (
+                                                <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] uppercase font-black border bg-violet-50 text-violet-700 border-violet-100">
+                                                    Comptage aveugle
+                                                </span>
+                                            )}
                                             {hasRecountLines && (
                                                 <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] uppercase font-black border bg-red-50 text-red-700 border-red-100">
                                                     Recompte requis
                                                 </span>
                                             )}
                                         </div>
+                                        {totalLines > 0 && (
+                                            <div className="mt-3 max-w-sm">
+                                                <div className="flex justify-between text-[10px] uppercase font-black tracking-widest text-slate-400">
+                                                    <span>Progression</span>
+                                                    <span>{countedLines}/{totalLines} lignes comptées</span>
+                                                </div>
+                                                <div className="h-2 mt-1 rounded-full bg-slate-100 overflow-hidden">
+                                                    <div
+                                                        className={`h-full rounded-full transition-all ${countedLines === totalLines ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                                                        style={{ width: `${Math.round((countedLines / totalLines) * 100)}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="flex gap-2">
                                         <button onClick={exportSession} disabled={busy || !selectedSession.lines?.length} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm inline-flex items-center gap-2">
@@ -2586,7 +2638,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                 <button onClick={cancelSession} disabled={!isManager || busy} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm">
                                                     Annuler
                                                 </button>
-                                                <button onClick={validateSession} disabled={!isManager || busy || !selectedSession.lines?.length || hasRecountLines} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
+                                                <button onClick={validateSession} disabled={!isManager || busy || !selectedSession.lines?.length || hasRecountLines || hasPendingLines} title={hasPendingLines ? 'Toutes les lignes doivent être comptées avant validation' : undefined} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
                                                     Valider les écarts
                                                 </button>
                                             </>
@@ -2673,15 +2725,15 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                             <div className="lg:col-span-6 grid grid-cols-3 gap-3 text-sm">
                                                 <div className="rounded-xl bg-white border border-slate-200 p-3">
                                                     <p className="text-[10px] uppercase font-black text-slate-400">Système</p>
-                                                    <p className="text-xl font-black text-slate-900">{expectedQuantity.toLocaleString('fr-FR')}</p>
+                                                    <p className="text-xl font-black text-slate-900">{isBlindCounting ? '•••' : expectedQuantity.toLocaleString('fr-FR')}</p>
                                                 </div>
                                                 <div className="rounded-xl bg-white border border-slate-200 p-3">
                                                     <p className="text-[10px] uppercase font-black text-slate-400">Compté</p>
                                                     <p className="text-xl font-black text-slate-900">{countedQuantity === null ? '-' : countedQuantity.toLocaleString('fr-FR')}</p>
                                                 </div>
-                                                <div className={`rounded-xl border p-3 ${variance === null || variance === 0 ? 'bg-emerald-50 border-emerald-100' : variance > 0 ? 'bg-blue-50 border-blue-100' : 'bg-amber-50 border-amber-100'}`}>
+                                                <div className={`rounded-xl border p-3 ${isBlindCounting ? 'bg-slate-50 border-slate-200' : variance === null || variance === 0 ? 'bg-emerald-50 border-emerald-100' : variance > 0 ? 'bg-blue-50 border-blue-100' : 'bg-amber-50 border-amber-100'}`}>
                                                     <p className="text-[10px] uppercase font-black text-slate-400">Écart</p>
-                                                    <p className="text-xl font-black text-slate-900">{variance === null ? '-' : `${variance > 0 ? '+' : ''}${variance.toLocaleString('fr-FR')}`}</p>
+                                                    <p className="text-xl font-black text-slate-900">{isBlindCounting ? '•••' : variance === null ? '-' : `${variance > 0 ? '+' : ''}${variance.toLocaleString('fr-FR')}`}</p>
                                                 </div>
                                             </div>
                                         )}
@@ -2710,10 +2762,14 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                         <p className="text-xs font-bold text-slate-400">{line.variant?.color || 'Standard'}</p>
                                                     </td>
                                                     <td className="px-5 py-4 text-sm font-bold text-slate-600">{line.location?.name || `Lieu #${line.location_id}`}</td>
-                                                    <td className="px-5 py-4 text-right font-black text-slate-700">{line.expected_quantity.toLocaleString('fr-FR')}</td>
-                                                    <td className="px-5 py-4 text-right font-black text-slate-900">{line.counted_quantity.toLocaleString('fr-FR')}</td>
-                                                    <td className={`px-5 py-4 text-right font-black ${line.variance_quantity === 0 ? 'text-emerald-600' : line.variance_quantity > 0 ? 'text-blue-600' : 'text-amber-700'}`}>
-                                                        {line.variance_quantity > 0 ? '+' : ''}{line.variance_quantity.toLocaleString('fr-FR')}
+                                                    <td className="px-5 py-4 text-right font-black text-slate-700">
+                                                        {isBlindCounting ? '•••' : Number(line.expected_quantity ?? 0).toLocaleString('fr-FR')}
+                                                    </td>
+                                                    <td className="px-5 py-4 text-right font-black text-slate-900">
+                                                        {line.counted_quantity === null || line.counted_quantity === undefined ? '—' : Number(line.counted_quantity).toLocaleString('fr-FR')}
+                                                    </td>
+                                                    <td className={`px-5 py-4 text-right font-black ${isBlindCounting || line.variance_quantity === null || line.variance_quantity === undefined ? 'text-slate-400' : line.variance_quantity === 0 ? 'text-emerald-600' : line.variance_quantity > 0 ? 'text-blue-600' : 'text-amber-700'}`}>
+                                                        {isBlindCounting ? '•••' : line.variance_quantity === null || line.variance_quantity === undefined ? '—' : `${line.variance_quantity > 0 ? '+' : ''}${Number(line.variance_quantity).toLocaleString('fr-FR')}`}
                                                     </td>
                                                     <td className="px-5 py-4">
                                                         <span className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-[10px] uppercase font-black ${lineStatusClass[line.status] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
@@ -2725,7 +2781,17 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                     </td>
                                                     <td className="px-5 py-4 text-sm font-bold text-slate-500">{line.reason || '-'}</td>
                                                     <td className="px-5 py-4 text-right">
-                                                        {['draft', 'counting'].includes(selectedSession.status) && line.status !== 'recount' && line.status !== 'validated' && Math.abs(Number(line.variance_quantity || 0)) > 0.000001 && (
+                                                        {['draft', 'counting'].includes(selectedSession.status) && line.status === 'pending' && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => focusLine(line)}
+                                                                disabled={!isManager || busy}
+                                                                className="px-3 py-2 rounded-lg border border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 text-xs font-black"
+                                                            >
+                                                                Saisir
+                                                            </button>
+                                                        )}
+                                                        {['draft', 'counting'].includes(selectedSession.status) && line.status !== 'pending' && line.status !== 'recount' && line.status !== 'validated' && Math.abs(Number(line.variance_quantity || 0)) > 0.000001 && (
                                                             <button
                                                                 type="button"
                                                                 onClick={() => requestRecount(line)}
@@ -2741,7 +2807,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                             {(!selectedSession.lines || selectedSession.lines.length === 0) && (
                                                 <tr>
                                                     <td colSpan="8" className="py-12 text-center text-sm font-bold text-slate-400">
-                                                        Aucune ligne comptée. Ajoutez les références réellement vérifiées.
+                                                        Aucune ligne dans cette campagne. Scannez ou ajoutez les références réellement vérifiées.
                                                     </td>
                                                 </tr>
                                             )}

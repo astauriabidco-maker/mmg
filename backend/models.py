@@ -259,6 +259,7 @@ class InventorySession(Base):
     location_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True, index=True)
     notes = Column(Text, nullable=True)
     zone_locked = Column(Boolean, default=True)
+    blind_counting = Column(Boolean, default=False) # comptage aveugle : espéré masqué jusqu'à validation
     locked_at = Column(DateTime, default=utcnow)
     unlocked_at = Column(DateTime, nullable=True)
     created_by = Column(String, default="Système")
@@ -279,7 +280,7 @@ class InventoryCountLine(Base):
     expected_quantity = Column(Float, default=0.0)
     counted_quantity = Column(Float, default=0.0)
     variance_quantity = Column(Float, default=0.0)
-    status = Column(String, default="ok", index=True) # ok, variance, recount, validated
+    status = Column(String, default="ok", index=True) # pending, ok, variance, recount, validated
     reason = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
     recount_requested_by = Column(String, nullable=True)

@@ -430,7 +430,16 @@ class InventorySessionCreate(BaseModel):
     name: str
     location_id: Optional[int] = None
     notes: Optional[str] = None
-    zone_locked: bool = True
+    # Gel de zone imposé à True par défaut côté serveur. Le client peut
+    # explicitement demander False (comptage sans gel) ; la garde anti-dérive
+    # 409 à la validation reste alors le filet de sécurité.
+    zone_locked: Optional[bool] = None
+    # Pré-remplit aussi les variantes actives sans stock dans la zone (espéré 0)
+    # pour détecter les oublis de comptage.
+    include_all_variants: bool = False
+    # Comptage aveugle : l'API masque expected_quantity/variance des lignes
+    # jusqu'à la validation (les écarts restent calculés côté serveur).
+    blind_counting: bool = False
 
 class InventoryCountLineUpsert(BaseModel):
     variant_id: int
@@ -444,17 +453,18 @@ class InventoryCountLineResponse(BaseModel):
     session_id: int
     variant_id: int
     location_id: int
-    expected_quantity: float
-    counted_quantity: float
-    variance_quantity: float
+    # Null en comptage aveugle (espéré/écart masqués jusqu'à validation).
+    expected_quantity: Optional[float] = None
+    counted_quantity: Optional[float] = None
+    variance_quantity: Optional[float] = None
     status: str = "ok"
     reason: Optional[str] = None
     notes: Optional[str] = None
     recount_requested_by: Optional[str] = None
     recount_requested_at: Optional[datetime] = None
     recount_notes: Optional[str] = None
-    counted_by: str
-    counted_at: datetime
+    counted_by: Optional[str] = None
+    counted_at: Optional[datetime] = None
     adjustment_move_id: Optional[int] = None
     variant: Optional[ProductVariantResponse] = None
     location: Optional[StockLocationResponse] = None
@@ -468,6 +478,7 @@ class InventorySessionResponse(BaseModel):
     location_id: Optional[int] = None
     notes: Optional[str] = None
     zone_locked: bool = True
+    blind_counting: bool = False
     locked_at: Optional[datetime] = None
     unlocked_at: Optional[datetime] = None
     created_by: str
