@@ -8,6 +8,7 @@ import OperatorManager from './OperatorManager';
 import RBACMatrix from './RBACMatrix';
 import BusinessRulesManager from './BusinessRulesManager';
 import ConfigDashboard from '../pages/ConfigDashboard';
+import api from '../services/api';
 
 export default function PlatformSettings() {
     const [activeTab, setActiveTab] = useState('users');
@@ -26,19 +27,14 @@ export default function PlatformSettings() {
     const handleSmtpTest = async () => {
         setSmtpTestStatus({ loading: true, message: 'Test en cours...', type: 'info' });
         try {
-            const res = await fetch('/api/v2/config/test-smtp', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(smtpConfig)
+            const res = await api.post('/v2/config/test-smtp', {
+                ...smtpConfig,
+                port: parseInt(smtpConfig.port, 10) || 587
             });
-            const data = await res.json();
-            if (res.ok) {
-                setSmtpTestStatus({ loading: false, message: 'Succès: ' + data.message, type: 'success' });
-            } else {
-                setSmtpTestStatus({ loading: false, message: 'Erreur: ' + data.detail, type: 'error' });
-            }
-        } catch (e) {
-            setSmtpTestStatus({ loading: false, message: 'Erreur réseau', type: 'error' });
+            setSmtpTestStatus({ loading: false, message: 'Succès: ' + (res.data?.message || 'Email de test envoyé'), type: 'success' });
+        } catch (err) {
+            const detail = err.response?.data?.detail || 'Erreur réseau';
+            setSmtpTestStatus({ loading: false, message: 'Erreur: ' + detail, type: 'error' });
         }
     };
     

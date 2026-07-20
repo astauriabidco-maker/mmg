@@ -11,7 +11,7 @@ import os
 
 from ..database import get_db
 from .. import models, schemas
-from ..core.security import get_current_user
+from ..core.security import get_current_user, require_roles
 from ..services.stock_reservations import (
     annotate_sale_availability,
     build_preview_payload,
@@ -677,20 +677,71 @@ Tu DOIS multiplier ces prix de base par le coefficient de {margin} pour le unit_
         }
     }
 
+DEFAULT_PIPELINE_STAGES = [
+    { "id": 'DRAFT', "title": 'Brouillons' },
+    { "id": 'SENT', "title": 'Envoyés (Négo)' },
+    { "id": 'VALIDATED', "title": 'Gagnés (Signés)' },
+    { "id": 'IN_DESIGN', "title": "Bureau d'Études" },
+    { "id": 'READY_FOR_PROD', "title": 'Prêts pour Prod' },
+    { "id": 'IN_PRODUCTION', "title": 'En Production' }
+]
+# Étapes adossées aux statuts métier des devis : renommage/réordonnancement
+# autorisés, suppression interdite (sinon des ventes disparaîtraient du Kanban).
+SYSTEM_PIPELINE_STAGE_IDS = {stage["id"] for stage in DEFAULT_PIPELINE_STAGES}
+MAX_PIPELINE_STAGES = 50
+
+
+class PipelineStagePayload(BaseModel):
+    id: str
+    title: str
+
+
 @router.get("/stages", dependencies=AUTH_DEPENDENCIES)
 def get_pipeline_stages(db: Session = Depends(get_db)):
     config = db.query(models.AppConfig).filter(models.AppConfig.category == "PIPELINE_STAGES").first()
-    import json
     if config:
         return json.loads(config.value)
-    return [
-        { "id": 'DRAFT', "title": 'Brouillons' },
-        { "id": 'SENT', "title": 'Envoyés (Négo)' },
-        { "id": 'VALIDATED', "title": 'Gagnés (Signés)' },
-        { "id": 'IN_DESIGN', "title": "Bureau d'Études" },
-        { "id": 'READY_FOR_PROD', "title": 'Prêts pour Prod' },
-        { "id": 'IN_PRODUCTION', "title": 'En Production' }
-    ]
+    return DEFAULT_PIPELINE_STAGES
+
+
+@router.post("/stages", dependencies=AUTH_DEPENDENCIES)
+def save_pipeline_stages(
+    stages: List[PipelineStagePayload],
+    db: Session = Depends(get_db),
+    role: str = Depends(require_roles("ADMIN", "MANAGER")),
+):
+    if not stages:
+        raise HTTPException(status_code=400, detail="La liste des étapes ne peut pas être vide.")
+    if len(stages) > MAX_PIPELINE_STAGES:
+        raise HTTPException(status_code=400, detail=f"Nombre maximum d'étapes dépassé ({MAX_PIPELINE_STAGES}).")
+
+    cleaned = []
+    seen_ids = set()
+    for stage in stages:
+        stage_id = (stage.id or "").strip()
+        title = (stage.title or "").strip()
+        if not stage_id or not title:
+            raise HTTPException(status_code=400, detail="Chaque étape doit avoir un identifiant et un titre non vides.")
+        if stage_id in seen_ids:
+            raise HTTPException(status_code=400, detail=f"Identifiant d'étape dupliqué : {stage_id}.")
+        seen_ids.add(stage_id)
+        cleaned.append({"id": stage_id, "title": title})
+
+    missing_system = SYSTEM_PIPELINE_STAGE_IDS - seen_ids
+    if missing_system:
+        raise HTTPException(
+            status_code=400,
+            detail="Impossible de supprimer les étapes système : " + ", ".join(sorted(missing_system)),
+        )
+
+    config = db.query(models.AppConfig).filter(models.AppConfig.category == "PIPELINE_STAGES").first()
+    if not config:
+        config = models.AppConfig(category="PIPELINE_STAGES", value=json.dumps(cleaned))
+        db.add(config)
+    else:
+        config.value = json.dumps(cleaned)
+    db.commit()
+    return cleaned
 
 
 @router.post("/", response_model=schemas.SaleOrderSchema, dependencies=AUTH_DEPENDENCIES)
