@@ -17,5 +17,6 @@ pdfplumber
 PyMuPDF
 openpyxl
 pytest
+httpx
 alembic
 psycopg2-binary
