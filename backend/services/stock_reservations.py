@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from .. import models
 from .stock_service import InventoryService
 from scripts.import_workshop_debits import DebitRecord, StockMatch, build_summary, consolidate_records
+from ..core.time import utcnow
 
 
 ACTIVE_RESERVATION_STATUS = "reserved"
@@ -299,7 +300,7 @@ def create_reservation(
         raise ValueError("Stock insuffisant: " + ", ".join(f"{m.supplier}/{m.reference}" for m in shortages[:10]))
 
     project_reference = next((record.project_reference for record in consolidated if record.project_reference), None)
-    reference = f"RSV-ATELIER-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+    reference = f"RSV-ATELIER-{utcnow().strftime('%Y%m%d%H%M%S%f')}"
     resolved_order_reference = (
         order_reference
         or (production_order.reference if production_order else None)
@@ -385,7 +386,7 @@ def create_commercial_reservation_for_sale(
         raise ValueError("Stock insuffisant pour le devis libre: " + ", ".join(shortages[:10]))
 
     reservation = models.StockReservation(
-        reference=f"{COMMERCIAL_RESERVATION_PREFIX}-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}",
+        reference=f"{COMMERCIAL_RESERVATION_PREFIX}-{utcnow().strftime('%Y%m%d%H%M%S%f')}",
         sale_order_id=sale.id,
         order_reference=sale.reference,
         source_label="devis libre",
@@ -435,7 +436,7 @@ def consume_reservation(
 
     source = get_or_create_location(db, source_location, "internal")
     dest = get_or_create_location(db, dest_location, "production")
-    now_ref = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    now_ref = utcnow().strftime("%Y%m%d%H%M%S")
     stats = {"created_moves": 0, "consumed_lines": 0}
 
     for line in reservation.lines:
@@ -469,7 +470,7 @@ def consume_reservation(
 
     if stats["consumed_lines"]:
         reservation.status = "consumed"
-        reservation.consumed_at = datetime.utcnow()
+        reservation.consumed_at = utcnow()
     return stats
 
 
@@ -487,7 +488,7 @@ def consume_commercial_reservation(
 
     source = get_or_create_location(db, source_location, "internal")
     dest = get_or_create_location(db, dest_location, "customer")
-    now_ref = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    now_ref = utcnow().strftime("%Y%m%d%H%M%S")
     stats = {"created_moves": 0, "consumed_lines": 0}
 
     for line in reservation.lines:
@@ -531,7 +532,7 @@ def consume_commercial_reservation(
 
     if stats["consumed_lines"]:
         reservation.status = "consumed"
-        reservation.consumed_at = datetime.utcnow()
+        reservation.consumed_at = utcnow()
     return stats
 
 
@@ -551,7 +552,7 @@ def return_commercial_reservation(
 
     source = get_or_create_location(db, source_location, "customer")
     dest = get_or_create_location(db, dest_location, "internal")
-    now_ref = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    now_ref = utcnow().strftime("%Y%m%d%H%M%S")
     stats = {"created_moves": 0, "returned_lines": 0}
 
     for line in reservation.lines:
@@ -597,7 +598,7 @@ def return_commercial_reservation(
         reservation.status = "returned"
         reservation.notes = (
             (reservation.notes or "")
-            + f"\nRetour client effectué le {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}."
+            + f"\nRetour client effectué le {utcnow().strftime('%Y-%m-%d %H:%M:%S')}."
         ).strip()
     return stats
 

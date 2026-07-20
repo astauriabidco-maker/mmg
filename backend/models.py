@@ -1,8 +1,8 @@
-from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text, UniqueConstraint, Numeric
 from sqlalchemy.orm import relationship
 from .database import Base
+from .core.time import utcnow
 import enum
-from datetime import datetime
 
 
 class MaterialType(str, enum.Enum):
@@ -68,7 +68,7 @@ class Planning(Base):
     status = Column(SAEnum(PlanningStatus), default=PlanningStatus.PENDING)
     issue_notes = Column(String, nullable=True)
     assigned_to = Column(String, nullable=True) # Name of the operator
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     order = relationship("Order")
 
@@ -105,7 +105,7 @@ class ProductionLog(Base):
     station = Column(String) # Changed from Enum to String
     material = Column(String) # PVC or ALU
     operator_name = Column(String, nullable=True) # Who did the task
-    start_time = Column(DateTime, default=datetime.utcnow)
+    start_time = Column(DateTime, default=utcnow)
     end_time = Column(DateTime, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
 
@@ -150,7 +150,7 @@ class ProductVariant(Base):
     color = Column(String, nullable=True)
     length_per_unit = Column(Float, nullable=True) # Ex: 6m pour barre ALU
     supplier_reference = Column(String, nullable=True)
-    cost_price = Column(Float, nullable=True)
+    cost_price = Column(Numeric(14, 2), nullable=True)
     quantity_in_stock = Column(Float, default=0.0)
     min_threshold = Column(Float, default=10.0)
     image_url = Column(String, nullable=True)
@@ -189,7 +189,7 @@ class StockMove(Base):
     __tablename__ = "stock_moves"
     id = Column(Integer, primary_key=True, index=True)
     reference = Column(String, index=True) # e.g. WH/IN/0001
-    date = Column(DateTime, default=datetime.utcnow)
+    date = Column(DateTime, default=utcnow)
     variant_id = Column(Integer, ForeignKey("product_variants.id"))
     location_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True) # Source
     location_dest_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True) # Dest
@@ -218,7 +218,7 @@ class StockReservation(Base):
     status = Column(String, default="reserved", index=True) # reserved, consumed, cancelled
     notes = Column(Text, nullable=True)
     created_by = Column(String, default="Système")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     consumed_at = Column(DateTime, nullable=True)
 
     lines = relationship("StockReservationLine", back_populates="reservation", cascade="all, delete-orphan")
@@ -254,10 +254,10 @@ class InventorySession(Base):
     location_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True, index=True)
     notes = Column(Text, nullable=True)
     zone_locked = Column(Boolean, default=True)
-    locked_at = Column(DateTime, default=datetime.utcnow)
+    locked_at = Column(DateTime, default=utcnow)
     unlocked_at = Column(DateTime, nullable=True)
     created_by = Column(String, default="Système")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     validated_by = Column(String, nullable=True)
     validated_at = Column(DateTime, nullable=True)
 
@@ -281,7 +281,7 @@ class InventoryCountLine(Base):
     recount_requested_at = Column(DateTime, nullable=True)
     recount_notes = Column(Text, nullable=True)
     counted_by = Column(String, default="Système")
-    counted_at = Column(DateTime, default=datetime.utcnow)
+    counted_at = Column(DateTime, default=utcnow)
     adjustment_move_id = Column(Integer, ForeignKey("stock_moves.id"), nullable=True)
 
     session = relationship("InventorySession", back_populates="lines")
@@ -349,8 +349,8 @@ class MMG(Base):
     status = Column(SAEnum(MMGStatus), default=MMGStatus.SENT)
     
     sale_order = relationship("SaleOrder", back_populates="mmg_dossiers")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     
     # Link to Order (once validated and imported)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
@@ -372,7 +372,7 @@ class ChatterMessage(Base):
     body = Column(Text)
     author = Column(String)
     is_system_log = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
 # --- RBAC DIRECTORY ---
 class Role(Base):
@@ -410,8 +410,8 @@ class SaleOrder(Base):
     currency = Column(String, default="EUR")
     notes = Column(Text, nullable=True)
     author = Column(String, default="Système")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     
     # E-Signature Portal
     signature_token = Column(String, unique=True, index=True, nullable=True)
@@ -429,7 +429,7 @@ class SaleOrderLine(Base):
     variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=True) # None if custom line
     description = Column(String) # Derived from variant or custom input
     quantity = Column(Float, default=1.0)
-    unit_price = Column(Float, default=0.0) # HT
+    unit_price = Column(Numeric(14, 2), default=0.0) # HT
     discount_pct = Column(Float, default=0.0) # % discount
     visual_config = Column(Text, nullable=True) # JSON string for drawing
     
@@ -442,10 +442,10 @@ class POSSession(Base):
     id = Column(Integer, primary_key=True, index=True)
     reference = Column(String, unique=True, index=True) # POS-S-0001
     opened_by_user = Column(String)
-    opened_at = Column(DateTime, default=datetime.utcnow)
+    opened_at = Column(DateTime, default=utcnow)
     closed_at = Column(DateTime, nullable=True)
-    starting_cash = Column(Float, default=0.0)
-    closing_cash = Column(Float, nullable=True)
+    starting_cash = Column(Numeric(14, 2), default=0.0)
+    closing_cash = Column(Numeric(14, 2), nullable=True)
     status = Column(String, default="OPEN") # OPEN, CLOSED
     
     orders = relationship("POSOrder", back_populates="session", cascade="all, delete-orphan")
@@ -456,10 +456,10 @@ class POSCashMovement(Base):
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(Integer, ForeignKey("pos_sessions.id"))
     movement_type = Column(String) # IN, OUT
-    amount = Column(Float, default=0.0)
+    amount = Column(Numeric(14, 2), default=0.0)
     reason = Column(String)
     author = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     
     session = relationship("POSSession", back_populates="cash_movements")
 
@@ -468,13 +468,13 @@ class POSOrder(Base):
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(Integer, ForeignKey("pos_sessions.id"))
     reference = Column(String, unique=True, index=True) # TK-2026-00001
-    date = Column(DateTime, default=datetime.utcnow)
+    date = Column(DateTime, default=utcnow)
     payment_method = Column(String, default="CASH") # CASH, CB, MOBO
     tax_rate = Column(Float, default=18.0)
     currency = Column(String, default="EUR")
-    amount_total = Column(Float, default=0.0)
-    amount_paid = Column(Float, default=0.0)
-    amount_return = Column(Float, default=0.0)
+    amount_total = Column(Numeric(14, 2), default=0.0)
+    amount_paid = Column(Numeric(14, 2), default=0.0)
+    amount_return = Column(Numeric(14, 2), default=0.0)
     seller_name = Column(String, default="Admin")
     
     
@@ -488,7 +488,7 @@ class POSOrderLine(Base):
     variant_id = Column(Integer, ForeignKey("product_variants.id"))
     product_name = Column(String) # Saved at time of checkout
     quantity = Column(Float, default=1.0)
-    unit_price = Column(Float, default=0.0) # HT
+    unit_price = Column(Numeric(14, 2), default=0.0) # HT
     
     order = relationship("POSOrder", back_populates="lines")
     variant = relationship("ProductVariant")
@@ -505,7 +505,7 @@ class Client(Base):
     tax_id = Column(String, nullable=True) # NIU
     customer_type = Column(String, default="B2B") # B2B, B2C
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
 # --- FOURNISSEURS (SUPPLIERS) ---
 class Supplier(Base):
@@ -529,7 +529,7 @@ class Supplier(Base):
     preferred_contact_method = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
 # --- ACHATS (PURCHASES) ---
 class PurchaseOrderStatus(str, enum.Enum):
@@ -544,10 +544,10 @@ class PurchaseOrder(Base):
     id = Column(Integer, primary_key=True, index=True)
     reference = Column(String, unique=True, index=True) # Ex: PO-2026-0001
     supplier = Column(String)
-    order_date = Column(DateTime, default=datetime.utcnow)
+    order_date = Column(DateTime, default=utcnow)
     expected_date = Column(DateTime, nullable=True)
     status = Column(SAEnum(PurchaseOrderStatus), default=PurchaseOrderStatus.DRAFT)
-    total_amount = Column(Float, default=0.0)
+    total_amount = Column(Numeric(14, 2), default=0.0)
     global_discount_percent = Column(Float, default=0.0)
     notes = Column(Text, nullable=True)
     author = Column(String, default="Système")
@@ -562,7 +562,7 @@ class PurchaseOrderLine(Base):
     variant_id = Column(Integer, ForeignKey("product_variants.id"))
     quantity = Column(Float, default=1.0)
     quantity_received = Column(Float, default=0.0)
-    unit_price = Column(Float, default=0.0)
+    unit_price = Column(Numeric(14, 2), default=0.0)
     discount_percent = Column(Float, default=0.0)
     
     order = relationship("PurchaseOrder", back_populates="lines")
@@ -575,12 +575,12 @@ class SupplierInvoice(Base):
     supplier_reference = Column(String, nullable=True)
     purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), index=True)
     supplier = Column(String)
-    issue_date = Column(DateTime, default=datetime.utcnow)
+    issue_date = Column(DateTime, default=utcnow)
     due_date = Column(DateTime, nullable=True)
     status = Column(String, default="TO_PAY", index=True) # TO_PAY, PARTIAL, PAID, CANCELLED
-    subtotal = Column(Float, default=0.0)
-    discount_amount = Column(Float, default=0.0)
-    total_amount = Column(Float, default=0.0)
+    subtotal = Column(Numeric(14, 2), default=0.0)
+    discount_amount = Column(Numeric(14, 2), default=0.0)
+    total_amount = Column(Numeric(14, 2), default=0.0)
     notes = Column(Text, nullable=True)
     author = Column(String, default="Système")
 
@@ -595,9 +595,9 @@ class SupplierInvoiceLine(Base):
     variant_id = Column(Integer, ForeignKey("product_variants.id"))
     description = Column(String)
     quantity = Column(Float, default=0.0)
-    unit_price = Column(Float, default=0.0)
+    unit_price = Column(Numeric(14, 2), default=0.0)
     discount_percent = Column(Float, default=0.0)
-    line_total = Column(Float, default=0.0)
+    line_total = Column(Numeric(14, 2), default=0.0)
 
     invoice = relationship("SupplierInvoice", back_populates="lines")
     purchase_order_line = relationship("PurchaseOrderLine")
@@ -614,7 +614,7 @@ class Invoice(Base):
     client_name = Column(String)
     client_address = Column(String, nullable=True)
     client_siret = Column(String, nullable=True) # France Specific
-    issue_date = Column(DateTime, default=datetime.utcnow)
+    issue_date = Column(DateTime, default=utcnow)
     due_date = Column(DateTime)
     status = Column(String, default="DRAFT") # DRAFT, UNPAID, PARTIAL, PAID, AVOIR
     invoice_type = Column(String, default="FINAL", index=True) # DEPOSIT, FINAL, CREDIT_NOTE
@@ -622,10 +622,10 @@ class Invoice(Base):
     delivery_note_id = Column(Integer, ForeignKey("delivery_notes.id"), nullable=True)
     return_move_id = Column(Integer, ForeignKey("stock_moves.id"), nullable=True)
     
-    subtotal = Column(Float, default=0.0)
+    subtotal = Column(Numeric(14, 2), default=0.0)
     tax_rate = Column(Float, default=20.0) # French standard TVA
-    tax_amount = Column(Float, default=0.0)
-    total = Column(Float, default=0.0)
+    tax_amount = Column(Numeric(14, 2), default=0.0)
+    total = Column(Numeric(14, 2), default=0.0)
     
     qr_code_hash = Column(String, nullable=True) # Sceau anti-fraude HMAC-SHA256 (NF525)
     previous_seal = Column(String, nullable=True) # Sceau de la pièce précédente (chaînage NF525)
@@ -648,7 +648,7 @@ class InvoiceLine(Base):
     invoice_id = Column(Integer, ForeignKey("invoices.id"))
     description = Column(String)
     quantity = Column(Float, default=1.0)
-    unit_price = Column(Float)
+    unit_price = Column(Numeric(14, 2))
     tax_rate = Column(Float, default=20.0)
     
     invoice = relationship("Invoice", back_populates="lines")
@@ -658,8 +658,8 @@ class Payment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     invoice_id = Column(Integer, ForeignKey("invoices.id"))
-    amount = Column(Float)
-    payment_date = Column(DateTime, default=datetime.utcnow)
+    amount = Column(Numeric(14, 2))
+    payment_date = Column(DateTime, default=utcnow)
     method = Column(String) # VIREMENT, CB, CHEQUE, ESPECES
     reference = Column(String, nullable=True) # Transaction ID
     

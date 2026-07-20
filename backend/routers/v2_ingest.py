@@ -10,6 +10,7 @@ from .. import models, schemas
 from ..core import security
 from ..core import uploads
 from datetime import datetime
+from ..core.time import utcnow
 
 router = APIRouter(
     prefix="/v2/ingest",
@@ -205,7 +206,7 @@ def export_orders_csv(db: Session = Depends(get_db)):
     csv_content = output.getvalue()
     output.close()
     
-    filename = f"Carnet_Commandes_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.csv"
+    filename = f"Carnet_Commandes_{utcnow().strftime('%Y%m%d_%H%M')}.csv"
     return Response(
         content=csv_content,
         media_type="text/csv; charset=utf-8",
@@ -233,7 +234,7 @@ def export_orders_pdf(db: Session = Depends(get_db)):
     
     # Header
     elements.append(Paragraph("MMG MENUISERIES — Carnet de Commandes", title_style))
-    elements.append(Paragraph(f"Généré le {datetime.utcnow().strftime('%d/%m/%Y à %H:%M')} — {len(data)} commande(s)", styles['Normal']))
+    elements.append(Paragraph(f"Généré le {utcnow().strftime('%d/%m/%Y à %H:%M')} — {len(data)} commande(s)", styles['Normal']))
     elements.append(Spacer(1, 15))
     
     # Table
@@ -282,7 +283,7 @@ def export_orders_pdf(db: Session = Depends(get_db)):
     pdf_value = buffer.getvalue()
     buffer.close()
     
-    filename = f"Carnet_Commandes_{datetime.utcnow().strftime('%Y%m%d')}.pdf"
+    filename = f"Carnet_Commandes_{utcnow().strftime('%Y%m%d')}.pdf"
     return Response(
         content=pdf_value,
         media_type="application/pdf",

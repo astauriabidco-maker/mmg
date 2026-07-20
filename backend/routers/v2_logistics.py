@@ -6,6 +6,7 @@ from datetime import datetime
 from ..database import get_db
 from .. import models, schemas
 from ..core import security
+from ..core.time import utcnow
 
 router = APIRouter(
     prefix="/v2/logistics",
@@ -14,7 +15,7 @@ router = APIRouter(
 )
 
 def generate_route_ref(db: Session):
-    year = datetime.utcnow().year
+    year = utcnow().year
     count = db.query(models.DeliveryRoute).filter(models.DeliveryRoute.reference.like(f"ROUTE-{year}-%")).count()
     return f"ROUTE-{year}-{count + 1:04d}"
 
@@ -60,7 +61,7 @@ def mark_delivered(note_id: int, signature_image: str = None, db: Session = Depe
         raise HTTPException(404, "BL non trouvé")
         
     note.status = "DELIVERED"
-    note.signed_at = datetime.utcnow()
+    note.signed_at = utcnow()
     # In a real app, save signature_image to disk or S3
     
     # Check if route is fully delivered

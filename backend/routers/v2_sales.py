@@ -26,6 +26,7 @@ from scripts.import_workshop_debits import parse_file
 import io
 from .v2_accounting import generate_invoice_reference, compute_qr_seal
 from ..services.document_sequences import next_number
+from ..core.time import utcnow
 
 router = APIRouter(
     prefix="/v2/sales",
@@ -116,7 +117,7 @@ def _resolve_sale_line(db: Session, line_req: schemas.SaleOrderLineCreate) -> Tu
 def _sale_total_amount(sale: models.SaleOrder) -> float:
     return float(
         sum(
-            (line.quantity or 0) * (line.unit_price or 0) * (1 - (line.discount_pct or 0) / 100)
+            (line.quantity or 0) * float(line.unit_price or 0) * (1 - (line.discount_pct or 0) / 100)
             for line in sale.lines
         )
     )
@@ -162,7 +163,7 @@ def _create_sale_invoice(
         client_name=sale.client_name,
         client_address=sale.client_address or sale.client_email,
         client_siret="",
-        due_date=datetime.utcnow() + timedelta(days=30),
+        due_date=utcnow() + timedelta(days=30),
         status="UNPAID",
         invoice_type=invoice_type,
         subtotal=subtotal,
@@ -187,7 +188,7 @@ def _create_sale_invoice(
                 invoice_id=invoice.id,
                 description=line.description,
                 quantity=line.quantity,
-                unit_price=(line.unit_price or 0) * (1 - (line.discount_pct or 0) / 100),
+                unit_price=float(line.unit_price or 0) * (1 - (line.discount_pct or 0) / 100),
                 tax_rate=tax_rate,
             ))
 
@@ -964,7 +965,7 @@ def sign_quote(token: str, request: Request, db: Session = Depends(get_db)):
         
     client_ip = request.client.host
     # Capture timestamp
-    current_time = datetime.utcnow()
+    current_time = utcnow()
     
     order.status = "VALIDATED"
     order.signed_at = current_time
@@ -1053,14 +1054,14 @@ def deliver_free_sale_order(
             delivery_address=sale.client_address,
             contact_phone=sale.client_contact,
             status="DELIVERED",
-            signed_at=datetime.utcnow(),
+            signed_at=utcnow(),
             delivery_notes=f"Sortie client depuis réservation {reservation.reference}.",
         )
         db.add(delivery_note)
         db.flush()
     else:
         delivery_note.status = "DELIVERED"
-        delivery_note.signed_at = delivery_note.signed_at or datetime.utcnow()
+        delivery_note.signed_at = delivery_note.signed_at or utcnow()
         delivery_note.delivery_notes = delivery_note.delivery_notes or f"Sortie client depuis réservation {reservation.reference}."
 
     sale.status = "DELIVERED"

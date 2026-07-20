@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..core.time import utcnow
 
 # doc_kind -> (préfixe de référence, largeur du compteur)
 DOC_KIND_FORMATS = {
@@ -56,7 +57,7 @@ def next_number(db: Session, doc_kind: str, year: Optional[int] = None) -> str:
     if doc_kind not in DOC_KIND_FORMATS:
         raise ValueError(f"Type de document inconnu: {doc_kind!r}")
     prefix, padding = DOC_KIND_FORMATS[doc_kind]
-    year = year or datetime.utcnow().year
+    year = year or utcnow().year
 
     sequence = _locked_sequence(db, doc_kind, year)
     sequence.counter = int(sequence.counter or 0) + 1

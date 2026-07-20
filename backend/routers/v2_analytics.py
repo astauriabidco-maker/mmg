@@ -8,6 +8,7 @@ from ..database import get_db
 from .. import models
 from ..core.config import STANDARDS, ALERT_THRESHOLD_PERCENT
 from ..core import security
+from ..core.time import utcnow
 
 router = APIRouter(
     prefix="/v2/analytics",
@@ -18,7 +19,7 @@ router = APIRouter(
 @router.get("/kpi")
 def get_dashboard_kpi(db: Session = Depends(get_db)):
     """KPI temps réel pour le tableau de bord principal."""
-    now = datetime.utcnow()
+    now = utcnow()
     first_of_month = datetime(now.year, now.month, 1)
 
     # --- CA MENSUEL (Factures du mois en cours) ---
@@ -51,7 +52,7 @@ def get_dashboard_kpi(db: Session = Depends(get_db)):
         loc = db.query(models.StockLocation).filter(models.StockLocation.id == q.location_id).first()
         if loc and loc.usage == "internal":
             variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == q.variant_id).first()
-            cost = variant.cost_price if variant and variant.cost_price else 0
+            cost = float(variant.cost_price) if variant and variant.cost_price else 0
             inventory_value += q.quantity * cost
 
     # --- TAUX DE RENDEMENT (Production OK / Total) ---
@@ -97,9 +98,9 @@ def get_dashboard_kpi(db: Session = Depends(get_db)):
         })
 
     return {
-        "ca_mensuel": round(ca_mensuel, 2),
-        "ca_delta_pct": round(ca_delta_pct, 1),
-        "inventory_value": round(inventory_value, 2),
+        "ca_mensuel": round(float(ca_mensuel), 2),
+        "ca_delta_pct": round(float(ca_delta_pct), 1),
+        "inventory_value": round(float(inventory_value), 2),
         "yield_rate": round(yield_rate, 1),
         "active_dossiers": active_dossiers,
         "chart_data": chart_data
@@ -107,7 +108,7 @@ def get_dashboard_kpi(db: Session = Depends(get_db)):
 
 @router.get("/daily")
 def get_daily_stats(db: Session = Depends(get_db)):
-    today = datetime.utcnow().date()
+    today = utcnow().date()
     # In SQLite, date comparison might need slight adjustment depending on storage format.
     # We stored DateTime. Let's filter >= today midnight.
     start_of_day = datetime(today.year, today.month, today.day)
@@ -157,7 +158,7 @@ def get_daily_stats(db: Session = Depends(get_db)):
 def get_hourly_stats(db: Session = Depends(get_db)):
     # Simple hourly aggregation
     # SQLite strftime('%H', start_time)
-    today = datetime.utcnow().date()
+    today = utcnow().date()
     start_of_day = datetime(today.year, today.month, today.day)
     
     results = db.query(
@@ -287,7 +288,7 @@ Règles:
     chart_type = ai_response.get("type", "text")
     message = ai_response.get("message", "Voici les données :")
     chart_data = []
-    now = datetime.utcnow()
+    now = utcnow()
 
     if intent == "SALES":
         # CA réel des 7 derniers jours depuis les Factures
@@ -375,7 +376,7 @@ Règles:
             loc = db.query(models.StockLocation).filter(models.StockLocation.id == q.location_id).first()
             if loc and loc.usage == "internal":
                 variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == q.variant_id).first()
-                cost = variant.cost_price if variant and variant.cost_price else 0
+                cost = float(variant.cost_price) if variant and variant.cost_price else 0
                 value = q.quantity * cost
                 loc_name = loc.name or "Inconnu"
                 loc_values[loc_name] = loc_values.get(loc_name, 0) + value
@@ -460,7 +461,7 @@ Règles:
 @router.get("/workshop")
 def get_workshop_analytics(db: Session = Depends(get_db)):
     """Analyse historique et performance de l'atelier."""
-    now = datetime.utcnow()
+    now = utcnow()
     seven_days_ago = now - timedelta(days=7)
 
     # 1. Lead Time global sur les 7 derniers jours

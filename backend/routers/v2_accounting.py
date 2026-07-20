@@ -10,6 +10,7 @@ from .. import models, schemas
 from ..core import security
 from ..services.document_sequences import next_number
 from ..services import nf525_seal
+from ..core.time import utcnow
 
 router = APIRouter(
     prefix="/v2/accounting",
@@ -186,8 +187,8 @@ def add_payment(invoice_id: int, payment: schemas.PaymentCreate, db: Session = D
     db.flush()
 
     # Calculate new status
-    total_paid = sum(p.amount for p in invoice.payments) + payment.amount
-    if total_paid >= invoice.total:
+    total_paid = sum(float(p.amount or 0) for p in invoice.payments) + payment.amount
+    if total_paid >= float(invoice.total or 0):
         invoice.status = "PAID"
     else:
         invoice.status = "PARTIAL"
@@ -268,7 +269,7 @@ def create_credit_note(
             {
                 "description": f"Avoir sur: {line.description}",
                 "quantity": line.quantity,
-                "unit_price": -line.unit_price,
+                "unit_price": -float(line.unit_price or 0),
                 "tax_rate": line.tax_rate,
             }
             for line in invoice.lines
@@ -289,8 +290,8 @@ def create_credit_note(
         client_name=invoice.client_name,
         client_address=invoice.client_address,
         client_siret=invoice.client_siret,
-        issue_date=datetime.utcnow(),
-        due_date=datetime.utcnow(),
+        issue_date=utcnow(),
+        due_date=utcnow(),
         status="AVOIR",
         invoice_type="CREDIT_NOTE",
         subtotal=subtotal,
@@ -419,6 +420,6 @@ def export_fec(db: Session = Depends(get_db), role: str = Depends(security.get_c
         ])
 
     response = Response(content=output.getvalue())
-    response.headers["Content-Disposition"] = f"attachment; filename=FEC_MMG_{datetime.utcnow().strftime('%Y%m')}.txt"
+    response.headers["Content-Disposition"] = f"attachment; filename=FEC_MMG_{utcnow().strftime('%Y%m')}.txt"
     response.headers["Content-Type"] = "text/csv"
     return response

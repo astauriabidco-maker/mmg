@@ -284,7 +284,7 @@ def generate_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
     table_data = [["Description", "Quantité", "Prix Unitaire (HT)", "Total (HT)"]]
     
     for line in invoice.lines:
-        line_total = line.quantity * line.unit_price
+        line_total = float(line.quantity or 0) * float(line.unit_price or 0)
         table_data.append([
             Paragraph(line.description, normal_style),
             str(line.quantity),

@@ -11,6 +11,7 @@ from .. import models, schemas
 from ..core import security
 from ..core import uploads
 from ..services.document_sequences import next_number
+from ..core.time import utcnow
 
 router = APIRouter(
     prefix="/v2/mmg",
@@ -365,7 +366,7 @@ def send_quote(dossier_id: int, db: Session = Depends(get_db)):
         existing_sale.workflow_type = "FABRICATION_FROM_MEASURE"
         db_item.sale_order_id = existing_sale.id
         
-    db_item.quote_sent_at = datetime.utcnow()
+    db_item.quote_sent_at = utcnow()
     db.commit()
     
     return {"message": "Devis CRM généré et envoyé au client.", "sent_at": db_item.quote_sent_at}

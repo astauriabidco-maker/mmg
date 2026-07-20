@@ -10,6 +10,7 @@ from backend import models
 from backend.core import security
 from backend.services.stock_service import InventoryService
 from backend.services.document_sequences import next_number
+from ..core.time import utcnow
 
 router = APIRouter(
     prefix="/v2/purchases",
@@ -205,7 +206,7 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
             "quantity_invoiceable": quantity_invoiceable,
             "unit_price": line.unit_price,
             "discount_percent": line.discount_percent or 0,
-            "line_total": (line.quantity or 0) * (line.unit_price or 0) * (1 - float(line.discount_percent or 0) / 100),
+            "line_total": (line.quantity or 0) * float(line.unit_price or 0) * (1 - float(line.discount_percent or 0) / 100),
         })
 
     total_received = sum(float(line.quantity_received or 0) for line in po.lines)
@@ -354,7 +355,7 @@ def create_supplier_invoice(
         supplier_reference=data.supplier_reference,
         purchase_order_id=po.id,
         supplier=po.supplier,
-        issue_date=data.issue_date or datetime.utcnow(),
+        issue_date=data.issue_date or utcnow(),
         due_date=data.due_date,
         status="TO_PAY",
         notes=data.notes,

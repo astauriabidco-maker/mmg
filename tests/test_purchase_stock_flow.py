@@ -109,7 +109,7 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
         details = details_response.json()
         assert details["status"] == "RECEIVED"
         assert details["global_discount_percent"] == 5
-        assert details["total_amount"] == 74.8125
+        assert details["total_amount"] == 74.81  # 78.75 x 0.95, arrondi centime (Numeric(14,2))
         assert details["lines"][0]["discount_percent"] == 10
         assert details["lines"][0]["line_total"] == 78.75
         assert details["lines"][0]["quantity_received"] == 7

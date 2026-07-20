@@ -8,6 +8,7 @@ from .. import models, schemas
 from ..core.security import get_current_user
 from ..services.stock_service import InventoryService
 from .v2_accounting import generate_invoice_reference, compute_qr_seal
+from ..core.time import utcnow
 
 router = APIRouter(
     prefix="/v2/pos",
@@ -28,8 +29,8 @@ def get_pending_invoices(db: Session = Depends(get_db)):
     invoices = db.query(models.Invoice).filter(models.Invoice.status.in_(["DRAFT", "UNPAID", "PARTIAL"])).all()
     results = []
     for inv in invoices:
-        paid_amount = sum(p.amount for p in inv.payments)
-        due_amount = inv.total - paid_amount
+        paid_amount = sum(float(p.amount or 0) for p in inv.payments)
+        due_amount = float(inv.total or 0) - paid_amount
         if due_amount > 0:
             results.append({
                 "id": inv.id,
@@ -70,8 +71,8 @@ def pay_invoice_pos(invoice_id: int, req: schemas.POSInvoicePaymentReq, db: Sess
         db.add(mv)
         
     db.flush()
-    paid_amount = sum(p.amount for p in invoice.payments)
-    if paid_amount >= invoice.total:
+    paid_amount = sum(float(p.amount or 0) for p in invoice.payments)
+    if paid_amount >= float(invoice.total or 0):
         invoice.status = "PAID"
     else:
         invoice.status = "PARTIAL"
@@ -182,15 +183,15 @@ def close_session(session_id: int, closing_cash: float, db: Session = Depends(ge
     expected_cash = session.starting_cash + total_cash_sales + cash_in - cash_out
     
     session.status = "CLOSED"
-    session.closed_at = datetime.utcnow()
+    session.closed_at = utcnow()
     session.closing_cash = closing_cash
     db.commit()
     
-    difference = closing_cash - expected_cash
+    difference = closing_cash - float(expected_cash)
     
     return {
         "message": "Caisse fermée avec succès", 
-        "expected": expected_cash, 
+        "expected": float(expected_cash), 
         "actual": closing_cash,
         "difference": difference
     }
@@ -320,7 +321,7 @@ def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db))
         sale_order_id=None,
         client_name="Client Comptoir (POS)",
         client_address="Vente au détail",
-        due_date=datetime.utcnow(),
+        due_date=utcnow(),
         status="PAID", # POS sales are paid immediately
         subtotal=subtotal,
         tax_rate=req.tax_rate,

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from ..database import get_db
 from .. import models, schemas
 from ..core.security import get_current_user, require_permissions, assert_permission
+from ..core.time import utcnow
 
 router = APIRouter(prefix="/v2/planning", tags=["planning"])
 
@@ -274,7 +275,7 @@ async def start_task(planning_id: int, db: Session = Depends(get_db), current_us
         station=task.station,
         material="Unknown", # Should fetch from order
         operator_name=operator_name,
-        start_time=datetime.utcnow()
+        start_time=utcnow()
     )
     # Fetch material from order
     order = db.query(models.Order).filter(models.Order.id == task.order_id).first()
@@ -311,7 +312,7 @@ async def pause_task(planning_id: int, db: Session = Depends(get_db), current_us
     ).first()
     
     if log:
-        log.end_time = datetime.utcnow()
+        log.end_time = utcnow()
         log.duration_seconds = (log.end_time - log.start_time).seconds
 
     db.commit()
@@ -339,7 +340,7 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db), current_use
     ).first()
     
     if log:
-        log.end_time = datetime.utcnow()
+        log.end_time = utcnow()
         log.duration_seconds = (log.end_time - log.start_time).seconds
     
     # --- AUTO-WORKFLOW LOGIC (Dynamic from DB) ---
@@ -383,7 +384,7 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db), current_use
         exists_note = db.query(models.DeliveryNote).filter(models.DeliveryNote.order_id == task.order_id).first()
         if not exists_note and order:
             from datetime import datetime
-            year = datetime.utcnow().year
+            year = utcnow().year
             count = db.query(models.DeliveryNote).filter(models.DeliveryNote.reference.like(f"BL-{year}-%")).count()
             ref = f"BL-{year}-{count + 1:04d}"
             
@@ -434,7 +435,7 @@ async def report_issue(planning_id: int, item: schemas.PlanningIssue, db: Sessio
     ).first()
     
     if log:
-        log.end_time = datetime.utcnow()
+        log.end_time = utcnow()
         log.duration_seconds = (log.end_time - log.start_time).seconds
     
     db.commit()

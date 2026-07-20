@@ -23,6 +23,7 @@ from ..services.stock_reservations import (
 )
 from ..services.stock_service import InventoryService
 from scripts.import_workshop_debits import parse_file
+from ..core.time import utcnow
 
 router = APIRouter(
     prefix="/v2/stock",
@@ -170,8 +171,8 @@ def create_inventory_session(
         notes=payload.notes,
         status="draft",
         zone_locked=payload.zone_locked,
-        locked_at=datetime.utcnow() if payload.zone_locked else None,
-        unlocked_at=None if payload.zone_locked else datetime.utcnow(),
+        locked_at=utcnow() if payload.zone_locked else None,
+        unlocked_at=None if payload.zone_locked else utcnow(),
         created_by=user.get("sub", "Admin"),
     )
     if not session.name:
@@ -253,7 +254,7 @@ def upsert_inventory_count_line(
     line.recount_requested_at = None
     line.recount_notes = None
     line.counted_by = user.get("sub", "Admin")
-    line.counted_at = datetime.utcnow()
+    line.counted_at = utcnow()
     session.status = "counting"
     db.commit()
     db.refresh(line)
@@ -285,7 +286,7 @@ def request_inventory_line_recount(
         raise HTTPException(status_code=400, detail="Cette ligne est déjà conforme.")
     line.status = "recount"
     line.recount_requested_by = user.get("sub", "Admin")
-    line.recount_requested_at = datetime.utcnow()
+    line.recount_requested_at = utcnow()
     line.recount_notes = payload.notes
     db.commit()
     db.refresh(line)
@@ -380,9 +381,9 @@ def validate_inventory_session(
 
     session.status = "validated"
     session.validated_by = author
-    session.validated_at = datetime.utcnow()
+    session.validated_at = utcnow()
     session.zone_locked = False
-    session.unlocked_at = datetime.utcnow()
+    session.unlocked_at = utcnow()
     db.commit()
     db.refresh(session)
     return get_inventory_session(session.id, db, user)
@@ -402,7 +403,7 @@ def cancel_inventory_session(
         raise HTTPException(status_code=400, detail="Campagne déjà validée.")
     session.status = "cancelled"
     session.zone_locked = False
-    session.unlocked_at = datetime.utcnow()
+    session.unlocked_at = utcnow()
     db.commit()
     db.refresh(session)
     return session
