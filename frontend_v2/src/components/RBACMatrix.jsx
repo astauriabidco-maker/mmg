@@ -2,12 +2,58 @@ import React, { useState, useEffect } from 'react';
 import { ShieldCheck, ShieldAlert, Check, Plus, Trash2, X } from 'lucide-react';
 import api from '../services/api';
 
+const ROLE_PRESETS = [
+    {
+        name: 'MAGASINIER',
+        label: 'Magasinier',
+        description: 'Réceptionne, range, transfère et compte le stock.',
+        scope: 'Stock',
+        permissions: ['STOCK_VIEW', 'stock.receive', 'stock.transfer', 'inventory.count', 'purchases.receive'],
+    },
+    {
+        name: 'CHEF_STOCK',
+        label: 'Chef stock',
+        description: 'Pilote le stock, les inventaires, les corrections et le catalogue.',
+        scope: 'Stock',
+        permissions: ['STOCK_VIEW', 'STOCK_EDIT', 'stock.receive', 'stock.transfer', 'stock.adjust', 'catalog.qualify', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count', 'inventory.validate', 'purchases.receive'],
+    },
+    {
+        name: 'DEBIT_OPERATOR',
+        label: 'Débit atelier',
+        description: 'Confirme le débit réel depuis les réservations atelier.',
+        scope: 'Atelier',
+        permissions: ['PROD_VIEW', 'planning:start', 'planning:pause', 'planning:stop', 'planning:consume_stock', 'workshop.consume_stock', 'planning:report_issue'],
+    },
+    {
+        name: 'WORKSHOP_LEAD',
+        label: 'Chef atelier',
+        description: 'Pilote les postes, priorités, blocages et débits atelier.',
+        scope: 'Atelier',
+        permissions: ['PROD_VIEW', 'PROD_EDIT', 'planning:start', 'planning:pause', 'planning:stop', 'planning:consume_stock', 'planning:reprioritize', 'planning:assign', 'planning:unblock', 'planning:report_issue', 'quality:reject', 'STOCK_VIEW', 'stock.receive', 'stock.transfer', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count'],
+    },
+    {
+        name: 'ACHATS',
+        label: 'Achats',
+        description: 'Suit les commandes fournisseurs et les réceptions attendues.',
+        scope: 'Achats',
+        permissions: ['STOCK_VIEW', 'purchases.receive'],
+    },
+    {
+        name: 'SALES',
+        label: 'Commercial CRM',
+        description: 'Gère les clients, propositions, devis et avant-vente.',
+        scope: 'Ventes',
+        permissions: ['SALES_VIEW', 'SALES_EDIT'],
+    },
+];
+
 export default function RBACMatrix() {
     const [roles, setRoles] = useState([]);
     const [permissions, setPermissions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showRoleModal, setShowRoleModal] = useState(false);
     const [newRoleForm, setNewRoleForm] = useState({ name: '', description: '' });
+    const [applyingPreset, setApplyingPreset] = useState(null);
 
     const fetchData = async () => {
         try {
@@ -69,6 +115,38 @@ export default function RBACMatrix() {
         }
     };
 
+    const applyPreset = async (preset) => {
+        const missingCodes = preset.permissions.filter(code => !permissions.some(permission => permission.code === code));
+        if (missingCodes.length > 0) {
+            alert(`Permissions manquantes côté serveur : ${missingCodes.join(', ')}. Redémarrez le backend pour relancer le seed.`);
+            return;
+        }
+        const message = roles.some(role => role.name === preset.name)
+            ? `Appliquer le modèle "${preset.label}" et remplacer ses permissions actuelles ?`
+            : `Créer le rôle "${preset.label}" avec ses permissions métier ?`;
+        if (!window.confirm(message)) return;
+        setApplyingPreset(preset.name);
+        try {
+            let role = roles.find(r => r.name === preset.name);
+            if (!role) {
+                const roleRes = await api.post('/v2/config/roles', {
+                    name: preset.name,
+                    description: preset.description,
+                });
+                role = roleRes.data;
+            }
+            const permissionIds = permissions
+                .filter(permission => preset.permissions.includes(permission.code))
+                .map(permission => permission.id);
+            await api.post(`/v2/config/roles/${role.id}/permissions`, permissionIds);
+            await fetchData();
+        } catch (e) {
+            alert(e.response?.data?.detail || "Impossible d'appliquer ce profil métier.");
+        } finally {
+            setApplyingPreset(null);
+        }
+    };
+
     if (loading) return <div className="p-8 text-center animate-pulse font-bold text-slate-400">Chargement Matrice RBAC...</div>;
 
     // Group permissions by module
@@ -79,7 +157,56 @@ export default function RBACMatrix() {
     }, {});
 
     return (
-        <div className="mt-12 bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden font-sans">
+        <div className="mt-12 space-y-6 font-sans">
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-6 border-b border-slate-100 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                    <div>
+                        <p className="text-[11px] font-black uppercase tracking-widest text-blue-500">Profils prêts à l'emploi</p>
+                        <h2 className="text-2xl font-black text-slate-900 mt-1">Choisir un rôle métier, pas une matrice</h2>
+                        <p className="text-sm font-semibold text-slate-500 mt-1">
+                            Ces modèles créent ou remettent à niveau les permissions d'un profil standard MMG.
+                        </p>
+                    </div>
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+                        La matrice avancée reste disponible plus bas pour les exceptions.
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 p-6">
+                    {ROLE_PRESETS.map(preset => {
+                        const roleExists = roles.some(role => role.name === preset.name);
+                        return (
+                            <button
+                                key={preset.name}
+                                type="button"
+                                onClick={() => applyPreset(preset)}
+                                disabled={applyingPreset === preset.name}
+                                className="text-left rounded-2xl border border-slate-200 bg-slate-50 hover:bg-white hover:border-blue-200 hover:shadow-md transition-all p-5 disabled:opacity-60 disabled:cursor-wait"
+                            >
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <span className="inline-flex px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                            {preset.scope}
+                                        </span>
+                                        <h3 className="text-lg font-black text-slate-900 mt-3">{preset.label}</h3>
+                                    </div>
+                                    <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase ${roleExists ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                                        {roleExists ? 'Existe' : 'À créer'}
+                                    </span>
+                                </div>
+                                <p className="text-sm font-semibold text-slate-600 mt-3 min-h-[2.5rem]">{preset.description}</p>
+                                <div className="flex items-center justify-between mt-4">
+                                    <span className="text-xs font-black text-slate-400">{preset.permissions.length} permission(s)</span>
+                                    <span className="text-xs font-black text-blue-600">
+                                        {applyingPreset === preset.name ? 'Application...' : roleExists ? 'Remettre à niveau' : 'Créer le profil'}
+                                    </span>
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
             <div className="p-8 bg-slate-900 text-white flex items-center justify-between">
                 <div>
                     <h2 className="text-2xl font-black flex items-center gap-3">
@@ -204,6 +331,7 @@ export default function RBACMatrix() {
                     </div>
                 </div>
             )}
+            </div>
         </div>
     );
 }

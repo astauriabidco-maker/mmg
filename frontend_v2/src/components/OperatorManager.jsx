@@ -2,8 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { UserPlus, Trash2, Shield, Link2, RefreshCw, Edit2, X, Check } from 'lucide-react';
 import api from '../services/api';
 
+const ROLE_DISPLAY = {
+    SUPER_ADMIN: { label: 'Super admin', family: 'Bureau' },
+    ADMIN: { label: 'Administrateur', family: 'Bureau' },
+    MANAGER: { label: 'Manager opérationnel', family: 'Bureau' },
+    SALES: { label: 'Commercial CRM', family: 'Bureau' },
+    ACHATS: { label: 'Achats', family: 'Bureau' },
+    MAGASINIER: { label: 'Magasinier', family: 'Stock' },
+    CHEF_STOCK: { label: 'Chef stock', family: 'Stock' },
+    OPERATOR: { label: 'Opérateur atelier', family: 'Atelier' },
+    DEBIT_OPERATOR: { label: 'Débit atelier', family: 'Atelier' },
+    QUALITY_CONTROLLER: { label: 'Contrôle qualité', family: 'Atelier' },
+    WORKSHOP_LEAD: { label: 'Chef atelier', family: 'Atelier' },
+};
+
 export default function OperatorManager() {
-    const pinRoles = ['OPERATOR', 'DEBIT_OPERATOR', 'QUALITY_CONTROLLER', 'WORKSHOP_LEAD'];
+    const pinRoles = ['OPERATOR', 'DEBIT_OPERATOR', 'QUALITY_CONTROLLER', 'WORKSHOP_LEAD', 'MAGASINIER'];
     const [users, setUsers] = useState([]);
     const [stations, setStations] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -179,9 +193,12 @@ export default function OperatorManager() {
                                 value={editingUser ? editingUser.role : newUser.role}
                                 onChange={e => editingUser ? setEditingUser({ ...editingUser, role: e.target.value }) : setNewUser({ ...newUser, role: e.target.value })}
                             >
-                                {roles.map(r => (
-                                    <option key={r.id} value={r.name}>{r.name} - {r.description}</option>
-                                ))}
+                                {roles.map(r => {
+                                    const meta = ROLE_DISPLAY[r.name] || { label: r.name, family: 'Personnalisé' };
+                                    return (
+                                        <option key={r.id} value={r.name}>{meta.label} · {meta.family} - {r.description}</option>
+                                    );
+                                })}
                             </select>
                         </div>
                         <div>
@@ -291,7 +308,7 @@ export default function OperatorManager() {
                                             </div>
                                             <div>
                                                 <div className="text-sm font-black">{user.first_name} {user.last_name}</div>
-                                                <div className="text-xs text-slate-400 font-medium">{pinRoles.includes(user.role) ? 'Atelier' : 'Bureau'}</div>
+                                                <div className="text-xs text-slate-400 font-medium">{ROLE_DISPLAY[user.role]?.family || (pinRoles.includes(user.role) ? 'Atelier' : 'Bureau')}</div>
                                             </div>
                                         </div>
                                     </td>
@@ -301,7 +318,10 @@ export default function OperatorManager() {
                                         {user.phone && <div className="text-xs">{user.phone}</div>}
                                         {(!user.email && !user.phone) && <span className="text-slate-300 italic">Non renseigné</span>}
                                     </td>
-                                    <td className="p-4 text-[10px] text-slate-400 font-medium uppercase tracking-widest">{user.role}</td>
+                                    <td className="p-4">
+                                        <div className="text-xs font-black text-slate-700">{ROLE_DISPLAY[user.role]?.label || user.role}</div>
+                                        <div className="text-[10px] text-slate-400 font-medium uppercase tracking-widest">{user.role}</div>
+                                    </td>
                                     <td className="py-4">
                                         <div className="flex flex-wrap gap-1.5">
                                             {user.stations?.length > 0 ? user.stations.map(s => (
