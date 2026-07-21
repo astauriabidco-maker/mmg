@@ -231,7 +231,13 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
     }
 
 @router.post("/{po_id}/receive")
-def receive_purchase_order(po_id: int, data: PurchaseOrderReceiveInput, db: Session = Depends(get_db)):
+def receive_purchase_order(
+    po_id: int,
+    data: PurchaseOrderReceiveInput,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.receive")
     po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po_id).first()
     if not po:
         raise HTTPException(status_code=404, detail="PO not found")

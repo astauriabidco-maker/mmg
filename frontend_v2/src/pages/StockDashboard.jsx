@@ -16,6 +16,18 @@ export default function StockDashboard() {
     const { user } = useAuth();
     const isManager = user?.role === 'ADMIN' || user?.role === 'MANAGER';
     const isAdmin = user?.role === 'ADMIN';
+    const can = (permission) => user?.permissions?.includes('*') || user?.permissions?.includes(permission);
+    const stockPermissions = {
+        receive: can('stock.receive') || can('STOCK_EDIT'),
+        transfer: can('stock.transfer') || can('STOCK_EDIT'),
+        adjust: can('stock.adjust') || can('STOCK_EDIT'),
+        qualifyCatalog: can('catalog.qualify') || can('STOCK_EDIT'),
+        reserveWorkshop: can('workshop.reserve_stock') || can('STOCK_EDIT'),
+        consumeWorkshop: can('workshop.consume_stock') || can('planning:consume_stock'),
+        countInventory: can('inventory.count') || can('STOCK_EDIT'),
+        validateInventory: can('inventory.validate') || can('STOCK_EDIT'),
+        receivePurchases: can('purchases.receive') || can('STOCK_EDIT'),
+    };
 
     const { data: appConfigs = [] } = useQuery({ queryKey: ['configs'], queryFn: async () => { const res = await api.get('/v2/config/app_configs'); return res.data; }});
     const { data: products = [], isLoading: loadingProducts } = useQuery({ queryKey: ['products'], queryFn: async () => { const res = await api.get('/v2/stock/products'); return res.data; }});
@@ -1170,7 +1182,7 @@ export default function StockDashboard() {
                                     <button onClick={() => selectInventoryFocus('drafts')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${showDraftOnly ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
                                         <FileEdit className="w-4 h-4"/> Brouillons
                                     </button>
-                                    {isManager && (
+                                    {stockPermissions.reserveWorkshop && (
                                         <button onClick={() => setShowWorkshopDebitModal(true)} className="px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black text-amber-700 hover:bg-amber-50 transition-all">
                                             <ArrowRight className="w-4 h-4"/> Débit atelier
                                         </button>
@@ -1257,6 +1269,7 @@ export default function StockDashboard() {
                             userRole={user?.role}
                             isManager={isManager}
                             isAdmin={isAdmin}
+                            permissions={stockPermissions}
                             roleFilter={todoRoleFilter}
                             setRoleFilter={setTodoRoleFilter}
                             counts={todoCounts}
@@ -2404,6 +2417,7 @@ function StockTodoView({
     userRole,
     isManager,
     isAdmin,
+    permissions,
     roleFilter,
     setRoleFilter,
     counts,
@@ -2451,6 +2465,7 @@ function StockTodoView({
             subtitle: counts.lowStock > 0 ? 'Variantes à sécuriser avant promesse client ou atelier.' : 'Aucune rupture visible.',
             actionLabel: 'Voir les ruptures',
             onAction: actions.showLowStock,
+            canAct: true,
         },
         {
             id: 'reservations',
@@ -2462,6 +2477,7 @@ function StockTodoView({
             subtitle: counts.reservations > 0 ? 'Stock réservé virtuellement, en attente de débit réel atelier.' : 'Aucune réservation atelier ouverte.',
             actionLabel: 'Ouvrir débit atelier',
             onAction: actions.openWorkshopDebit,
+            canAct: permissions.reserveWorkshop,
         },
         {
             id: 'drafts',
@@ -2473,6 +2489,7 @@ function StockTodoView({
             subtitle: counts.drafts > 0 ? 'Références créées sans fiche complète ni stock exploitable.' : 'Catalogue qualifié.',
             actionLabel: 'Qualifier les fiches',
             onAction: actions.showDrafts,
+            canAct: permissions.qualifyCatalog,
         },
         {
             id: 'inventory',
@@ -2484,6 +2501,7 @@ function StockTodoView({
             subtitle: counts.inventory > 0 ? `${counts.inventoryIssues || 0} écart(s) ou ligne(s) à surveiller.` : 'Aucune campagne ouverte.',
             actionLabel: 'Ouvrir inventaire',
             onAction: actions.openPhysicalInventory,
+            canAct: permissions.countInventory || permissions.validateInventory,
         },
         {
             id: 'purchases',
@@ -2495,6 +2513,7 @@ function StockTodoView({
             subtitle: counts.purchases > 0 ? 'Commandes fournisseur en attente ou partielles.' : 'Rien à réceptionner.',
             actionLabel: 'Aller aux achats',
             onAction: actions.openPurchases,
+            canAct: permissions.receivePurchases,
         },
     ];
 
@@ -2524,7 +2543,7 @@ function StockTodoView({
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                    <button onClick={actions.openReception} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-sm inline-flex items-center gap-2">
+                    <button disabled={!permissions.receive} onClick={actions.openReception} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-sm font-black shadow-sm inline-flex items-center gap-2">
                         <Truck className="w-4 h-4" />
                         Réceptionner
                     </button>
@@ -2555,7 +2574,8 @@ function StockTodoView({
                         <button
                             key={card.id}
                             onClick={card.onAction}
-                            className={`text-left rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all ${priorityClasses[card.priority]}`}
+                            disabled={!card.canAct}
+                            className={`text-left rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all disabled:opacity-60 disabled:cursor-not-allowed ${priorityClasses[card.priority]}`}
                         >
                             <div className="flex items-start justify-between gap-3">
                                 <Icon className="w-5 h-5 shrink-0" />
@@ -2564,7 +2584,7 @@ function StockTodoView({
                             <h3 className="font-black text-slate-900 mt-4">{card.title}</h3>
                             <p className="text-xs font-bold text-slate-600 mt-1 min-h-[2.5rem]">{card.subtitle}</p>
                             <span className="inline-flex items-center gap-1 text-xs font-black mt-4">
-                                {card.actionLabel}
+                                {card.canAct ? card.actionLabel : 'Permission requise'}
                                 <ArrowRight className="w-3.5 h-3.5" />
                             </span>
                         </button>
@@ -2594,7 +2614,8 @@ function StockTodoView({
                                 onAction={() => actions.consumeReservation(reservation)}
                                 secondaryLabel="Annuler"
                                 onSecondary={() => actions.cancelReservation(reservation)}
-                                disabled={reservationActionId === reservation.id || !isManager}
+                                disabled={reservationActionId === reservation.id || !permissions.consumeWorkshop}
+                                secondaryDisabled={reservationActionId === reservation.id || !permissions.reserveWorkshop}
                             />
                         ))}
                         {visibleLowStock.map(item => (
@@ -2607,6 +2628,7 @@ function StockTodoView({
                                 meta={`Disponible ${item.availableQuantity} / seuil ${item.minThreshold}`}
                                 actionLabel="Réceptionner"
                                 onAction={actions.openReception}
+                                disabled={!permissions.receive}
                             />
                         ))}
                         {visibleDrafts.map(product => (
@@ -2619,6 +2641,7 @@ function StockTodoView({
                                 meta="Fiche incomplète avant exploitation stock"
                                 actionLabel="Qualifier"
                                 onAction={actions.showDrafts}
+                                disabled={!permissions.qualifyCatalog}
                             />
                         ))}
                         {visiblePurchases.map(po => (
@@ -2631,6 +2654,7 @@ function StockTodoView({
                                 meta={`Statut ${po.status || '-'} · prévu ${formatDate(po.expected_date)}`}
                                 actionLabel="Ouvrir achats"
                                 onAction={actions.openPurchases}
+                                disabled={!permissions.receivePurchases}
                             />
                         ))}
                         {visibleInventory.map(session => (
@@ -2643,6 +2667,7 @@ function StockTodoView({
                                 meta={`Statut ${session.status || '-'}${session.lines?.length ? ` · ${session.lines.length} ligne(s)` : ''}`}
                                 actionLabel="Ouvrir"
                                 onAction={actions.openPhysicalInventory}
+                                disabled={!permissions.countInventory && !permissions.validateInventory}
                             />
                         ))}
                         {!hasDetailedActions && (
@@ -2694,7 +2719,7 @@ function StockTodoView({
     );
 }
 
-function TodoRow({ badge, badgeClass, title, subtitle, meta, actionLabel, onAction, secondaryLabel, onSecondary, disabled = false }) {
+function TodoRow({ badge, badgeClass, title, subtitle, meta, actionLabel, onAction, secondaryLabel, onSecondary, disabled = false, secondaryDisabled = disabled }) {
     return (
         <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-50 transition-colors">
             <div className="min-w-0">
@@ -2708,7 +2733,7 @@ function TodoRow({ badge, badgeClass, title, subtitle, meta, actionLabel, onActi
             </div>
             <div className="flex items-center gap-2 shrink-0">
                 {secondaryLabel && (
-                    <button onClick={onSecondary} disabled={disabled} className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400 text-slate-700 text-xs font-black">
+                    <button onClick={onSecondary} disabled={secondaryDisabled} className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400 text-slate-700 text-xs font-black">
                         {secondaryLabel}
                     </button>
                 )}

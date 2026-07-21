@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from ..database import get_db
 from .. import models, schemas
-from ..core.security import get_current_user, get_current_user_role, require_roles
+from ..core.security import assert_permission, get_current_user, get_current_user_role
 import time
 import io
 import tempfile
@@ -57,9 +57,8 @@ async def _parse_workshop_uploads(files: List[UploadFile]):
     return records, issues, source_names
 
 
-def _require_stock_manager(user: dict) -> None:
-    if user.get("role") not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut gérer l'inventaire physique.")
+def _require_permission(db: Session, user: dict, permission_code: str) -> None:
+    assert_permission(db, user, permission_code)
 
 
 def _get_quant_quantity(db: Session, variant_id: int, location_id: int) -> float:
@@ -265,7 +264,7 @@ def create_inventory_session(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    _require_stock_manager(user)
+    _require_permission(db, user, "inventory.validate")
     if payload.location_id:
         location = db.query(models.StockLocation).filter_by(id=payload.location_id, is_active=True).first()
         if not location:
@@ -325,7 +324,7 @@ def upsert_inventory_count_line(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    _require_stock_manager(user)
+    _require_permission(db, user, "inventory.count")
     session = db.query(models.InventorySession).filter_by(id=session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
@@ -383,7 +382,7 @@ def request_inventory_line_recount(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    _require_stock_manager(user)
+    _require_permission(db, user, "inventory.validate")
     session = db.query(models.InventorySession).filter_by(id=session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
@@ -413,7 +412,7 @@ def validate_inventory_session(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    _require_stock_manager(user)
+    _require_permission(db, user, "inventory.validate")
     session = (
         db.query(models.InventorySession)
         .options(joinedload(models.InventorySession.lines))
@@ -532,7 +531,7 @@ def cancel_inventory_session(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    _require_stock_manager(user)
+    _require_permission(db, user, "inventory.validate")
     session = db.query(models.InventorySession).filter_by(id=session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
@@ -631,9 +630,8 @@ def get_products(db: Session = Depends(get_db), user: dict = Depends(get_current
     return products
 
 @router.post("/products", response_model=schemas.ProductResponse)
-def create_product(product_data: schemas.ProductCreate, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
-    if role not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut créer des produits.")
+def create_product(product_data: schemas.ProductCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _require_permission(db, user, "catalog.qualify")
     
     existing = db.query(models.Product).filter(models.Product.reference_base == product_data.reference_base).first()
     if existing: raise HTTPException(400, "Base reference already exists")
@@ -651,9 +649,8 @@ def create_product(product_data: schemas.ProductCreate, db: Session = Depends(ge
     return new_product
 
 @router.put("/products/{product_id}", response_model=schemas.ProductResponse)
-def update_product(product_id: int, product_data: schemas.ProductBase, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
-    if role not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut modifier des produits.")
+def update_product(product_id: int, product_data: schemas.ProductBase, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _require_permission(db, user, "catalog.qualify")
         
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product: raise HTTPException(404, "Product not found")
@@ -668,18 +665,16 @@ import shutil
 from ..core import uploads
 
 @router.post("/products/upload_image")
-async def upload_product_image(file: UploadFile = File(...), role: str = Depends(get_current_user_role)):
-    if role not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Non autorisé.")
+async def upload_product_image(file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _require_permission(db, user, "catalog.qualify")
 
     filepath = await uploads.save_upload_file(file, os.path.join("uploads", "products"))
     return {"image_url": f"/uploads/products/{os.path.basename(filepath)}"}
 
 
 @router.put("/variants/{variant_id}", response_model=schemas.ProductVariantResponse)
-def update_variant(variant_id: int, variant_data: schemas.ProductVariantBase, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
-    if role not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Non autorisé.")
+def update_variant(variant_id: int, variant_data: schemas.ProductVariantBase, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _require_permission(db, user, "catalog.qualify")
         
     variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == variant_id).first()
     if not variant: raise HTTPException(404, "Variant not found")
@@ -691,7 +686,8 @@ def update_variant(variant_id: int, variant_data: schemas.ProductVariantBase, db
     return variant
 
 @router.post("/products/{product_id}/variants", response_model=schemas.ProductVariantResponse)
-def add_variant(product_id: int, variant_data: schemas.ProductVariantCreate, db: Session = Depends(get_db), role: str = Depends(require_roles("ADMIN", "MANAGER"))):
+def add_variant(product_id: int, variant_data: schemas.ProductVariantCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _require_permission(db, user, "catalog.qualify")
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product: raise HTTPException(404, "Product not found")
     new_variant = models.ProductVariant(product_id=product.id, **variant_data.model_dump())
@@ -707,10 +703,6 @@ from fastapi import BackgroundTasks
 @router.post("/transaction") # Kept same endpoint name for UI compat momentarily, but treats it as an Odoo Move
 def create_transaction(tx: schemas.StockMoveCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     from ..core.events import EventBus
-    
-    role = user.get("role")
-    if role not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Privilèges insuffisants pour créer un mouvement de stock.")
         
     variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == tx.variant_id).first()
     if not variant: raise HTTPException(404, "Variant not found")
@@ -722,6 +714,15 @@ def create_transaction(tx: schemas.StockMoveCreate, background_tasks: Background
         (src_loc and src_loc.usage == "inventory")
         or (dest_loc and dest_loc.usage == "inventory")
     )
+    if is_manual_inventory_adjustment:
+        required_permission = "stock.adjust"
+    elif src_loc and dest_loc and src_loc.usage == "internal" and dest_loc.usage == "internal":
+        required_permission = "stock.transfer"
+    elif dest_loc and dest_loc.usage == "internal":
+        required_permission = "stock.receive"
+    else:
+        required_permission = "stock.adjust"
+    _require_permission(db, user, required_permission)
     if is_manual_inventory_adjustment and not (tx.reason or "").strip():
         raise HTTPException(
             status_code=400,
@@ -831,8 +832,7 @@ def get_recent_transactions(db: Session = Depends(get_db)):
 
 @router.get("/transactions/export")
 def export_stock_audit_xlsx(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    if user.get("role") not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut exporter le journal stock.")
+    _require_permission(db, user, "stock.adjust")
 
     moves = (
         db.query(models.StockMove)
@@ -929,8 +929,7 @@ async def create_draft_products_from_workshop_debits(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    if user.get("role") not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut créer des brouillons catalogue.")
+    _require_permission(db, user, "catalog.qualify")
 
     records, issues, _source_names = await _parse_workshop_uploads(files)
     if any(issue.severity == "error" for issue in issues):
@@ -1070,8 +1069,7 @@ async def reserve_workshop_debits(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    if user.get("role") not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut réserver un débit atelier.")
+    _require_permission(db, user, "workshop.reserve_stock")
     if (allow_missing or allow_shortage) and user.get("role") != "ADMIN":
         raise HTTPException(status_code=403, detail="Seul un administrateur peut forcer une réservation incomplète.")
     records, issues, source_names = await _parse_workshop_uploads(files)
@@ -1124,8 +1122,7 @@ def consume_workshop_reservation(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    if user.get("role") not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut consommer une réservation atelier.")
+    _require_permission(db, user, "workshop.consume_stock")
     reservation = (
         db.query(models.StockReservation)
         .options(joinedload(models.StockReservation.lines).joinedload(models.StockReservationLine.variant))
@@ -1151,8 +1148,7 @@ def cancel_workshop_reservation(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    if user.get("role") not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut annuler une réservation atelier.")
+    _require_permission(db, user, "workshop.reserve_stock")
     reservation = (
         db.query(models.StockReservation)
         .options(joinedload(models.StockReservation.lines))
@@ -1337,9 +1333,8 @@ def get_import_template():
     return response
 
 @router.post("/import/upload")
-async def upload_import_file(file: UploadFile = File(...), db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
-    if role not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Import de masse réservé aux managers.")
+async def upload_import_file(file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _require_permission(db, user, "catalog.qualify")
         
     if not file.filename.endswith('.xlsx'):
         raise HTTPException(400, "Le fichier doit être un .xlsx")
@@ -1560,9 +1555,8 @@ def export_draft_catalog_xlsx(db: Session = Depends(get_db)):
     return response
 
 @router.post("/catalog/drafts/import")
-async def import_draft_catalog_updates(file: UploadFile = File(...), db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
-    if role not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Import brouillons réservé aux managers.")
+async def import_draft_catalog_updates(file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _require_permission(db, user, "catalog.qualify")
     if not file.filename or not file.filename.endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Le fichier doit être un .xlsx")
 
@@ -1650,9 +1644,7 @@ async def import_draft_catalog_updates(file: UploadFile = File(...), db: Session
 @router.post("/import-bom/{sale_order_id}")
 async def import_bom_for_sale_order(sale_order_id: int, background_tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     from ..core.events import EventBus
-    
-    if user.get("role") not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul le BE ou un Manager peut importer une nomenclature.")
+    _require_permission(db, user, "workshop.reserve_stock")
         
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_order_id).first()
     if not sale:
