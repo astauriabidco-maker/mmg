@@ -701,6 +701,7 @@ class DeliveryNote(Base):
     
     status = Column(String, default="READY") # READY, ASSIGNED, IN_TRANSIT, DELIVERED, ISSUE
     signed_at = Column(DateTime, nullable=True)
+    signature_path = Column(String, nullable=True) # Chemin relatif sous uploads/ de la signature client
     delivery_notes = Column(Text, nullable=True) # Changed from 'notes' to avoid name clash
     
     order = relationship("Order")

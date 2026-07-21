@@ -645,6 +645,7 @@ class SaleDeliveryNoteSummary(BaseModel):
     reference: str
     status: str
     signed_at: Optional[datetime] = None
+    signature_path: Optional[str] = None
     delivery_notes: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -767,11 +768,16 @@ class DeliveryNoteBase(BaseModel):
 class DeliveryNoteCreate(DeliveryNoteBase):
     pass
 
+class DeliveryConfirmRequest(BaseModel):
+    """Confirmation de livraison : signature client en base64 (data URL acceptée)."""
+    signature_image: Optional[str] = None
+
 class DeliveryNoteResponse(DeliveryNoteBase):
     id: int
     reference: str
     route_id: Optional[int] = None
     signed_at: Optional[datetime] = None
+    signature_path: Optional[str] = None
     
     model_config = ConfigDict(from_attributes=True)
 

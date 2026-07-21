@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from datetime import datetime
+import os
 
 from ..database import get_db
 from .. import models, schemas
-from ..core import security
+from ..core import security, uploads
 from ..core.time import utcnow
 
 router = APIRouter(
@@ -53,16 +54,27 @@ def create_route(route: schemas.DeliveryRouteCreate, db: Session = Depends(get_d
 def get_ready_notes(db: Session = Depends(get_db)):
     return db.query(models.DeliveryNote).filter(models.DeliveryNote.status == "READY").all()
 
-@router.post("/notes/{note_id}/deliver")
-def mark_delivered(note_id: int, signature_image: str = None, db: Session = Depends(get_db)):
-    # Simulates the delivery app signature
+@router.post("/notes/{note_id}/deliver", response_model=schemas.DeliveryNoteResponse)
+def mark_delivered(note_id: int, payload: Optional[schemas.DeliveryConfirmRequest] = None, db: Session = Depends(get_db)):
+    # Confirmation de livraison depuis l'app chauffeur (signature client)
     note = db.query(models.DeliveryNote).filter(models.DeliveryNote.id == note_id).first()
     if not note:
         raise HTTPException(404, "BL non trouvé")
         
     note.status = "DELIVERED"
     note.signed_at = utcnow()
-    # In a real app, save signature_image to disk or S3
+    
+    # Persiste la signature client (base64) sous uploads/delivery/ — même
+    # pipeline allowlisté/borné que les autres uploads (backend/core/uploads.py).
+    if payload and payload.signature_image:
+        content, extension = uploads.decode_base64_upload(payload.signature_image)
+        directory = os.path.join("uploads", "delivery")
+        os.makedirs(directory, exist_ok=True)
+        filename = uploads.generate_safe_filename(extension, prefix="sig_")
+        file_path = os.path.join(directory, filename)
+        with open(file_path, "wb") as signature_file:
+            signature_file.write(content)
+        note.signature_path = file_path.replace(os.sep, "/")
     
     # Check if route is fully delivered
     if note.route_id:
@@ -73,7 +85,8 @@ def mark_delivered(note_id: int, signature_image: str = None, db: Session = Depe
                 route.status = "COMPLETED"
                 
     db.commit()
-    return {"status": "success"}
+    db.refresh(note)
+    return note
 
 @router.post("/routes/{route_id}/start")
 def start_route(route_id: int, db: Session = Depends(get_db)):

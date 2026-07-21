@@ -10,6 +10,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import Image as RLImage
+import os
 
 from ..database import get_db
 from .. import models
@@ -523,8 +525,28 @@ def generate_delivery_note_pdf(note_id: int, db: Session = Depends(get_db)):
         elements.append(Paragraph(escape(note.delivery_notes), normal_style))
 
     elements.append(Spacer(1, 36))
+    received_cell = Paragraph("<b>Reçu par le client</b><br/><br/><br/>Signature :", normal_style)
+    # Signature client capturée à la livraison (app chauffeur) : on l'incruste
+    # dans la case « Reçu par le client » quand le fichier existe encore.
+    if note.signature_path and os.path.isfile(note.signature_path):
+        try:
+            signature_image = RLImage(note.signature_path, width=180, height=60, kind="proportional")
+            signed_label = (
+                f"Signé électroniquement le {note.signed_at.strftime('%d/%m/%Y %H:%M')}"
+                if note.signed_at else "Signé électroniquement"
+            )
+            received_cell = [
+                Paragraph("<b>Reçu par le client</b>", normal_style),
+                Spacer(1, 6),
+                signature_image,
+                Spacer(1, 4),
+                Paragraph(escape(signed_label), small_style),
+            ]
+        except Exception:
+            # Image illisible/corrompue : on retombe sur la case signature vierge.
+            received_cell = Paragraph("<b>Reçu par le client</b><br/><br/><br/>Signature :", normal_style)
     signature_table = Table(
-        [[Paragraph("<b>Remis par MMG</b><br/><br/><br/>Signature :", normal_style), Paragraph("<b>Reçu par le client</b><br/><br/><br/>Signature :", normal_style)]],
+        [[Paragraph("<b>Remis par MMG</b><br/><br/><br/>Signature :", normal_style), received_cell]],
         colWidths=[250, 250],
     )
     signature_table.setStyle(TableStyle([
