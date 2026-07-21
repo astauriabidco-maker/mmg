@@ -628,6 +628,53 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                         </div>
                                     </div>
 
+                                    {/* Configuration fine persistée (plus-values du devis) */}
+                                    {selectedDossier.configuration && (
+                                        <div className="bg-violet-50 border border-violet-100 p-6 rounded-3xl space-y-4">
+                                            <h4 className="font-bold text-violet-800 flex items-center gap-2">
+                                                <PenTool className="w-5 h-5" /> Options & Plus-values (configurateur)
+                                            </h4>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+                                                <div className="flex justify-between border-b border-violet-100 pb-2">
+                                                    <span className="text-sm text-violet-600">Forme :</span>
+                                                    <span className="font-bold text-violet-900">{selectedDossier.configuration.shape || 'Rectangulaire'}</span>
+                                                </div>
+                                                <div className="flex justify-between border-b border-violet-100 pb-2">
+                                                    <span className="text-sm text-violet-600">Ventilation :</span>
+                                                    <span className="font-bold text-violet-900">{selectedDossier.configuration.ventilation || 'Aucune'}</span>
+                                                </div>
+                                                <div className="flex justify-between border-b border-violet-100 pb-2">
+                                                    <span className="text-sm text-violet-600">Soubassement :</span>
+                                                    <span className="font-bold text-violet-900">{selectedDossier.configuration.soubassement_type || 'Vitré'}</span>
+                                                </div>
+                                                <div className="flex justify-between border-b border-violet-100 pb-2">
+                                                    <span className="text-sm text-violet-600">Volet Roulant :</span>
+                                                    <span className="font-bold text-violet-900">{selectedDossier.configuration.annexes?.volet_roulant || 'Aucun'}</span>
+                                                </div>
+                                                <div className="flex justify-between border-b border-violet-100 pb-2">
+                                                    <span className="text-sm text-violet-600">Volet Battant :</span>
+                                                    <span className="font-bold text-violet-900">{selectedDossier.configuration.annexes?.volet_battant || 'Aucun'}</span>
+                                                </div>
+                                                <div className="flex justify-between border-b border-violet-100 pb-2">
+                                                    <span className="text-sm text-violet-600">Prestation de Pose :</span>
+                                                    <span className="font-bold text-violet-900">{selectedDossier.configuration.annexes?.frais_pose || 'Aucun'}</span>
+                                                </div>
+                                                <div className="flex justify-between border-b border-violet-100 pb-2">
+                                                    <span className="text-sm text-violet-600">Moustiquaire :</span>
+                                                    <span className={`font-bold ${selectedDossier.configuration.annexes?.moustiquaire ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                        {selectedDossier.configuration.annexes?.moustiquaire ? 'OUI' : 'NON'}
+                                                    </span>
+                                                </div>
+                                                <div className="flex justify-between pb-2">
+                                                    <span className="text-sm text-violet-600">Livraison Chantier :</span>
+                                                    <span className={`font-bold ${selectedDossier.configuration.annexes?.livraison ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                        {selectedDossier.configuration.annexes?.livraison ? 'OUI' : 'NON'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     <div className="bg-slate-900 p-8 rounded-3xl text-center space-y-4">
                                         <p className="text-slate-400 text-sm">Prêt pour l'envoi au client ? Tous les champs commerciaux sont renseignés.</p>
                                         <button

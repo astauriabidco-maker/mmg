@@ -75,6 +75,7 @@ def _serialize_detail(db_item: models.MMG) -> schemas.MMGDetail:
         signature=db_item.signature or "",
         sale_order_id=db_item.sale_order_id,
         order_id=db_item.order_id,
+        configuration=db_item.configuration or None,
     )
 
 def generate_reference(db: Session):
@@ -97,6 +98,12 @@ async def create_dossier(item: schemas.MMGCreate, db: Session = Depends(get_db))
             photo_paths.append(path)
     
     # 4. Create Model
+    # Configuration fine persistée telle quelle (JSON) : forme, ventilation,
+    # soubassement... + sous-clé "annexes" (volets, moustiquaire, pose...).
+    # C'est la source des plus-values calculées par send-quote.
+    stored_configuration = item.configuration.model_dump()
+    stored_configuration["annexes"] = item.annexes.model_dump() if item.annexes else {}
+
     db_item = models.MMG(
         reference=ref,
         client_name=item.client.name,
@@ -137,6 +144,7 @@ async def create_dossier(item: schemas.MMGCreate, db: Session = Depends(get_db))
         
         photos=",".join(photo_paths),
         signature=sig_path,
+        configuration=stored_configuration,
         status=models.MMGStatus.SENT,
         sale_order_id=item.sale_order_id
     )
@@ -262,9 +270,11 @@ def send_quote(dossier_id: int, db: Session = Depends(get_db)):
         db.add(sale_line)
         
         # 0. Forme Spéciale (Plue-value)
-        # Le modèle MMG n'a pas de colonne `configuration` : les options fines
-        # (shape, ventilation, annexes...) ne sont pas persistées aujourd'hui.
-        config = getattr(db_item, "configuration", None) or {}
+        # La configuration fine persistée à la création (colonne JSON
+        # `configuration`) alimente les règles de plus-values ci-dessous.
+        # Rétrocompat : les dossiers créés avant cette colonne retombent
+        # sur {} et ne déclenchent aucune plue-value.
+        config = db_item.configuration or {}
         shape = config.get("shape", "Rectangulaire")
         if shape != "Rectangulaire":
             shape_markup = 0.40 if shape == "Cintré" else 0.20

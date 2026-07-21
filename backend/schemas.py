@@ -222,6 +222,17 @@ class MMGConfiguration(BaseModel):
     is_pmr_compliant: bool = False
     doublage_thickness: Optional[str] = "100" # For Neuf
     keep_existing_frame: bool = False # For Reno
+    # Options fines (plus-values du devis)
+    ventilation: Optional[str] = "Aucune" # Aucune / Standard / Acoustique
+    shape: Optional[str] = "Rectangulaire" # Rectangulaire / Cintré / Trapèze / Triangle
+    soubassement_type: Optional[str] = "Vitré" # Vitré / Plein
+
+class MMGAnnexes(BaseModel):
+    volet_roulant: Optional[str] = "Aucun" # Aucun / Manuel / Electrique / Solaire
+    volet_battant: Optional[str] = "Aucun" # Aucun / 1 Vantail / 2 Vantaux
+    moustiquaire: bool = False
+    frais_pose: Optional[str] = "Aucun" # Aucun / Standard / Renovation / Complexe
+    livraison: bool = False
 
 class MMGLogistics(BaseModel):
     floor_number: int = 0
@@ -233,6 +244,7 @@ class MMGCreate(BaseModel):
     measurements: MMGMeasurements
     options: MMGOptions
     configuration: MMGConfiguration
+    annexes: Optional[MMGAnnexes] = None
     logistics: Optional[MMGLogistics] = None
     sale_order_id: Optional[int] = None
     photos: List[str]
@@ -282,6 +294,8 @@ class MMGDetail(MMGResponse):
     photos: List[str] # Will be list in response
     signature: str
     order_id: Optional[int]
+    # Configuration fine persistée (forme, ventilation, soubassement, annexes...)
+    configuration: Optional[dict] = None
     
     model_config = ConfigDict(from_attributes=True)
 

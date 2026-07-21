@@ -152,3 +152,111 @@ def test_mmg_status_and_send_quote_flow(client):
     detail = client.get(f"/v2/mmg/{dossier['id']}", headers=headers).json()
     assert detail["sale_order_id"] is not None
     assert detail["quote_sent_at"] is not None
+
+
+def _mmg_payload_full_options() -> dict:
+    payload = _mmg_payload()
+    payload["configuration"].update(
+        {
+            "installation_type": "Neuf",
+            "doublage_thickness": "100",
+            "shape": "Cintré",
+            "ventilation": "Acoustique",
+            "soubassement_type": "Plein",
+        }
+    )
+    payload["annexes"] = {
+        "volet_roulant": "Electrique",
+        "volet_battant": "Aucun",
+        "moustiquaire": True,
+        "frais_pose": "Standard",
+        "livraison": True,
+    }
+    return payload
+
+
+def _sale_lines(test_client: TestClient, headers: dict, sale_order_id: int) -> list:
+    response = test_client.get(f"/v2/sales/{sale_order_id}", headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()["lines"]
+
+
+def test_mmg_configuration_persisted_and_reloaded(client):
+    headers = _login(client)
+
+    response = client.post("/v2/mmg/", json=_mmg_payload_full_options(), headers=headers)
+    assert response.status_code == 200, response.text
+    dossier = response.json()
+
+    detail_resp = client.get(f"/v2/mmg/{dossier['id']}", headers=headers)
+    assert detail_resp.status_code == 200, detail_resp.text
+    config = detail_resp.json()["configuration"]
+    assert config is not None
+    assert config["shape"] == "Cintré"
+    assert config["ventilation"] == "Acoustique"
+    assert config["soubassement_type"] == "Plein"
+    assert config["annexes"]["volet_roulant"] == "Electrique"
+    assert config["annexes"]["moustiquaire"] is True
+    assert config["annexes"]["frais_pose"] == "Standard"
+    assert config["annexes"]["livraison"] is True
+
+
+def test_mmg_send_quote_applies_plue_values(client):
+    headers = _login(client)
+    dossier = client.post("/v2/mmg/", json=_mmg_payload_full_options(), headers=headers).json()
+
+    quote = client.post(f"/v2/mmg/{dossier['id']}/send-quote", headers=headers)
+    assert quote.status_code == 200, quote.text
+
+    detail = client.get(f"/v2/mmg/{dossier['id']}", headers=headers).json()
+    lines = _sale_lines(client, headers, detail["sale_order_id"])
+    by_desc = {line["description"]: line for line in lines}
+
+    # Ligne de base : 1.2m x 1.4m = 1.68 m2 x 450 EUR/m2 (ALU) = 756.0
+    base_desc = "ALU - Standard (1200.0x1400.0mm) (Pose: Neuf)"
+    assert by_desc[base_desc]["unit_price"] == pytest.approx(756.0)
+
+    # Plue-value forme cintree : 40% de 756.0 = 302.4
+    assert by_desc["Plue-value Forme : Cintré"]["unit_price"] == pytest.approx(302.4)
+
+    # Tapees d'isolation : perimetre (1.2 + 1.4) x 2 = 5.2 ml a 15 EUR/ml
+    tapees = by_desc["Tapées d'isolation (100mm)"]
+    assert tapees["quantity"] == pytest.approx(5.2)
+    assert tapees["unit_price"] == pytest.approx(15.0)
+
+    # Grille de ventilation acoustique : 45 EUR
+    assert by_desc["Accessoire : Grille de Ventilation Acoustique"]["unit_price"] == pytest.approx(45.0)
+
+    # Soubassement plein : 65 EUR forfaitaires
+    assert by_desc["Option : Panneau de Soubassement Plein isolant"]["unit_price"] == pytest.approx(65.0)
+
+    # Volet roulant electrique : 280 EUR
+    assert by_desc["Option : Volet Roulant Electrique"]["unit_price"] == pytest.approx(280.0)
+
+    # Prestation de pose standard : 100 EUR
+    assert by_desc["Prestation : Pose Standard"]["unit_price"] == pytest.approx(100.0)
+
+    # Moustiquaire : 85 EUR
+    assert by_desc["Accessoire : Moustiquaire intégrée"]["unit_price"] == pytest.approx(85.0)
+
+    # Livraison chantier : 50 EUR
+    assert by_desc["Logistique : Frais de livraison sur chantier"]["unit_price"] == pytest.approx(50.0)
+
+
+def test_mmg_send_quote_without_options_stays_retrocompatible(client):
+    headers = _login(client)
+    # Payload minimal historique : pas de shape/ventilation/annexes fines
+    dossier = client.post("/v2/mmg/", json=_mmg_payload(), headers=headers).json()
+
+    quote = client.post(f"/v2/mmg/{dossier['id']}/send-quote", headers=headers)
+    assert quote.status_code == 200, quote.text
+
+    detail = client.get(f"/v2/mmg/{dossier['id']}", headers=headers).json()
+    lines = _sale_lines(client, headers, detail["sale_order_id"])
+    descriptions = [line["description"] for line in lines]
+
+    # Seules la ligne de base et les tapees (pose a neuf par defaut)
+    assert len(lines) == 2
+    assert not any("Plue-value" in desc for desc in descriptions)
+    assert not any("Volet" in desc for desc in descriptions)
+    assert not any("Moustiquaire" in desc for desc in descriptions)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text, UniqueConstraint, Numeric
+from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text, UniqueConstraint, Numeric, JSON
 from sqlalchemy.orm import relationship
 from .database import Base
 from .core.time import utcnow
@@ -343,6 +343,11 @@ class MMG(Base):
     
     hardware_type = Column(String, nullable=True) # Standard, Security
     is_pmr_compliant = Column(Boolean, default=False)
+
+    # Configuration fine du formulaire (JSON) : forme, ventilation,
+    # soubassement_type, doublage... + sous-clé "annexes" (volets,
+    # moustiquaire, frais de pose, livraison). Source des plus-values du devis.
+    configuration = Column(JSON, nullable=True)
     
     # Logistics
     floor_number = Column(Integer, default=0)
