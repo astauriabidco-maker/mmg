@@ -400,6 +400,7 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db), current_use
 
     # --- STOCK AUTO-DEDUCTION ---
     from ..services.stock_service import StockService
+    from ..services.stock_reservations import InsufficientStockAtConsumptionError
     try:
         stock_result = StockService.deduct_stock_for_order(
             db,
@@ -407,6 +408,9 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db), current_use
             task.station,
             author=current_user.get("sub", "Atelier"),
         )
+    except InsufficientStockAtConsumptionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

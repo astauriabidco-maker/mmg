@@ -412,6 +412,7 @@ class StockReservationResponse(BaseModel):
     order_reference: Optional[str] = None
     project_reference: Optional[str] = None
     source_label: Optional[str] = None
+    location_id: Optional[int] = None
     status: str
     notes: Optional[str] = None
     created_by: str

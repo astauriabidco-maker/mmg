@@ -23,6 +23,53 @@ RESERVABLE_SALE_STATUSES = {"VALIDATED", "IN_DESIGN", "READY_FOR_PROD", "IN_PROD
 COMMERCIAL_RESERVATION_PREFIX = "RSV-COM"
 ALU_SUPPLIERS = {"CORTIZO", "SEPALUMIC", "TECHNAL/HYDRO", "TECHNAL", "HYDRO"}
 PVC_SUPPLIERS = {"VEKA", "KOMMERLING", "KÖMMERLING", "REHAU", "DECEUNINCK"}
+DEFAULT_INTERNAL_LOCATION_NAME = "WH/Stock"
+
+
+class InsufficientStockAtConsumptionError(ValueError):
+    """Disponible insuffisant sur l'emplacement ancré au moment de consommer.
+
+    Levée par le re-contrôle transactionnel de la consommation : le stock a
+    été prélevé par un autre flux (POS, vente, ajustement…) entre la
+    réservation et le débit. Mappée en HTTP 409 par les routeurs."""
+
+
+def get_default_internal_location(db: Session) -> models.StockLocation:
+    """Emplacement interne principal : « WH/Stock » actif, sinon premier interne actif.
+
+    Convention documentée dans la migration ``c6e1a8d3f045`` (backfill des
+    réservations historiques).
+    """
+    location = (
+        db.query(models.StockLocation)
+        .filter_by(name=DEFAULT_INTERNAL_LOCATION_NAME, usage="internal", is_active=True)
+        .first()
+    )
+    if location:
+        return location
+    location = (
+        db.query(models.StockLocation)
+        .filter_by(usage="internal", is_active=True)
+        .order_by(models.StockLocation.id.asc())
+        .first()
+    )
+    if location:
+        return location
+    return get_or_create_location(db, DEFAULT_INTERNAL_LOCATION_NAME, "internal")
+
+
+def resolve_reservation_location(db: Session, reservation: models.StockReservation) -> models.StockLocation:
+    """Emplacement de prélèvement d'une réservation : son ancre, sinon le principal.
+
+    Les réservations historiques sans ancre (location_id NULL, base non
+    migrée ou emplacement supprimé) retombent sur l'emplacement interne
+    principal — le comportement d'avant l'ancrage.
+    """
+    if reservation.location_id:
+        location = db.query(models.StockLocation).filter_by(id=reservation.location_id).first()
+        if location:
+            return location
+    return get_default_internal_location(db)
 
 
 def infer_material_from_records(records: Iterable[DebitRecord]) -> str | None:
@@ -134,8 +181,8 @@ def find_variant(db: Session, record: DebitRecord) -> models.ProductVariant | No
     )
 
 
-def active_reserved_quantity(db: Session, variant_id: int) -> float:
-    lines = (
+def active_reserved_quantity(db: Session, variant_id: int, location_id: int | None = None) -> float:
+    query = (
         db.query(models.StockReservationLine)
         .join(models.StockReservation)
         .filter(
@@ -143,8 +190,18 @@ def active_reserved_quantity(db: Session, variant_id: int) -> float:
             models.StockReservationLine.status == ACTIVE_RESERVATION_STATUS,
             models.StockReservation.status == ACTIVE_RESERVATION_STATUS,
         )
-        .all()
     )
+    if location_id is not None:
+        # Réservations historiques sans ancre (location_id NULL) : elles pèsent
+        # sur tous les emplacements — hypothèse conservatrice qui évite toute
+        # sur-réservation tant que le backfill n'a pas tourné.
+        query = query.filter(
+            or_(
+                models.StockReservation.location_id == location_id,
+                models.StockReservation.location_id.is_(None),
+            )
+        )
+    lines = query.all()
     return float(sum(line.reserved_quantity or 0 for line in lines))
 
 
@@ -215,6 +272,13 @@ def physical_quantity(db: Session, variant_id: int, source_location_id: int) -> 
     return float(quant.quantity if quant else 0)
 
 
+def available_quantity_at_location(db: Session, variant_id: int, location_id: int) -> tuple[float, float, float]:
+    """Disponible FERME sur un emplacement : physique de l'emplacement - réservé actif de l'emplacement."""
+    physical = physical_quantity(db, variant_id, location_id)
+    reserved = active_reserved_quantity(db, variant_id, location_id=location_id)
+    return physical, reserved, max(physical - reserved, 0.0)
+
+
 def preview_records(db: Session, records: Iterable[DebitRecord], source_location: str = "WH/Stock") -> list[StockMatch]:
     source = db.query(models.StockLocation).filter_by(name=source_location, usage="internal").first()
     matches: list[StockMatch] = []
@@ -223,9 +287,9 @@ def preview_records(db: Session, records: Iterable[DebitRecord], source_location
         reserved = 0.0
         available = 0.0
         if variant and source:
-            physical = physical_quantity(db, variant.id, source.id)
-            reserved = active_reserved_quantity(db, variant.id)
-            available = max(physical - reserved, 0)
+            # Fermeté : le disponible est évalué sur L'EMPLACEMENT source de la
+            # réservation, plus sur la somme de tous les emplacements internes.
+            _physical, reserved, available = available_quantity_at_location(db, variant.id, source.id)
         missing = max(record.quantity - available, 0)
         if not variant:
             status = "not_found"
@@ -334,6 +398,7 @@ def create_reservation(
         order_reference=resolved_order_reference,
         project_reference=project_reference,
         source_label=source_label,
+        location_id=source.id,
         status=ACTIVE_RESERVATION_STATUS,
         notes=notes,
         created_by=created_by,
@@ -393,12 +458,17 @@ def create_commercial_reservation_for_sale(
     if not stock_lines:
         return None
 
+    # Réservation commerciale ancrée sur l'emplacement interne principal : le
+    # contrôle de disponibilité porte sur CET emplacement (fermeté), plus sur
+    # la somme de tous les emplacements internes.
+    location = get_default_internal_location(db)
+
     shortages = []
     for line in stock_lines:
         variant = line.variant
         if not variant:
             continue
-        _physical, _already_reserved, available = available_quantity_for_variant(db, variant)
+        _physical, _already_reserved, available = available_quantity_at_location(db, variant.id, location.id)
         requested = float(line.quantity or 0)
         if available < requested:
             shortages.append(f"{variant.reference}: {available:g} disponible < {requested:g} demandé")
@@ -410,6 +480,7 @@ def create_commercial_reservation_for_sale(
         sale_order_id=sale.id,
         order_reference=sale.reference,
         source_label="devis libre",
+        location_id=location.id,
         status=ACTIVE_RESERVATION_STATUS,
         notes=f"Réservation commerciale automatique à validation du devis {sale.reference}.",
         created_by=created_by,
@@ -421,7 +492,7 @@ def create_commercial_reservation_for_sale(
         variant = line.variant
         if not variant:
             continue
-        _physical, _already_reserved, available = available_quantity_for_variant(db, variant)
+        _physical, _already_reserved, available = available_quantity_at_location(db, variant.id, location.id)
         requested = float(line.quantity or 0)
         db.add(
             models.StockReservationLine(
@@ -444,18 +515,73 @@ def create_commercial_reservation_for_sale(
     return reservation
 
 
+def _own_active_reserved_quantity(db: Session, reservation_id: int, variant_id: int) -> float:
+    lines = (
+        db.query(models.StockReservationLine)
+        .filter(
+            models.StockReservationLine.reservation_id == reservation_id,
+            models.StockReservationLine.variant_id == variant_id,
+            models.StockReservationLine.status == ACTIVE_RESERVATION_STATUS,
+        )
+        .all()
+    )
+    return float(sum(line.reserved_quantity or 0 for line in lines))
+
+
+def assert_consumable_at_location(db: Session, reservation: models.StockReservation, location: models.StockLocation) -> None:
+    """Re-contrôle du disponible réel sur l'emplacement ancré avant consommation.
+
+    Un autre flux (POS, vente, ajustement, inventaire) a pu prélever le stock
+    entre la réservation et le débit. On vérifie, agrégé par variante, que le
+    physique de l'emplacement couvre le réservé actif des AUTRES réservations
+    plus les lignes de celle-ci ; sinon erreur métier explicite (409 côté
+    routeurs) plutôt qu'un débit partiel ou un stock incohérent.
+    """
+    required: dict[int, float] = {}
+    labels: dict[int, str] = {}
+    for line in reservation.lines:
+        if line.status != ACTIVE_RESERVATION_STATUS or not line.variant_id or (line.reserved_quantity or 0) <= 0:
+            continue
+        required[line.variant_id] = required.get(line.variant_id, 0.0) + float(line.reserved_quantity or 0)
+        labels.setdefault(line.variant_id, line.supplier_reference or f"variante #{line.variant_id}")
+
+    for variant_id, quantity in required.items():
+        physical = physical_quantity(db, variant_id, location.id)
+        reserved_here = active_reserved_quantity(db, variant_id, location_id=location.id)
+        # La part réservée par CETTE réservation reste disponible pour elle.
+        own = _own_active_reserved_quantity(db, reservation.id, variant_id)
+        available = physical - max(reserved_here - own, 0.0)
+        if available + 1e-9 < quantity:
+            usable = max(available, 0.0)
+            missing = quantity - usable
+            raise InsufficientStockAtConsumptionError(
+                f"Stock insuffisant sur l'emplacement « {location.name} » pour consommer la réservation "
+                f"{reservation.reference} : {labels[variant_id]} — disponible {usable:g}, requis {quantity:g} "
+                f"(manquant {missing:g}). Le stock a probablement été prélevé par un autre flux entre la "
+                f"réservation et la consommation."
+            )
+
+
 def consume_reservation(
     db: Session,
     reservation: models.StockReservation,
-    source_location: str = "WH/Stock",
+    source_location: str | None = None,
     dest_location: str = "Production Ateliers",
     author: str = "Système",
 ) -> dict[str, int]:
     if reservation.status != ACTIVE_RESERVATION_STATUS:
         return {"created_moves": 0, "consumed_lines": 0}
 
-    source = get_or_create_location(db, source_location, "internal")
+    # Consommation depuis l'emplacement ANCRÉ à la réservation (plus depuis
+    # « WH/Stock » en dur). Le paramètre source_location ne sert que de repli
+    # explicite pour les réservations historiques sans ancre.
+    source = (
+        resolve_reservation_location(db, reservation)
+        if not source_location
+        else get_or_create_location(db, source_location, "internal")
+    )
     dest = get_or_create_location(db, dest_location, "production")
+    assert_consumable_at_location(db, reservation, source)
     now_ref = utcnow().strftime("%Y%m%d%H%M%S")
     stats = {"created_moves": 0, "consumed_lines": 0}
 
@@ -497,7 +623,7 @@ def consume_reservation(
 def consume_commercial_reservation(
     db: Session,
     reservation: models.StockReservation,
-    source_location: str = "WH/Stock",
+    source_location: str | None = None,
     dest_location: str = "Partner/Customer",
     author: str = "Système",
 ) -> dict[str, int]:
@@ -506,8 +632,13 @@ def consume_commercial_reservation(
     if reservation.source_label not in {"devis libre", "devis_libre"}:
         raise ValueError("Cette réservation n'est pas une réservation commerciale de devis libre.")
 
-    source = get_or_create_location(db, source_location, "internal")
+    source = (
+        resolve_reservation_location(db, reservation)
+        if not source_location
+        else get_or_create_location(db, source_location, "internal")
+    )
     dest = get_or_create_location(db, dest_location, "customer")
+    assert_consumable_at_location(db, reservation, source)
     now_ref = utcnow().strftime("%Y%m%d%H%M%S")
     stats = {"created_moves": 0, "consumed_lines": 0}
 
@@ -560,7 +691,7 @@ def return_commercial_reservation(
     db: Session,
     reservation: models.StockReservation,
     source_location: str = "Partner/Customer",
-    dest_location: str = "WH/Stock",
+    dest_location: str | None = None,
     author: str = "Système",
 ) -> dict[str, int]:
     if reservation.status == "returned":
@@ -571,7 +702,13 @@ def return_commercial_reservation(
         raise ValueError("Cette réservation n'est pas une réservation commerciale de devis libre.")
 
     source = get_or_create_location(db, source_location, "customer")
-    dest = get_or_create_location(db, dest_location, "internal")
+    # Le retour recrédite l'emplacement ANCRÉ à la réservation (celui d'où le
+    # stock est sorti), plus « WH/Stock » en dur ; repli explicite possible.
+    dest = (
+        get_or_create_location(db, dest_location, "internal")
+        if dest_location
+        else resolve_reservation_location(db, reservation)
+    )
     now_ref = utcnow().strftime("%Y%m%d%H%M%S")
     stats = {"created_moves": 0, "returned_lines": 0}
 

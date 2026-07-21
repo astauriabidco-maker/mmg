@@ -220,6 +220,9 @@ class StockReservation(Base):
     order_reference = Column(String, index=True, nullable=True)
     project_reference = Column(String, index=True, nullable=True)
     source_label = Column(String, nullable=True)
+    # Emplacement interne auquel la réservation est ancrée : le disponible est
+    # calculé sur CET emplacement et la consommation puise depuis lui.
+    location_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True, index=True)
     status = Column(String, default="reserved", index=True) # reserved, consumed, cancelled
     notes = Column(Text, nullable=True)
     created_by = Column(String, default="Système")
@@ -229,6 +232,7 @@ class StockReservation(Base):
     lines = relationship("StockReservationLine", back_populates="reservation", cascade="all, delete-orphan")
     sale_order = relationship("SaleOrder")
     production_order = relationship("Order")
+    location = relationship("StockLocation")
 
 class StockReservationLine(Base):
     __tablename__ = "stock_reservation_lines"

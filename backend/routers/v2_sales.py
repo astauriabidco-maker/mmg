@@ -13,6 +13,7 @@ from ..database import get_db
 from .. import models, schemas
 from ..core.security import get_current_user, require_roles
 from ..services.stock_reservations import (
+    InsufficientStockAtConsumptionError,
     annotate_sale_availability,
     build_preview_payload,
     cancel_reservation,
@@ -1032,6 +1033,9 @@ def deliver_free_sale_order(
             reservation,
             author=current_user.get("sub", "Admin"),
         )
+    except InsufficientStockAtConsumptionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))

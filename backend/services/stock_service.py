@@ -1,11 +1,16 @@
 from dataclasses import dataclass
 from typing import Optional
 
+import logging
+
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -110,6 +115,53 @@ class InventoryService:
                 "Validez ou annulez la campagne avant de créer un mouvement stock."
             )
 
+    @staticmethod
+    def _warn_if_reservation_breached(
+        db: Session,
+        variant: models.ProductVariant,
+        source_location: Optional[models.StockLocation],
+        remaining_quantity: float,
+        *,
+        source_screen: Optional[str],
+        document_type: Optional[str],
+        document_reference: Optional[str],
+    ) -> None:
+        """Avertit quand une sortie interne perce une réservation ferme.
+
+        Limite assumée (documentée) : seul le PHYSIQUE est bloquant dans le
+        moteur à quants — il n'existe pas de quant « réservé » séparé. Une
+        sortie hors consommation de réservation (POS, vente, ajustement) peut
+        donc encore prendre du stock réservé ; le re-contrôle transactionnel
+        à la consommation (``assert_consumable_at_location``) refuse alors le
+        débit avec une erreur métier explicite. Ce warning rend la cassure
+        visible dans les logs dès la sortie fautive, sans bloquer les flux
+        légitimes (ex. déstockage d'urgence).
+        """
+        if not source_location or source_location.usage != "internal":
+            return
+        if document_type == "stock_reservation":
+            # Consommation/retour de réservation : le réservé de cette
+            # réservation est légitimement prélevé, le re-contrôle amont a
+            # déjà arbitré.
+            return
+        from .stock_reservations import active_reserved_quantity
+
+        reserved = active_reserved_quantity(db, variant.id, location_id=source_location.id)
+        if reserved > remaining_quantity + 1e-9:
+            logger.warning(
+                "Réservation percée : sortie interne (écran=%s, document=%s/%s) de la variante #%s (%s) "
+                "depuis « %s » — reste %g < réservé actif %g. Une réservation ferme échouera au débit "
+                "(re-contrôle 409).",
+                source_screen or "inconnu",
+                document_type or "inconnu",
+                document_reference or "-",
+                variant.id,
+                variant.reference,
+                source_location.name,
+                remaining_quantity,
+                reserved,
+            )
+
     @classmethod
     def move_stock(
         cls,
@@ -175,6 +227,15 @@ class InventoryService:
                 raise ValueError(f"Stock source insuffisant: {previous_source_quantity:g} < {qty:g}.")
             source_quant.quantity = previous_source_quantity - qty
             new_source_quantity = float(source_quant.quantity or 0)
+            cls._warn_if_reservation_breached(
+                db,
+                variant,
+                source_location,
+                new_source_quantity,
+                source_screen=source_screen,
+                document_type=document_type,
+                document_reference=document_reference,
+            )
 
         if dest_location_id:
             dest_quant = quants[dest_location_id]

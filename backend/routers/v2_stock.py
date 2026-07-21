@@ -15,6 +15,7 @@ from openpyxl.styles import Font, PatternFill
 from sqlalchemy import or_, update
 from ..services.bom_parser import parse_bom_file
 from ..services.stock_reservations import (
+    InsufficientStockAtConsumptionError,
     annotate_variant_availability,
     build_preview_payload,
     cancel_reservation,
@@ -1131,6 +1132,9 @@ def consume_workshop_reservation(
         stats = consume_reservation(db, reservation, author=user.get("sub", "Admin"))
         db.commit()
         return {"status": "success", **stats}
+    except InsufficientStockAtConsumptionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
