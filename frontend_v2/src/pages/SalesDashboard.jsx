@@ -27,9 +27,6 @@ export default function SalesDashboard() {
     const [isCreatingFinalInvoice, setIsCreatingFinalInvoice] = useState(false);
     const [isCreatingDepositInvoice, setIsCreatingDepositInvoice] = useState(false);
     const [isRecordingPayment, setIsRecordingPayment] = useState(false);
-    const [workshopPrepFiles, setWorkshopPrepFiles] = useState([]);
-    const [workshopPrepPreview, setWorkshopPrepPreview] = useState(null);
-    const [isWorkshopPreparing, setIsWorkshopPreparing] = useState(false);
 
     // AI Copilot State
     const [showAIModal, setShowAIModal] = useState(false);
@@ -837,59 +834,6 @@ export default function SalesDashboard() {
             alert("Erreur lors de l'envoi au BE");
         } finally {
             setIsStatusUpdating(false);
-        }
-    };
-
-    const buildWorkshopPrepFormData = () => {
-        const formData = new FormData();
-        workshopPrepFiles.forEach(file => formData.append("files", file));
-        formData.append("source_location", "WH/Stock");
-        return formData;
-    };
-
-    const previewWorkshopPreparation = async () => {
-        if (!selectedSale || workshopPrepFiles.length === 0) {
-            return alert("Ajoutez au moins un fichier atelier.");
-        }
-        setIsWorkshopPreparing(true);
-        try {
-            const res = await api.post(`/v2/sales/${selectedSale.id}/prepare-workshop/preview`, buildWorkshopPrepFormData(), {
-                headers: { "Content-Type": "multipart/form-data" }
-            });
-            setWorkshopPrepPreview(res.data);
-        } catch (err) {
-            console.error(err);
-            alert(err.response?.data?.detail || "Prévisualisation atelier impossible.");
-        } finally {
-            setIsWorkshopPreparing(false);
-        }
-    };
-
-    const reserveWorkshopPreparation = async () => {
-        if (!selectedSale || !workshopPrepPreview) return;
-        const status = workshopPrepPreview.summary?.stock_match_status || {};
-        if (workshopPrepPreview.issues?.some(issue => issue.severity === 'error')) {
-            return alert("Réservation bloquée : corrigez les alertes workflow.");
-        }
-        if ((status.not_found || 0) > 0 || (status.shortage || 0) > 0) {
-            return alert("Réservation bloquée : références inconnues ou stock insuffisant.");
-        }
-        if (!window.confirm(`Réserver le stock atelier pour ${selectedSale.reference} ?`)) return;
-        setIsWorkshopPreparing(true);
-        try {
-            const res = await api.post(`/v2/sales/${selectedSale.id}/prepare-workshop/reserve`, buildWorkshopPrepFormData(), {
-                headers: { "Content-Type": "multipart/form-data" }
-            });
-            alert(res.data.message || "Stock réservé pour atelier.");
-            setWorkshopPrepFiles([]);
-            setWorkshopPrepPreview(null);
-            queryClient.invalidateQueries(['sales']);
-            openSaleDetails(selectedSale.id);
-        } catch (err) {
-            console.error(err);
-            alert(err.response?.data?.detail || "Réservation atelier impossible.");
-        } finally {
-            setIsWorkshopPreparing(false);
         }
     };
 
