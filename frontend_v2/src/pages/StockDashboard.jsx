@@ -41,7 +41,7 @@ export default function StockDashboard() {
     
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
-    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'inventory' | 'audit' | 'physical-inventory' | 'valuation'
+    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'inventory' | 'locations' | 'audit' | 'physical-inventory' | 'valuation'
     const [inventoryFocus, setInventoryFocus] = useState('catalog'); // 'catalog' | 'stock' | 'drafts' | 'services'
     const [todoRoleFilter, setTodoRoleFilter] = useState('me'); // 'me' | 'stock' | 'atelier' | 'catalogue' | 'achats' | 'manager'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
@@ -1028,6 +1028,18 @@ export default function StockDashboard() {
         consumeReservation: consumeWorkshopReservation,
         cancelReservation: cancelWorkshopReservation,
     };
+    const locationUsageLabels = {
+        internal: 'Stock physique',
+        production: 'Production atelier',
+        supplier: 'Fournisseur virtuel',
+        customer: 'Client virtuel',
+        inventory: 'Inventaire virtuel',
+    };
+    const rootLocations = locations.filter(location => !location.parent_id);
+    const physicalLocations = locations.filter(location => location.usage === 'internal');
+    const internalRootLocations = rootLocations.filter(location => location.usage === 'internal');
+    const virtualLocations = locations.filter(location => location.usage !== 'internal');
+    const productionLocations = locations.filter(location => location.usage === 'production');
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
@@ -1077,6 +1089,11 @@ export default function StockDashboard() {
                                     <ArrowRight className="w-4 h-4"/> Débit atelier
                                     {reservations.length > 0 && <span className="rounded-full bg-amber-500 text-white px-2 py-0.5 text-[10px]">{reservations.length}</span>}
                                 </button>
+                                {isAdmin && (
+                                    <button onClick={() => setCurrentMenu('locations')} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-black shadow-sm">
+                                        <MapPin className="w-4 h-4 text-blue-600"/> Zones
+                                    </button>
+                                )}
                             </>
                         )}
                         <button onClick={handleExportExcel} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-black shadow-sm">
@@ -1135,7 +1152,13 @@ export default function StockDashboard() {
                                 onClick={() => selectInventoryFocus('catalog')}
                                 className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'inventory' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                             >
-                                <LayoutGrid className="w-4 h-4"/> Catalogue & stock
+                                <LayoutGrid className="w-4 h-4"/> Articles & stock
+                            </button>
+                            <button
+                                onClick={() => setCurrentMenu('locations')}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'locations' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <MapPin className="w-4 h-4"/> Zones & emplacements
                             </button>
                             <button
                                 onClick={() => setCurrentMenu('audit')}
@@ -1282,6 +1305,162 @@ export default function StockDashboard() {
                             actions={todoActions}
                             reservationActionId={reservationActionId}
                         />
+                    </div>
+                ) : currentMenu === 'locations' ? (
+                    <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
+                        <div className="max-w-7xl mx-auto p-6 space-y-6">
+                            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                                <div className="px-6 py-5 bg-slate-900 text-white flex flex-wrap items-start justify-between gap-4">
+                                    <div>
+                                        <p className="text-[10px] uppercase font-black tracking-widest text-blue-200 mb-2">Plan de rangement stock</p>
+                                        <h2 className="text-2xl font-black flex items-center gap-3">
+                                            <MapPin className="w-6 h-6 text-blue-300" />
+                                            Zones & emplacements
+                                        </h2>
+                                        <p className="text-sm font-bold text-slate-300 mt-1 max-w-3xl">
+                                            Créez les entrepôts, zones, racks et emplacements utilisés par réception, transfert, inventaire physique et débit atelier.
+                                        </p>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {isAdmin ? (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAddingSubLocTo('root')}
+                                                    className="px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black inline-flex items-center gap-2 shadow-sm"
+                                                >
+                                                    <Plus className="w-4 h-4" />
+                                                    Nouvel entrepôt
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowLocationManagerModal(true)}
+                                                    className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white text-sm font-black inline-flex items-center gap-2"
+                                                >
+                                                    <Edit3 className="w-4 h-4" />
+                                                    Gestion avancée
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <span className="px-4 py-3 rounded-xl bg-white/10 border border-white/15 text-sm font-black text-slate-200">
+                                                Lecture seule
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-6 border-b border-slate-100">
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Zones physiques</p>
+                                        <p className="text-3xl font-black text-slate-950 mt-2">{physicalLocations.length}</p>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">Entrepôts, racks et emplacements de stock réel.</p>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Racines</p>
+                                        <p className="text-3xl font-black text-slate-950 mt-2">{internalRootLocations.length}</p>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">Points d’entrée du plan d’entrepôt.</p>
+                                    </div>
+                                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Atelier</p>
+                                        <p className="text-3xl font-black text-emerald-800 mt-2">{productionLocations.length}</p>
+                                        <p className="text-xs font-bold text-emerald-700 mt-1">Zones de production et encours.</p>
+                                    </div>
+                                    <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">Lieux virtuels</p>
+                                        <p className="text-3xl font-black text-amber-800 mt-2">{virtualLocations.length}</p>
+                                        <p className="text-xs font-bold text-amber-700 mt-1">Fournisseur, client, inventaire ou flux système.</p>
+                                    </div>
+                                </div>
+
+                                {addingSubLocTo === 'root' && isAdmin && (
+                                    <div className="px-6 py-4 border-b border-blue-100 bg-blue-50">
+                                        <div className="max-w-xl">
+                                            <p className="text-[10px] uppercase tracking-widest font-black text-blue-700 mb-2">Créer une zone principale</p>
+                                            <input
+                                                autoFocus
+                                                value={newSubLocName}
+                                                onChange={event => setNewSubLocName(event.target.value)}
+                                                onBlur={() => setAddingSubLocTo(null)}
+                                                onKeyDown={event => {
+                                                    if (event.key === 'Escape') setAddingSubLocTo(null);
+                                                    if (event.key === 'Enter') handleAddSubLocation(event, 'root');
+                                                }}
+                                                className="w-full text-sm p-3 bg-white border border-blue-200 rounded-xl text-slate-900 font-bold placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-500/30 transition-all"
+                                                placeholder="Ex: Entrepôt principal, Rack ALU, Zone vitrage... Entrée pour créer"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6 p-6">
+                                    <div className="space-y-4">
+                                        <div>
+                                            <p className="text-xs uppercase tracking-widest font-black text-slate-400">Arborescence physique</p>
+                                            <h3 className="text-xl font-black text-slate-900">Entrepôts, zones et emplacements</h3>
+                                        </div>
+                                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+                                            {internalRootLocations.map(location => (
+                                                isAdmin ? renderManagedLocationTree(location) : renderLocationTree(location)
+                                            ))}
+                                            {internalRootLocations.length === 0 && (
+                                                <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center">
+                                                    <MapPin className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                                                    <p className="font-black text-slate-600">Aucun emplacement physique configuré.</p>
+                                                    <p className="text-sm font-bold text-slate-400 mt-1">
+                                                        Créez au moins un entrepôt ou une zone interne avant de recevoir du stock réel.
+                                                    </p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-4">
+                                        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                                            <p className="text-xs uppercase tracking-widest font-black text-slate-400">Règle simple</p>
+                                            <h3 className="font-black text-slate-900 mt-1">Physique vs virtuel</h3>
+                                            <div className="space-y-3 mt-4 text-sm font-bold text-slate-600">
+                                                <p><span className="text-slate-950">Stock physique</span> : là où un opérateur peut réellement trouver une pièce.</p>
+                                                <p><span className="text-slate-950">Lieux virtuels</span> : étapes de flux pour fournisseur, client, production ou inventaire.</p>
+                                                <p><span className="text-slate-950">Inventaire</span> : comptez toujours une zone physique clairement identifiée.</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                                            <div className="flex items-center justify-between gap-3 mb-4">
+                                                <div>
+                                                    <p className="text-xs uppercase tracking-widest font-black text-slate-400">Lieux système</p>
+                                                    <h3 className="font-black text-slate-900">Virtuels</h3>
+                                                </div>
+                                                {isAdmin && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setShowLocationManagerModal(true)}
+                                                        className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-black text-slate-600 hover:bg-slate-50"
+                                                    >
+                                                        Modifier
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                                                {virtualLocations.map(location => (
+                                                    <div key={location.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                                                        <p className="font-black text-slate-900">{getFullLocationName(location)}</p>
+                                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400 mt-1">
+                                                            {locationUsageLabels[location.usage] || location.usage}
+                                                        </p>
+                                                    </div>
+                                                ))}
+                                                {virtualLocations.length === 0 && (
+                                                    <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm font-bold text-slate-400 text-center">
+                                                        Aucun lieu virtuel configuré.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 ) : currentMenu === 'audit' ? (
                     <div className="flex-1 overflow-y-auto w-full relative p-6">
@@ -2674,7 +2853,7 @@ function StockTodoView({
                             <div className="p-10 text-center">
                                 <Check className="w-10 h-10 mx-auto text-emerald-400 mb-3" />
                                 <p className="font-black text-slate-700">Aucune action urgente pour cette vue.</p>
-                                <p className="text-sm font-bold text-slate-400 mt-1">Le stock peut être consulté dans Catalogue & stock.</p>
+                                <p className="text-sm font-bold text-slate-400 mt-1">Le stock peut être consulté dans Articles & stock.</p>
                             </div>
                         )}
                     </div>
