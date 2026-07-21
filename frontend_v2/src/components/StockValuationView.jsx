@@ -65,7 +65,7 @@ export default function StockValuationView({ products, locations, quants }) {
     const formatCurrency = (val) => val.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'});
 
     return (
-        <div className="flex flex-col gap-6 w-full max-w-7xl mx-auto h-full p-4 pb-20 overflow-y-auto">
+        <div className="flex flex-col gap-6 w-full h-full p-4 pb-20 overflow-y-auto">
             
             {/* TOP CARDS */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 shrink-0">

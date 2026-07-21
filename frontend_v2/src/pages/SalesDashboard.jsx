@@ -1348,10 +1348,10 @@ export default function SalesDashboard() {
     ];
 
     return (
-        <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex flex-col overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in relative">
+        <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
 
             {/* TOP NAVIGATION TABS */}
-            <div className="bg-slate-900 px-6 py-4 flex flex-wrap items-center justify-between gap-4 shrink-0 rounded-t-[2rem]">
+            <div className="bg-slate-900 px-6 py-4 flex flex-wrap items-center justify-between gap-4 shrink-0">
                 <div className="flex flex-wrap gap-3">
                 <button
                     onClick={() => {

@@ -326,7 +326,7 @@ export default function PurchasesDashboard() {
     );
 
     return (
-        <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in relative">
+        <div className="w-full h-[calc(100vh-80px)] font-sans flex overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
             
             {/* LEFT SIDEBAR : PO LIST */}
             <div className="w-[400px] bg-white border-r border-slate-200 flex flex-col items-stretch h-full shadow-xl z-20 relative">

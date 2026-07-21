@@ -70,7 +70,7 @@ export default function ConfigDashboard() {
     );
 
     return (
-        <div className="p-8 max-w-[1600px] mx-auto h-[calc(100vh-100px)] overflow-y-auto animate-fade-in relative font-sans">
+        <div className="p-6 w-full h-[calc(100vh-80px)] overflow-y-auto animate-fade-in relative font-sans bg-white border-y border-slate-200/80">
             <h1 className="text-3xl font-black text-slate-800 mb-2 flex items-center gap-3">
                 <Settings className="w-8 h-8 text-blue-600" /> Options & Référentiels
             </h1>

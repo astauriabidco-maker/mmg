@@ -119,7 +119,7 @@ export default function AccountingDashboard() {
     const totalRevenue = invoices.filter(i => i.status !== "DRAFT").reduce((acc, i) => acc + i.total, 0);
 
     return (
-        <div className="space-y-6 max-w-7xl mx-auto animate-fade-in pb-12">
+        <div className="space-y-6 w-full h-[calc(100vh-80px)] overflow-y-auto animate-fade-in p-6 pb-12 bg-white border-y border-slate-200/80">
             
             {/* KPI ROW */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">

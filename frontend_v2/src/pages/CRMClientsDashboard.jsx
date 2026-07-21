@@ -382,8 +382,8 @@ export default function CRMClientsDashboard() {
     };
 
     return (
-        <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex flex-col overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in">
-            <div className="bg-slate-900 px-8 py-6 text-white shrink-0 rounded-t-[2rem]">
+        <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in">
+            <div className="bg-slate-900 px-8 py-6 text-white shrink-0">
                 <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
                     <div>
                         <div className="inline-flex items-center gap-2 rounded-xl bg-white/10 border border-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-blue-100 mb-3">

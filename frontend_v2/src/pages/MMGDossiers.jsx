@@ -297,7 +297,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                 />
             )}
             <main className={`flex-1 transition-all duration-300 overflow-y-auto ${!isEmbedded ? 'lg:ml-72' : ''}`}>
-                <div className="p-8 max-w-7xl mx-auto">
+                <div className={`${isEmbedded ? 'w-full p-6' : 'p-8 max-w-7xl mx-auto'}`}>
                     {!isEmbedded && (
                         <header className="mb-10 flex items-center justify-between">
                             <div className="flex items-center gap-4">
