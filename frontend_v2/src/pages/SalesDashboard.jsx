@@ -229,7 +229,7 @@ export default function SalesDashboard() {
             openSaleDetails(selectedSale.id);
         } catch (err) {
             console.error(err);
-            alert("Erreur lors de la mise à jour du statut");
+            alert(err.response?.data?.detail || "Erreur lors de la mise à jour du statut");
         } finally {
             setIsStatusUpdating(false);
         }
@@ -387,7 +387,7 @@ export default function SalesDashboard() {
                 }
             } catch (err) {
                 console.error(err);
-                alert("Erreur lors de la mise à jour du statut");
+                alert(err.response?.data?.detail || "Erreur lors de la mise à jour du statut");
             } finally {
                 setIsStatusUpdating(false);
             }
@@ -403,7 +403,7 @@ export default function SalesDashboard() {
             openSaleDetails(selectedSale.id);
         } catch (err) {
             console.error(err);
-            alert("Erreur lors de la validation");
+            alert(err.response?.data?.detail || "Erreur lors de la validation");
         } finally {
             setIsStatusUpdating(false);
         }
@@ -831,7 +831,7 @@ export default function SalesDashboard() {
             openSaleDetails(selectedSale.id);
         } catch (err) {
             console.error(err);
-            alert("Erreur lors de l'envoi au BE");
+            alert(err.response?.data?.detail || "Erreur lors de l'envoi au BE");
         } finally {
             setIsStatusUpdating(false);
         }
@@ -1458,12 +1458,15 @@ export default function SalesDashboard() {
                             {executionPipelineStages.map(col => {
                                 const colSales = filteredSales.filter(s => matchesExecutionStage(s, col.id));
                                 const colValue = colSales.reduce((sum, s) => sum + s.lines.reduce((lsum, l) => lsum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0), 0);
+                                // Colonnes pilotées par les actions métier (sortie client, facturation) :
+                                // le dépôt de carte y est interdit, le statut suit les vrais flux.
+                                const isDropDisabled = ['TO_DELIVER', 'DELIVERED', 'INVOICED'].includes(col.id);
 
                                 return (
                                     <div
                                         key={col.id}
-                                        onDragOver={col.id === 'TO_DELIVER' ? undefined : handleDragOver}
-                                        onDrop={col.id === 'TO_DELIVER' ? undefined : (e) => handleDrop(e, col.id)}
+                                        onDragOver={isDropDisabled ? undefined : handleDragOver}
+                                        onDrop={isDropDisabled ? undefined : (e) => handleDrop(e, col.id)}
                                         className="w-80 shrink-0 flex flex-col h-full"
                                     >
                                         <div className="flex items-center justify-between mb-4 px-2">

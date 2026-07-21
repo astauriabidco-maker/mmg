@@ -866,13 +866,92 @@ async def reserve_sale_workshop_preparation(
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
 
+# --- Machine à états des devis (endpoint générique PUT /{order_id}/status) ---
+# Les statuts d'exécution atelier/livraison (READY_FOR_PROD, IN_PRODUCTION,
+# DELIVERED) appartiennent aux flux métier dédiés : préparation atelier
+# (réserve le stock), launch-production (crée les ordres de fabrication),
+# sortie client / BL (débite le stock). L'endpoint générique ne les atteint
+# que via les portes documentées ci-dessous.
+SALE_KNOWN_STATUSES = {
+    "DRAFT", "SENT", "VALIDATED", "ACCEPTED", "IN_DESIGN",
+    "READY_FOR_PROD", "IN_PRODUCTION", "DELIVERED", "CANCELLED",
+}
+SALE_TERMINAL_STATUSES = {"DELIVERED", "CANCELLED"}
+SALE_ALLOWED_TRANSITIONS = {
+    "DRAFT": {"SENT", "VALIDATED", "CANCELLED"},
+    "SENT": {"VALIDATED", "ACCEPTED", "CANCELLED"},
+    "VALIDATED": {"IN_DESIGN", "READY_FOR_PROD", "CANCELLED"},
+    "ACCEPTED": {"IN_DESIGN", "READY_FOR_PROD", "CANCELLED"},
+    "IN_DESIGN": {"READY_FOR_PROD", "CANCELLED"},
+    "READY_FOR_PROD": {"CANCELLED"},
+    "IN_PRODUCTION": {"CANCELLED"},  # réservé à un administrateur
+    "DELIVERED": set(),
+    "CANCELLED": set(),
+}
+# Cibles exigeant une réservation atelier active (stock réellement réservé).
+SALE_WORKSHOP_GUARDED_STATUSES = {"READY_FOR_PROD"}
+
+
 @router.put("/{order_id}/status", dependencies=AUTH_DEPENDENCIES)
-def update_sale_status(order_id: int, status: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def update_sale_status(
+    order_id: int,
+    status: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    role: str = Depends(require_roles("ADMIN", "MANAGER")),
+):
     from ..core.events import EventBus
     order = _load_sale(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
-        
+
+    status = (status or "").strip().upper()
+    if status not in SALE_KNOWN_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Statut cible inconnu : {status}.")
+
+    if status == order.status:
+        return {
+            "message": f"Statut inchangé : {status}",
+            "portal_link": None,
+            "commercial_reservation_id": None,
+            "cancelled_commercial_reservations": 0,
+        }
+
+    if order.status in SALE_TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Le devis est {order.status} : ce statut terminal ne peut plus être modifié ici.",
+        )
+
+    allowed_targets = SALE_ALLOWED_TRANSITIONS.get(order.status, set())
+    if status not in allowed_targets:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Transition de statut interdite : {order.status} → {status}. "
+                "Les étapes atelier et livraison passent par les actions métier dédiées "
+                "(préparation atelier, lancement fabrication, sortie client)."
+            ),
+        )
+
+    if status in SALE_WORKSHOP_GUARDED_STATUSES:
+        active_workshop_reservations = _active_workshop_reservations_for_sale(db, order.id).count()
+        if active_workshop_reservations == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Le passage en « Prêt pour production » exige une réservation atelier active. "
+                    "Préparez l'atelier depuis la fiche devis ou le tableau de stock : "
+                    "la réservation fait passer le devis automatiquement."
+                ),
+            )
+
+    if order.status == "IN_PRODUCTION" and status == "CANCELLED" and role != "ADMIN":
+        raise HTTPException(
+            status_code=403,
+            detail="Seul un administrateur peut annuler un devis en production.",
+        )
+
     import uuid
     if status == "SENT" and not order.signature_token:
         order.signature_token = str(uuid.uuid4())
