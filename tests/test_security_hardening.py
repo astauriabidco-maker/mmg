@@ -3,39 +3,23 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 from starlette.websockets import WebSocketDisconnect
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from backend import database, models
+from backend import models
 from backend.core import security
 from backend.core.security import get_password_hash
-from backend.main import app
 
 
 @pytest.fixture()
-def client():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    models.Base.metadata.create_all(bind=engine)
-
-    def override_get_db():
-        db = TestingSessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    app.dependency_overrides[database.get_db] = override_get_db
+def client(isolated_client):
+    # Base entièrement en mémoire (fixture `isolated_client` de conftest.py) :
+    # le WebSocket /ws/{id} instancie database.SessionLocal() directement,
+    # il est donc patché lui aussi — aucune dépendance à ./atelier.db.
+    test_client, TestingSessionLocal = isolated_client
 
     with TestingSessionLocal() as db:
         db.add(
@@ -56,12 +40,7 @@ def client():
         )
         db.commit()
 
-    try:
-        with TestClient(app) as test_client:
-            yield test_client, TestingSessionLocal
-    finally:
-        app.dependency_overrides.pop(database.get_db, None)
-        models.Base.metadata.drop_all(bind=engine)
+    return test_client, TestingSessionLocal
 
 
 def _login(client: TestClient, username: str, password: str) -> dict:

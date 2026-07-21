@@ -44,10 +44,10 @@ def test_sensitive_routes_require_authentication():
     assert [response.status_code for response in responses] == [401] * len(responses)
 
 
-def test_sales_signature_portal_remains_public():
-    from backend.main import app
-
-    client = TestClient(app)
+def test_sales_signature_portal_remains_public(isolated_client):
+    # La route portail interroge la DB via get_db : elle doit rester publique
+    # (404 pour un token inconnu) sans jamais dépendre de ./atelier.db.
+    client, _ = isolated_client
     response = client.get("/v2/sales/portal/not-a-real-token")
 
     assert response.status_code == 404
