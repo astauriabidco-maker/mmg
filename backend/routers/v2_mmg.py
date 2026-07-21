@@ -269,11 +269,11 @@ def send_quote(dossier_id: int, db: Session = Depends(get_db)):
         )
         db.add(sale_line)
         
-        # 0. Forme Spéciale (Plue-value)
+        # 0. Forme Spéciale (Plus-value)
         # La configuration fine persistée à la création (colonne JSON
         # `configuration`) alimente les règles de plus-values ci-dessous.
         # Rétrocompat : les dossiers créés avant cette colonne retombent
-        # sur {} et ne déclenchent aucune plue-value.
+        # sur {} et ne déclenchent aucune plus-value.
         config = db_item.configuration or {}
         shape = config.get("shape", "Rectangulaire")
         if shape != "Rectangulaire":
@@ -281,7 +281,7 @@ def send_quote(dossier_id: int, db: Session = Depends(get_db)):
             shape_price = estimated_price * shape_markup
             db.add(models.SaleOrderLine(
                 order_id=sale.id,
-                description=f"Plue-value Forme : {shape}",
+                description=f"Plus-value Forme : {shape}",
                 quantity=1.0,
                 unit_price=round(shape_price, 2)
             ))

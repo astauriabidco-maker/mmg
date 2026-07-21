@@ -201,7 +201,7 @@ def test_mmg_configuration_persisted_and_reloaded(client):
     assert config["annexes"]["livraison"] is True
 
 
-def test_mmg_send_quote_applies_plue_values(client):
+def test_mmg_send_quote_applies_plus_values(client):
     headers = _login(client)
     dossier = client.post("/v2/mmg/", json=_mmg_payload_full_options(), headers=headers).json()
 
@@ -216,8 +216,8 @@ def test_mmg_send_quote_applies_plue_values(client):
     base_desc = "ALU - Standard (1200.0x1400.0mm) (Pose: Neuf)"
     assert by_desc[base_desc]["unit_price"] == pytest.approx(756.0)
 
-    # Plue-value forme cintree : 40% de 756.0 = 302.4
-    assert by_desc["Plue-value Forme : Cintré"]["unit_price"] == pytest.approx(302.4)
+    # Plus-value forme cintree : 40% de 756.0 = 302.4
+    assert by_desc["Plus-value Forme : Cintré"]["unit_price"] == pytest.approx(302.4)
 
     # Tapees d'isolation : perimetre (1.2 + 1.4) x 2 = 5.2 ml a 15 EUR/ml
     tapees = by_desc["Tapées d'isolation (100mm)"]
@@ -257,6 +257,6 @@ def test_mmg_send_quote_without_options_stays_retrocompatible(client):
 
     # Seules la ligne de base et les tapees (pose a neuf par defaut)
     assert len(lines) == 2
-    assert not any("Plue-value" in desc for desc in descriptions)
+    assert not any("Plus-value" in desc for desc in descriptions)
     assert not any("Volet" in desc for desc in descriptions)
     assert not any("Moustiquaire" in desc for desc in descriptions)
