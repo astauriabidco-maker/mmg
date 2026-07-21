@@ -55,6 +55,7 @@ export default function StockDashboard() {
     const [showWorkshopDebitModal, setShowWorkshopDebitModal] = useState(false);
     const [workshopFiles, setWorkshopFiles] = useState([]);
     const [workshopContextValue, setWorkshopContextValue] = useState('');
+    const [workshopSourceLocation, setWorkshopSourceLocation] = useState('');
     const [workshopPreview, setWorkshopPreview] = useState(null);
     const [workshopLoading, setWorkshopLoading] = useState(false);
     const [reservationActionId, setReservationActionId] = useState(null);
@@ -451,10 +452,20 @@ export default function StockDashboard() {
         }
     };
 
+    // Emplacements internes actifs (l'endpoint /v2/stock/locations ne renvoie
+    // que les actifs). Défaut : « WH/Stock » s'il existe, sinon le premier
+    // interne actif — convention alignée sur le backfill de la migration
+    // d'ancrage des réservations.
+    const internalLocations = locations.filter(l => l.usage === 'internal');
+    const defaultWorkshopSourceLocation = internalLocations.find(l => l.name === 'WH/Stock')?.name || internalLocations[0]?.name || 'WH/Stock';
+    const effectiveWorkshopSourceLocation = workshopSourceLocation || defaultWorkshopSourceLocation;
+
     const buildWorkshopFormData = () => {
         const formData = new FormData();
         workshopFiles.forEach(file => formData.append("files", file));
-        formData.append("source_location", "WH/Stock");
+        // Champ attendu par l'API : source_location (nom de l'emplacement,
+        // Form). Le backend ancre la réservation sur location_id correspondant.
+        formData.append("source_location", effectiveWorkshopSourceLocation);
         if (workshopContextValue.startsWith("sale:")) {
             formData.append("sale_order_id", workshopContextValue.split(":")[1]);
         }
@@ -1015,6 +1026,10 @@ export default function StockDashboard() {
                                                 <div className="min-w-0">
                                                     <p className="text-xs font-black text-amber-100 truncate">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
                                                     <p className="text-[10px] font-bold text-amber-300/80">{reservation.lines?.length || 0} ligne(s) - {totalReserved.toLocaleString('fr-FR')} réservé</p>
+                                                    <p className="text-[10px] font-bold text-amber-300/60 flex items-center gap-1 mt-0.5">
+                                                        <MapPin className="w-3 h-3" />
+                                                        {locations.find(l => l.id === reservation.location_id)?.name || '—'}
+                                                    </p>
                                                 </div>
                                                 <span className="text-[9px] font-black uppercase text-amber-200 bg-amber-400/10 border border-amber-300/20 rounded-lg px-2 py-1">réservé</span>
                                             </div>
@@ -2095,7 +2110,23 @@ export default function StockDashboard() {
                                     </p>
                                 )}
                             </div>
-                            <div className="col-span-2">
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Emplacement source</label>
+                                <select
+                                    value={effectiveWorkshopSourceLocation}
+                                    onChange={e => {
+                                        setWorkshopSourceLocation(e.target.value);
+                                        setWorkshopPreview(null);
+                                    }}
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700"
+                                >
+                                    {internalLocations.map(l => (
+                                        <option key={l.id} value={l.name}>{l.name}</option>
+                                    ))}
+                                </select>
+                                <p className="text-[10px] font-bold text-slate-400 mt-1">La réservation sera ancrée sur cet emplacement.</p>
+                            </div>
+                            <div>
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Fichiers atelier</label>
                                 <input
                                     type="file"
