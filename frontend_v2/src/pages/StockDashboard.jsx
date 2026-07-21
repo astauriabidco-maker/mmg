@@ -936,7 +936,7 @@ export default function StockDashboard() {
     });
 
     return (
-        <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex flex-col overflow-hidden bg-white border border-slate-200/80 rounded-2xl shadow-xl animate-fade-in relative">
+        <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
             <div className="px-6 py-4 shrink-0 border-b border-slate-200 bg-white">
                 <div className="flex flex-col gap-4">
                     <div className="flex flex-wrap items-center justify-between gap-4">
