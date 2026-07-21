@@ -670,7 +670,7 @@ export default function StockDashboard() {
         return (
             <div key={parentLoc.id} className="w-full">
                 <div 
-                    className={`group flex items-center justify-between py-2.5 px-3 cursor-pointer rounded-xl transition-all border-l-4 mb-1 ${isActive ? 'bg-blue-600/20 border-blue-500 text-white shadow-inner' : 'border-transparent hover:bg-white/5 text-slate-400 hover:text-slate-200'}`}
+                    className={`group flex items-center justify-between py-2.5 px-3 cursor-pointer rounded-xl transition-all border mb-1 ${isActive ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900'}`}
                     style={{ paddingLeft: `${depth * 16 + 12}px` }}
                     onClick={() => {
                         setActiveLocationId(parentLoc.id);
@@ -680,16 +680,16 @@ export default function StockDashboard() {
                     }}
                 >
                     <div className="flex items-center gap-3">
-                        {isInternal ? <FolderOpen className={`w-4 h-4 ${isActive ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'}`} /> : <Truck className="w-4 h-4 text-emerald-500" />}
+                        {isInternal ? <FolderOpen className={`w-4 h-4 ${isActive ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-600'}`} /> : <Truck className="w-4 h-4 text-emerald-500" />}
                         <span className={`text-sm ${isActive ? 'font-black' : 'font-bold'}`}>{parentLoc.name}</span>
                         {!isInternal && <span className="text-[9px] uppercase font-black bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-md border border-emerald-500/20">{parentLoc.usage}</span>}
                     </div>
                     {isAdmin && (
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button type="button" onClick={(e) => { e.stopPropagation(); setAddingSubLocTo(parentLoc.id); }} className="p-1.5 hover:bg-blue-500/20 rounded-lg text-slate-500 hover:text-blue-400 transition-colors">
+                            <button type="button" onClick={(e) => { e.stopPropagation(); setAddingSubLocTo(parentLoc.id); }} className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600 transition-colors">
                                 <Plus className="w-3.5 h-3.5" />
                             </button>
-                            <button type="button" onClick={(e) => handleDeleteLocation(parentLoc.id, e)} className="p-1.5 hover:bg-red-500/20 rounded-lg text-slate-500 hover:text-red-400 transition-colors">
+                            <button type="button" onClick={(e) => handleDeleteLocation(parentLoc.id, e)} className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600 transition-colors">
                                 <Trash2 className="w-3.5 h-3.5" />
                             </button>
                         </div>
@@ -709,7 +709,7 @@ export default function StockDashboard() {
                                     if (e.key === 'Escape') setAddingSubLocTo(null);
                                     if (e.key === 'Enter') handleAddSubLocation(e, parentLoc.id);
                                 }} 
-                                className="flex-1 text-sm p-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" 
+                                className="flex-1 text-sm p-2 bg-white border border-slate-200 rounded-lg text-slate-900 placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-500/30 transition-all" 
                                 placeholder="Nom sous-lieu... Entrée" 
                             />
                         </div>
@@ -936,205 +936,125 @@ export default function StockDashboard() {
     });
 
     return (
-        <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in relative">
-            
-            {/* LEFT SIDEBAR : NAVIGATION & LOCATIONS */}
-            <div className="w-[320px] bg-slate-900 border-r border-slate-800 flex flex-col items-stretch h-full text-slate-300 shadow-xl z-20 relative">
-                {/* Decorative glow */}
-                <div className="absolute top-0 left-0 w-full h-48 bg-blue-500/10 rounded-full blur-3xl -translate-y-1/2"></div>
-                <div className="p-6 border-b border-white/5 flex flex-col gap-4 relative z-10">
-                    <h3 className="font-black text-white flex items-center gap-3 tracking-tight text-xl">
-                        <Box className="text-blue-400 w-6 h-6"/> Inventaire & Stock
-                    </h3>
-                    
-                    <div className="relative">
-                        <Search className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-                        <input 
-                            type="text" 
-                            placeholder="Rechercher produit, réf..." 
-                            value={searchTerm}
-                            onChange={(e) => {
-                                setSearchTerm(e.target.value);
-                                if (currentMenu !== 'inventory') setCurrentMenu('inventory');
-                            }}
-                            className="w-full bg-slate-800/50 border border-slate-700 rounded-xl py-2.5 pl-10 pr-4 text-sm font-bold text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder-slate-500"
-                        />
-                    </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                    {/* VUES PRINCIPALES */}
-                    <div>
-                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-2">Vues Principales</div>
-                        <button 
-                            onClick={() => selectInventoryFocus('catalog')}
-                            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold transition-all text-sm ${currentMenu === 'inventory' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
-                        >
-                            <LayoutGrid className="w-4 h-4"/> Catalogue & Stock
-                        </button>
-                        <button 
-                            onClick={() => setCurrentMenu('audit')}
-                            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold transition-all text-sm mt-1 ${currentMenu === 'audit' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
-                        >
-                            <Layers className="w-4 h-4"/> Historique Mouvements
-                        </button>
-                        <button 
-                            onClick={() => setCurrentMenu('physical-inventory')}
-                            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold transition-all text-sm mt-1 ${currentMenu === 'physical-inventory' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
-                        >
-                            <ClipboardCheck className="w-4 h-4"/> Inventaire Physique
-                        </button>
-                        {isAdmin && (
-                            <button 
-                                onClick={() => setCurrentMenu('valuation')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold transition-all text-sm mt-1 ${currentMenu === 'valuation' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
-                            >
-                                <TrendingUp className="w-4 h-4"/> Valorisation Financière
-                            </button>
-                        )}
-                    </div>
-
-                    {/* ACTIONS RAPIDES */}
-                    <div>
-                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-2">Actions Rapides</div>
-                        <div className="grid grid-cols-2 gap-2">
-                            {isManager && (
-                                <>
-                                    <button onClick={() => openNewProductModal('stockable')} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
-                                        <Plus className="w-5 h-5 text-blue-400"/>
-                                        <span className="text-[10px] font-bold">Nv. Article</span>
-                                    </button>
-                                    <button onClick={() => openNewProductModal('service')} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
-                                        <FileEdit className="w-5 h-5 text-emerald-400"/>
-                                        <span className="text-[10px] font-bold">Nv. Prestation</span>
-                                    </button>
-                                    <button onClick={openReceptionModal} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
-                                        <Truck className="w-5 h-5 text-emerald-400"/>
-                                        <span className="text-[10px] font-bold">Entrée Stock</span>
-                                    </button>
-                                    <button onClick={() => setShowImportModal(true)} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
-                                        <FileText className="w-5 h-5 text-indigo-400"/>
-                                        <span className="text-[10px] font-bold">Import</span>
-                                    </button>
-                                    <button onClick={() => setShowWorkshopDebitModal(true)} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
-                                        <ArrowRight className="w-5 h-5 text-amber-400"/>
-                                        <span className="text-[10px] font-bold">Débit Atelier</span>
-                                        {reservations.length > 0 && <span className="text-[9px] font-black text-amber-300">{reservations.length} réservée(s)</span>}
-                                    </button>
-                                </>
-                            )}
-                            <button onClick={handleExportExcel} className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 text-slate-300 transition-all">
-                                <Download className="w-5 h-5 text-orange-400"/>
-                                <span className="text-[10px] font-bold">Export</span>
-                            </button>
+        <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex flex-col overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in relative">
+            <div className="bg-slate-900 text-white px-8 py-6 shrink-0 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-72 h-72 bg-blue-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/4"></div>
+                <div className="relative z-10 flex flex-col gap-5">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div>
+                            <h3 className="font-black flex items-center gap-3 tracking-tight text-2xl">
+                                <Box className="text-blue-400 w-6 h-6"/> Inventaire & Stock
+                            </h3>
+                            <p className="text-sm font-bold text-slate-400 mt-1">
+                                Catalogue, stock réel, mouvements et inventaires physiques dans un seul espace.
+                            </p>
                         </div>
+
+                        <div className="relative w-full max-w-md">
+                            <Search className="w-4 h-4 text-slate-500 absolute left-4 top-3.5" />
+                            <input
+                                type="text"
+                                placeholder="Rechercher produit, référence, fournisseur..."
+                                value={searchTerm}
+                                onChange={(e) => {
+                                    setSearchTerm(e.target.value);
+                                    if (currentMenu !== 'inventory') setCurrentMenu('inventory');
+                                }}
+                                className="w-full bg-white/10 border border-white/10 rounded-2xl py-3 pl-11 pr-4 text-sm font-bold text-white outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                        {isManager && (
+                            <>
+                                <button onClick={() => openNewProductModal('stockable')} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black shadow-lg shadow-blue-500/20">
+                                    <Plus className="w-4 h-4"/> Article
+                                </button>
+                                <button onClick={() => openNewProductModal('service')} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black">
+                                    <FileEdit className="w-4 h-4"/> Prestation
+                                </button>
+                                <button onClick={openReceptionModal} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white text-sm font-black">
+                                    <Truck className="w-4 h-4 text-emerald-300"/> Entrée stock
+                                </button>
+                                <button onClick={() => setShowImportModal(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white text-sm font-black">
+                                    <FileText className="w-4 h-4 text-indigo-300"/> Import
+                                </button>
+                                <button onClick={() => setShowWorkshopDebitModal(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-300/20 text-amber-100 text-sm font-black">
+                                    <ArrowRight className="w-4 h-4"/> Débit atelier
+                                    {reservations.length > 0 && <span className="rounded-full bg-amber-400 text-slate-950 px-2 py-0.5 text-[10px]">{reservations.length}</span>}
+                                </button>
+                            </>
+                        )}
+                        <button onClick={handleExportExcel} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white text-sm font-black">
+                            <Download className="w-4 h-4 text-orange-300"/> Export
+                        </button>
                     </div>
 
                     {isManager && reservations.length > 0 && (
-                        <div>
-                            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-2">Réservations Atelier</div>
-                            <div className="space-y-2">
-                                {reservations.map(reservation => {
-                                    const totalReserved = reservation.lines?.reduce((sum, line) => sum + (line.reserved_quantity || 0), 0) || 0;
-                                    return (
-                                        <div key={reservation.id} className="rounded-xl bg-amber-500/10 border border-amber-400/20 p-3">
-                                            <div className="flex items-start justify-between gap-2">
-                                                <div className="min-w-0">
-                                                    <p className="text-xs font-black text-amber-100 truncate">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
-                                                    <p className="text-[10px] font-bold text-amber-300/80">{reservation.lines?.length || 0} ligne(s) - {totalReserved.toLocaleString('fr-FR')} réservé</p>
-                                                    <p className="text-[10px] font-bold text-amber-300/60 flex items-center gap-1 mt-0.5">
-                                                        <MapPin className="w-3 h-3" />
-                                                        {locations.find(l => l.id === reservation.location_id)?.name || '—'}
-                                                    </p>
-                                                </div>
-                                                <span className="text-[9px] font-black uppercase text-amber-200 bg-amber-400/10 border border-amber-300/20 rounded-lg px-2 py-1">réservé</span>
+                        <div className="flex gap-3 overflow-x-auto pb-1">
+                            {reservations.map(reservation => {
+                                const totalReserved = reservation.lines?.reduce((sum, line) => sum + (line.reserved_quantity || 0), 0) || 0;
+                                return (
+                                    <div key={reservation.id} className="min-w-[280px] rounded-2xl bg-amber-400/10 border border-amber-300/20 p-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <p className="text-xs font-black text-amber-50 truncate">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
+                                                <p className="text-[10px] font-bold text-amber-200/80">{reservation.lines?.length || 0} ligne(s) - {totalReserved.toLocaleString('fr-FR')} réservé</p>
                                             </div>
-                                            <div className="grid grid-cols-2 gap-2 mt-3">
-                                                <button
-                                                    onClick={() => consumeWorkshopReservation(reservation)}
-                                                    disabled={reservationActionId === reservation.id}
-                                                    className="py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 text-white text-[10px] font-black"
-                                                >
-                                                    Débit réel
-                                                </button>
-                                                <button
-                                                    onClick={() => cancelWorkshopReservation(reservation)}
-                                                    disabled={reservationActionId === reservation.id}
-                                                    className="py-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:bg-slate-700 text-slate-200 text-[10px] font-black border border-slate-700"
-                                                >
-                                                    Annuler
-                                                </button>
-                                            </div>
+                                            <span className="text-[9px] font-black uppercase text-amber-950 bg-amber-300 rounded-lg px-2 py-1">réservé</span>
                                         </div>
-                                    );
-                                })}
-                            </div>
+                                        <div className="grid grid-cols-2 gap-2 mt-3">
+                                            <button onClick={() => consumeWorkshopReservation(reservation)} disabled={reservationActionId === reservation.id} className="py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 text-white text-[10px] font-black">
+                                                Débit réel
+                                            </button>
+                                            <button onClick={() => cancelWorkshopReservation(reservation)} disabled={reservationActionId === reservation.id} className="py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 disabled:bg-slate-700 text-slate-200 text-[10px] font-black border border-white/10">
+                                                Annuler
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
-                    )}
-
-                    {/* EMPLACEMENTS */}
-                    {currentMenu === 'inventory' && (
-                    <div className="pt-2 border-t border-white/5">
-                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-3 flex justify-between items-center">
-                            Filtres par Emplacements
-                            {isAdmin && (
-                                <button onClick={(e) => setAddingSubLocTo('root')} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors" title="Créer rapidement une zone">
-                                    <Plus className="w-3.5 h-3.5"/>
-                                </button>
-                            )}
-                        </div>
-
-                        {isAdmin && (
-                            <button
-                                onClick={() => setShowLocationManagerModal(true)}
-                                className="w-full mb-3 px-3 py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white font-black text-sm flex items-center justify-center gap-2 transition-all"
-                            >
-                                <MapPin className="w-4 h-4" />
-                                Gérer les zones
-                            </button>
-                        )}
-
-                        <div 
-                            onClick={() => {
-                                setActiveLocationId('global');
-                                setInventoryFocus('catalog');
-                            }}
-                            className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border ${activeLocationId === 'global' ? 'bg-blue-900/40 border-blue-500/50 text-blue-400 shadow-inner' : 'border-transparent text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
-                        >
-                            <MapPin className={`w-5 h-5 ${activeLocationId === 'global' ? 'text-blue-400' : 'text-slate-500'}`} />
-                            <span className="font-black text-sm tracking-wide">Vue Globale (Tous Stocks)</span>
-                        </div>
-                        
-                        <div className="space-y-0.5 mt-2">
-                            {addingSubLocTo === 'root' && (
-                                <div className="mb-2 px-2">
-                                    <input 
-                                        autoFocus 
-                                        value={newSubLocName} 
-                                        onChange={e=>setNewSubLocName(e.target.value)} 
-                                        onBlur={() => setAddingSubLocTo(null)} 
-                                        onKeyDown={e => {
-                                            if (e.key === 'Escape') setAddingSubLocTo(null);
-                                            if (e.key === 'Enter') handleAddSubLocation(e, 'root');
-                                        }} 
-                                        className="w-full text-sm p-2 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500 transition-all" 
-                                        placeholder="Nom Entrepôt + Entrée" 
-                                    />
-                                </div>
-                            )}
-                            {locations.filter(l => !l.parent_id).map(rootLoc => renderLocationTree(rootLoc))}
-                        </div>
-                    </div>
                     )}
                 </div>
             </div>
 
             {/* MAIN CONTENT : GRID / AUDIT */}
-            <div className="flex-1 flex flex-col bg-slate-50/50 relative">
+            <div className="flex-1 flex flex-col bg-slate-50/50 relative min-h-0">
                 
                 {/* TOOLBAR */}
-                <div className="h-20 bg-white/60 backdrop-blur-xl border-b border-slate-200/60 flex items-center justify-between px-8 shrink-0 z-10">
-                    <div className="flex items-center gap-3">
+                <div className="bg-white/70 backdrop-blur-xl border-b border-slate-200/60 flex flex-wrap items-center justify-between gap-4 px-8 py-4 shrink-0 z-10">
+                    <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm">
+                            <button
+                                onClick={() => selectInventoryFocus('catalog')}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'inventory' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <LayoutGrid className="w-4 h-4"/> Catalogue & stock
+                            </button>
+                            <button
+                                onClick={() => setCurrentMenu('audit')}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'audit' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <Layers className="w-4 h-4"/> Mouvements
+                            </button>
+                            <button
+                                onClick={() => setCurrentMenu('physical-inventory')}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'physical-inventory' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <ClipboardCheck className="w-4 h-4"/> Inventaire physique
+                            </button>
+                            {isAdmin && (
+                                <button
+                                    onClick={() => setCurrentMenu('valuation')}
+                                    className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'valuation' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                                >
+                                    <TrendingUp className="w-4 h-4"/> Valorisation
+                                </button>
+                            )}
+                        </div>
+
                         {currentMenu === 'inventory' && (
                             <>
                                 <div className="flex items-center bg-slate-100/80 rounded-xl p-1 border border-slate-200/50 shadow-inner">
@@ -1174,6 +1094,71 @@ export default function StockDashboard() {
                         </button>
                     </div>
                 </div>
+
+                {currentMenu === 'inventory' && (
+                    <div className="px-8 py-4 bg-white/50 border-b border-slate-200/60 shrink-0">
+                        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                            <div>
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Filtrer par emplacement</p>
+                                <p className="text-xs font-bold text-slate-500">Les emplacements sont des filtres de stock, pas une deuxième navigation.</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {isAdmin && (
+                                    <>
+                                        <button
+                                            type="button"
+                                            onClick={() => setAddingSubLocTo('root')}
+                                            className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-black inline-flex items-center gap-1"
+                                            title="Créer rapidement une zone"
+                                        >
+                                            <Plus className="w-3.5 h-3.5" />
+                                            Zone
+                                        </button>
+                                        <button
+                                            onClick={() => setShowLocationManagerModal(true)}
+                                            className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black inline-flex items-center gap-2"
+                                        >
+                                            <MapPin className="w-4 h-4" />
+                                            Gérer les zones
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 max-h-44 overflow-y-auto pr-1">
+                            <div
+                                onClick={() => {
+                                    setActiveLocationId('global');
+                                    setInventoryFocus('catalog');
+                                }}
+                                className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border ${activeLocationId === 'global' ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+                            >
+                                <MapPin className={`w-5 h-5 ${activeLocationId === 'global' ? 'text-blue-600' : 'text-slate-400'}`} />
+                                <span className="font-black text-sm tracking-wide">Vue globale</span>
+                            </div>
+
+                            {addingSubLocTo === 'root' && (
+                                <div className="p-2 rounded-xl border border-blue-200 bg-blue-50">
+                                    <input
+                                        autoFocus
+                                        value={newSubLocName}
+                                        onChange={e=>setNewSubLocName(e.target.value)}
+                                        onBlur={() => setAddingSubLocTo(null)}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Escape') setAddingSubLocTo(null);
+                                            if (e.key === 'Enter') handleAddSubLocation(e, 'root');
+                                        }}
+                                        className="w-full text-sm p-2 bg-white border border-blue-200 rounded-xl text-slate-900 placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-500/30 transition-all"
+                                        placeholder="Nom Entrepôt + Entrée"
+                                    />
+                                </div>
+                            )}
+
+                            {locations.filter(l => !l.parent_id).map(rootLoc => renderLocationTree(rootLoc))}
+                        </div>
+                    </div>
+                )}
 
                 {currentMenu === 'audit' ? (
                     <div className="flex-1 overflow-y-auto w-full relative p-6">
