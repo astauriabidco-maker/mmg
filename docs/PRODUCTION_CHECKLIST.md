@@ -34,7 +34,18 @@ Watcher fichiers (uniquement si le pipeline d'import Proges est activé) :
 Intégrations optionnelles (laisser vide tant que non utilisées) :
 `OPENAI_API_KEY` (fonctions IA), `WHATSAPP_VERIFY_TOKEN` /
 `WHATSAPP_ACCESS_TOKEN` / `WHATSAPP_PHONE_ID` / `MANAGER_PHONE` (notifications
-WhatsApp), `SMTP_SERVER` / `SMTP_PORT`.
+WhatsApp), `SMTP_SERVER` / `SMTP_PORT` (watcher fichiers / QR).
+
+Email transactionnel (confirmation de devis signé — `backend/core/events.py`) :
+
+| Variable | Rôle | Défaut / repli |
+|---|---|---|
+| `SMTP_HOST` | Hôte du serveur SMTP | **Obligatoire** pour activer l'envoi ; absent → emails ignorés (warning log) |
+| `SMTP_PORT` | Port SMTP | 587 |
+| `SMTP_USER` | Identifiant d'authentification | Vide → pas de `login` |
+| `SMTP_PASSWORD` | Mot de passe SMTP | Vide |
+| `SMTP_FROM` | Adresse d'expédition | Repli sur `SMTP_USER` ; **obligatoire** (via l'une des deux) |
+| `SMTP_USE_TLS` | STARTTLS après connexion | `true` (mettre `false` pour un relais local non chiffré) |
 
 ## 2. Migrations de schéma — automatiques au déploiement
 
@@ -124,9 +135,12 @@ Ne pas tout activer le jour J. Ordre conseillé :
    sans elles les notifications sont simplement journalisées.
 5. **IA** : nécessite `OPENAI_API_KEY` ; sans clé, les fonctions IA sont
    inactives.
-6. **Email SMTP** : ⚠️ **non implémenté** — `_task_send_welcome_email` dans
-   `backend/core/events.py` est une simulation (log seul). Ne pas promettre
-   d'emails automatiques tant qu'un envoi SMTP réel n'a pas été développé.
+6. **Email SMTP** : emails transactionnels réels (confirmation de devis signé,
+   portail client et passage « Accepté »). Nécessite `SMTP_HOST` et
+   `SMTP_FROM` (voir §1) ; **sans ces variables, l'envoi est ignoré proprement**
+   (warning dans les logs, jamais d'erreur côté flux métier). L'écran
+   « Paramètres plateforme → Tester SMTP » permet de valider les identifiants
+   avant de les poser dans `.env`.
 
 ## 7. Vérifications finales avant ouverture
 

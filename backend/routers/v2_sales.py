@@ -969,16 +969,25 @@ def update_sale_status(
             raise HTTPException(status_code=400, detail=str(exc))
     db.commit()
     
-    # --- INTERNAL AUTOMATION TRIGGER ---
-    if status == "ACCEPTED":
-        EventBus.on_quote_accepted(order.id, order.client_name, _sale_total_amount(order), background_tasks)
-    
     # Generate portal link
     portal_link = None
     if order.signature_token:
         frontend_base_url = os.environ.get("FRONTEND_BASE_URL", "http://localhost:5000").rstrip("/")
         portal_link = f"{frontend_base_url}/portal/sign/{order.signature_token}"
-        
+
+    # --- INTERNAL AUTOMATION TRIGGER ---
+    if status == "ACCEPTED":
+        amount_ttc = _sale_total_amount(order) * (1 + _sale_tax_rate(order) / 100)
+        EventBus.on_quote_accepted(
+            order.id,
+            order.client_name,
+            amount_ttc,
+            background_tasks,
+            client_email=order.client_email,
+            reference=order.reference,
+            portal_link=portal_link,
+        )
+
     return {
         "message": f"Statut mis à jour : {status}",
         "portal_link": portal_link,
@@ -1024,7 +1033,7 @@ def get_quote_by_token(token: str, db: Session = Depends(get_db)):
 
 from fastapi import Request
 @router.post("/portal/{token}/sign")
-def sign_quote(token: str, request: Request, db: Session = Depends(get_db)):
+def sign_quote(token: str, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     order = (
         db.query(models.SaleOrder)
         .options(
@@ -1062,6 +1071,12 @@ def sign_quote(token: str, request: Request, db: Session = Depends(get_db)):
     invoice = _create_signature_invoice(db, order)
     
     db.commit()
+
+    # Email de confirmation au client (best-effort : jamais bloquant pour la signature)
+    from ..core.events import EventBus
+    amount_ttc = _sale_total_amount(order) * (1 + _sale_tax_rate(order) / 100)
+    EventBus.on_quote_signed(order.client_email, order.client_name, order.reference, amount_ttc, background_tasks)
+
     invoice_label = "facture finale" if invoice.invoice_type == "FINAL" else "facture d'acompte"
     return {
         "message": f"Devis signé avec succès et {invoice_label} générée.",

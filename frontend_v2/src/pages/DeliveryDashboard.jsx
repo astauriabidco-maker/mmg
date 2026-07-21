@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Truck, MapPin, Package, Plus, Calendar, User, Search, CheckCircle, FileText } from 'lucide-react';
-import api from '../services/api';
+import api, { API_BASE_URL } from '../services/api';
 
 export default function DeliveryDashboard() {
     const [routes, setRoutes] = useState([]);
@@ -183,7 +183,20 @@ export default function DeliveryDashboard() {
                                                 <div className="flex items-center gap-3">
                                                     <span className="text-xs text-slate-500 truncate max-w-[200px]">{note.delivery_address}</span>
                                                     {note.status === "DELIVERED" ? (
-                                                        <CheckCircle className="w-5 h-5 text-emerald-500" />
+                                                        <span className="flex items-center gap-2">
+                                                            {note.signature_path && (
+                                                                <a
+                                                                    href={`${API_BASE_URL}/${note.signature_path}`}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    className="text-[10px] font-black uppercase text-emerald-600 hover:text-emerald-800 underline"
+                                                                    title="Voir la signature client"
+                                                                >
+                                                                    Signature
+                                                                </a>
+                                                            )}
+                                                            <CheckCircle className="w-5 h-5 text-emerald-500" />
+                                                        </span>
                                                     ) : (
                                                         <span className="w-2 h-2 rounded-full bg-slate-300"></span>
                                                     )}

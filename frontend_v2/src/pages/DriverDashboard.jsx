@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Truck, MapPin, Phone, CheckCircle, Package, ArrowLeft, PenTool } from 'lucide-react';
-import api from '../services/api';
+import api, { API_BASE_URL } from '../services/api';
 import SignaturePad from 'react-signature-canvas';
 
 export default function DriverDashboard() {
@@ -41,7 +41,7 @@ export default function DriverDashboard() {
         
         try {
             await api.post(`/v2/logistics/notes/${selectedNote.id}/deliver`, {
-                signature: signatureBase64
+                signature_image: signatureBase64
             });
             setShowSignatureModal(false);
             setSelectedNote(null);
@@ -160,6 +160,18 @@ export default function DriverDashboard() {
                                 {note.contact_phone && (
                                     <a href={`tel:${note.contact_phone}`} className="inline-flex items-center gap-2 text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg text-sm font-bold mb-4">
                                         <Phone className="w-4 h-4"/> Appeler le client
+                                    </a>
+                                )}
+
+                                {note.status === "DELIVERED" && note.signature_path && (
+                                    <a
+                                        href={`${API_BASE_URL}/${note.signature_path}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="block mt-2 p-2 bg-white border border-emerald-200 rounded-xl"
+                                    >
+                                        <p className="text-[10px] font-black uppercase text-slate-400 mb-1">Signature client</p>
+                                        <img src={`${API_BASE_URL}/${note.signature_path}`} alt="Signature client" className="max-h-20 mx-auto" />
                                     </a>
                                 )}
 
