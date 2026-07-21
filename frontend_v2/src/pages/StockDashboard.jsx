@@ -936,22 +936,21 @@ export default function StockDashboard() {
     });
 
     return (
-        <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex flex-col overflow-hidden bg-slate-50/50 border border-slate-200/60 rounded-[2rem] shadow-2xl animate-fade-in relative">
-            <div className="bg-slate-900 text-white px-8 py-6 shrink-0 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-72 h-72 bg-blue-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/4"></div>
-                <div className="relative z-10 flex flex-col gap-5">
-                    <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="max-w-[1600px] h-[calc(100vh-100px)] mx-auto font-sans flex flex-col overflow-hidden bg-white border border-slate-200/80 rounded-2xl shadow-xl animate-fade-in relative">
+            <div className="px-6 py-4 shrink-0 border-b border-slate-200 bg-white">
+                <div className="flex flex-col gap-4">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
                         <div>
-                            <h3 className="font-black flex items-center gap-3 tracking-tight text-2xl">
-                                <Box className="text-blue-400 w-6 h-6"/> Inventaire & Stock
+                            <h3 className="font-black flex items-center gap-3 tracking-tight text-xl text-slate-950">
+                                <Box className="text-blue-600 w-5 h-5"/> Inventaire & Stock
                             </h3>
-                            <p className="text-sm font-bold text-slate-400 mt-1">
+                            <p className="text-sm font-bold text-slate-500 mt-0.5">
                                 Catalogue, stock réel, mouvements et inventaires physiques dans un seul espace.
                             </p>
                         </div>
 
                         <div className="relative w-full max-w-md">
-                            <Search className="w-4 h-4 text-slate-500 absolute left-4 top-3.5" />
+                            <Search className="w-4 h-4 text-slate-400 absolute left-4 top-3.5" />
                             <input
                                 type="text"
                                 placeholder="Rechercher produit, référence, fournisseur..."
@@ -960,7 +959,7 @@ export default function StockDashboard() {
                                     setSearchTerm(e.target.value);
                                     if (currentMenu !== 'inventory') setCurrentMenu('inventory');
                                 }}
-                                className="w-full bg-white/10 border border-white/10 rounded-2xl py-3 pl-11 pr-4 text-sm font-bold text-white outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-11 pr-4 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500/30 placeholder-slate-400"
                             />
                         </div>
                     </div>
@@ -968,26 +967,26 @@ export default function StockDashboard() {
                     <div className="flex flex-wrap items-center gap-2">
                         {isManager && (
                             <>
-                                <button onClick={() => openNewProductModal('stockable')} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black shadow-lg shadow-blue-500/20">
+                                <button onClick={() => openNewProductModal('stockable')} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black shadow-sm">
                                     <Plus className="w-4 h-4"/> Article
                                 </button>
-                                <button onClick={() => openNewProductModal('service')} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black">
+                                <button onClick={() => openNewProductModal('service')} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-sm">
                                     <FileEdit className="w-4 h-4"/> Prestation
                                 </button>
-                                <button onClick={openReceptionModal} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white text-sm font-black">
-                                    <Truck className="w-4 h-4 text-emerald-300"/> Entrée stock
+                                <button onClick={openReceptionModal} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-black shadow-sm">
+                                    <Truck className="w-4 h-4 text-emerald-600"/> Entrée stock
                                 </button>
-                                <button onClick={() => setShowImportModal(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white text-sm font-black">
-                                    <FileText className="w-4 h-4 text-indigo-300"/> Import
+                                <button onClick={() => setShowImportModal(true)} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-black shadow-sm">
+                                    <FileText className="w-4 h-4 text-indigo-600"/> Import
                                 </button>
-                                <button onClick={() => setShowWorkshopDebitModal(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-300/20 text-amber-100 text-sm font-black">
+                                <button onClick={() => setShowWorkshopDebitModal(true)} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-sm font-black shadow-sm">
                                     <ArrowRight className="w-4 h-4"/> Débit atelier
-                                    {reservations.length > 0 && <span className="rounded-full bg-amber-400 text-slate-950 px-2 py-0.5 text-[10px]">{reservations.length}</span>}
+                                    {reservations.length > 0 && <span className="rounded-full bg-amber-500 text-white px-2 py-0.5 text-[10px]">{reservations.length}</span>}
                                 </button>
                             </>
                         )}
-                        <button onClick={handleExportExcel} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white text-sm font-black">
-                            <Download className="w-4 h-4 text-orange-300"/> Export
+                        <button onClick={handleExportExcel} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-black shadow-sm">
+                            <Download className="w-4 h-4 text-orange-600"/> Export
                         </button>
                     </div>
 
@@ -996,19 +995,19 @@ export default function StockDashboard() {
                             {reservations.map(reservation => {
                                 const totalReserved = reservation.lines?.reduce((sum, line) => sum + (line.reserved_quantity || 0), 0) || 0;
                                 return (
-                                    <div key={reservation.id} className="min-w-[280px] rounded-2xl bg-amber-400/10 border border-amber-300/20 p-3">
+                                    <div key={reservation.id} className="min-w-[280px] rounded-xl bg-amber-50 border border-amber-200 p-3">
                                         <div className="flex items-start justify-between gap-3">
                                             <div className="min-w-0">
-                                                <p className="text-xs font-black text-amber-50 truncate">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
-                                                <p className="text-[10px] font-bold text-amber-200/80">{reservation.lines?.length || 0} ligne(s) - {totalReserved.toLocaleString('fr-FR')} réservé</p>
+                                                <p className="text-xs font-black text-amber-950 truncate">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
+                                                <p className="text-[10px] font-bold text-amber-700">{reservation.lines?.length || 0} ligne(s) - {totalReserved.toLocaleString('fr-FR')} réservé</p>
                                             </div>
-                                            <span className="text-[9px] font-black uppercase text-amber-950 bg-amber-300 rounded-lg px-2 py-1">réservé</span>
+                                            <span className="text-[9px] font-black uppercase text-amber-900 bg-amber-200 rounded-lg px-2 py-1">réservé</span>
                                         </div>
                                         <div className="grid grid-cols-2 gap-2 mt-3">
                                             <button onClick={() => consumeWorkshopReservation(reservation)} disabled={reservationActionId === reservation.id} className="py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 text-white text-[10px] font-black">
                                                 Débit réel
                                             </button>
-                                            <button onClick={() => cancelWorkshopReservation(reservation)} disabled={reservationActionId === reservation.id} className="py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 disabled:bg-slate-700 text-slate-200 text-[10px] font-black border border-white/10">
+                                            <button onClick={() => cancelWorkshopReservation(reservation)} disabled={reservationActionId === reservation.id} className="py-2 rounded-lg bg-white hover:bg-slate-50 disabled:bg-slate-100 text-slate-700 text-[10px] font-black border border-slate-200">
                                                 Annuler
                                             </button>
                                         </div>
@@ -1021,12 +1020,12 @@ export default function StockDashboard() {
             </div>
 
             {/* MAIN CONTENT : GRID / AUDIT */}
-            <div className="flex-1 flex flex-col bg-slate-50/50 relative min-h-0">
+            <div className="flex-1 flex flex-col bg-white relative min-h-0">
                 
                 {/* TOOLBAR */}
-                <div className="bg-white/70 backdrop-blur-xl border-b border-slate-200/60 flex flex-wrap items-center justify-between gap-4 px-8 py-4 shrink-0 z-10">
+                <div className="bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-4 px-6 py-3 shrink-0 z-10">
                     <div className="flex flex-wrap items-center gap-3">
-                        <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm">
+                        <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1">
                             <button
                                 onClick={() => selectInventoryFocus('catalog')}
                                 className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'inventory' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
@@ -1057,7 +1056,7 @@ export default function StockDashboard() {
 
                         {currentMenu === 'inventory' && (
                             <>
-                                <div className="flex items-center bg-slate-100/80 rounded-xl p-1 border border-slate-200/50 shadow-inner">
+                                <div className="flex items-center bg-slate-50 rounded-xl p-1 border border-slate-200">
                                     <button onClick={() => setViewMode('list')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'list' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
                                         <List className="w-4 h-4"/>
                                     </button>
@@ -1065,7 +1064,7 @@ export default function StockDashboard() {
                                         <LayoutGrid className="w-4 h-4"/>
                                     </button>
                                 </div>
-                                <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm">
+                                <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1">
                                     <button onClick={() => selectInventoryFocus('catalog')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${inventoryFocus === 'catalog' && !showDraftOnly ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
                                         <Package className="w-4 h-4"/> Catalogue
                                     </button>
@@ -1096,11 +1095,10 @@ export default function StockDashboard() {
                 </div>
 
                 {currentMenu === 'inventory' && (
-                    <div className="px-8 py-4 bg-white/50 border-b border-slate-200/60 shrink-0">
-                        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                    <div className="px-6 py-3 bg-white border-b border-slate-200 shrink-0">
+                        <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
                             <div>
                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Filtrer par emplacement</p>
-                                <p className="text-xs font-bold text-slate-500">Les emplacements sont des filtres de stock, pas une deuxième navigation.</p>
                             </div>
                             <div className="flex items-center gap-2">
                                 {isAdmin && (
@@ -1126,7 +1124,7 @@ export default function StockDashboard() {
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 max-h-44 overflow-y-auto pr-1">
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-2 max-h-32 overflow-y-auto pr-1">
                             <div
                                 onClick={() => {
                                     setActiveLocationId('global');
@@ -1182,9 +1180,9 @@ export default function StockDashboard() {
                 ) : (
                     <>
                         {/* HEADER INFO */}
-                <div className="px-8 py-6 bg-white/40 border-b border-slate-200/60 shrink-0 flex justify-between items-start">
+                <div className="px-6 py-4 bg-white border-b border-slate-200 shrink-0 flex flex-wrap justify-between items-center gap-4">
                     <div>
-                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
+                        <h2 className="text-xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
                             {inventoryTitle}
                         </h2>
                         <p className="text-sm font-bold text-slate-500 mt-1">
@@ -1192,12 +1190,11 @@ export default function StockDashboard() {
                         </p>
                     </div>
 
-                    <div className="flex gap-4">
+                    <div className="flex flex-wrap gap-2">
                         {activeLocationId === 'global' && (
-                            <div className="bg-slate-900 text-white px-6 py-3 rounded-2xl flex flex-col justify-center shadow-xl shadow-slate-900/20 border border-slate-800 relative overflow-hidden">
-                                <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/20 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
-                                <span className="text-[10px] uppercase font-black tracking-widest opacity-60 text-blue-200">Valorisation du Stock</span>
-                                <span className="text-2xl font-black tracking-tight">{totalValuation.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
+                            <div className="px-4 py-2 rounded-xl border border-slate-200 bg-slate-50 flex items-center gap-3">
+                                <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">Valorisation</span>
+                                <span className="text-lg font-black text-slate-950">{totalValuation.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
                             </div>
                         )}
                         {(showLowStockOnly || showDraftOnly) && (
@@ -1208,7 +1205,7 @@ export default function StockDashboard() {
                                     setInventoryFocus('catalog');
                                     setSearchTerm('');
                                 }}
-                                className="px-4 py-3 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 font-black text-xs uppercase tracking-widest shadow-sm"
+                                className="px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 font-black text-xs uppercase tracking-widest"
                             >
                                 Tous
                             </button>
@@ -1220,10 +1217,10 @@ export default function StockDashboard() {
                                 setInventoryFocus('stock');
                                 setSearchTerm('');
                             }}
-                            className={`px-5 py-3 rounded-2xl border flex flex-col justify-center transition-all ${showLowStockOnly ? 'bg-red-600 border-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-500/20' : totalLowStockCount > 0 ? 'bg-white border-red-200 hover:bg-red-50 text-red-600 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500 shadow-sm'}`}
+                            className={`px-4 py-2 rounded-xl border inline-flex items-center gap-2 transition-all ${showLowStockOnly ? 'bg-red-600 border-red-600 hover:bg-red-500 text-white' : totalLowStockCount > 0 ? 'bg-white border-red-200 hover:bg-red-50 text-red-600' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500'}`}
                         >
                             <span className="text-[10px] uppercase font-black tracking-widest opacity-70">{showLowStockOnly ? 'Filtre actif' : 'Alertes Rupture'}</span>
-                            <span className="text-xl font-black tracking-tight">{totalLowStockCount} variante(s)</span>
+                            <span className="text-lg font-black tracking-tight">{totalLowStockCount}</span>
                         </button>
                         <button 
                             onClick={() => {
@@ -1234,16 +1231,16 @@ export default function StockDashboard() {
                                 setSearchTerm('');
                                 if (nextDraftState) setActiveLocationId('global');
                             }}
-                            className={`px-5 py-3 rounded-2xl border flex flex-col justify-center transition-all ${showDraftOnly ? 'bg-amber-500 border-amber-500 hover:bg-amber-400 text-white shadow-lg shadow-amber-500/20' : totalDraftCount > 0 ? 'bg-white border-amber-200 hover:bg-amber-50 text-amber-700 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500 shadow-sm'}`}
+                            className={`px-4 py-2 rounded-xl border inline-flex items-center gap-2 transition-all ${showDraftOnly ? 'bg-amber-500 border-amber-500 hover:bg-amber-400 text-white' : totalDraftCount > 0 ? 'bg-white border-amber-200 hover:bg-amber-50 text-amber-700' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500'}`}
                         >
                             <span className="text-[10px] uppercase font-black tracking-widest opacity-70">{showDraftOnly ? 'Filtre actif' : 'Brouillons catalogue'}</span>
-                            <span className="text-xl font-black tracking-tight">{totalDraftCount} article(s)</span>
+                            <span className="text-lg font-black tracking-tight">{totalDraftCount}</span>
                         </button>
                     </div>
                 </div>
 
                 {/* THE GRID / LIST */}
-                <div className="flex-1 overflow-y-auto w-full relative p-6">
+                <div className="flex-1 overflow-y-auto w-full relative p-4 bg-white">
                     {groupedData.length === 0 && (
                         <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-200 rounded-3xl m-6">
                             <Box className="w-12 h-12 text-slate-300 mb-4" />
