@@ -18,8 +18,13 @@ COPY backend ./backend
 COPY scripts ./scripts
 COPY init_db.py ./init_db.py
 
-RUN mkdir -p /data /app/uploads
+RUN mkdir -p /data /app/uploads \
+    && chmod +x scripts/docker-entrypoint.sh
 
 EXPOSE 7000
 
+# L'entrypoint applique `alembic upgrade head` (source de vérité du schéma en
+# prod) puis exec la commande ci-dessous. Si la migration échoue, le conteneur
+# ne démarre pas : comportement voulu (cf. scripts/docker-entrypoint.sh).
+ENTRYPOINT ["scripts/docker-entrypoint.sh"]
 CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "7000"]

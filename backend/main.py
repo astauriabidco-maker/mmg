@@ -169,14 +169,30 @@ def create_order(
 # --- AUTH ---
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from .core import security
+from .core.rate_limit import login_rate_limiter
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 @app.post("/token")
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db)):
+async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db)):
+    # Rate limiting anti force brute (PIN à 4 chiffres) : compteur par
+    # (IP client, username), 5 échecs -> blocage 10 min (429), remise à zéro
+    # au succès. Voir backend/core/rate_limit.py pour la limite multi-instance.
+    client_ip = request.client.host if request.client else "unknown"
+    rate_key = (client_ip, form_data.username)
+    blocked_for = login_rate_limiter.check_blocked(rate_key)
+    if blocked_for > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Trop de tentatives de connexion échouées. Réessayez dans {blocked_for // 60 + 1} minute(s).",
+            headers={"Retry-After": str(blocked_for)},
+        )
+
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
     if not user or not security.verify_password(form_data.password, user.pin_hash):
+        login_rate_limiter.record_failure(rate_key)
         raise HTTPException(status_code=400, detail="Incorrect username or password")
+    login_rate_limiter.reset(rate_key)
     permissions = ["*"]
     if user.role not in ["ADMIN", "SUPER_ADMIN"]:
         role = db.query(models.Role).filter(models.Role.name == user.role).first()

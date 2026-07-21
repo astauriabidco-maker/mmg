@@ -4,7 +4,11 @@ from passlib.context import CryptContext
 import os
 
 # Init DB
-models.Base.metadata.create_all(bind=engine)
+# Même règle que backend/main.py : create_all est un filet de sécurité en
+# développement uniquement. En production, Alembic est la seule source de
+# vérité du schéma (appliquée par scripts/docker-entrypoint.sh avant ce script).
+if os.environ.get("APP_ENV", "development").lower() != "production":
+    models.Base.metadata.create_all(bind=engine)
 
 # Password Hasher
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
