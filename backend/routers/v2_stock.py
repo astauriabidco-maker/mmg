@@ -1092,6 +1092,12 @@ async def reserve_workshop_debits(
             allow_missing=allow_missing,
             allow_shortage=allow_shortage,
         )
+        if sale_order_id:
+            # Aligné sur prepare-workshop/reserve : la réservation atelier fait
+            # passer le devis en READY_FOR_PROD. Jamais de rétrogradation.
+            sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_order_id).first()
+            if sale and sale.status in ["VALIDATED", "IN_DESIGN"]:
+                sale.status = "READY_FOR_PROD"
         db.commit()
         db.refresh(reservation)
         return reservation

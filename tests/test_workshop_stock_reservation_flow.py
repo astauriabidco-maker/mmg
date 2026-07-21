@@ -990,3 +990,228 @@ def test_draft_catalog_can_be_exported_and_reimported():
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)
+
+
+def _seed_stock_and_sale(db, sale_status, reference, workflow_type=None, with_visual_config=False):
+    """Crée un produit/variant SEPALUMIC:7007 en stock et un devis au statut donné."""
+    product = models.Product(
+        reference_base="SEPALUMIC:7007",
+        name="Bavette de faitage",
+        material_type="ALU",
+        unit="barre",
+        supplier="SEPALUMIC",
+        product_type="stockable",
+    )
+    db.add(product)
+    db.flush()
+    variant = models.ProductVariant(
+        product_id=product.id,
+        reference="SEPALUMIC:7007",
+        supplier_reference="7007",
+        quantity_in_stock=5,
+        min_threshold=0,
+    )
+    location = models.StockLocation(name="WH/Stock", usage="internal", is_active=True)
+    db.add_all([variant, location])
+    db.flush()
+    db.add(models.StockQuant(variant_id=variant.id, location_id=location.id, quantity=5))
+    sale = models.SaleOrder(
+        reference=reference,
+        client_name="Client atelier",
+        status=sale_status,
+        workflow_type=workflow_type,
+        tax_rate=20,
+    )
+    db.add(sale)
+    db.flush()
+    visual_config = None
+    if with_visual_config:
+        visual_config = json.dumps(
+            {
+                "type": "Fenêtre",
+                "width": 1200,
+                "height": 1400,
+                "material": "ALU",
+            }
+        )
+    db.add(
+        models.SaleOrderLine(
+            order_id=sale.id,
+            description="Menuiserie ALU Sepalumic",
+            quantity=1,
+            unit_price=1000,
+            visual_config=visual_config,
+        )
+    )
+    db.commit()
+    return sale.id
+
+
+def _make_test_client():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+    return engine, TestingSessionLocal, TestClient(app)
+
+
+def _cleanup_test_client(engine):
+    app.dependency_overrides.pop(database.get_db, None)
+    models.Base.metadata.drop_all(bind=engine)
+
+
+SEPALUMIC_CONTENT = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
+
+
+def test_workshop_reservation_moves_sale_to_ready_for_prod():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            sale_id = _seed_stock_and_sale(db, "VALIDATED", "DEV-READY-AUTO")
+
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
+        response = client.post(
+            "/v2/stock/workshop-debits/reservations",
+            headers=headers,
+            data={"sale_order_id": str(sale_id)},
+            files=[("files", ("SEPVER.TXT", SEPALUMIC_CONTENT, "text/plain"))],
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "reserved"
+
+        with TestingSessionLocal() as db:
+            sale_db = db.query(models.SaleOrder).one()
+        assert sale_db.status == "READY_FOR_PROD"
+    finally:
+        _cleanup_test_client(engine)
+
+
+def test_workshop_reservation_never_downgrades_advanced_sale_status():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            sale_id = _seed_stock_and_sale(db, "IN_PRODUCTION", "DEV-DEJA-AVANCE")
+
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
+        response = client.post(
+            "/v2/stock/workshop-debits/reservations",
+            headers=headers,
+            data={"sale_order_id": str(sale_id)},
+            files=[("files", ("SEPVER.TXT", SEPALUMIC_CONTENT, "text/plain"))],
+        )
+        assert response.status_code == 200, response.text
+
+        with TestingSessionLocal() as db:
+            sale_db = db.query(models.SaleOrder).one()
+        assert sale_db.status == "IN_PRODUCTION"
+    finally:
+        _cleanup_test_client(engine)
+
+
+def test_workshop_reservation_without_sale_context_does_not_touch_sales():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            product = models.Product(
+                reference_base="SEPALUMIC:7007",
+                name="Bavette de faitage",
+                material_type="ALU",
+                unit="barre",
+                supplier="SEPALUMIC",
+                product_type="stockable",
+            )
+            db.add(product)
+            db.flush()
+            variant = models.ProductVariant(
+                product_id=product.id,
+                reference="SEPALUMIC:7007",
+                supplier_reference="7007",
+                quantity_in_stock=5,
+                min_threshold=0,
+            )
+            location = models.StockLocation(name="WH/Stock", usage="internal", is_active=True)
+            db.add_all([variant, location])
+            db.flush()
+            db.add(models.StockQuant(variant_id=variant.id, location_id=location.id, quantity=5))
+            order = models.Order(
+                reference="CMD-DEBIT-LIBRE",
+                width=1200,
+                height=900,
+                material=models.MaterialType.ALU,
+                client_name="Client atelier",
+                quantity=1,
+            )
+            db.add(order)
+            db.commit()
+            order_id = order.id
+
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
+        response = client.post(
+            "/v2/stock/workshop-debits/reservations",
+            headers=headers,
+            data={"production_order_id": str(order_id)},
+            files=[("files", ("SEPVER.TXT", SEPALUMIC_CONTENT, "text/plain"))],
+        )
+        assert response.status_code == 200, response.text
+        reservation = response.json()
+        assert reservation["status"] == "reserved"
+        assert reservation["sale_order_id"] is None
+        assert reservation["production_order_id"] == order_id
+
+        with TestingSessionLocal() as db:
+            assert db.query(models.SaleOrder).count() == 0
+    finally:
+        _cleanup_test_client(engine)
+
+
+def test_full_flow_reservation_then_launch_production():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            sale_id = _seed_stock_and_sale(
+                db,
+                "VALIDATED",
+                "DEV-FLOW-COMPLET",
+                workflow_type="FABRICATION_FROM_MEASURE",
+                with_visual_config=True,
+            )
+
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
+        reserve_response = client.post(
+            "/v2/stock/workshop-debits/reservations",
+            headers=headers,
+            data={"sale_order_id": str(sale_id)},
+            files=[("files", ("SEPVER.TXT", SEPALUMIC_CONTENT, "text/plain"))],
+        )
+        assert reserve_response.status_code == 200, reserve_response.text
+
+        with TestingSessionLocal() as db:
+            assert db.query(models.SaleOrder).one().status == "READY_FOR_PROD"
+
+        launch_response = client.post(f"/v2/sales/{sale_id}/launch-production", headers=headers)
+        assert launch_response.status_code == 200, launch_response.text
+        assert launch_response.json()["created_orders"] == 1
+        assert launch_response.json()["linked_reservations"] == 1
+
+        with TestingSessionLocal() as db:
+            sale_db = db.query(models.SaleOrder).one()
+            order = db.query(models.Order).one()
+            reservation_db = db.query(models.StockReservation).one()
+
+        assert sale_db.status == "IN_PRODUCTION"
+        assert order.sale_order_id == sale_id
+        assert reservation_db.production_order_id == order.id
+    finally:
+        _cleanup_test_client(engine)

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle, Copy, FileText, Package, Send, Truck, Undo2, Wrench, X } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Copy, Factory, FileText, Package, Send, Truck, Undo2, Wrench, X } from 'lucide-react';
 import api from '../services/api';
 import { openPdfWithFeedback } from '../services/pdf';
 import BusinessTimeline from '../components/BusinessTimeline';
@@ -183,6 +183,13 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
         });
     };
 
+    const launchProduction = () => {
+        if (!window.confirm("Lancer la fabrication ? Les ordres de production seront créés et transmis à l'atelier.")) return;
+        runAction('launchProduction', async () => {
+            await api.post(`/v2/sales/${sale.id}/launch-production`);
+        });
+    };
+
     const getInvoicePaidAmount = (invoice) => (
         (invoice?.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
     );
@@ -289,6 +296,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                             <p className="text-sm font-bold text-slate-700">
                                 {sale.status === 'DRAFT' ? "Envoyer le devis au client."
                                     : sale.status === 'SENT' ? "Attendre la signature ou valider manuellement."
+                                    : sale.status === 'READY_FOR_PROD' ? "Stock réservé: lancer la fabrication pour transmettre à l'atelier."
                                     : canDeliver ? "Sortir les articles réservés quand ils sont remis au client."
                                     : canCreateFinalInvoice ? "Livraison faite: générer la facture finale / solde."
                                     : canCreditNote ? "Retour facturé détecté: créer un avoir si la régularisation est confirmée."
@@ -310,6 +318,11 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                             {canDeliver && (
                                 <button onClick={deliverFreeSale} disabled={busyAction === 'deliverFreeSale'} className="px-5 py-3 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500 disabled:bg-slate-300 inline-flex items-center gap-2">
                                     <Truck className="w-4 h-4" /> Sortie client
+                                </button>
+                            )}
+                            {sale.status === 'READY_FOR_PROD' && (
+                                <button onClick={launchProduction} disabled={busyAction === 'launchProduction'} className="px-5 py-3 rounded-xl bg-indigo-600 text-white font-black hover:bg-indigo-500 disabled:bg-slate-300 inline-flex items-center gap-2">
+                                    <Factory className="w-4 h-4" /> Lancer la fabrication
                                 </button>
                             )}
                             {canCreateFinalInvoice && (
