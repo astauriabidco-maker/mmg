@@ -1325,7 +1325,7 @@ def get_import_template():
     # Une ligne d'exemple
     ws.append([
         "3186", "Double poignée de porte Cortizo", "QUINCAILLERIE", "pce", "CORTIZO", "stockable",
-        "0", "", "COR 60, COR 70", "318601", "340001000211", "Blanc",
+        "0", "", "", "COR 60, COR 70", "318601", "340001000211", "Blanc",
         25.50, 10, "A1-R3-B"
     ])
     

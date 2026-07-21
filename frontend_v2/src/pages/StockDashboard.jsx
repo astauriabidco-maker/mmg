@@ -452,6 +452,22 @@ export default function StockDashboard() {
         }
     };
 
+    const downloadPimTemplate = async () => {
+        try {
+            const res = await api.get('/v2/stock/import/template', { responseType: 'blob' });
+            const url = window.URL.createObjectURL(new Blob([res.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', 'MMG_Template_Import_Produits.xlsx');
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (error) {
+            alert(error.response?.data?.detail || "Téléchargement du template PIM impossible.");
+        }
+    };
+
     // Emplacements internes actifs (l'endpoint /v2/stock/locations ne renvoie
     // que les actifs). Défaut : « WH/Stock » s'il existe, sinon le premier
     // interne actif — convention alignée sur le backfill de la migration
@@ -2248,9 +2264,9 @@ export default function StockDashboard() {
                             <p className="text-sm font-medium text-slate-600 mb-4 font-sans">
                                 Générez et remplissez le template officiel pour importer de multiples familles de produits et leurs déclinaisons instantanément.
                             </p>
-                            <a href={`${api.defaults.baseURL}/v2/stock/import/template`} className="w-full inline-flex font-bold justify-center items-center gap-2 py-3 bg-white border border-slate-300 shadow-sm hover:bg-slate-50 rounded-xl text-slate-700 transition-colors">
+                            <button type="button" onClick={downloadPimTemplate} className="w-full inline-flex font-bold justify-center items-center gap-2 py-3 bg-white border border-slate-300 shadow-sm hover:bg-slate-50 rounded-xl text-slate-700 transition-colors">
                                 Télécharger le Template (.xlsx)
-                            </a>
+                            </button>
                         </div>
 
                         <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 mb-8 w-full">
