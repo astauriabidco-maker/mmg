@@ -5,7 +5,7 @@ import { downloadFileWithFeedback } from '../services/pdf';
 import { 
     Package, MapPin, Search, Plus, Trash2, Layers, 
     ArrowRight, Box, Hash, ChevronRight, ChevronDown, 
-    Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download, TrendingUp, ClipboardCheck
+    Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download, TrendingUp, ClipboardCheck, AlertTriangle
 } from 'lucide-react';
 import ChatterWidget from '../components/ChatterWidget';
 import StockValuationView from '../components/StockValuationView';
@@ -25,11 +25,13 @@ export default function StockDashboard() {
     const { data: reservations = [] } = useQuery({ queryKey: ['workshop-reservations'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/reservations?status=reserved'); return res.data; }});
     const { data: workshopContexts = { sales: [], production_orders: [] } } = useQuery({ queryKey: ['workshop-debit-contexts'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/contexts'); return res.data; }});
     const { data: inventorySessions = [] } = useQuery({ queryKey: ['inventory-sessions'], queryFn: async () => { const res = await api.get('/v2/stock/inventory-sessions'); return res.data; }});
+    const { data: purchases = [] } = useQuery({ queryKey: ['purchases'], queryFn: async () => { const res = await api.get('/v2/purchases/'); return res.data; }});
     
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
-    const [currentMenu, setCurrentMenu] = useState('inventory'); // 'inventory' | 'audit' | 'settings'
+    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'inventory' | 'audit' | 'physical-inventory' | 'valuation'
     const [inventoryFocus, setInventoryFocus] = useState('catalog'); // 'catalog' | 'stock' | 'drafts' | 'services'
+    const [todoRoleFilter, setTodoRoleFilter] = useState('me'); // 'me' | 'stock' | 'atelier' | 'catalogue' | 'achats' | 'manager'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
     const [showDraftOnly, setShowDraftOnly] = useState(false);
@@ -830,6 +832,19 @@ export default function StockDashboard() {
         }
     };
 
+    const selectTodo = () => {
+        setCurrentMenu('todo');
+        setSearchTerm('');
+        setShowLowStockOnly(false);
+        setShowDraftOnly(false);
+        setActiveLocationId('global');
+    };
+
+    const goToPurchases = () => {
+        window.history.pushState(null, '', '/manager?view=purchases');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+    };
+
     const getVariantTransactions = (variantId) => {
         return transactions
             .filter(tx => tx.variant_id === variantId)
@@ -935,6 +950,73 @@ export default function StockDashboard() {
         }
     });
 
+    const draftProducts = products.filter(isDraftProduct);
+    const stockVariants = products
+        .filter(product => (product.product_type || 'stockable').toLowerCase() !== 'service')
+        .flatMap(product => (product.variants || []).map(variant => {
+            const internalStock = quants
+                .filter(quant => quant.variant_id === variant.id && locations.find(location => location.id === quant.location_id)?.usage === 'internal')
+                .reduce((sum, quant) => sum + Number(quant.quantity || 0), 0);
+            const reservedQuantity = Number(variant.reserved_quantity || 0);
+            return {
+                product,
+                variant,
+                internalStock,
+                reservedQuantity,
+                availableQuantity: Number(variant.available_quantity ?? Math.max(internalStock - reservedQuantity, 0)),
+                minThreshold: Number(variant.min_threshold || 0),
+            };
+        }));
+    const lowStockVariants = stockVariants
+        .filter(item => item.availableQuantity <= item.minThreshold)
+        .sort((a, b) => (a.availableQuantity - a.minThreshold) - (b.availableQuantity - b.minThreshold));
+    const openInventorySessions = inventorySessions.filter(session => {
+        const status = String(session.status || '').toUpperCase();
+        return !['CLOSED', 'DONE', 'VALIDATED', 'CANCELLED'].includes(status);
+    });
+    const inventoryIssueCount = openInventorySessions.reduce((sum, session) => {
+        const lines = session.lines || [];
+        return sum + lines.filter(line => {
+            const status = String(line.status || line.line_status || '').toUpperCase();
+            const expected = Number(line.expected_quantity ?? line.theoretical_quantity ?? line.expected_qty ?? 0);
+            const counted = Number(line.counted_quantity ?? line.counted_qty ?? expected);
+            return status.includes('VARIANCE') || status.includes('ECART') || status.includes('RECOUNT') || status.includes('RECOMP') || Math.abs(counted - expected) > 0;
+        }).length;
+    }, 0);
+    const openPurchases = purchases
+        .filter(po => ['DRAFT', 'SENT', 'PARTIAL'].includes(String(po.status || '').toUpperCase()))
+        .sort((a, b) => new Date(a.expected_date || '2999-12-31') - new Date(b.expected_date || '2999-12-31'));
+    const recentManualAdjustments = transactions.filter(tx => {
+        const documentType = String(tx.document_type || '').toLowerCase();
+        const sourceScreen = String(tx.source_screen || '').toLowerCase();
+        return documentType.includes('manual_inventory_adjustment') || sourceScreen.includes('manual') || sourceScreen.includes('inventory');
+    }).slice(0, 4);
+    const todoTotal = lowStockVariants.length + draftProducts.length + reservations.length + openInventorySessions.length + openPurchases.length;
+    const todoCounts = {
+        lowStock: lowStockVariants.length,
+        drafts: draftProducts.length,
+        reservations: reservations.length,
+        inventory: openInventorySessions.length,
+        inventoryIssues: inventoryIssueCount,
+        purchases: openPurchases.length,
+    };
+    const todoActions = {
+        showLowStock: () => {
+            setCurrentMenu('inventory');
+            setInventoryFocus('stock');
+            setShowDraftOnly(false);
+            setShowLowStockOnly(true);
+        },
+        showDrafts: () => selectInventoryFocus('drafts'),
+        openWorkshopDebit: () => setShowWorkshopDebitModal(true),
+        openPhysicalInventory: () => setCurrentMenu('physical-inventory'),
+        openMovements: () => setCurrentMenu('audit'),
+        openReception: openReceptionModal,
+        openPurchases: goToPurchases,
+        consumeReservation: consumeWorkshopReservation,
+        cancelReservation: cancelWorkshopReservation,
+    };
+
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
             <div className="px-6 py-4 shrink-0 border-b border-slate-200 bg-white">
@@ -1026,6 +1108,17 @@ export default function StockDashboard() {
                 <div className="bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-4 px-6 py-3 shrink-0 z-10">
                     <div className="flex flex-wrap items-center gap-3">
                         <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1">
+                            <button
+                                onClick={selectTodo}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'todo' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <AlertTriangle className="w-4 h-4"/> À traiter
+                                {todoTotal > 0 && (
+                                    <span className={`ml-1 px-2 py-0.5 rounded-lg text-[10px] font-black ${currentMenu === 'todo' ? 'bg-white/15 text-white' : 'bg-amber-100 text-amber-700'}`}>
+                                        {todoTotal}
+                                    </span>
+                                )}
+                            </button>
                             <button
                                 onClick={() => selectInventoryFocus('catalog')}
                                 className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'inventory' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
@@ -1158,7 +1251,26 @@ export default function StockDashboard() {
                     </div>
                 )}
 
-                {currentMenu === 'audit' ? (
+                {currentMenu === 'todo' ? (
+                    <div className="flex-1 overflow-y-auto w-full relative p-6 bg-slate-50">
+                        <StockTodoView
+                            userRole={user?.role}
+                            isManager={isManager}
+                            isAdmin={isAdmin}
+                            roleFilter={todoRoleFilter}
+                            setRoleFilter={setTodoRoleFilter}
+                            counts={todoCounts}
+                            lowStockVariants={lowStockVariants}
+                            draftProducts={draftProducts}
+                            reservations={reservations}
+                            openInventorySessions={openInventorySessions}
+                            openPurchases={openPurchases}
+                            recentManualAdjustments={recentManualAdjustments}
+                            actions={todoActions}
+                            reservationActionId={reservationActionId}
+                        />
+                    </div>
+                ) : currentMenu === 'audit' ? (
                     <div className="flex-1 overflow-y-auto w-full relative p-6">
                         <AuditLogs transactions={transactions} locations={locations} />
                     </div>
@@ -2284,6 +2396,341 @@ export default function StockDashboard() {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+function StockTodoView({
+    userRole,
+    isManager,
+    isAdmin,
+    roleFilter,
+    setRoleFilter,
+    counts,
+    lowStockVariants,
+    draftProducts,
+    reservations,
+    openInventorySessions,
+    openPurchases,
+    recentManualAdjustments,
+    actions,
+    reservationActionId,
+}) {
+    const roleTabs = [
+        { id: 'me', label: 'Mes actions', helper: 'priorités utiles à mon profil' },
+        { id: 'stock', label: 'Magasin', helper: 'ruptures, réceptions, transferts' },
+        { id: 'atelier', label: 'Atelier', helper: 'réservations et débits réels' },
+        { id: 'catalogue', label: 'Catalogue', helper: 'fiches à qualifier' },
+        { id: 'achats', label: 'Achats', helper: 'commandes à recevoir' },
+        { id: 'manager', label: 'Pilotage', helper: 'inventaire, audit, anomalies' },
+    ];
+
+    const normalizedRole = String(userRole || '').toUpperCase();
+    const isPersonalMatch = itemRole => {
+        if (isAdmin || isManager) return true;
+        if (normalizedRole.includes('ATELIER')) return itemRole === 'atelier';
+        if (normalizedRole.includes('PURCHASE') || normalizedRole.includes('ACHAT')) return itemRole === 'achats';
+        return ['stock', 'catalogue'].includes(itemRole);
+    };
+
+    const formatDate = value => {
+        if (!value) return 'Date non prévue';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return 'Date non prévue';
+        return date.toLocaleDateString('fr-FR');
+    };
+
+    const cards = [
+        {
+            id: 'low-stock',
+            role: 'stock',
+            priority: counts.lowStock > 0 ? 'urgent' : 'ok',
+            icon: AlertTriangle,
+            title: 'Ruptures / seuils bas',
+            metric: counts.lowStock,
+            subtitle: counts.lowStock > 0 ? 'Variantes à sécuriser avant promesse client ou atelier.' : 'Aucune rupture visible.',
+            actionLabel: 'Voir les ruptures',
+            onAction: actions.showLowStock,
+        },
+        {
+            id: 'reservations',
+            role: 'atelier',
+            priority: counts.reservations > 0 ? 'warning' : 'ok',
+            icon: ArrowRight,
+            title: 'Débits atelier à confirmer',
+            metric: counts.reservations,
+            subtitle: counts.reservations > 0 ? 'Stock réservé virtuellement, en attente de débit réel atelier.' : 'Aucune réservation atelier ouverte.',
+            actionLabel: 'Ouvrir débit atelier',
+            onAction: actions.openWorkshopDebit,
+        },
+        {
+            id: 'drafts',
+            role: 'catalogue',
+            priority: counts.drafts > 0 ? 'warning' : 'ok',
+            icon: FileEdit,
+            title: 'Fiches à qualifier',
+            metric: counts.drafts,
+            subtitle: counts.drafts > 0 ? 'Références créées sans fiche complète ni stock exploitable.' : 'Catalogue qualifié.',
+            actionLabel: 'Qualifier les fiches',
+            onAction: actions.showDrafts,
+        },
+        {
+            id: 'inventory',
+            role: 'manager',
+            priority: counts.inventory > 0 ? 'normal' : 'ok',
+            icon: ClipboardCheck,
+            title: 'Inventaires ouverts',
+            metric: counts.inventory,
+            subtitle: counts.inventory > 0 ? `${counts.inventoryIssues || 0} écart(s) ou ligne(s) à surveiller.` : 'Aucune campagne ouverte.',
+            actionLabel: 'Ouvrir inventaire',
+            onAction: actions.openPhysicalInventory,
+        },
+        {
+            id: 'purchases',
+            role: 'achats',
+            priority: counts.purchases > 0 ? 'normal' : 'ok',
+            icon: Truck,
+            title: 'Réceptions fournisseur',
+            metric: counts.purchases,
+            subtitle: counts.purchases > 0 ? 'Commandes fournisseur en attente ou partielles.' : 'Rien à réceptionner.',
+            actionLabel: 'Aller aux achats',
+            onAction: actions.openPurchases,
+        },
+    ];
+
+    const visibleCards = cards.filter(card => roleFilter === 'me' ? isPersonalMatch(card.role) : card.role === roleFilter);
+    const visibleLowStock = roleFilter === 'me' || roleFilter === 'stock' ? lowStockVariants.slice(0, 5) : [];
+    const visibleReservations = roleFilter === 'me' || roleFilter === 'atelier' ? reservations.slice(0, 5) : [];
+    const visibleDrafts = roleFilter === 'me' || roleFilter === 'catalogue' ? draftProducts.slice(0, 5) : [];
+    const visiblePurchases = roleFilter === 'me' || roleFilter === 'achats' ? openPurchases.slice(0, 5) : [];
+    const visibleInventory = roleFilter === 'me' || roleFilter === 'manager' ? openInventorySessions.slice(0, 4) : [];
+    const hasDetailedActions = visibleLowStock.length || visibleReservations.length || visibleDrafts.length || visiblePurchases.length || visibleInventory.length;
+
+    const priorityClasses = {
+        urgent: 'border-red-200 bg-red-50 text-red-700',
+        warning: 'border-amber-200 bg-amber-50 text-amber-700',
+        normal: 'border-blue-200 bg-blue-50 text-blue-700',
+        ok: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    };
+
+    return (
+        <div className="max-w-[1500px] mx-auto w-full space-y-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-600 mb-2">File d'actions stock</p>
+                    <h2 className="text-3xl font-black text-slate-900 tracking-tight">À traiter maintenant</h2>
+                    <p className="text-sm font-bold text-slate-500 mt-1">
+                        Les priorités sont regroupées par rôle pour éviter de chercher l'action dans le catalogue.
+                    </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    <button onClick={actions.openReception} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-sm inline-flex items-center gap-2">
+                        <Truck className="w-4 h-4" />
+                        Réceptionner
+                    </button>
+                    <button onClick={actions.openMovements} className="px-4 py-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-black inline-flex items-center gap-2">
+                        <Layers className="w-4 h-4" />
+                        Voir mouvements
+                    </button>
+                </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+                {roleTabs.map(tab => (
+                    <button
+                        key={tab.id}
+                        onClick={() => setRoleFilter(tab.id)}
+                        className={`px-4 py-3 rounded-2xl border text-left transition-all ${roleFilter === tab.id ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-200 hover:text-blue-700'}`}
+                    >
+                        <span className="block text-sm font-black">{tab.label}</span>
+                        <span className={`block text-[10px] font-bold mt-0.5 ${roleFilter === tab.id ? 'text-white/60' : 'text-slate-400'}`}>{tab.helper}</span>
+                    </button>
+                ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                {visibleCards.map(card => {
+                    const Icon = card.icon;
+                    return (
+                        <button
+                            key={card.id}
+                            onClick={card.onAction}
+                            className={`text-left rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all ${priorityClasses[card.priority]}`}
+                        >
+                            <div className="flex items-start justify-between gap-3">
+                                <Icon className="w-5 h-5 shrink-0" />
+                                <span className="text-3xl font-black leading-none">{card.metric}</span>
+                            </div>
+                            <h3 className="font-black text-slate-900 mt-4">{card.title}</h3>
+                            <p className="text-xs font-bold text-slate-600 mt-1 min-h-[2.5rem]">{card.subtitle}</p>
+                            <span className="inline-flex items-center gap-1 text-xs font-black mt-4">
+                                {card.actionLabel}
+                                <ArrowRight className="w-3.5 h-3.5" />
+                            </span>
+                        </button>
+                    );
+                })}
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-[1.5fr_1fr] gap-5">
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                    <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+                        <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Actions attendues</p>
+                            <h3 className="font-black text-slate-900">Liste opérationnelle</h3>
+                        </div>
+                        <span className="text-xs font-black text-slate-400">{hasDetailedActions ? 'Priorisée automatiquement' : 'Rien d’urgent'}</span>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                        {visibleReservations.map(reservation => (
+                            <TodoRow
+                                key={`rsv-${reservation.id}`}
+                                badge="Atelier"
+                                badgeClass="bg-amber-100 text-amber-700"
+                                title={`Débit réel à confirmer ${reservation.reference || ''}`}
+                                subtitle={reservation.order_reference || 'Réservation atelier active'}
+                                meta={`${reservation.lines?.length || 0} ligne(s) réservée(s)`}
+                                actionLabel="Débiter"
+                                onAction={() => actions.consumeReservation(reservation)}
+                                secondaryLabel="Annuler"
+                                onSecondary={() => actions.cancelReservation(reservation)}
+                                disabled={reservationActionId === reservation.id || !isManager}
+                            />
+                        ))}
+                        {visibleLowStock.map(item => (
+                            <TodoRow
+                                key={`low-${item.variant.id}`}
+                                badge="Magasin"
+                                badgeClass="bg-red-100 text-red-700"
+                                title={item.product.name}
+                                subtitle={item.variant.reference}
+                                meta={`Disponible ${item.availableQuantity} / seuil ${item.minThreshold}`}
+                                actionLabel="Réceptionner"
+                                onAction={actions.openReception}
+                            />
+                        ))}
+                        {visibleDrafts.map(product => (
+                            <TodoRow
+                                key={`draft-${product.id}`}
+                                badge="Catalogue"
+                                badgeClass="bg-amber-100 text-amber-700"
+                                title={product.name}
+                                subtitle={product.reference_base}
+                                meta="Fiche incomplète avant exploitation stock"
+                                actionLabel="Qualifier"
+                                onAction={actions.showDrafts}
+                            />
+                        ))}
+                        {visiblePurchases.map(po => (
+                            <TodoRow
+                                key={`po-${po.id}`}
+                                badge="Achats"
+                                badgeClass="bg-blue-100 text-blue-700"
+                                title={po.reference || `Commande #${po.id}`}
+                                subtitle={po.supplier || 'Fournisseur non renseigné'}
+                                meta={`Statut ${po.status || '-'} · prévu ${formatDate(po.expected_date)}`}
+                                actionLabel="Ouvrir achats"
+                                onAction={actions.openPurchases}
+                            />
+                        ))}
+                        {visibleInventory.map(session => (
+                            <TodoRow
+                                key={`inv-${session.id}`}
+                                badge="Inventaire"
+                                badgeClass="bg-indigo-100 text-indigo-700"
+                                title={session.name || `Campagne #${session.id}`}
+                                subtitle={session.zone_locked ? 'Zone gelée pendant comptage' : 'Campagne ouverte'}
+                                meta={`Statut ${session.status || '-'}${session.lines?.length ? ` · ${session.lines.length} ligne(s)` : ''}`}
+                                actionLabel="Ouvrir"
+                                onAction={actions.openPhysicalInventory}
+                            />
+                        ))}
+                        {!hasDetailedActions && (
+                            <div className="p-10 text-center">
+                                <Check className="w-10 h-10 mx-auto text-emerald-400 mb-3" />
+                                <p className="font-black text-slate-700">Aucune action urgente pour cette vue.</p>
+                                <p className="text-sm font-bold text-slate-400 mt-1">Le stock peut être consulté dans Catalogue & stock.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="space-y-4">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Règle d’usage</p>
+                        <div className="space-y-3">
+                            <RoleRule icon={Truck} title="Magasin" text="réceptionne, range, transfère et traite les ruptures." />
+                            <RoleRule icon={ArrowRight} title="Atelier" text="confirme le débit réel seulement après réservation validée." />
+                            <RoleRule icon={FileEdit} title="Catalogue" text="qualifie les brouillons avant toute exploitation stock." />
+                            <RoleRule icon={ClipboardCheck} title="Manager" text="valide les inventaires, lit les écarts et audite les mouvements." />
+                        </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                        <div className="flex items-center justify-between gap-3 mb-4">
+                            <div>
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contrôle</p>
+                                <h3 className="font-black text-slate-900">Derniers ajustements</h3>
+                            </div>
+                            {isAdmin && (
+                                <button onClick={actions.openMovements} className="text-xs font-black text-blue-600 hover:text-blue-700">Audit</button>
+                            )}
+                        </div>
+                        <div className="space-y-2">
+                            {recentManualAdjustments.length > 0 ? recentManualAdjustments.map(tx => (
+                                <div key={tx.id || tx.reference} className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                    <p className="font-black text-sm text-slate-800">{tx.item_name || tx.reference}</p>
+                                    <p className="text-xs font-bold text-slate-500">{tx.business_reason || tx.source_screen || 'Mouvement inventaire'} · {formatDate(tx.created_at)}</p>
+                                </div>
+                            )) : (
+                                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4 text-sm font-bold text-emerald-700">
+                                    Aucun ajustement manuel récent à vérifier.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function TodoRow({ badge, badgeClass, title, subtitle, meta, actionLabel, onAction, secondaryLabel, onSecondary, disabled = false }) {
+    return (
+        <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-50 transition-colors">
+            <div className="min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                    <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase ${badgeClass}`}>{badge}</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Action attendue</span>
+                </div>
+                <p className="font-black text-slate-900 truncate">{title}</p>
+                <p className="text-sm font-bold text-slate-500 truncate">{subtitle}</p>
+                <p className="text-xs font-bold text-slate-400 mt-1">{meta}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+                {secondaryLabel && (
+                    <button onClick={onSecondary} disabled={disabled} className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400 text-slate-700 text-xs font-black">
+                        {secondaryLabel}
+                    </button>
+                )}
+                <button onClick={onAction} disabled={disabled} className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-black inline-flex items-center gap-2">
+                    {actionLabel}
+                    <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function RoleRule({ icon: Icon, title, text }) {
+    return (
+        <div className="flex gap-3">
+            <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
+                <Icon className="w-4 h-4" />
+            </div>
+            <div>
+                <p className="font-black text-sm text-slate-900">{title}</p>
+                <p className="text-xs font-bold text-slate-500">{text}</p>
+            </div>
         </div>
     );
 }
