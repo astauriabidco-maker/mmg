@@ -837,22 +837,6 @@ export default function SalesDashboard() {
         }
     };
 
-    const launchProduction = async () => {
-        if(!selectedSale) return;
-        setIsStatusUpdating(true);
-        try {
-            await api.post(`/v2/sales/${selectedSale.id}/launch-production`);
-            queryClient.invalidateQueries(['sales']);
-            openSaleDetails(selectedSale.id);
-            alert("✅ Dossier lancé en production avec succès ! Les fiches de suivi ont été générées.");
-        } catch (err) {
-            console.error(err);
-            alert(err.response?.data?.detail || "Erreur lors du lancement en production");
-        } finally {
-            setIsStatusUpdating(false);
-        }
-    };
-
     const generateMetre = async () => {
         if (!selectedSale) return;
         setIsStatusUpdating(true);
