@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { downloadFileWithFeedback } from '../services/pdf';
@@ -81,6 +81,7 @@ export default function StockDashboard() {
     const [showNewProductModal, setShowNewProductModal] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
     const [showLocationManagerModal, setShowLocationManagerModal] = useState(false);
+    const locationNameInputRef = useRef(null);
     const [massImportFile, setMassImportFile] = useState(null);
     const [draftCatalogFile, setDraftCatalogFile] = useState(null);
     const [draftCatalogImporting, setDraftCatalogImporting] = useState(false);
@@ -175,6 +176,16 @@ export default function StockDashboard() {
             selectInventoryFocus('services');
         }
         setShowNewProductModal(true);
+    };
+
+    const openSubLocationForm = (parentLoc = null) => {
+        setLocationForm({
+            name: '',
+            usage: parentLoc?.usage || 'internal',
+            parent_id: parentLoc ? String(parentLoc.id) : '',
+        });
+        setShowLocationManagerModal(true);
+        window.setTimeout(() => locationNameInputRef.current?.focus(), 80);
     };
 
 
@@ -918,7 +929,7 @@ export default function StockDashboard() {
                         </button>
                         <button
                             type="button"
-                            onClick={() => setLocationForm({ name: '', usage: parentLoc.usage, parent_id: String(parentLoc.id) })}
+                            onClick={() => openSubLocationForm(parentLoc)}
                             className="px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-black inline-flex items-center gap-1"
                         >
                             <Plus className="w-3.5 h-3.5" />
@@ -1601,7 +1612,7 @@ export default function StockDashboard() {
                                             <>
                                                 <button
                                                     type="button"
-                                                    onClick={() => setLocationForm({ name: '', usage: selectedLocation.usage, parent_id: String(selectedLocation.id) })}
+                                                    onClick={() => openSubLocationForm(selectedLocation)}
                                                     className="px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black inline-flex items-center gap-2 shadow-sm"
                                                 >
                                                     <Plus className="w-4 h-4" />
@@ -2904,15 +2915,18 @@ export default function StockDashboard() {
                                 <div>
                                     <p className="text-xs uppercase tracking-widest font-black text-slate-400">Créer une zone</p>
                                     <p className="text-sm font-bold text-slate-600 mt-1">
-                                        Créez une zone principale ou une sous-zone directement exploitable par réception, transfert et inventaire.
+                                        {locationForm.parent_id
+                                            ? `Sous-zone de ${locations.find(location => String(location.id) === String(locationForm.parent_id))?.name || 'la zone sélectionnée'}`
+                                            : 'Créez une zone principale directement exploitable par réception, transfert et inventaire.'}
                                     </p>
                                 </div>
                                 <label className="block space-y-1">
                                     <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Nom</span>
                                     <input
+                                        ref={locationNameInputRef}
                                         value={locationForm.name}
                                         onChange={event => setLocationForm(prev => ({ ...prev, name: event.target.value }))}
-                                        placeholder="Ex: Rack ALU A"
+                                        placeholder={locationForm.parent_id ? "Ex: Étagère 1, Casier A, Niveau bas" : "Ex: Rack ALU A"}
                                         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-black outline-none focus:ring-2 focus:ring-blue-500"
                                     />
                                 </label>
