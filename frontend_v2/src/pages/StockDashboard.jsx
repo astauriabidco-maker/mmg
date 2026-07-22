@@ -1422,8 +1422,8 @@ export default function StockDashboard() {
 
                 {currentMenu === 'location-detail' && selectedLocation ? (
                     <div className="flex-1 overflow-y-auto w-full bg-slate-50">
-                        <div className="max-w-7xl mx-auto p-6 space-y-6">
-                            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                        <div className="w-full p-6 space-y-6">
+                            <div className="border border-slate-200 bg-white overflow-hidden shadow-sm">
                                 <div className="px-6 py-5 bg-slate-950 text-white flex flex-wrap items-start justify-between gap-4">
                                     <div className="min-w-0">
                                         <button
@@ -1710,8 +1710,8 @@ export default function StockDashboard() {
                     </div>
                 ) : currentMenu === 'product-detail' && selectedProduct ? (
                     <div className="flex-1 overflow-y-auto w-full bg-slate-50">
-                        <div className="max-w-7xl mx-auto p-6 space-y-6">
-                            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                        <div className="w-full p-6 space-y-6">
+                            <div className="border border-slate-200 bg-white overflow-hidden shadow-sm">
                                 <div className="px-6 py-5 bg-slate-950 text-white flex flex-wrap items-start justify-between gap-4">
                                     <div className="min-w-0">
                                         <button
@@ -2054,8 +2054,8 @@ export default function StockDashboard() {
                     </div>
                 ) : currentMenu === 'workshop' ? (
                     <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
-                        <div className="max-w-7xl mx-auto p-6 space-y-6">
-                            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                        <div className="w-full p-6 space-y-6">
+                            <div className="border border-slate-200 bg-white overflow-hidden shadow-sm">
                                 <div className="px-6 py-5 bg-amber-50 border-b border-amber-100 flex flex-wrap items-start justify-between gap-4">
                                     <div>
                                         <p className="text-[10px] uppercase font-black tracking-widest text-amber-700 mb-2">Réservations atelier</p>
@@ -2139,8 +2139,8 @@ export default function StockDashboard() {
                     </div>
                 ) : currentMenu === 'import-export' ? (
                     <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
-                        <div className="max-w-7xl mx-auto p-6">
-                            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                        <div className="w-full p-6">
+                            <div className="border border-slate-200 bg-white overflow-hidden shadow-sm">
                                 <div className="px-6 py-5 bg-slate-900 text-white flex flex-wrap items-start justify-between gap-4">
                                     <div>
                                         <p className="text-[10px] uppercase font-black tracking-widest text-blue-200 mb-2">Données stock</p>
@@ -2187,8 +2187,8 @@ export default function StockDashboard() {
                     </div>
                 ) : currentMenu === 'locations' ? (
                     <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
-                        <div className="max-w-7xl mx-auto p-6 space-y-6">
-                            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                        <div className="w-full p-6 space-y-6">
+                            <div className="border border-slate-200 bg-white overflow-hidden shadow-sm">
                                 <div className="px-6 py-5 bg-slate-900 text-white flex flex-wrap items-start justify-between gap-4">
                                     <div>
                                         <p className="text-[10px] uppercase font-black tracking-widest text-blue-200 mb-2">Plan de rangement stock</p>
@@ -3627,7 +3627,7 @@ function StockTodoView({
     };
 
     return (
-        <div className="max-w-[1500px] mx-auto w-full space-y-6">
+        <div className="w-full space-y-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                     <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-600 mb-2">File d'actions stock</p>
@@ -4053,8 +4053,8 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
     };
 
     return (
-        <div className="max-w-7xl mx-auto space-y-6">
-            <div className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden">
+        <div className="w-full space-y-6">
+            <div className="bg-white border border-slate-200 shadow-sm overflow-hidden">
                 <div className="px-8 py-6 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div>
                         <h3 className="text-2xl font-black text-slate-900 flex items-center gap-3">
@@ -4465,7 +4465,7 @@ function AuditLogs({ transactions }) {
     };
 
     return (
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden w-full max-w-7xl mx-auto mt-4">
+        <div className="bg-white border border-slate-200 shadow-sm overflow-hidden w-full">
             <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                 <div>
                     <h3 className="font-black text-xl flex items-center gap-2">
