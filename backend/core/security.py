@@ -64,11 +64,19 @@ def get_current_user_role(token: str = Depends(oauth2_scheme), db: Session = Dep
         raise HTTPException(status_code=401, detail="No role found in token")
     return role
 
+def get_current_user_roles(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    payload = get_current_user(token, db)
+    roles = payload.get("roles") or ([payload.get("role")] if payload.get("role") else [])
+    roles = [role for role in roles if role]
+    if not roles:
+        raise HTTPException(status_code=401, detail="No role found in token")
+    return roles
+
 def require_roles(*allowed_roles: str):
-    def dependency(role: str = Depends(get_current_user_role)):
-        if role not in allowed_roles:
+    def dependency(roles: list[str] = Depends(get_current_user_roles)):
+        if not any(role in allowed_roles for role in roles):
             raise HTTPException(status_code=403, detail="Privilèges insuffisants")
-        return role
+        return roles[0]
     return dependency
 
 def user_has_permission(db: Session, role_name: str, permission_code: str) -> bool:
@@ -79,11 +87,35 @@ def user_has_permission(db: Session, role_name: str, permission_code: str) -> bo
         return False
     return any(permission.code == permission_code for permission in role.permissions)
 
+def roles_have_permission(db: Session, role_names: list[str], permission_code: str) -> bool:
+    if any(role_name in ["ADMIN", "SUPER_ADMIN"] for role_name in role_names):
+        return True
+    roles = db.query(models.Role).filter(models.Role.name.in_(role_names)).all()
+    return any(
+        permission.code == permission_code
+        for role in roles
+        for permission in role.permissions
+    )
+
+def get_permissions_for_roles(db: Session, role_names: list[str]) -> list[str]:
+    if any(role_name in ["ADMIN", "SUPER_ADMIN"] for role_name in role_names):
+        return ["*"]
+    roles = db.query(models.Role).filter(models.Role.name.in_(role_names)).all()
+    codes = {
+        permission.code
+        for role in roles
+        for permission in role.permissions
+    }
+    return sorted(codes)
+
 def assert_permission(db: Session, current_user: dict, permission_code: str):
-    role_name = current_user.get("role")
-    if not role_name:
+    token_permissions = current_user.get("permissions") or []
+    if "*" in token_permissions or permission_code in token_permissions:
+        return
+    role_names = current_user.get("roles") or ([current_user.get("role")] if current_user.get("role") else [])
+    if not role_names:
         raise HTTPException(status_code=401, detail="No role found in token")
-    if not user_has_permission(db, role_name, permission_code):
+    if not roles_have_permission(db, role_names, permission_code):
         raise HTTPException(status_code=403, detail=f"Permission requise: {permission_code}")
 
 def require_permissions(*permission_codes: str):

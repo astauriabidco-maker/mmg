@@ -16,6 +16,21 @@ router = APIRouter(
 PIN_ROLES = {"OPERATOR", "DEBIT_OPERATOR", "QUALITY_CONTROLLER", "WORKSHOP_LEAD", "MAGASINIER"}
 ACCESS_MODES = {"PIN", "EMAIL", "HYBRID"}
 
+def _load_secondary_roles(db: Session, primary_role: str, additional_roles: List[str]):
+    role_names = []
+    for role_name in additional_roles or []:
+        normalized = (role_name or "").strip().upper()
+        if normalized and normalized != primary_role and normalized not in role_names:
+            role_names.append(normalized)
+    if not role_names:
+        return []
+    roles = db.query(models.Role).filter(models.Role.name.in_(role_names)).all()
+    found = {role.name for role in roles}
+    missing = [role_name for role_name in role_names if role_name not in found]
+    if missing:
+        raise HTTPException(400, f"Rôle(s) complémentaire(s) inconnu(s): {', '.join(missing)}")
+    return roles
+
 def _temporary_secret(access_mode: str, role_name: str) -> str:
     if access_mode == "PIN" or role_name in PIN_ROLES:
         return f"{secrets.randbelow(10000):04d}"
@@ -133,9 +148,10 @@ def create_user(
         raise HTTPException(400, "Mode d'accès invalide. Utilisez PIN, EMAIL ou HYBRID.")
     if user.send_invite and not user.email:
         raise HTTPException(400, "Un email est requis pour envoyer une invitation.")
+    primary_role = user.role.upper()
 
-    temporary_secret = user.pin or _temporary_secret(access_mode, user.role)
-    _validate_user_secret(temporary_secret, user.role, access_mode)
+    temporary_secret = user.pin or _temporary_secret(access_mode, primary_role)
+    _validate_user_secret(temporary_secret, primary_role, access_mode)
     invite_token = secrets.token_urlsafe(24) if user.send_invite or access_mode in {"EMAIL", "HYBRID"} else None
     invitation_link = _invite_link(invite_token) if invite_token else None
     hashed_pin = security.get_password_hash(temporary_secret)
@@ -152,9 +168,10 @@ def create_user(
         invite_token=invite_token,
         pin_must_change=True,
         pin_hash=hashed_pin,
-        role=user.role,
+        role=primary_role,
         is_active=True
     )
+    new_user.secondary_roles = _load_secondary_roles(db, primary_role, user.additional_roles)
     
     if user.station_codes:
         stations = db.query(models.Station).filter(models.Station.code.in_(user.station_codes)).all()
@@ -171,7 +188,7 @@ def create_user(
             user.email,
             display_name,
             user.username,
-            user.role,
+            primary_role,
             invitation_link,
         )
         invitation_sent = True
@@ -209,7 +226,10 @@ def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Dep
             raise HTTPException(400, "Mode d'accès invalide. Utilisez PIN, EMAIL ou HYBRID.")
         db_user.access_mode = access_mode
     if user_update.role:
-        db_user.role = user_update.role
+        db_user.role = user_update.role.upper()
+        db_user.secondary_roles = [role for role in db_user.secondary_roles if role.name != db_user.role]
+    if user_update.additional_roles is not None:
+        db_user.secondary_roles = _load_secondary_roles(db, db_user.role, user_update.additional_roles)
     if user_update.pin:
         if db_user.role in PIN_ROLES or user_update.role in PIN_ROLES:
             if not user_update.pin.isdigit() or len(user_update.pin) != 4:

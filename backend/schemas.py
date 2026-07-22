@@ -15,6 +15,7 @@ class UserBase(BaseModel):
     team: Optional[str] = None
     access_mode: str = "PIN"
     role: str = "OPERATOR"
+    additional_roles: List[str] = []
     stations: List['Station'] = [] # Changed to list of Station objects
 
 class UserCreate(UserBase):
@@ -32,6 +33,7 @@ class UserUpdate(BaseModel):
     team: Optional[str] = None
     access_mode: Optional[str] = None
     role: Optional[str] = None
+    additional_roles: Optional[List[str]] = None
     pin: Optional[str] = None # Optional PIN reset
     station_codes: Optional[List[str]] = None
 

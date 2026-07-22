@@ -219,15 +219,14 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
         user.invite_token = None
         user.pin_must_change = False
         db.commit()
-    permissions = ["*"]
-    if user.role not in ["ADMIN", "SUPER_ADMIN"]:
-        role = db.query(models.Role).filter(models.Role.name == user.role).first()
-        permissions = [permission.code for permission in role.permissions] if role else []
+    role_names = user.role_names
+    permissions = security.get_permissions_for_roles(db, role_names)
     
     access_token = security.create_access_token(
         data={
             "sub": user.username, 
             "role": user.role, 
+            "roles": role_names,
             "stations": [s.code for s in user.stations],
             "permissions": permissions,
         }
@@ -236,6 +235,7 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
         "access_token": access_token, 
         "token_type": "bearer", 
         "role": user.role, 
+        "roles": role_names,
         "stations": [s.code for s in user.stations],
         "permissions": permissions,
     }

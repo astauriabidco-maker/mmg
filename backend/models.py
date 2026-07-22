@@ -60,11 +60,27 @@ class User(Base):
     
     # Many-to-many relationship with Stations
     stations = relationship("Station", secondary="user_stations")
+    secondary_roles = relationship("Role", secondary="user_secondary_roles")
+
+    @property
+    def additional_roles(self):
+        return [role.name for role in self.secondary_roles or []]
+
+    @property
+    def role_names(self):
+        names = [self.role] if self.role else []
+        names.extend(role.name for role in self.secondary_roles or [] if role.name not in names)
+        return names
 
 class UserStation(Base):
     __tablename__ = "user_stations"
     user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
     station_id = Column(Integer, ForeignKey("stations.id"), primary_key=True)
+
+class UserSecondaryRole(Base):
+    __tablename__ = "user_secondary_roles"
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
 
 class Planning(Base):
     __tablename__ = "planning"

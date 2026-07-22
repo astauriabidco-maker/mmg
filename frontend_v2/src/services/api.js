@@ -23,6 +23,7 @@ api.interceptors.response.use(
             localStorage.removeItem('token');
             localStorage.removeItem('username');
             localStorage.removeItem('role');
+            localStorage.removeItem('roles');
             localStorage.removeItem('stations');
             delete api.defaults.headers.common['Authorization'];
             window.dispatchEvent(new Event('mmg-auth-expired'));

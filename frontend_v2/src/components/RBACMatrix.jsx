@@ -89,6 +89,7 @@ export default function RBACMatrix() {
         job_title: '',
         team: '',
         role: 'MAGASINIER',
+        additional_roles: [],
         access_mode: 'PIN',
         pin: '',
         station_codes: [],
@@ -163,6 +164,7 @@ export default function RBACMatrix() {
             ...newUserForm,
             accessType,
             role: isAtelier ? 'MAGASINIER' : 'SALES',
+            additional_roles: [],
             access_mode: isAtelier ? 'PIN' : 'EMAIL',
             send_invite: !isAtelier,
             station_codes: isAtelier ? newUserForm.station_codes : [],
@@ -174,6 +176,14 @@ export default function RBACMatrix() {
         if (current.has(code)) current.delete(code);
         else current.add(code);
         setNewUserForm({...newUserForm, station_codes: Array.from(current)});
+    };
+
+    const toggleAdditionalRole = (roleName) => {
+        const current = new Set(newUserForm.additional_roles || []);
+        if (current.has(roleName)) current.delete(roleName);
+        else current.add(roleName);
+        current.delete(newUserForm.role);
+        setNewUserForm({...newUserForm, additional_roles: Array.from(current)});
     };
 
     const submitNewUser = async () => {
@@ -188,6 +198,7 @@ export default function RBACMatrix() {
                 job_title: newUserForm.job_title.trim() || null,
                 team: newUserForm.team.trim() || null,
                 role: newUserForm.role,
+                additional_roles: (newUserForm.additional_roles || []).filter(roleName => roleName !== newUserForm.role),
                 access_mode: newUserForm.access_mode,
                 pin: newUserForm.pin.trim() || null,
                 station_codes: newUserForm.station_codes || [],
@@ -210,6 +221,30 @@ export default function RBACMatrix() {
         } catch (e) {
             alert(e.response?.data?.detail || "Impossible d'envoyer l'invitation.");
         }
+    };
+
+    const updateUserAdditionalRoles = async (user, additionalRoles) => {
+        try {
+            await api.put(`/v2/config/users/${user.id}`, {
+                additional_roles: Array.from(new Set(additionalRoles)).filter(roleName => roleName && roleName !== user.role),
+            });
+            await fetchData();
+        } catch (e) {
+            alert(e.response?.data?.detail || "Impossible de mettre à jour les rôles de l'utilisateur.");
+        }
+    };
+
+    const addRoleToUser = (user, roleName) => {
+        if (!roleName || user.role === roleName || (user.additional_roles || []).includes(roleName)) return;
+        updateUserAdditionalRoles(user, [...(user.additional_roles || []), roleName]);
+    };
+
+    const removeRoleFromUser = (user, roleName) => {
+        if (user.role === roleName) {
+            alert("Ce profil est le rôle principal de l'utilisateur. Changez d'abord son rôle principal pour le retirer.");
+            return;
+        }
+        updateUserAdditionalRoles(user, (user.additional_roles || []).filter(item => item !== roleName));
     };
 
     const deleteRole = async (roleId) => {
@@ -266,7 +301,9 @@ export default function RBACMatrix() {
     const selectedPreset = ROLE_PRESETS.find(preset => preset.name === selectedRole?.name) || ROLE_FALLBACKS[selectedRole?.name];
     const selectedPermissions = selectedRole ? selectedRole.permissions || [] : [];
     const selectedPermissionCodes = new Set(selectedPermissions.map(permission => permission.code));
-    const selectedUsers = users.filter(user => user.role === selectedRole?.name);
+    const userHasRole = (user, roleName) => user?.role === roleName || (user?.additional_roles || []).includes(roleName);
+    const selectedUsers = users.filter(user => userHasRole(user, selectedRole?.name));
+    const assignableUsers = users.filter(user => selectedRole?.name && !userHasRole(user, selectedRole.name));
     const selectedGroupedPermissions = selectedPermissions.reduce((acc, permission) => {
         if (!acc[permission.module]) acc[permission.module] = [];
         acc[permission.module].push(permission);
@@ -424,7 +461,7 @@ export default function RBACMatrix() {
                             <input value={newUserForm.last_name} onChange={e => setNewUserForm({...newUserForm, last_name: e.target.value})} className={inputClass} placeholder="Dupont" />
                         </Field>
                         <Field label="Profil métier">
-                            <select value={newUserForm.role} onChange={e => setNewUserForm({...newUserForm, role: e.target.value})} className={inputClass}>
+                            <select value={newUserForm.role} onChange={e => setNewUserForm({...newUserForm, role: e.target.value, additional_roles: (newUserForm.additional_roles || []).filter(roleName => roleName !== e.target.value)})} className={inputClass}>
                                 {roles.map(role => {
                                     const preset = ROLE_PRESETS.find(item => item.name === role.name) || ROLE_FALLBACKS[role.name];
                                     return <option key={role.id} value={role.name}>{preset?.label || role.name}</option>;
@@ -450,6 +487,38 @@ export default function RBACMatrix() {
                         <Field label="Poste / équipe">
                             <input value={newUserForm.job_title} onChange={e => setNewUserForm({...newUserForm, job_title: e.target.value})} className={inputClass} placeholder="Magasinier, achats..." />
                         </Field>
+                        <div className="lg:col-span-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-3">
+                                <div>
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Rôles complémentaires</p>
+                                    <h3 className="font-black text-slate-900">Ajouter des casquettes métier</h3>
+                                </div>
+                                <p className="text-xs font-bold text-slate-500">Le rôle principal garde l’écran d’accueil.</p>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                                {roles.filter(role => role.name !== newUserForm.role).map(role => {
+                                    const preset = ROLE_PRESETS.find(item => item.name === role.name) || ROLE_FALLBACKS[role.name];
+                                    const checked = (newUserForm.additional_roles || []).includes(role.name);
+                                    return (
+                                        <label
+                                            key={role.id}
+                                            className={`rounded-xl border px-3 py-2 flex items-start gap-3 cursor-pointer ${checked ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-100'}`}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={checked}
+                                                onChange={() => toggleAdditionalRole(role.name)}
+                                                className="mt-1"
+                                            />
+                                            <span>
+                                                <span className="block text-sm font-black">{preset?.label || role.name}</span>
+                                                <span className="block text-[11px] font-bold text-slate-400">{preset?.scope || 'Custom'}</span>
+                                            </span>
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                        </div>
                     </div>
 
                     <aside className="rounded-2xl border border-slate-200 bg-slate-50 p-5 space-y-4">
@@ -525,7 +594,7 @@ export default function RBACMatrix() {
                             <div className="space-y-2 max-h-[430px] overflow-y-auto pr-1">
                                 {roles.map(role => {
                                     const preset = ROLE_PRESETS.find(item => item.name === role.name) || ROLE_FALLBACKS[role.name];
-                                    const roleUsers = users.filter(user => user.role === role.name).length;
+                                    const roleUsers = users.filter(user => userHasRole(user, role.name)).length;
                                     return (
                                         <button
                                             key={role.id}
@@ -630,6 +699,28 @@ export default function RBACMatrix() {
                                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Utilisateurs</p>
                                         <h3 className="font-black text-slate-900">Qui utilise ce profil</h3>
                                     </div>
+                                    {assignableUsers.length > 0 && (
+                                        <div className="p-4 border-b border-slate-100 bg-white">
+                                            <select
+                                                value=""
+                                                onChange={e => {
+                                                    const user = users.find(item => item.id === Number(e.target.value));
+                                                    if (user) addRoleToUser(user, selectedRole.name);
+                                                }}
+                                                className="w-full px-3 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-bold text-slate-700"
+                                            >
+                                                <option value="">Ajouter ce profil à un utilisateur...</option>
+                                                {assignableUsers.map(user => (
+                                                    <option key={user.id} value={user.id}>
+                                                        {`${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username} - rôle principal {user.role}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <p className="text-[11px] font-semibold text-slate-400 mt-2">
+                                                Ajoute ce profil comme rôle complémentaire. Le rôle principal garde l'écran d'accueil.
+                                            </p>
+                                        </div>
+                                    )}
                                     <div className="divide-y divide-slate-100">
                                         {selectedUsers.length > 0 ? selectedUsers.map(user => (
                                             <div key={user.id} className="p-4 flex items-center gap-3">
@@ -641,17 +732,38 @@ export default function RBACMatrix() {
                                                     <p className="text-xs font-semibold text-slate-400 truncate">
                                                         {user.username} · {user.access_mode || 'PIN'} · {user.invitation_status || 'ACTIVE'}
                                                     </p>
+                                                    {user.additional_roles?.length > 0 && (
+                                                        <p className="mt-1 text-[11px] font-bold text-blue-600 truncate">
+                                                            + {user.additional_roles.join(', ')}
+                                                        </p>
+                                                    )}
+                                                    <p className="mt-1">
+                                                        <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase ${user.role === selectedRole.name ? 'bg-slate-900 text-white' : 'bg-blue-50 text-blue-700'}`}>
+                                                            {user.role === selectedRole.name ? 'Principal' : 'Complémentaire'}
+                                                        </span>
+                                                    </p>
                                                 </div>
-                                                {user.email && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => resendInvite(user.id)}
-                                                        className="px-3 py-2 rounded-xl border border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-black inline-flex items-center gap-1"
-                                                    >
-                                                        <Mail className="w-3.5 h-3.5" />
-                                                        Inviter
-                                                    </button>
-                                                )}
+                                                <div className="flex flex-col gap-2">
+                                                    {user.email && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => resendInvite(user.id)}
+                                                            className="px-3 py-2 rounded-xl border border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-black inline-flex items-center gap-1"
+                                                        >
+                                                            <Mail className="w-3.5 h-3.5" />
+                                                            Inviter
+                                                        </button>
+                                                    )}
+                                                    {user.role !== selectedRole.name && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => removeRoleFromUser(user, selectedRole.name)}
+                                                            className="px-3 py-2 rounded-xl border border-red-100 bg-red-50 text-red-700 hover:bg-red-100 text-xs font-black"
+                                                        >
+                                                            Retirer
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </div>
                                         )) : (
                                             <div className="p-6 text-sm font-bold text-slate-400 text-center">

@@ -12,9 +12,10 @@ export const AuthProvider = ({ children }) => {
         if (token) {
             const username = localStorage.getItem('username') || 'Operator';
             const role = localStorage.getItem('role');
+            const roles = JSON.parse(localStorage.getItem('roles') || '[]');
             const stations = JSON.parse(localStorage.getItem('stations') || '[]');
             const permissions = JSON.parse(localStorage.getItem('permissions') || '[]');
-            setUser({ username, role, stations, permissions });
+            setUser({ username, role, roles: roles.length ? roles : [role], stations, permissions });
             api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         }
         setLoading(false);
@@ -36,12 +37,13 @@ export const AuthProvider = ({ children }) => {
 
             const res = await api.post('/token', formData);
 
-            const { access_token, role, stations, permissions } = res.data;
+            const { access_token, role, roles, stations, permissions } = res.data;
             if (access_token) {
-                const loggedInUser = { username, role, stations: stations || [], permissions: permissions || [] };
+                const loggedInUser = { username, role, roles: roles || [role], stations: stations || [], permissions: permissions || [] };
                 localStorage.setItem('token', access_token);
                 localStorage.setItem('username', username);
                 localStorage.setItem('role', role);
+                localStorage.setItem('roles', JSON.stringify(roles || [role]));
                 localStorage.setItem('stations', JSON.stringify(stations || []));
                 localStorage.setItem('permissions', JSON.stringify(permissions || []));
 
@@ -59,6 +61,7 @@ export const AuthProvider = ({ children }) => {
         localStorage.removeItem('token');
         localStorage.removeItem('username');
         localStorage.removeItem('role');
+        localStorage.removeItem('roles');
         localStorage.removeItem('stations');
         localStorage.removeItem('permissions');
         delete api.defaults.headers.common['Authorization'];
