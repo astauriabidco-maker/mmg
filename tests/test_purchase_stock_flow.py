@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -5,6 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend import database, models
 from backend.core import security
+from backend.core.time import utcnow
 from backend.main import app
 
 
@@ -355,6 +358,178 @@ def test_purchase_order_can_be_received_partially_then_completed():
         assert quant.quantity == 7.0
         assert sorted(move.quantity for move in moves) == [3.0, 4.0]
         assert len(supplier_invoices) == 2
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_supplier_operational_purchase_list_flags_open_receipt_invoice_and_overbilling():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        client = TestClient(app)
+        headers = _auth_headers(TestingSessionLocal, "supplier-ops-tester")
+
+        product_response = client.post(
+            "/v2/stock/products",
+            headers=headers,
+            json={
+                "reference_base": "TEST-SUPPLIER-OPS",
+                "name": "Joint fournisseur pilotage",
+                "material_type": "ACCESSOIRE",
+                "unit": "pce",
+                "supplier": "Ops Supplier",
+                "variants": [
+                    {
+                        "reference": "TEST-SUPPLIER-OPS-001",
+                        "quantity_in_stock": 0,
+                    }
+                ],
+            },
+        )
+        assert product_response.status_code == 200, product_response.text
+        variant_id = product_response.json()["variants"][0]["id"]
+
+        location_response = client.post(
+            "/v2/stock/locations",
+            headers=headers,
+            json={"name": "WH/Fiche Fournisseur", "usage": "internal"},
+        )
+        assert location_response.status_code == 200, location_response.text
+        target_location_id = location_response.json()["id"]
+
+        expected_date = (utcnow() - timedelta(days=2)).isoformat()
+        purchase_response = client.post(
+            "/v2/purchases/",
+            headers=headers,
+            json={
+                "supplier": "Ops Supplier",
+                "expected_date": expected_date,
+                "lines": [{"variant_id": variant_id, "quantity": 10, "unit_price": 4}],
+            },
+        )
+        assert purchase_response.status_code == 200, purchase_response.text
+        po_id = purchase_response.json()["id"]
+
+        line_id = client.get(f"/v2/purchases/{po_id}", headers=headers).json()["lines"][0]["id"]
+        partial_receipt = client.post(
+            f"/v2/purchases/{po_id}/receive",
+            headers=headers,
+            json={
+                "target_location_id": target_location_id,
+                "lines": [{"line_id": line_id, "quantity": 3}],
+            },
+        )
+        assert partial_receipt.status_code == 200, partial_receipt.text
+
+        too_high_invoice = client.post(
+            f"/v2/purchases/{po_id}/supplier-invoices",
+            headers=headers,
+            json={
+                "supplier_reference": "FAC-TROP-HAUTE",
+                "lines": [{"purchase_order_line_id": line_id, "quantity": 4}],
+            },
+        )
+        assert too_high_invoice.status_code == 400, too_high_invoice.text
+        assert "supérieure au reçu non facturé" in too_high_invoice.json()["detail"]
+
+        purchase_list_response = client.get("/v2/purchases/", headers=headers)
+        assert purchase_list_response.status_code == 200, purchase_list_response.text
+        [supplier_po] = [
+            po for po in purchase_list_response.json()
+            if po["supplier"] == "Ops Supplier" and po["id"] == po_id
+        ]
+
+        assert supplier_po["status"] == "PARTIAL"
+        assert supplier_po["operational_status"] == "LATE_RECEIPT"
+        assert supplier_po["receipt_status"] == "PARTIAL"
+        assert supplier_po["invoice_match_status"] == "TO_MATCH"
+        assert supplier_po["supplier_invoice_status"] == "NONE"
+        assert supplier_po["next_action"] == "Relancer fournisseur"
+        assert supplier_po["is_late"] is True
+        assert supplier_po["late_days"] >= 2
+        assert supplier_po["quantity_ordered"] == 10.0
+        assert supplier_po["quantity_received"] == 3.0
+        assert supplier_po["quantity_remaining"] == 7.0
+        assert supplier_po["quantity_invoiceable"] == 3.0
+        assert supplier_po["expected_date"] is not None
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_supplier_operational_purchase_list_exposes_late_purchase_orders():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        client = TestClient(app)
+        headers = _auth_headers(TestingSessionLocal, "supplier-late-tester")
+
+        product_response = client.post(
+            "/v2/stock/products",
+            headers=headers,
+            json={
+                "reference_base": "TEST-SUPPLIER-LATE",
+                "name": "Article fournisseur retard",
+                "material_type": "ACCESSOIRE",
+                "unit": "pce",
+                "supplier": "Late Supplier",
+                "variants": [{"reference": "TEST-SUPPLIER-LATE-001", "quantity_in_stock": 0}],
+            },
+        )
+        assert product_response.status_code == 200, product_response.text
+
+        purchase_response = client.post(
+            "/v2/purchases/",
+            headers=headers,
+            json={
+                "supplier": "Late Supplier",
+                "expected_date": (utcnow() - timedelta(days=3)).isoformat(),
+                "lines": [
+                    {
+                        "variant_id": product_response.json()["variants"][0]["id"],
+                        "quantity": 5,
+                        "unit_price": 2,
+                    }
+                ],
+            },
+        )
+        assert purchase_response.status_code == 200, purchase_response.text
+
+        purchase_list = client.get("/v2/purchases/", headers=headers).json()
+        [late_po] = [po for po in purchase_list if po["supplier"] == "Late Supplier"]
+        assert late_po["is_late"] is True
+        assert late_po["late_days"] >= 3
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)

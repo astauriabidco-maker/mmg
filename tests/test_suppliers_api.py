@@ -1,4 +1,5 @@
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from backend import database, models
+from backend.core.time import utcnow
 from backend.core.security import get_password_hash
 from backend.main import app
 
@@ -132,3 +134,102 @@ def test_suppliers_crud_with_business_profile(client):
     # ID inconnu
     assert client.get("/v2/suppliers/", headers=headers).status_code == 200
     assert client.delete("/v2/suppliers/99999", headers=headers).status_code == 404
+
+
+def test_supplier_operations_exposes_actionable_purchase_situation(client):
+    headers = _login(client)
+
+    supplier_response = client.post(
+        "/v2/suppliers/",
+        json={
+            "name": "OPS FOURNISSEUR",
+            "email": "ops@example.com",
+            "supplier_category": "QUINCAILLERIE",
+            "lead_time_days": 7,
+        },
+        headers=headers,
+    )
+    assert supplier_response.status_code == 200, supplier_response.text
+    supplier_id = supplier_response.json()["id"]
+
+    product_response = client.post(
+        "/v2/stock/products",
+        headers=headers,
+        json={
+            "reference_base": "OPS-SUP-001",
+            "name": "Article fournisseur opérationnel",
+            "material_type": "ACCESSOIRE",
+            "unit": "pce",
+            "supplier": "OPS FOURNISSEUR",
+            "variants": [{"reference": "OPS-SUP-001-A", "quantity_in_stock": 0}],
+        },
+    )
+    assert product_response.status_code == 200, product_response.text
+    variant_id = product_response.json()["variants"][0]["id"]
+
+    location_response = client.post(
+        "/v2/stock/locations",
+        headers=headers,
+        json={"name": "WH/Supplier Ops", "usage": "internal"},
+    )
+    assert location_response.status_code == 200, location_response.text
+    target_location_id = location_response.json()["id"]
+
+    purchase_response = client.post(
+        "/v2/purchases/",
+        headers=headers,
+        json={
+            "supplier": "OPS FOURNISSEUR",
+            "expected_date": (utcnow() - timedelta(days=4)).isoformat(),
+            "lines": [{"variant_id": variant_id, "quantity": 10, "unit_price": 5}],
+        },
+    )
+    assert purchase_response.status_code == 200, purchase_response.text
+    po_id = purchase_response.json()["id"]
+    details = client.get(f"/v2/purchases/{po_id}", headers=headers).json()
+    line_id = details["lines"][0]["id"]
+
+    receipt_response = client.post(
+        f"/v2/purchases/{po_id}/receive",
+        headers=headers,
+        json={
+            "target_location_id": target_location_id,
+            "lines": [{"line_id": line_id, "quantity": 3}],
+        },
+    )
+    assert receipt_response.status_code == 200, receipt_response.text
+
+    invoice_response = client.post(
+        f"/v2/purchases/{po_id}/supplier-invoices",
+        headers=headers,
+        json={
+            "supplier_reference": "FAC-OPS-001",
+            "lines": [{"purchase_order_line_id": line_id, "quantity": 2}],
+        },
+    )
+    assert invoice_response.status_code == 200, invoice_response.text
+
+    operations_response = client.get(f"/v2/suppliers/{supplier_id}/operations", headers=headers)
+    assert operations_response.status_code == 200, operations_response.text
+    operations = operations_response.json()
+
+    assert operations["supplier"]["name"] == "OPS FOURNISSEUR"
+    assert operations["metrics"]["open_orders"] == 1
+    assert operations["metrics"]["to_receive"] == 1
+    assert operations["metrics"]["to_invoice"] == 1
+    assert operations["metrics"]["late_orders"] == 1
+    assert operations["metrics"]["amount_committed"] == 50.0
+    assert operations["to_receive"][0]["quantity_remaining"] == 7.0
+    assert operations["to_receive"][0]["is_late"] is True
+    assert operations["to_receive"][0]["late_days"] >= 4
+    assert operations["to_invoice"][0]["quantity_invoiceable"] == 1.0
+    assert {action["code"]: action["enabled"] for action in operations["actions"]} == {
+        "purchase.create": True,
+        "purchase.receive": True,
+        "purchase.match_invoice": True,
+        "supplier.contact": True,
+        "supplier.dispute": False,
+    }
+    assert any(event["type"] == "late_receipt" for event in operations["timeline"])
+    assert any(event["type"] == "stock_receipt" for event in operations["timeline"])
+    assert any(event["type"] == "supplier_invoice" for event in operations["timeline"])

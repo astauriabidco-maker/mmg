@@ -103,8 +103,13 @@ def _purchase_order_metrics(po: models.PurchaseOrder, db: Session) -> dict:
     quantity_invoiced = sum(float(invoiced_quantities.get(line.id, 0)) for line in po.lines)
     quantity_remaining = max(quantity_ordered - quantity_received, 0)
     quantity_invoiceable = max(quantity_received - quantity_invoiced, 0)
+    is_cancelled = po.status == models.PurchaseOrderStatus.CANCELLED
+    late_days = 0
+    if po.expected_date and quantity_remaining > 0 and not is_cancelled:
+        late_days = max((utcnow().date() - po.expected_date.date()).days, 0)
+    is_late = late_days > 0
 
-    if po.status == models.PurchaseOrderStatus.CANCELLED:
+    if is_cancelled:
         receipt_status = "CANCELLED"
         invoice_match_status = "CANCELLED"
         operational_status = "CANCELLED"
@@ -130,8 +135,8 @@ def _purchase_order_metrics(po: models.PurchaseOrder, db: Session) -> dict:
             operational_status = "DRAFT_EMPTY"
             next_action = "Ajouter des lignes d'achat"
         elif quantity_remaining > 0:
-            operational_status = "TO_RECEIVE" if quantity_received <= 0 else "PARTIAL_RECEIPT"
-            next_action = "Réceptionner fournisseur"
+            operational_status = "LATE_RECEIPT" if is_late else "TO_RECEIVE" if quantity_received <= 0 else "PARTIAL_RECEIPT"
+            next_action = "Relancer fournisseur" if is_late else "Réceptionner fournisseur"
         elif quantity_invoiceable > 0:
             operational_status = "INVOICE_TO_MATCH"
             next_action = "Rapprocher facture fournisseur"
@@ -150,6 +155,8 @@ def _purchase_order_metrics(po: models.PurchaseOrder, db: Session) -> dict:
         "invoice_match_status": invoice_match_status,
         "operational_status": operational_status,
         "next_action": next_action,
+        "is_late": is_late,
+        "late_days": late_days,
         "invoiced_quantities": invoiced_quantities,
     }
 
@@ -209,6 +216,8 @@ def get_purchase_orders(db: Session = Depends(get_db)):
             "invoice_match_status": metrics["invoice_match_status"],
             "operational_status": metrics["operational_status"],
             "next_action": metrics["next_action"],
+            "is_late": metrics["is_late"],
+            "late_days": metrics["late_days"],
         })
     return result
 
@@ -307,6 +316,8 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
         "invoice_match_status": metrics["invoice_match_status"],
         "operational_status": metrics["operational_status"],
         "next_action": metrics["next_action"],
+        "is_late": metrics["is_late"],
+        "late_days": metrics["late_days"],
         "lines": lines,
         "supplier_invoices": [_serialize_supplier_invoice(invoice) for invoice in po.supplier_invoices],
     }

@@ -1172,6 +1172,10 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
     const [activeTab, setActiveTab] = useState('overview');
 
     const supOrders = purchases.filter(p => p.supplier === sup.name);
+    const formatCurrency = (amount) => Number(amount || 0).toLocaleString('fr-FR', {style: 'currency', currency: sup.default_currency || 'EUR'});
+    const orderedQty = (order) => Number(order.quantity_ordered ?? (order.lines || []).reduce((sum, line) => sum + Number(line.quantity || 0), 0));
+    const remainingQty = (order) => Number(order.quantity_remaining ?? Math.max(orderedQty(order) - Number(order.quantity_received || 0), 0));
+    const invoiceableQty = (order) => Number(order.quantity_invoiceable ?? Math.max(Number(order.quantity_received || 0) - Number(order.quantity_invoiced || 0), 0));
     const totalSpent = supOrders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
     const totalOrders = supOrders.length;
     const receivedOrders = supOrders.filter(o => o.status === 'RECEIVED').length;
@@ -1179,8 +1183,8 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const openOrders = supOrders.filter(o => !['RECEIVED', 'CANCELLED'].includes(o.status));
-    const toReceiveOrders = supOrders.filter(o => ['DRAFT', 'SENT', 'PARTIAL'].includes(o.status));
-    const toInvoiceOrders = supOrders.filter(o => Number(o.quantity_received || 0) > Number(o.quantity_invoiced || 0));
+    const toReceiveOrders = supOrders.filter(o => !['RECEIVED', 'CANCELLED'].includes(o.status) && remainingQty(o) > 0);
+    const toInvoiceOrders = supOrders.filter(o => invoiceableQty(o) > 0);
     const lateOrders = supOrders.filter(o => {
         if (!o.expected_date || ['RECEIVED', 'CANCELLED'].includes(o.status)) return false;
         const expected = new Date(o.expected_date);
@@ -1204,13 +1208,34 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                 : 'bg-emerald-100 text-emerald-700 border-emerald-200';
     const qualityAlerts = lateOrders.length + toInvoiceOrders.length + supOrders.filter(o => o.status === 'PARTIAL').length;
     const qualityLabel = qualityAlerts === 0 ? 'Stable' : qualityAlerts <= 2 ? 'À surveiller' : 'Sous tension';
+    const committedAmount = openOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
+    const quantityToReceive = toReceiveOrders.reduce((sum, order) => sum + remainingQty(order), 0);
+    const quantityToInvoice = toInvoiceOrders.reduce((sum, order) => sum + invoiceableQty(order), 0);
+    const operationalOrders = [...new Map([...lateOrders, ...toReceiveOrders, ...toInvoiceOrders].map(order => [order.id, order])).values()]
+        .sort((a, b) => {
+            const aLate = lateOrders.some(order => order.id === a.id) ? 0 : 1;
+            const bLate = lateOrders.some(order => order.id === b.id) ? 0 : 1;
+            if (aLate !== bLate) return aLate - bLate;
+            return new Date(a.expected_date || a.created_at || 0) - new Date(b.expected_date || b.created_at || 0);
+        })
+        .slice(0, 6);
+    const openOrder = (order) => {
+        setCurrentTab('orders');
+        openPODetails(order.id);
+    };
+    const getOrderNextAction = (order) => {
+        if (lateOrders.some(lateOrder => lateOrder.id === order.id)) return 'Relancer retard';
+        if (remainingQty(order) > 0) return 'Réceptionner';
+        if (invoiceableQty(order) > 0) return 'Rapprocher facture';
+        return order.next_action || 'Voir commande';
+    };
     const supplierTimeline = supOrders
         .flatMap(order => {
             const events = [{
                 key: `${order.id}-created`,
                 date: order.order_date || order.created_at,
                 label: 'Commande fournisseur',
-                detail: `${order.reference} · ${Number(order.total_amount || 0).toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}`,
+                detail: `${order.reference} · ${formatCurrency(order.total_amount)}`,
                 tone: 'blue',
             }];
             if (Number(order.quantity_received || 0) > 0) {
@@ -1238,6 +1263,40 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
     
     // Average order value
     const avgOrderValue = totalOrders > 0 ? (totalSpent / totalOrders) : 0;
+    const actionTiles = [
+        {
+            label: 'Créer commande',
+            detail: canOrder ? 'Bon fournisseur prérempli' : 'Fournisseur bloqué',
+            value: '+',
+            tone: 'slate',
+            disabled: !canOrder,
+            onClick: () => openCreatePOForSupplier(sup.name),
+        },
+        {
+            label: 'À réceptionner',
+            detail: `${quantityToReceive.toLocaleString('fr-FR')} unité(s) restantes`,
+            value: toReceiveOrders.length,
+            tone: 'emerald',
+            disabled: toReceiveOrders.length === 0,
+            onClick: () => openOrder(toReceiveOrders[0]),
+        },
+        {
+            label: 'Factures à rapprocher',
+            detail: `${quantityToInvoice.toLocaleString('fr-FR')} unité(s) facturables`,
+            value: toInvoiceOrders.length,
+            tone: 'orange',
+            disabled: toInvoiceOrders.length === 0,
+            onClick: () => openOrder(toInvoiceOrders[0]),
+        },
+        {
+            label: 'Retards',
+            detail: 'Commandes à relancer',
+            value: lateOrders.length,
+            tone: 'red',
+            disabled: lateOrders.length === 0,
+            onClick: () => openOrder(lateOrders[0]),
+        },
+    ];
     const openWebsite = () => {
         if (!sup.website) return;
         const url = sup.website.startsWith('http') ? sup.website : `https://${sup.website}`;
@@ -1332,22 +1391,114 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                                         <Plus className="w-5 h-5" /> Créer commande fournisseur
                                     </button>
                                 </div>
-                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+                                <div className="grid grid-cols-2 xl:grid-cols-5 gap-4 mt-6">
                                     <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Commandes ouvertes</p>
                                         <p className="text-3xl font-black text-slate-900 mt-1">{openOrders.length}</p>
                                     </div>
                                     <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4">
                                         <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">À réceptionner</p>
-                                        <p className="text-3xl font-black text-blue-700 mt-1">{toReceiveOrders.length}</p>
+                                        <p className="text-3xl font-black text-blue-700 mt-1">{quantityToReceive.toLocaleString('fr-FR')}</p>
+                                        <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">{toReceiveOrders.length} commande(s)</p>
                                     </div>
                                     <div className="rounded-2xl bg-orange-50 border border-orange-100 p-4">
                                         <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">À facturer</p>
-                                        <p className="text-3xl font-black text-orange-700 mt-1">{toInvoiceOrders.length}</p>
+                                        <p className="text-3xl font-black text-orange-700 mt-1">{quantityToInvoice.toLocaleString('fr-FR')}</p>
+                                        <p className="text-[10px] font-black text-orange-400 uppercase tracking-widest">{toInvoiceOrders.length} commande(s)</p>
                                     </div>
                                     <div className="rounded-2xl bg-red-50 border border-red-100 p-4">
                                         <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Retards</p>
                                         <p className="text-3xl font-black text-red-700 mt-1">{lateOrders.length}</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4">
+                                        <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Montant engagé</p>
+                                        <p className="text-2xl font-black text-emerald-700 mt-1">{formatCurrency(committedAmount)}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-8 mb-8">
+                                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                                    <div className="p-6 border-b border-slate-100 bg-slate-50">
+                                        <h3 className="font-black text-slate-800 flex items-center gap-2"><ArrowRight className="w-5 h-5 text-slate-400"/> Actions directes</h3>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">Les raccourcis importants selon la situation du fournisseur.</p>
+                                    </div>
+                                    <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        {actionTiles.map(action => (
+                                            <button
+                                                key={action.label}
+                                                onClick={action.onClick}
+                                                disabled={action.disabled}
+                                                className={`text-left rounded-2xl border p-4 transition-all disabled:opacity-45 disabled:cursor-not-allowed ${
+                                                    action.tone === 'emerald' ? 'bg-emerald-50 border-emerald-100 hover:bg-emerald-100'
+                                                    : action.tone === 'orange' ? 'bg-orange-50 border-orange-100 hover:bg-orange-100'
+                                                    : action.tone === 'red' ? 'bg-red-50 border-red-100 hover:bg-red-100'
+                                                    : 'bg-slate-50 border-slate-100 hover:bg-slate-100'
+                                                }`}
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div>
+                                                        <p className="font-black text-slate-900">{action.label}</p>
+                                                        <p className="text-xs font-bold text-slate-500 mt-1">{action.detail}</p>
+                                                    </div>
+                                                    <span className={`min-w-10 h-10 px-2 rounded-xl flex items-center justify-center font-black ${
+                                                        action.tone === 'emerald' ? 'bg-emerald-600 text-white'
+                                                        : action.tone === 'orange' ? 'bg-orange-600 text-white'
+                                                        : action.tone === 'red' ? 'bg-red-600 text-white'
+                                                        : 'bg-slate-900 text-white'
+                                                    }`}>
+                                                        {action.value}
+                                                    </span>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                                    <div className="p-6 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                                        <div>
+                                            <h3 className="font-black text-slate-800 flex items-center gap-2"><PackageOpen className="w-5 h-5 text-slate-400"/> Commandes à traiter</h3>
+                                            <p className="text-xs font-bold text-slate-500 mt-1">Retards, réceptions ouvertes et factures à rapprocher.</p>
+                                        </div>
+                                        <button onClick={() => setActiveTab('orders')} className="text-xs font-black text-blue-600 hover:text-blue-700">
+                                            Voir tout
+                                        </button>
+                                    </div>
+                                    <div className="divide-y divide-slate-100">
+                                        {operationalOrders.map(order => (
+                                            <button
+                                                key={order.id}
+                                                onClick={() => openOrder(order)}
+                                                className="w-full p-4 text-left hover:bg-slate-50 transition-colors flex items-center justify-between gap-4"
+                                            >
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="font-black text-slate-900">{order.reference}</p>
+                                                        <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${getStatusColor(order.status)}`}>{order.status}</span>
+                                                    </div>
+                                                    <p className="text-xs font-bold text-slate-500 mt-1">
+                                                        Reste à recevoir {remainingQty(order).toLocaleString('fr-FR')} · À rapprocher {invoiceableQty(order).toLocaleString('fr-FR')}
+                                                    </p>
+                                                    {order.expected_date && (
+                                                        <p className={`text-[10px] font-black uppercase tracking-widest mt-1 ${lateOrders.some(lateOrder => lateOrder.id === order.id) ? 'text-red-600' : 'text-slate-400'}`}>
+                                                            Livraison prévue {new Date(order.expected_date).toLocaleDateString('fr-FR')}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                <div className="text-right shrink-0">
+                                                    <p className="font-black text-slate-900">{formatCurrency(order.total_amount)}</p>
+                                                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mt-1">{getOrderNextAction(order)}</p>
+                                                </div>
+                                            </button>
+                                        ))}
+                                        {operationalOrders.length === 0 && (
+                                            <div className="p-8 text-center">
+                                                <CheckCircle className="w-10 h-10 text-emerald-300 mx-auto mb-3" />
+                                                <p className="font-black text-slate-700">Aucune action urgente</p>
+                                                <p className="text-sm font-bold text-slate-400 mt-1">Pas de retard, pas de réception ouverte, pas de facture à rapprocher.</p>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -1361,7 +1512,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                                         </div>
                                     </div>
                                     <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Total Dépensé</p>
-                                    <h3 className="text-2xl font-black text-slate-800">{totalSpent.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</h3>
+                                    <h3 className="text-2xl font-black text-slate-800">{formatCurrency(totalSpent)}</h3>
                                 </div>
                                 
                                 <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
@@ -1391,7 +1542,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                                         </div>
                                     </div>
                                     <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Panier Moyen</p>
-                                    <h3 className="text-2xl font-black text-slate-800">{avgOrderValue.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</h3>
+                                    <h3 className="text-2xl font-black text-slate-800">{formatCurrency(avgOrderValue)}</h3>
                                 </div>
                             </div>
 
