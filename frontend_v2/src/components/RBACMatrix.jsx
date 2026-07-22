@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, ShieldAlert, Check, Plus, Trash2, X, Users, Eye, Settings2 } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Check, Plus, Trash2, X, Users, Eye, Settings2, Mail, KeyRound } from 'lucide-react';
 import api from '../services/api';
 
 const ROLE_PRESETS = [
@@ -75,22 +75,42 @@ export default function RBACMatrix() {
     const [roles, setRoles] = useState([]);
     const [permissions, setPermissions] = useState([]);
     const [users, setUsers] = useState([]);
+    const [stations, setStations] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showRoleModal, setShowRoleModal] = useState(false);
     const [newRoleForm, setNewRoleForm] = useState({ name: '', description: '' });
+    const emptyUserForm = {
+        accessType: 'ATELIER',
+        username: '',
+        first_name: '',
+        last_name: '',
+        email: '',
+        phone: '',
+        job_title: '',
+        team: '',
+        role: 'MAGASINIER',
+        access_mode: 'PIN',
+        pin: '',
+        station_codes: [],
+        send_invite: false,
+    };
+    const [newUserForm, setNewUserForm] = useState(emptyUserForm);
+    const [createdAccess, setCreatedAccess] = useState(null);
     const [applyingPreset, setApplyingPreset] = useState(null);
     const [selectedRoleName, setSelectedRoleName] = useState('MAGASINIER');
 
     const fetchData = async () => {
         try {
-            const [rolesRes, permsRes, usersRes] = await Promise.all([
+            const [rolesRes, permsRes, usersRes, stationsRes] = await Promise.all([
                 api.get('/v2/config/roles'),
                 api.get('/v2/config/permissions'),
-                api.get('/v2/config/users')
+                api.get('/v2/config/users'),
+                api.get('/v2/config/stations')
             ]);
             setRoles(rolesRes.data);
             setPermissions(permsRes.data);
             setUsers(usersRes.data);
+            setStations(stationsRes.data);
             if (!rolesRes.data.some(role => role.name === selectedRoleName) && rolesRes.data[0]) {
                 setSelectedRoleName(rolesRes.data[0].name);
             }
@@ -133,6 +153,61 @@ export default function RBACMatrix() {
             fetchData();
         } catch (e) {
             alert(e.response?.data?.detail || "Erreur lors de la création du rôle");
+        }
+    };
+
+    const setAccessType = (accessType) => {
+        const isAtelier = accessType === 'ATELIER';
+        setNewUserForm({
+            ...newUserForm,
+            accessType,
+            role: isAtelier ? 'MAGASINIER' : 'SALES',
+            access_mode: isAtelier ? 'PIN' : 'EMAIL',
+            send_invite: !isAtelier,
+            station_codes: isAtelier ? newUserForm.station_codes : [],
+        });
+    };
+
+    const toggleStation = (code) => {
+        const current = new Set(newUserForm.station_codes || []);
+        if (current.has(code)) current.delete(code);
+        else current.add(code);
+        setNewUserForm({...newUserForm, station_codes: Array.from(current)});
+    };
+
+    const submitNewUser = async () => {
+        if (!newUserForm.username || !newUserForm.role) return;
+        try {
+            const payload = {
+                username: newUserForm.username.trim(),
+                first_name: newUserForm.first_name.trim() || null,
+                last_name: newUserForm.last_name.trim() || null,
+                email: newUserForm.email.trim() || null,
+                phone: newUserForm.phone.trim() || null,
+                job_title: newUserForm.job_title.trim() || null,
+                team: newUserForm.team.trim() || null,
+                role: newUserForm.role,
+                access_mode: newUserForm.access_mode,
+                pin: newUserForm.pin.trim() || null,
+                station_codes: newUserForm.station_codes || [],
+                send_invite: Boolean(newUserForm.send_invite),
+            };
+            const res = await api.post('/v2/config/users', payload);
+            setCreatedAccess(res.data);
+            setNewUserForm(emptyUserForm);
+            await fetchData();
+        } catch (e) {
+            alert(e.response?.data?.detail || "Impossible de créer l'utilisateur.");
+        }
+    };
+
+    const resendInvite = async (userId) => {
+        try {
+            const res = await api.post(`/v2/config/users/${userId}/invite`);
+            setCreatedAccess(res.data);
+            await fetchData();
+        } catch (e) {
+            alert(e.response?.data?.detail || "Impossible d'envoyer l'invitation.");
         }
     };
 
@@ -197,6 +272,7 @@ export default function RBACMatrix() {
         return acc;
     }, {});
     const isBuiltinFullAccess = ['ADMIN', 'SUPER_ADMIN'].includes(selectedRole?.name);
+    const inputClass = "w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500";
 
     return (
         <div className="mt-12 space-y-6 font-sans">
@@ -246,6 +322,130 @@ export default function RBACMatrix() {
                         );
                     })}
                 </div>
+            </div>
+
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-6 border-b border-slate-100 flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
+                    <div>
+                        <p className="text-[11px] font-black uppercase tracking-widest text-emerald-500">Création utilisateur</p>
+                        <h2 className="text-2xl font-black text-slate-900 mt-1">Créer un accès exploitable</h2>
+                        <p className="text-sm font-semibold text-slate-500 mt-1">
+                            Choisissez d'abord le contexte d'usage, puis le profil métier. Les permissions viennent du rôle.
+                        </p>
+                    </div>
+                    <div className="flex rounded-2xl border border-slate-200 bg-slate-50 p-1">
+                        {[
+                            ['ATELIER', 'Rapide atelier'],
+                            ['BUREAU', 'Bureau / email'],
+                        ].map(([value, label]) => (
+                            <button
+                                key={value}
+                                type="button"
+                                onClick={() => setAccessType(value)}
+                                className={`px-4 py-2 rounded-xl text-sm font-black ${newUserForm.accessType === value ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-white'}`}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="p-6 grid grid-cols-1 2xl:grid-cols-[1fr_360px] gap-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <Field label="Identifiant">
+                            <input value={newUserForm.username} onChange={e => setNewUserForm({...newUserForm, username: e.target.value})} className={inputClass} placeholder="ex: jdupont" />
+                        </Field>
+                        <Field label="Prénom">
+                            <input value={newUserForm.first_name} onChange={e => setNewUserForm({...newUserForm, first_name: e.target.value})} className={inputClass} placeholder="Jean" />
+                        </Field>
+                        <Field label="Nom">
+                            <input value={newUserForm.last_name} onChange={e => setNewUserForm({...newUserForm, last_name: e.target.value})} className={inputClass} placeholder="Dupont" />
+                        </Field>
+                        <Field label="Profil métier">
+                            <select value={newUserForm.role} onChange={e => setNewUserForm({...newUserForm, role: e.target.value})} className={inputClass}>
+                                {roles.map(role => {
+                                    const preset = ROLE_PRESETS.find(item => item.name === role.name) || ROLE_FALLBACKS[role.name];
+                                    return <option key={role.id} value={role.name}>{preset?.label || role.name}</option>;
+                                })}
+                            </select>
+                        </Field>
+                        <Field label="Mode d'accès">
+                            <select value={newUserForm.access_mode} onChange={e => setNewUserForm({...newUserForm, access_mode: e.target.value})} className={inputClass}>
+                                <option value="PIN">PIN atelier</option>
+                                <option value="EMAIL">Email / invitation</option>
+                                <option value="HYBRID">PIN + email</option>
+                            </select>
+                        </Field>
+                        <Field label={newUserForm.access_mode === 'PIN' ? 'PIN temporaire' : 'Mot de passe temporaire'}>
+                            <input value={newUserForm.pin} onChange={e => setNewUserForm({...newUserForm, pin: e.target.value})} className={inputClass} placeholder={newUserForm.access_mode === 'PIN' ? 'Auto si vide' : 'Auto si vide'} />
+                        </Field>
+                        <Field label="Email">
+                            <input value={newUserForm.email} onChange={e => setNewUserForm({...newUserForm, email: e.target.value})} className={inputClass} placeholder="nom@entreprise.com" />
+                        </Field>
+                        <Field label="Téléphone">
+                            <input value={newUserForm.phone} onChange={e => setNewUserForm({...newUserForm, phone: e.target.value})} className={inputClass} placeholder="+33..." />
+                        </Field>
+                        <Field label="Poste / équipe">
+                            <input value={newUserForm.job_title} onChange={e => setNewUserForm({...newUserForm, job_title: e.target.value})} className={inputClass} placeholder="Magasinier, achats..." />
+                        </Field>
+                    </div>
+
+                    <aside className="rounded-2xl border border-slate-200 bg-slate-50 p-5 space-y-4">
+                        <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Accès atelier</p>
+                            <h3 className="font-black text-slate-900">Stations autorisées</h3>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto pr-1">
+                            {stations.map(station => (
+                                <label key={station.code} className={`rounded-xl border px-3 py-2 flex items-center gap-3 cursor-pointer ${newUserForm.station_codes.includes(station.code) ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-600'}`}>
+                                    <input
+                                        type="checkbox"
+                                        checked={newUserForm.station_codes.includes(station.code)}
+                                        onChange={() => toggleStation(station.code)}
+                                    />
+                                    <span className="text-sm font-black">{station.display_name}</span>
+                                </label>
+                            ))}
+                            {stations.length === 0 && <p className="text-sm font-bold text-slate-400">Aucune station configurée.</p>}
+                        </div>
+                        <label className="rounded-xl border border-slate-200 bg-white p-3 flex items-start gap-3 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={newUserForm.send_invite}
+                                onChange={e => setNewUserForm({...newUserForm, send_invite: e.target.checked, access_mode: e.target.checked && newUserForm.access_mode === 'PIN' ? 'HYBRID' : newUserForm.access_mode})}
+                            />
+                            <span>
+                                <span className="block text-sm font-black text-slate-900">Envoyer une invitation email</span>
+                                <span className="block text-xs font-semibold text-slate-500 mt-1">Best-effort : la création réussit même si SMTP n'est pas configuré.</span>
+                            </span>
+                        </label>
+                        <button onClick={submitNewUser} disabled={!newUserForm.username || !newUserForm.role} className="w-full py-4 rounded-xl bg-emerald-600 disabled:bg-slate-300 hover:bg-emerald-500 text-white font-black shadow-sm inline-flex justify-center items-center gap-2">
+                            <Plus className="w-4 h-4" /> Créer l'utilisateur
+                        </button>
+                    </aside>
+                </div>
+
+                {createdAccess && (
+                    <div className="mx-6 mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-4">
+                        <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Accès créé</p>
+                            <h3 className="text-xl font-black text-emerald-950">{createdAccess.user?.username}</h3>
+                            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+                                {createdAccess.temporary_pin && (
+                                    <InfoPill icon={KeyRound} label="PIN / secret temporaire" value={createdAccess.temporary_pin} />
+                                )}
+                                {createdAccess.invitation_link && (
+                                    <InfoPill icon={Mail} label="Lien invitation" value={createdAccess.invitation_link} />
+                                )}
+                                <InfoPill icon={ShieldCheck} label="Statut invitation" value={createdAccess.user?.invitation_status || 'ACTIVE'} />
+                            </div>
+                            <p className="text-sm font-bold text-emerald-800 mt-3">{createdAccess.message}</p>
+                        </div>
+                        <button onClick={() => setCreatedAccess(null)} className="self-start px-4 py-3 rounded-xl border border-emerald-200 bg-white text-emerald-700 font-black">
+                            Masquer
+                        </button>
+                    </div>
+                )}
             </div>
 
             {selectedRole && (
@@ -373,10 +573,22 @@ export default function RBACMatrix() {
                                                 <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-black">
                                                     {(user.first_name || user.username || '?').charAt(0).toUpperCase()}
                                                 </div>
-                                                <div className="min-w-0">
+                                                <div className="min-w-0 flex-1">
                                                     <p className="font-black text-sm text-slate-900 truncate">{`${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username}</p>
-                                                    <p className="text-xs font-semibold text-slate-400 truncate">{user.username}</p>
+                                                    <p className="text-xs font-semibold text-slate-400 truncate">
+                                                        {user.username} · {user.access_mode || 'PIN'} · {user.invitation_status || 'ACTIVE'}
+                                                    </p>
                                                 </div>
+                                                {user.email && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => resendInvite(user.id)}
+                                                        className="px-3 py-2 rounded-xl border border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-black inline-flex items-center gap-1"
+                                                    >
+                                                        <Mail className="w-3.5 h-3.5" />
+                                                        Inviter
+                                                    </button>
+                                                )}
                                             </div>
                                         )) : (
                                             <div className="p-6 text-sm font-bold text-slate-400 text-center">
@@ -540,6 +752,27 @@ function RoleMetric({ icon: Icon, label, value }) {
                     <Icon className="w-5 h-5" />
                 </div>
             </div>
+        </div>
+    );
+}
+
+function Field({ label, children }) {
+    return (
+        <label className="block">
+            <span className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">{label}</span>
+            {children}
+        </label>
+    );
+}
+
+function InfoPill({ icon: Icon, label, value }) {
+    return (
+        <div className="rounded-xl border border-emerald-200 bg-white p-3 min-w-0">
+            <div className="flex items-center gap-2 text-emerald-700">
+                <Icon className="w-4 h-4 shrink-0" />
+                <p className="text-[10px] font-black uppercase tracking-widest truncate">{label}</p>
+            </div>
+            <p className="mt-1 text-sm font-black text-slate-900 break-all">{value}</p>
         </div>
     );
 }

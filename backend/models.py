@@ -46,6 +46,14 @@ class User(Base):
     last_name = Column(String, nullable=True)
     email = Column(String, nullable=True)
     phone = Column(String, nullable=True)
+    job_title = Column(String, nullable=True)
+    team = Column(String, nullable=True)
+    access_mode = Column(String, default="PIN") # PIN, EMAIL, HYBRID
+    invitation_status = Column(String, default="ACTIVE") # ACTIVE, PENDING, SENT, FAILED
+    invite_token = Column(String, nullable=True, unique=True, index=True)
+    invited_at = Column(DateTime, nullable=True)
+    pin_must_change = Column(Boolean, default=False)
+    last_login_at = Column(DateTime, nullable=True)
     pin_hash = Column(String) # Hashed 4-digit PIN
     role = Column(String, default="OPERATOR") # Link to roles.name
     is_active = Column(Boolean, default=True)

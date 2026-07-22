@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Lock, Delete } from 'lucide-react';
+import { Lock, Delete, MailCheck } from 'lucide-react';
+import api from '../services/api';
 
 export default function Login() {
     const [pin, setPin] = useState('');
@@ -9,8 +10,25 @@ export default function Login() {
     const [password, setPassword] = useState('');
     const [isKioskMode, setIsKioskMode] = useState(true);
     const [error, setError] = useState('');
+    const [inviteNotice, setInviteNotice] = useState('');
     const { login } = useAuth();
     const navigate = useNavigate();
+
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const inviteToken = params.get('invite');
+        if (!inviteToken) return;
+
+        setIsKioskMode(false);
+        api.get(`/invitations/${inviteToken}`)
+            .then(res => {
+                setUsername(res.data.username || '');
+                setInviteNotice(`Invitation trouvée pour ${res.data.display_name || res.data.username}. Saisissez le secret temporaire transmis séparément pour activer l'accès.`);
+            })
+            .catch(() => {
+                setError("Invitation introuvable ou expirée.");
+            });
+    }, []);
 
     const handleNum = (num) => {
         if (pin.length < 4) {
@@ -81,6 +99,13 @@ export default function Login() {
                 {error && (
                     <div className="text-red-500 text-center mb-4 font-bold animate-pulse">
                         {error}
+                    </div>
+                )}
+
+                {inviteNotice && !error && (
+                    <div className="mb-5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-100 text-sm font-semibold flex items-start gap-3">
+                        <MailCheck className="w-5 h-5 text-emerald-300 shrink-0 mt-0.5" />
+                        <span>{inviteNotice}</span>
                     </div>
                 )}
 

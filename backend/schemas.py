@@ -11,12 +11,16 @@ class UserBase(BaseModel):
     last_name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
+    job_title: Optional[str] = None
+    team: Optional[str] = None
+    access_mode: str = "PIN"
     role: str = "OPERATOR"
     stations: List['Station'] = [] # Changed to list of Station objects
 
 class UserCreate(UserBase):
-    pin: str # 4 digits
+    pin: Optional[str] = None # 4 digits or temporary password
     station_codes: List[str] = [] # Codes of stations to associate
+    send_invite: bool = False
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
@@ -24,6 +28,9 @@ class UserUpdate(BaseModel):
     last_name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
+    job_title: Optional[str] = None
+    team: Optional[str] = None
+    access_mode: Optional[str] = None
     role: Optional[str] = None
     pin: Optional[str] = None # Optional PIN reset
     station_codes: Optional[List[str]] = None
@@ -31,7 +38,18 @@ class UserUpdate(BaseModel):
 class User(UserBase):
     id: int
     is_active: bool
+    invitation_status: Optional[str] = None
+    invited_at: Optional[datetime] = None
+    pin_must_change: bool = False
+    last_login_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
+
+class UserCreateResponse(BaseModel):
+    user: User
+    temporary_pin: Optional[str] = None
+    invitation_sent: bool = False
+    invitation_link: Optional[str] = None
+    message: str
 
 class Token(BaseModel):
     access_token: str

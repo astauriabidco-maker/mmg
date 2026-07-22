@@ -10,6 +10,7 @@ from .routers import api, v2_planning, v2_analytics, v2_printer, v2_ingest, v2_c
 from .core.websocket import manager
 from .core import security
 from .core.logger import logger
+from .core.time import utcnow
 from fastapi import WebSocket, WebSocketDisconnect
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -130,6 +131,25 @@ def readiness_check(db: Session = Depends(database.get_db)):
     db.execute(text("SELECT 1"))
     return {"status": "ready", "database": "ok"}
 
+@app.get("/invitations/{token}", tags=["auth"])
+def get_user_invitation(token: str, db: Session = Depends(database.get_db)):
+    user = (
+        db.query(models.User)
+        .filter(models.User.invite_token == token, models.User.is_active == True)  # noqa: E712
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="Invitation introuvable ou expirée")
+    display_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username
+    return {
+        "username": user.username,
+        "display_name": display_name,
+        "email": user.email,
+        "role": user.role,
+        "access_mode": user.access_mode,
+        "invitation_status": user.invitation_status,
+    }
+
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: int, token: str = ""):
     db = database.SessionLocal()
@@ -193,6 +213,12 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
         login_rate_limiter.record_failure(rate_key)
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     login_rate_limiter.reset(rate_key)
+    user.last_login_at = utcnow()
+    if user.invitation_status == "PENDING":
+        user.invitation_status = "ACTIVE"
+        user.invite_token = None
+        user.pin_must_change = False
+        db.commit()
     permissions = ["*"]
     if user.role not in ["ADMIN", "SUPER_ADMIN"]:
         role = db.query(models.Role).filter(models.Role.name == user.role).first()

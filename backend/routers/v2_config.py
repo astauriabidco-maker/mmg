@@ -1,16 +1,65 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
+import os
+import secrets
 from ..database import get_db
 from .. import models, schemas
 from ..core import security
+from ..core.events import _send_smtp_email
 
 router = APIRouter(
     prefix="/v2/config",
     tags=["config"],
     dependencies=[Depends(security.get_current_user)],
 )
-PIN_ROLES = {"OPERATOR", "DEBIT_OPERATOR", "QUALITY_CONTROLLER", "WORKSHOP_LEAD"}
+PIN_ROLES = {"OPERATOR", "DEBIT_OPERATOR", "QUALITY_CONTROLLER", "WORKSHOP_LEAD", "MAGASINIER"}
+ACCESS_MODES = {"PIN", "EMAIL", "HYBRID"}
+
+def _temporary_secret(access_mode: str, role_name: str) -> str:
+    if access_mode == "PIN" or role_name in PIN_ROLES:
+        return f"{secrets.randbelow(10000):04d}"
+    return secrets.token_urlsafe(12)
+
+def _validate_user_secret(secret: str, role_name: str, access_mode: str) -> None:
+    if access_mode == "PIN" or role_name in PIN_ROLES:
+        if not secret.isdigit() or len(secret) != 4:
+            raise HTTPException(400, "Le code PIN atelier doit être composé de 4 chiffres")
+    elif len(secret) < 8:
+        raise HTTPException(400, "Le mot de passe temporaire doit faire au moins 8 caractères")
+
+def _invite_link(token: str) -> str:
+    base_url = (os.environ.get("FRONTEND_BASE_URL") or os.environ.get("APP_BASE_URL") or "").strip().rstrip("/")
+    if not base_url:
+        return f"INVITE-TOKEN:{token}"
+    return f"{base_url}/login?invite={token}"
+
+def _send_user_invitation_email(recipient: str, display_name: str, username: str, role_name: str, invite_link: str) -> bool:
+    subject = "Invitation MMG - Accès plateforme"
+    text_body = (
+        f"Bonjour {display_name},\n\n"
+        "Votre accès MMG est prêt.\n"
+        f"Identifiant : {username}\n"
+        f"Profil : {role_name}\n\n"
+        f"Lien d'invitation : {invite_link}\n\n"
+        "Si vous utilisez un terminal atelier, votre responsable peut aussi vous remettre un PIN temporaire.\n"
+    )
+    html_body = (
+        f"<p>Bonjour <strong>{display_name}</strong>,</p>"
+        "<p>Votre accès MMG est prêt.</p>"
+        f"<p><strong>Identifiant :</strong> {username}<br><strong>Profil :</strong> {role_name}</p>"
+        f"<p><a href=\"{invite_link}\">Ouvrir mon accès MMG</a></p>"
+        "<p>Si vous utilisez un terminal atelier, votre responsable peut aussi vous remettre un PIN temporaire.</p>"
+    )
+    return _send_smtp_email(recipient, subject, text_body, html_body)
+
+def _send_invitation_best_effort(recipient: str, display_name: str, username: str, role_name: str, invite_link: str) -> None:
+    try:
+        _send_user_invitation_email(recipient, display_name, username, role_name, invite_link)
+    except Exception:
+        # L'invitation ne doit jamais annuler la création d'accès. Le statut
+        # reste PENDING côté UI pour permettre un renvoi manuel.
+        pass
 
 @router.get("/stations", response_model=List[schemas.Station])
 def get_stations(db: Session = Depends(get_db)):
@@ -68,27 +117,40 @@ def reorder_stations(order_map: dict, db: Session = Depends(get_db), role: str =
 def get_users(db: Session = Depends(get_db)):
     return db.query(models.User).all()
 
-@router.post("/users", response_model=schemas.User)
-def create_user(user: schemas.UserCreate, db: Session = Depends(get_db), role: str = Depends(security.require_roles("ADMIN", "MANAGER"))):
+@router.post("/users", response_model=schemas.UserCreateResponse)
+def create_user(
+    user: schemas.UserCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    role: str = Depends(security.require_roles("ADMIN", "MANAGER")),
+):
     existing = db.query(models.User).filter(models.User.username == user.username).first()
     if existing:
         raise HTTPException(400, "Username already exists")
-    
-    # PIN/Password validation
-    if user.role in PIN_ROLES:
-        if not user.pin.isdigit() or len(user.pin) != 4:
-            raise HTTPException(400, "Le code PIN Opérateur doit être composé de 4 chiffres")
-    else:
-        if len(user.pin) < 4:
-            raise HTTPException(400, "Le mot de passe doit faire au moins 4 caractères")
 
-    hashed_pin = security.get_password_hash(user.pin)
+    access_mode = (user.access_mode or "PIN").upper()
+    if access_mode not in ACCESS_MODES:
+        raise HTTPException(400, "Mode d'accès invalide. Utilisez PIN, EMAIL ou HYBRID.")
+    if user.send_invite and not user.email:
+        raise HTTPException(400, "Un email est requis pour envoyer une invitation.")
+
+    temporary_secret = user.pin or _temporary_secret(access_mode, user.role)
+    _validate_user_secret(temporary_secret, user.role, access_mode)
+    invite_token = secrets.token_urlsafe(24) if user.send_invite or access_mode in {"EMAIL", "HYBRID"} else None
+    invitation_link = _invite_link(invite_token) if invite_token else None
+    hashed_pin = security.get_password_hash(temporary_secret)
     new_user = models.User(
         username=user.username,
         first_name=user.first_name,
         last_name=user.last_name,
         email=user.email,
         phone=user.phone,
+        job_title=user.job_title,
+        team=user.team,
+        access_mode=access_mode,
+        invitation_status="PENDING" if user.send_invite else "ACTIVE",
+        invite_token=invite_token,
+        pin_must_change=True,
         pin_hash=hashed_pin,
         role=user.role,
         is_active=True
@@ -101,7 +163,25 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db), role: s
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    return new_user
+    invitation_sent = False
+    if user.send_invite and user.email and invitation_link:
+        display_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username
+        background_tasks.add_task(
+            _send_invitation_best_effort,
+            user.email,
+            display_name,
+            user.username,
+            user.role,
+            invitation_link,
+        )
+        invitation_sent = True
+    return {
+        "user": new_user,
+        "temporary_pin": temporary_secret,
+        "invitation_sent": invitation_sent,
+        "invitation_link": invitation_link,
+        "message": "Utilisateur créé. Communiquez le PIN temporaire une seule fois." if not user.send_invite else "Utilisateur créé. Invitation email planifiée.",
+    }
 
 @router.put("/users/{user_id}", response_model=schemas.User)
 def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Depends(get_db), role: str = Depends(security.require_roles("ADMIN", "MANAGER"))):
@@ -119,6 +199,15 @@ def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Dep
         db_user.email = user_update.email
     if user_update.phone is not None:
         db_user.phone = user_update.phone
+    if user_update.job_title is not None:
+        db_user.job_title = user_update.job_title
+    if user_update.team is not None:
+        db_user.team = user_update.team
+    if user_update.access_mode is not None:
+        access_mode = user_update.access_mode.upper()
+        if access_mode not in ACCESS_MODES:
+            raise HTTPException(400, "Mode d'accès invalide. Utilisez PIN, EMAIL ou HYBRID.")
+        db_user.access_mode = access_mode
     if user_update.role:
         db_user.role = user_update.role
     if user_update.pin:
@@ -129,6 +218,7 @@ def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Dep
             if len(user_update.pin) < 4:
                 raise HTTPException(400, "Le mot de passe doit faire au moins 4 caractères")
         db_user.pin_hash = security.get_password_hash(user_update.pin)
+        db_user.pin_must_change = True
     
     if user_update.station_codes is not None:
         stations = db.query(models.Station).filter(models.Station.code.in_(user_update.station_codes)).all()
@@ -137,6 +227,42 @@ def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Dep
     db.commit()
     db.refresh(db_user)
     return db_user
+
+@router.post("/users/{user_id}/invite", response_model=schemas.UserCreateResponse)
+def resend_user_invitation(
+    user_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    role: str = Depends(security.require_roles("ADMIN", "MANAGER")),
+):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(404, "User not found")
+    if not db_user.email:
+        raise HTTPException(400, "Impossible d'envoyer une invitation sans email.")
+
+    db_user.invite_token = secrets.token_urlsafe(24)
+    db_user.invitation_status = "PENDING"
+    db_user.invited_at = None
+    db.commit()
+    db.refresh(db_user)
+    invitation_link = _invite_link(db_user.invite_token)
+    display_name = f"{db_user.first_name or ''} {db_user.last_name or ''}".strip() or db_user.username
+    background_tasks.add_task(
+        _send_invitation_best_effort,
+        db_user.email,
+        display_name,
+        db_user.username,
+        db_user.role,
+        invitation_link,
+    )
+    return {
+        "user": db_user,
+        "temporary_pin": None,
+        "invitation_sent": True,
+        "invitation_link": invitation_link,
+        "message": "Invitation email planifiée.",
+    }
 
 @router.delete("/users/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db), role: str = Depends(security.require_roles("ADMIN", "MANAGER"))):
