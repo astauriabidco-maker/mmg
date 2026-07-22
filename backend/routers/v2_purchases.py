@@ -96,6 +96,72 @@ def _serialize_supplier_invoice(invoice: models.SupplierInvoice) -> dict:
         ],
     }
 
+def _purchase_order_metrics(po: models.PurchaseOrder, db: Session) -> dict:
+    invoiced_quantities = _invoiced_quantities_by_po_line(db, po.id)
+    quantity_ordered = sum(float(line.quantity or 0) for line in po.lines)
+    quantity_received = sum(float(line.quantity_received or 0) for line in po.lines)
+    quantity_invoiced = sum(float(invoiced_quantities.get(line.id, 0)) for line in po.lines)
+    quantity_remaining = max(quantity_ordered - quantity_received, 0)
+    quantity_invoiceable = max(quantity_received - quantity_invoiced, 0)
+
+    if po.status == models.PurchaseOrderStatus.CANCELLED:
+        receipt_status = "CANCELLED"
+        invoice_match_status = "CANCELLED"
+        operational_status = "CANCELLED"
+        next_action = "Commande annulée"
+    else:
+        if quantity_received <= 0:
+            receipt_status = "NONE"
+        elif quantity_remaining > 0:
+            receipt_status = "PARTIAL"
+        else:
+            receipt_status = "FULL"
+
+        if quantity_received <= 0:
+            invoice_match_status = "NO_RECEIPT"
+        elif quantity_invoiced <= 0:
+            invoice_match_status = "TO_MATCH"
+        elif quantity_invoiceable > 0:
+            invoice_match_status = "PARTIAL_MATCH"
+        else:
+            invoice_match_status = "MATCHED"
+
+        if quantity_ordered <= 0:
+            operational_status = "DRAFT_EMPTY"
+            next_action = "Ajouter des lignes d'achat"
+        elif quantity_remaining > 0:
+            operational_status = "TO_RECEIVE" if quantity_received <= 0 else "PARTIAL_RECEIPT"
+            next_action = "Réceptionner fournisseur"
+        elif quantity_invoiceable > 0:
+            operational_status = "INVOICE_TO_MATCH"
+            next_action = "Rapprocher facture fournisseur"
+        else:
+            operational_status = "READY_TO_CLOSE"
+            next_action = "Clôturer après contrôle"
+
+    return {
+        "quantity_ordered": quantity_ordered,
+        "quantity_received": quantity_received,
+        "quantity_remaining": quantity_remaining,
+        "quantity_invoiced": quantity_invoiced,
+        "quantity_invoiceable": quantity_invoiceable,
+        "receipt_status": receipt_status,
+        "supplier_invoice_status": "FULL" if quantity_received > 0 and quantity_invoiced >= quantity_received else "PARTIAL" if quantity_invoiced > 0 else "NONE",
+        "invoice_match_status": invoice_match_status,
+        "operational_status": operational_status,
+        "next_action": next_action,
+        "invoiced_quantities": invoiced_quantities,
+    }
+
+def _line_match_status(quantity_received: float, quantity_invoiced: float) -> str:
+    if quantity_received <= 0:
+        return "NO_RECEIPT"
+    if quantity_invoiced <= 0:
+        return "TO_INVOICE"
+    if quantity_invoiced < quantity_received:
+        return "PARTIAL_MATCH"
+    return "MATCHED"
+
 @router.get("/ai-recommendations")
 def get_ai_recommendations(db: Session = Depends(get_db)):
     variants = db.query(models.ProductVariant).all()
@@ -123,9 +189,7 @@ def get_purchase_orders(db: Session = Depends(get_db)):
     pos = db.query(models.PurchaseOrder).order_by(models.PurchaseOrder.order_date.desc()).all()
     result = []
     for po in pos:
-        invoiced_quantities = _invoiced_quantities_by_po_line(db, po.id)
-        total_received = sum(float(line.quantity_received or 0) for line in po.lines)
-        total_invoiced = sum(float(invoiced_quantities.get(line.id, 0)) for line in po.lines)
+        metrics = _purchase_order_metrics(po, db)
         result.append({
             "id": po.id,
             "reference": po.reference,
@@ -134,11 +198,17 @@ def get_purchase_orders(db: Session = Depends(get_db)):
             "expected_date": po.expected_date,
             "status": po.status,
             "total_amount": po.total_amount,
-            "lines_count": len(po.lines)
-            ,
-            "supplier_invoice_status": "FULL" if total_received > 0 and total_invoiced >= total_received else "PARTIAL" if total_invoiced > 0 else "NONE",
-            "quantity_received": total_received,
-            "quantity_invoiced": total_invoiced,
+            "lines_count": len(po.lines),
+            "quantity_ordered": metrics["quantity_ordered"],
+            "quantity_received": metrics["quantity_received"],
+            "quantity_remaining": metrics["quantity_remaining"],
+            "quantity_invoiced": metrics["quantity_invoiced"],
+            "quantity_invoiceable": metrics["quantity_invoiceable"],
+            "receipt_status": metrics["receipt_status"],
+            "supplier_invoice_status": metrics["supplier_invoice_status"],
+            "invoice_match_status": metrics["invoice_match_status"],
+            "operational_status": metrics["operational_status"],
+            "next_action": metrics["next_action"],
         })
     return result
 
@@ -190,27 +260,31 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
     if not po:
         raise HTTPException(status_code=404, detail="PO not found")
         
-    invoiced_quantities = _invoiced_quantities_by_po_line(db, po.id)
+    metrics = _purchase_order_metrics(po, db)
+    invoiced_quantities = metrics["invoiced_quantities"]
     lines = []
     for line in po.lines:
         quantity_invoiced = float(invoiced_quantities.get(line.id, 0))
-        quantity_invoiceable = max(float(line.quantity_received or 0) - quantity_invoiced, 0)
+        quantity_received = float(line.quantity_received or 0)
+        quantity_ordered = float(line.quantity or 0)
+        quantity_remaining = max(quantity_ordered - quantity_received, 0)
+        quantity_invoiceable = max(quantity_received - quantity_invoiced, 0)
         lines.append({
             "id": line.id,
             "variant_id": line.variant_id,
             "variant_ref": line.variant.reference if line.variant else "Inconnu",
             "product_name": line.variant.product.name if line.variant and line.variant.product else "Inconnu",
-            "quantity": line.quantity,
-            "quantity_received": line.quantity_received,
+            "quantity": quantity_ordered,
+            "quantity_received": quantity_received,
+            "quantity_remaining": quantity_remaining,
             "quantity_invoiced": quantity_invoiced,
             "quantity_invoiceable": quantity_invoiceable,
             "unit_price": line.unit_price,
             "discount_percent": line.discount_percent or 0,
             "line_total": (line.quantity or 0) * float(line.unit_price or 0) * (1 - float(line.discount_percent or 0) / 100),
+            "receipt_status": "RECEIVED" if quantity_remaining <= 0 and quantity_ordered > 0 else "PARTIAL" if quantity_received > 0 else "TO_RECEIVE",
+            "invoice_match_status": _line_match_status(quantity_received, quantity_invoiced),
         })
-
-    total_received = sum(float(line.quantity_received or 0) for line in po.lines)
-    total_invoiced = sum(float(invoiced_quantities.get(line.id, 0)) for line in po.lines)
         
     return {
         "id": po.id,
@@ -223,9 +297,16 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
         "notes": po.notes,
         "author": po.author,
         "global_discount_percent": po.global_discount_percent or 0,
-        "supplier_invoice_status": "FULL" if total_received > 0 and total_invoiced >= total_received else "PARTIAL" if total_invoiced > 0 else "NONE",
-        "quantity_received": total_received,
-        "quantity_invoiced": total_invoiced,
+        "quantity_ordered": metrics["quantity_ordered"],
+        "quantity_received": metrics["quantity_received"],
+        "quantity_remaining": metrics["quantity_remaining"],
+        "quantity_invoiced": metrics["quantity_invoiced"],
+        "quantity_invoiceable": metrics["quantity_invoiceable"],
+        "receipt_status": metrics["receipt_status"],
+        "supplier_invoice_status": metrics["supplier_invoice_status"],
+        "invoice_match_status": metrics["invoice_match_status"],
+        "operational_status": metrics["operational_status"],
+        "next_action": metrics["next_action"],
         "lines": lines,
         "supplier_invoices": [_serialize_supplier_invoice(invoice) for invoice in po.supplier_invoices],
     }
@@ -287,7 +368,7 @@ def receive_purchase_order(
                     quantity=receive_qty,
                     reference=ref_move,
                     notes=f"Réception fournisseur depuis {po.reference}",
-                    author=po.author,
+                    author=current_user.get("sub", "unknown"),
                     source_screen="purchases.receipt",
                     document_type="purchase_order",
                     document_reference=po.reference,

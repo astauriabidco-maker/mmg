@@ -506,7 +506,7 @@ export default function PurchasesDashboard() {
                         </div>
                     )
                 ) : selectedPO ? (
-                    <div className="p-8 max-w-4xl mx-auto w-full">
+                    <div className="p-8 w-full">
                         <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
                             <div className="px-8 py-6 border-b border-slate-100 bg-slate-900 text-white flex justify-between items-start relative overflow-hidden">
                                 <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/20 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
@@ -523,22 +523,33 @@ export default function PurchasesDashboard() {
                                     <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-md ${selectedPO.supplier_invoice_status === 'FULL' ? 'bg-emerald-100 text-emerald-700' : selectedPO.supplier_invoice_status === 'PARTIAL' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-600'}`}>
                                         Facture fournisseur {selectedPO.supplier_invoice_status === 'FULL' ? 'rapprochée' : selectedPO.supplier_invoice_status === 'PARTIAL' ? 'partielle' : 'à rapprocher'}
                                     </span>
+                                    <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-md bg-blue-100 text-blue-700">
+                                        {selectedPO.next_action || 'Contrôle achat'}
+                                    </span>
                                 </div>
                             </div>
                             
                             <div className="p-8">
-                                <div className="grid grid-cols-3 gap-4 mb-8">
+                                <div className="grid grid-cols-2 xl:grid-cols-5 gap-4 mb-8">
                                     <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4">
                                         <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Commandé</p>
-                                        <p className="text-2xl font-black text-blue-700">{(selectedPO.lines || []).reduce((sum, line) => sum + Number(line.quantity || 0), 0).toLocaleString('fr-FR')}</p>
+                                        <p className="text-2xl font-black text-blue-700">{Number(selectedPO.quantity_ordered ?? (selectedPO.lines || []).reduce((sum, line) => sum + Number(line.quantity || 0), 0)).toLocaleString('fr-FR')}</p>
                                     </div>
                                     <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4">
                                         <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Réceptionné</p>
                                         <p className="text-2xl font-black text-emerald-700">{Number(selectedPO.quantity_received || 0).toLocaleString('fr-FR')}</p>
                                     </div>
+                                    <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Reste à recevoir</p>
+                                        <p className="text-2xl font-black text-slate-800">{Number(selectedPO.quantity_remaining || 0).toLocaleString('fr-FR')}</p>
+                                    </div>
                                     <div className="rounded-2xl bg-orange-50 border border-orange-100 p-4">
                                         <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Facturé fournisseur</p>
                                         <p className="text-2xl font-black text-orange-700">{Number(selectedPO.quantity_invoiced || 0).toLocaleString('fr-FR')}</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4">
+                                        <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest">À rapprocher</p>
+                                        <p className="text-2xl font-black text-amber-700">{Number(selectedPO.quantity_invoiceable || 0).toLocaleString('fr-FR')}</p>
                                     </div>
                                 </div>
 
@@ -550,6 +561,7 @@ export default function PurchasesDashboard() {
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Prix Unitaire</th>
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Commandé</th>
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Reçu</th>
+                                            <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Reste</th>
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Facturé</th>
                                             <th className="py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Total Ligne</th>
                                         </tr>
@@ -567,6 +579,7 @@ export default function PurchasesDashboard() {
                                                 </td>
                                                 <td className="py-4 px-4 text-center font-black text-blue-600 text-lg">{line.quantity}</td>
                                                 <td className="py-4 px-4 text-center font-black text-emerald-600 text-lg">{line.quantity_received}</td>
+                                                <td className="py-4 px-4 text-center font-black text-slate-700 text-lg">{line.quantity_remaining || 0}</td>
                                                 <td className="py-4 px-4 text-center">
                                                     <span className={`inline-flex px-2.5 py-1 rounded-lg text-sm font-black ${line.quantity_invoiced >= line.quantity_received && line.quantity_received > 0 ? 'bg-emerald-50 text-emerald-700' : line.quantity_invoiced > 0 ? 'bg-orange-50 text-orange-700' : 'bg-slate-50 text-slate-500'}`}>
                                                         {line.quantity_invoiced || 0}

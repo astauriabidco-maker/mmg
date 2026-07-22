@@ -108,11 +108,21 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
         assert details_response.status_code == 200, details_response.text
         details = details_response.json()
         assert details["status"] == "RECEIVED"
+        assert details["operational_status"] == "INVOICE_TO_MATCH"
+        assert details["receipt_status"] == "FULL"
+        assert details["invoice_match_status"] == "TO_MATCH"
+        assert details["next_action"] == "Rapprocher facture fournisseur"
+        assert details["quantity_ordered"] == 7.0
+        assert details["quantity_remaining"] == 0.0
+        assert details["quantity_invoiceable"] == 7.0
         assert details["global_discount_percent"] == 5
         assert details["total_amount"] == 74.81  # 78.75 x 0.95, arrondi centime (Numeric(14,2))
         assert details["lines"][0]["discount_percent"] == 10
         assert details["lines"][0]["line_total"] == 78.75
         assert details["lines"][0]["quantity_received"] == 7
+        assert details["lines"][0]["quantity_remaining"] == 0
+        assert details["lines"][0]["receipt_status"] == "RECEIVED"
+        assert details["lines"][0]["invoice_match_status"] == "TO_INVOICE"
 
         quants_response = client.get("/v2/stock/quants", headers=headers)
         assert quants_response.status_code == 200, quants_response.text
@@ -142,6 +152,10 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
         assert transactions[0]["transaction_type"] == "Fournisseurs \u2794 WH/Test Achats"
         assert transactions[0]["author"] == "purchase-tester"
         assert transactions[0]["notes"] == f"R\u00e9ception fournisseur depuis {details['reference']}"
+        assert transactions[0]["source_screen"] == "purchases.receipt"
+        assert transactions[0]["document_type"] == "purchase_order"
+        assert transactions[0]["document_reference"] == details["reference"]
+        assert transactions[0]["business_reason"] == "Réception fournisseur"
 
         with TestingSessionLocal() as db:
             variant = db.query(models.ProductVariant).filter_by(id=variant_id).one()
@@ -235,8 +249,18 @@ def test_purchase_order_can_be_received_partially_then_completed():
         details_response = client.get(f"/v2/purchases/{po_id}", headers=headers)
         details = details_response.json()
         assert details["status"] == "PARTIAL"
+        assert details["operational_status"] == "PARTIAL_RECEIPT"
+        assert details["receipt_status"] == "PARTIAL"
+        assert details["invoice_match_status"] == "TO_MATCH"
+        assert details["next_action"] == "Réceptionner fournisseur"
+        assert details["quantity_ordered"] == 7.0
+        assert details["quantity_remaining"] == 4.0
+        assert details["quantity_invoiceable"] == 3.0
         assert details["lines"][0]["quantity_received"] == 3.0
+        assert details["lines"][0]["quantity_remaining"] == 4.0
         assert details["lines"][0]["quantity_invoiceable"] == 3.0
+        assert details["lines"][0]["receipt_status"] == "PARTIAL"
+        assert details["lines"][0]["invoice_match_status"] == "TO_INVOICE"
 
         over_invoice_response = client.post(
             f"/v2/purchases/{po_id}/supplier-invoices",
@@ -266,9 +290,13 @@ def test_purchase_order_can_be_received_partially_then_completed():
         details_response = client.get(f"/v2/purchases/{po_id}", headers=headers)
         details = details_response.json()
         assert details["supplier_invoice_status"] == "PARTIAL"
+        assert details["invoice_match_status"] == "PARTIAL_MATCH"
+        assert details["operational_status"] == "PARTIAL_RECEIPT"
         assert details["quantity_invoiced"] == 2.0
+        assert details["quantity_invoiceable"] == 1.0
         assert details["lines"][0]["quantity_invoiced"] == 2.0
         assert details["lines"][0]["quantity_invoiceable"] == 1.0
+        assert details["lines"][0]["invoice_match_status"] == "PARTIAL_MATCH"
         assert len(details["supplier_invoices"]) == 1
 
         over_receive_response = client.post(
@@ -305,10 +333,16 @@ def test_purchase_order_can_be_received_partially_then_completed():
 
         details_response = client.get(f"/v2/purchases/{po_id}", headers=headers)
         details = details_response.json()
+        assert details["operational_status"] == "READY_TO_CLOSE"
+        assert details["receipt_status"] == "FULL"
+        assert details["invoice_match_status"] == "MATCHED"
+        assert details["next_action"] == "Clôturer après contrôle"
         assert details["supplier_invoice_status"] == "FULL"
         assert details["quantity_received"] == 7.0
+        assert details["quantity_remaining"] == 0.0
         assert details["quantity_invoiced"] == 7.0
         assert details["lines"][0]["quantity_invoiceable"] == 0.0
+        assert details["lines"][0]["invoice_match_status"] == "MATCHED"
 
         with TestingSessionLocal() as db:
             quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=target_location_id).one()
