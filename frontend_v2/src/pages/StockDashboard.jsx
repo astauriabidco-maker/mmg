@@ -4388,9 +4388,37 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
 // Composant AuditLogs
 function AuditLogs({ transactions }) {
     const [movementFilter, setMovementFilter] = useState('all');
+    const [selectedMovementId, setSelectedMovementId] = useState(null);
     const filteredTransactions = movementFilter === 'workshop_debit'
         ? transactions.filter(tx => tx.movement_kind === 'workshop_debit' || tx.reference?.startsWith('DEBIT-ATELIER'))
         : transactions;
+    const selectedMovement = filteredTransactions.find(tx => tx.id === selectedMovementId) || filteredTransactions[0] || null;
+    const parseRoute = (transactionType = '') => {
+        const parts = String(transactionType || '').split('➔').map(part => part.trim());
+        return {
+            from: parts[0] || 'Origine non renseignée',
+            to: parts[1] || 'Destination non renseignée',
+        };
+    };
+    const getMovementLabel = (tx) => {
+        if (!tx) return 'Mouvement';
+        if (tx.movement_kind === 'workshop_debit' || tx.reference?.startsWith('DEBIT-ATELIER')) return 'Débit atelier réel';
+        if (tx.source_screen === 'sales.customer_delivery') return 'Sortie client';
+        if (tx.source_screen === 'sales.customer_return') return 'Retour client';
+        if (tx.source_screen === 'purchases.receipt') return 'Réception fournisseur';
+        if (tx.source_screen === 'stock.physical_inventory') return 'Inventaire physique';
+        if (tx.source_screen === 'stock.manual_transaction') return 'Mouvement manuel';
+        return tx.transaction_type || 'Mouvement stock';
+    };
+    const getMovementTone = (tx) => {
+        if (!tx) return 'slate';
+        if (tx.movement_kind === 'workshop_debit' || tx.source_screen === 'sales.customer_delivery') return 'orange';
+        if (tx.source_screen === 'sales.customer_return' || tx.source_screen === 'purchases.receipt') return 'emerald';
+        if (tx.source_screen === 'stock.physical_inventory') return 'blue';
+        return 'slate';
+    };
+    const selectedRoute = selectedMovement ? parseRoute(selectedMovement.transaction_type) : null;
+    const selectedTone = getMovementTone(selectedMovement);
     const exportAudit = async () => {
         const res = await api.get('/v2/stock/transactions/export', { responseType: 'blob' });
         const url = window.URL.createObjectURL(new Blob([res.data]));
@@ -4404,7 +4432,7 @@ function AuditLogs({ transactions }) {
     };
 
     return (
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden w-full max-w-5xl mx-auto mt-4">
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden w-full max-w-7xl mx-auto mt-4">
             <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                 <div>
                     <h3 className="font-black text-xl flex items-center gap-2">
@@ -4437,6 +4465,99 @@ function AuditLogs({ transactions }) {
                     </button>
                 </div>
             </div>
+
+            {selectedMovement && (
+                <div className="p-6 border-b border-slate-100 bg-white">
+                    <div className="rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+                        <div className={`px-6 py-5 text-white flex flex-wrap items-start justify-between gap-4 ${selectedTone === 'orange' ? 'bg-orange-600' : selectedTone === 'emerald' ? 'bg-emerald-700' : selectedTone === 'blue' ? 'bg-blue-700' : 'bg-slate-950'}`}>
+                            <div className="min-w-0">
+                                <p className="text-[10px] uppercase font-black tracking-widest text-white/70 mb-2">Fiche mouvement stock</p>
+                                <h3 className="text-2xl font-black leading-tight">{getMovementLabel(selectedMovement)}</h3>
+                                <p className="mt-2 text-sm font-bold text-white/80">
+                                    {selectedMovement.reference || `TX-#${selectedMovement.id}`} · {new Date(selectedMovement.created_at).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })}
+                                </p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-[10px] uppercase font-black tracking-widest text-white/70">Impact quantité</p>
+                                <p className="text-4xl font-black">
+                                    {Number(selectedMovement.quantity_change || 0) > 0 ? '+' : ''}{selectedMovement.quantity_change}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="p-6 grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6 bg-slate-50">
+                            <div className="space-y-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Article impacté</p>
+                                        <p className="mt-2 text-lg font-black text-slate-950">{selectedMovement.item_name || 'Produit inconnu'}</p>
+                                        <p className="text-xs font-mono font-bold text-slate-400 mt-1">Variante #{selectedMovement.variant_id || '-'}</p>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Responsable</p>
+                                        <p className="mt-2 text-lg font-black text-slate-950">{selectedMovement.author || 'Non renseigné'}</p>
+                                        <p className="text-xs font-bold text-slate-400 mt-1">{selectedMovement.source_screen || 'Écran source non renseigné'}</p>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400 mb-4">Flux de stock</p>
+                                    <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-center">
+                                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Origine</p>
+                                            <p className="mt-1 font-black text-slate-900">{selectedRoute.from}</p>
+                                        </div>
+                                        <ArrowRight className="w-6 h-6 text-slate-300" />
+                                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Destination</p>
+                                            <p className="mt-1 font-black text-slate-900">{selectedRoute.to}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Pourquoi ce mouvement existe ?</p>
+                                    <p className="mt-2 text-sm font-bold text-slate-700">
+                                        {selectedMovement.business_reason || selectedMovement.notes || 'Raison métier non renseignée.'}
+                                    </p>
+                                    {selectedMovement.notes && selectedMovement.business_reason && (
+                                        <p className="mt-3 rounded-xl bg-slate-50 border border-slate-100 p-3 text-xs font-bold text-slate-500">{selectedMovement.notes}</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="space-y-4">
+                                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Document lié</p>
+                                    <div className="mt-3 rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                                        <p className="font-black text-slate-950">{selectedMovement.document_reference || 'Aucun document référencé'}</p>
+                                        <p className="text-xs font-bold text-slate-400 mt-1">{selectedMovement.document_type || 'Type non renseigné'}</p>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Audit technique</p>
+                                    <div className="mt-3 space-y-2 text-xs font-bold text-slate-600">
+                                        <div className="flex justify-between gap-3"><span>ID mouvement</span><span className="font-mono text-slate-900">{selectedMovement.id}</span></div>
+                                        <div className="flex justify-between gap-3"><span>Type</span><span className="font-mono text-slate-900">{selectedMovement.movement_kind || '-'}</span></div>
+                                        <div className="flex justify-between gap-3"><span>Écran</span><span className="font-mono text-slate-900 text-right">{selectedMovement.source_screen || '-'}</span></div>
+                                        <div className="flex justify-between gap-3"><span>Horodatage</span><span className="font-mono text-slate-900 text-right">{new Date(selectedMovement.created_at).toLocaleString('fr-FR')}</span></div>
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedMovementId(null)}
+                                    className="w-full rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 inline-flex items-center justify-center gap-2"
+                                >
+                                    <X className="w-4 h-4" />
+                                    Revenir au dernier mouvement
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             
             <div className="w-full p-0">
                 <table className="w-full text-left border-collapse">
@@ -4453,12 +4574,25 @@ function AuditLogs({ transactions }) {
                         {filteredTransactions.map(tx => {
                             const isWorkshopDebit = tx.movement_kind === 'workshop_debit' || tx.reference?.startsWith('DEBIT-ATELIER');
                             return (
-                                <tr key={tx.id} className="hover:bg-slate-50 border-b border-slate-50 transition-colors">
+                                <tr
+                                    key={tx.id}
+                                    onClick={() => setSelectedMovementId(tx.id)}
+                                    className={`hover:bg-slate-50 border-b border-slate-50 transition-colors cursor-pointer ${selectedMovement?.id === tx.id ? 'bg-blue-50/60' : ''}`}
+                                >
                                     <td className="px-6 py-4 text-sm text-slate-600 font-medium">
                                         {new Date(tx.created_at).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })}
                                         <div className="text-[10px] text-slate-400 font-mono mt-1">{tx.author}</div>
                                     </td>
-                                    <td className="px-6 py-4 text-sm font-mono text-slate-500 font-bold">{tx.reference || `TX-#${tx.id}`}</td>
+                                    <td className="px-6 py-4 text-sm font-mono text-slate-500 font-bold">
+                                        {tx.reference || `TX-#${tx.id}`}
+                                        <button
+                                            type="button"
+                                            onClick={(event) => { event.stopPropagation(); setSelectedMovementId(tx.id); }}
+                                            className="ml-2 rounded-lg bg-slate-100 hover:bg-slate-200 px-2 py-1 text-[10px] font-black text-slate-600"
+                                        >
+                                            Fiche
+                                        </button>
+                                    </td>
                                     <td className="px-6 py-4">
                                         <span className="font-bold text-slate-800 text-[13px] block">{tx.item_name}</span>
                                         {(tx.document_reference || tx.business_reason) && (
