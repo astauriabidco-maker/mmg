@@ -1331,160 +1331,153 @@ export default function StockDashboard() {
         available: summary.available + Number(row.availableQuantity || 0),
         valuation: summary.valuation + Number(row.valuation || 0),
     }), { physicalStock: 0, reserved: 0, available: 0, valuation: 0 });
+    const stockNavGroups = [
+        {
+            label: 'Priorités',
+            items: [
+                { key: 'todo', label: 'À traiter', Icon: AlertTriangle, count: todoTotal, tone: 'slate', onClick: selectTodo },
+                { key: 'risk', label: 'Stock à risque', Icon: AlertTriangle, count: riskTotal, tone: 'red', onClick: () => setCurrentMenu('risk') },
+            ],
+        },
+        {
+            label: 'Référentiel',
+            items: [
+                { key: 'catalog', label: 'Catalogue', Icon: Package, tone: 'blue', onClick: () => selectInventoryFocus('catalog') },
+                { key: 'stock', label: 'Stock réel', Icon: MapPin, tone: 'emerald', onClick: () => selectInventoryFocus('stock') },
+                { key: 'services', label: 'Prestations', Icon: FileEdit, tone: 'emerald', onClick: () => selectInventoryFocus('services') },
+                { key: 'drafts', label: 'Brouillons', Icon: FileEdit, count: totalDraftCount, tone: 'amber', onClick: () => selectInventoryFocus('drafts') },
+                { key: 'locations', label: 'Zones & emplacements', Icon: MapPin, tone: 'blue', onClick: () => setCurrentMenu('locations') },
+            ],
+        },
+        {
+            label: 'Flux & contrôle',
+            items: [
+                ...(stockPermissions.reserveWorkshop || stockPermissions.consumeWorkshop ? [
+                    { key: 'workshop', label: 'Débit atelier', Icon: ArrowRight, count: reservations.length, tone: 'amber', onClick: () => setCurrentMenu('workshop') },
+                ] : []),
+                { key: 'audit', label: 'Mouvements', Icon: Layers, tone: 'blue', onClick: () => setCurrentMenu('audit') },
+                { key: 'physical-inventory', label: 'Inventaire physique', Icon: ClipboardCheck, tone: 'blue', onClick: () => setCurrentMenu('physical-inventory') },
+                { key: 'import-export', label: 'Import / Export', Icon: Download, tone: 'blue', onClick: () => setCurrentMenu('import-export') },
+                ...(isAdmin ? [
+                    { key: 'valuation', label: 'Valorisation', Icon: TrendingUp, tone: 'blue', onClick: () => setCurrentMenu('valuation') },
+                ] : []),
+            ],
+        },
+    ];
+    const navToneClasses = {
+        slate: 'bg-slate-950 text-white shadow-sm',
+        red: 'bg-red-600 text-white shadow-sm',
+        blue: 'bg-blue-600 text-white shadow-sm',
+        emerald: 'bg-emerald-600 text-white shadow-sm',
+        amber: 'bg-amber-500 text-white shadow-sm',
+    };
+    const navCountClasses = {
+        slate: 'bg-slate-100 text-slate-700',
+        red: 'bg-red-100 text-red-700',
+        blue: 'bg-blue-100 text-blue-700',
+        emerald: 'bg-emerald-100 text-emerald-700',
+        amber: 'bg-amber-100 text-amber-700',
+    };
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
-            <div className="px-6 py-4 shrink-0 border-b border-slate-200 bg-white">
-                <div className="flex flex-col gap-4">
+            <div className="shrink-0 border-b border-slate-200 bg-white">
+                <div className="px-6 py-4">
                     <div className="flex flex-wrap items-center justify-between gap-4">
-                        <div>
+                        <div className="min-w-0">
                             <h3 className="font-black flex items-center gap-3 tracking-tight text-xl text-slate-950">
-                                <Box className="text-blue-600 w-5 h-5"/> Inventaire & Stock
+                                <Box className="text-blue-600 w-5 h-5" /> Inventaire & Stock
                             </h3>
                             <p className="text-sm font-bold text-slate-500 mt-0.5">
-                                Catalogue, stock réel, mouvements et inventaires physiques dans un seul espace.
+                                Piloter les priorités, le catalogue, le stock physique et la traçabilité.
                             </p>
                         </div>
 
-                        <div className="relative w-full max-w-md">
-                            <Search className="w-4 h-4 text-slate-400 absolute left-4 top-3.5" />
-                            <input
-                                type="text"
-                                placeholder="Rechercher produit, référence, fournisseur..."
-                                value={searchTerm}
-                                onChange={(e) => {
-                                    setSearchTerm(e.target.value);
-                                    if (!inventoryPageMenus.includes(currentMenu)) {
-                                        setCurrentMenu('catalog');
-                                        setInventoryFocus('catalog');
-                                        setShowDraftOnly(false);
-                                    }
-                                }}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-11 pr-4 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500/30 placeholder-slate-400"
-                            />
+                        <div className="flex flex-1 flex-wrap items-center justify-end gap-2 min-w-[280px]">
+                            <div className="relative w-full max-w-lg">
+                                <Search className="w-4 h-4 text-slate-400 absolute left-4 top-3.5" />
+                                <input
+                                    type="text"
+                                    placeholder="Rechercher produit, référence, fournisseur..."
+                                    value={searchTerm}
+                                    onChange={(e) => {
+                                        setSearchTerm(e.target.value);
+                                        if (!inventoryPageMenus.includes(currentMenu)) {
+                                            setCurrentMenu('catalog');
+                                            setInventoryFocus('catalog');
+                                            setShowDraftOnly(false);
+                                        }
+                                    }}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-11 pr-4 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500/30 placeholder-slate-400"
+                                />
+                            </div>
+                            {isInventoryPage && (
+                                <div className="flex items-center bg-slate-50 rounded-xl p-1 border border-slate-200">
+                                    <button
+                                        onClick={() => setViewMode('list')}
+                                        className={`px-3 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'list' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                                        title="Vue liste"
+                                    >
+                                        <List className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                        onClick={() => setViewMode('kanban')}
+                                        className={`px-3 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'kanban' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                                        title="Vue cartes"
+                                    >
+                                        <LayoutGrid className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            )}
+                            <button
+                                onClick={() => queryClient.invalidateQueries()}
+                                className="px-3 py-2.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-all flex items-center justify-center gap-2 font-black text-sm border border-slate-200 bg-white"
+                            >
+                                <RefreshCw className="w-4 h-4" />
+                                <span className="hidden sm:inline">Actualiser</span>
+                            </button>
                         </div>
                     </div>
+                </div>
 
+                <div className="px-6 pb-4">
+                    <div className="grid grid-cols-1 xl:grid-cols-[260px_1fr_1fr] gap-3">
+                        {stockNavGroups.map(group => (
+                            <div key={group.label} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-2">
+                                <p className="px-2 pb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                    {group.label}
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {group.items.map(item => {
+                                        const Icon = item.Icon;
+                                        const active = currentMenu === item.key;
+                                        const count = Number(item.count || 0);
+                                        return (
+                                            <button
+                                                key={item.key}
+                                                type="button"
+                                                onClick={item.onClick}
+                                                className={`inline-flex min-h-[38px] items-center gap-2 rounded-xl px-3 py-2 text-xs font-black transition-all ${active ? navToneClasses[item.tone] : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 hover:text-slate-950'}`}
+                                            >
+                                                <Icon className="w-4 h-4 shrink-0" />
+                                                <span className="whitespace-nowrap">{item.label}</span>
+                                                {count > 0 && (
+                                                    <span className={`rounded-lg px-2 py-0.5 text-[10px] font-black ${active ? 'bg-white/15 text-white' : navCountClasses[item.tone]}`}>
+                                                        {count}
+                                                    </span>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </div>
 
             {/* MAIN CONTENT : GRID / AUDIT */}
             <div className="flex-1 flex flex-col bg-white relative min-h-0">
-
-                {/* TOOLBAR */}
-                <div className="bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-4 px-6 py-3 shrink-0 z-10">
-                    <div className="flex flex-wrap items-center gap-2">
-                        <div className="flex flex-wrap items-center bg-slate-50 border border-slate-200 rounded-xl p-1 gap-1">
-                            <button
-                                onClick={selectTodo}
-                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'todo' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                            >
-                                <AlertTriangle className="w-4 h-4"/> À traiter
-                                {todoTotal > 0 && (
-                                    <span className={`ml-1 px-2 py-0.5 rounded-lg text-[10px] font-black ${currentMenu === 'todo' ? 'bg-white/15 text-white' : 'bg-amber-100 text-amber-700'}`}>
-                                        {todoTotal}
-                                    </span>
-                                )}
-                            </button>
-                            <button
-                                onClick={() => setCurrentMenu('risk')}
-                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'risk' ? 'bg-red-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                            >
-                                <AlertTriangle className="w-4 h-4"/> Stock à risque
-                                {riskTotal > 0 && (
-                                    <span className={`ml-1 px-2 py-0.5 rounded-lg text-[10px] font-black ${currentMenu === 'risk' ? 'bg-white/15 text-white' : 'bg-red-100 text-red-700'}`}>
-                                        {riskTotal}
-                                    </span>
-                                )}
-                            </button>
-                            <button
-                                onClick={() => selectInventoryFocus('catalog')}
-                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'catalog' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                            >
-                                <Package className="w-4 h-4"/> Catalogue
-                            </button>
-                            <button
-                                onClick={() => selectInventoryFocus('stock')}
-                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'stock' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                            >
-                                <MapPin className="w-4 h-4"/> Stock réel
-                            </button>
-                            <button
-                                onClick={() => selectInventoryFocus('services')}
-                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'services' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                            >
-                                <FileEdit className="w-4 h-4"/> Prestations
-                            </button>
-                            <button
-                                onClick={() => selectInventoryFocus('drafts')}
-                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'drafts' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                            >
-                                <FileEdit className="w-4 h-4"/> Brouillons
-                            </button>
-                            <button
-                                onClick={() => setCurrentMenu('locations')}
-                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'locations' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                            >
-                                <MapPin className="w-4 h-4"/> Zones & emplacements
-                            </button>
-                            {(stockPermissions.reserveWorkshop || stockPermissions.consumeWorkshop) && (
-                                <button
-                                    onClick={() => setCurrentMenu('workshop')}
-                                    className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'workshop' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                                >
-                                    <ArrowRight className="w-4 h-4"/> Débit atelier
-                                    {reservations.length > 0 && (
-                                        <span className={`ml-1 px-2 py-0.5 rounded-lg text-[10px] font-black ${currentMenu === 'workshop' ? 'bg-white/15 text-white' : 'bg-amber-100 text-amber-700'}`}>
-                                            {reservations.length}
-                                        </span>
-                                    )}
-                                </button>
-                            )}
-                            <button
-                                onClick={() => setCurrentMenu('audit')}
-                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'audit' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                            >
-                                <Layers className="w-4 h-4"/> Mouvements
-                            </button>
-                            <button
-                                onClick={() => setCurrentMenu('physical-inventory')}
-                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'physical-inventory' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                            >
-                                <ClipboardCheck className="w-4 h-4"/> Inventaire physique
-                            </button>
-                            <button
-                                onClick={() => setCurrentMenu('import-export')}
-                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'import-export' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                            >
-                                <Download className="w-4 h-4"/> Import / Export
-                            </button>
-                            {isAdmin && (
-                                <button
-                                    onClick={() => setCurrentMenu('valuation')}
-                                    className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'valuation' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                                >
-                                    <TrendingUp className="w-4 h-4"/> Valorisation
-                                </button>
-                            )}
-                        </div>
-                    </div>
-
-                    <div className="flex gap-3 items-center">
-                        {isInventoryPage && (
-                            <div className="flex items-center bg-slate-50 rounded-xl p-1 border border-slate-200">
-                                <button onClick={() => setViewMode('list')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'list' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
-                                    <List className="w-4 h-4"/>
-                                </button>
-                                <button onClick={() => setViewMode('kanban')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'kanban' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
-                                    <LayoutGrid className="w-4 h-4"/>
-                                </button>
-                            </div>
-                        )}
-                        <button onClick={() => queryClient.invalidateQueries()} className="px-4 py-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-all flex items-center justify-center gap-2 font-bold text-sm">
-                            <RefreshCw className="w-4 h-4"/> Actualiser
-                        </button>
-                    </div>
-                </div>
 
                 {currentMenu === 'stock' && (
                     <div className="px-6 py-3 bg-white border-b border-slate-200 shrink-0">
