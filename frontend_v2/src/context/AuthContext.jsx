@@ -38,6 +38,7 @@ export const AuthProvider = ({ children }) => {
 
             const { access_token, role, stations, permissions } = res.data;
             if (access_token) {
+                const loggedInUser = { username, role, stations: stations || [], permissions: permissions || [] };
                 localStorage.setItem('token', access_token);
                 localStorage.setItem('username', username);
                 localStorage.setItem('role', role);
@@ -45,8 +46,8 @@ export const AuthProvider = ({ children }) => {
                 localStorage.setItem('permissions', JSON.stringify(permissions || []));
 
                 api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
-                setUser({ username, role, stations, permissions: permissions || [] });
-                return true;
+                setUser(loggedInUser);
+                return loggedInUser;
             }
         } catch (e) {
             console.error("Login failed", e);

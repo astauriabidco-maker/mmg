@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Delete, MailCheck } from 'lucide-react';
 import api from '../services/api';
+import { getDefaultPathForUser } from '../utils/roleNavigation';
 
 export default function Login() {
     const [pin, setPin] = useState('');
@@ -50,17 +51,9 @@ export default function Login() {
         const loginPassword = isKioskMode ? pin : password;
         if (!loginPassword) return;
 
-        const success = await login(loginUsername, loginPassword);
-        if (success) {
-            if (loginUsername === 'admin' || loginUsername === 'manager') {
-                navigate('/manager');
-            } else {
-                let station = 'PVC_DEBIT';
-                if (loginUsername === 'op_soudure') station = 'PVC_SOUDURE';
-                if (loginUsername === 'op_assemblage') station = 'PVC_ASSEMBLAGE';
-                if (loginUsername === 'op_vitrage') station = 'PVC_VITRAGE';
-                navigate(`/dashboard/${station}`);
-            }
+        const loggedInUser = await login(loginUsername, loginPassword);
+        if (loggedInUser) {
+            navigate(getDefaultPathForUser(loggedInUser));
         } else {
             setError('Identifiants incorrects');
             setPin('');

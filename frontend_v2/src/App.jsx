@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { getDefaultPathForUser } from './utils/roleNavigation';
 
 const Login = lazy(() => import('./pages/Login'));
 const OperatorDashboard = lazy(() => import('./pages/OperatorDashboard'));
@@ -37,6 +38,12 @@ const SaleDetailRedirect = () => {
     return <Navigate to={`/manager?view=sale-detail&id=${saleId}`} replace />;
 };
 
+const DefaultDashboardRedirect = () => {
+    const { user } = useAuth();
+    if (!user) return <Navigate to="/login" replace />;
+    return <Navigate to={getDefaultPathForUser(user)} replace />;
+};
+
 const queryClient = new QueryClient();
 
 export default function App() {
@@ -52,7 +59,7 @@ export default function App() {
 
                             <Route
                                 path="/dashboard"
-                                element={<Navigate to="/dashboard/PVC_DEBIT" replace />}
+                                element={<DefaultDashboardRedirect />}
                             />
                             <Route
                                 path="/dashboard/:stationId"
