@@ -28,4 +28,131 @@
             transform: translateY(0);
         }
     }
+
+    .hide-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+
+    .hide-scrollbar::-webkit-scrollbar {
+        display: none;
+    }
+
+    .manager-view-shell > * {
+        min-width: 0;
+    }
+
+    .app-responsive-table {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+}
+
+@media (max-width: 1023px) {
+    .manager-view-shell > [class*="h-[calc(100vh-80px)]"] {
+        height: auto !important;
+        min-height: calc(100vh - 64px);
+        overflow-y: visible !important;
+    }
+
+    .manager-view-shell [class*="grid-cols-["] {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .manager-view-shell [class*="w-[400px]"],
+    .manager-view-shell [class*="w-[390px]"],
+    .manager-view-shell [class*="w-[360px]"],
+    .manager-view-shell [class*="w-[320px]"],
+    .manager-view-shell [class*="w-80"] {
+        width: 100% !important;
+        max-width: none !important;
+    }
+
+    .manager-view-shell [class*="overflow-x-auto"] {
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .manager-view-shell [class*="fixed inset-0"][class*="items-center"] {
+        align-items: flex-start;
+        overflow-y: auto;
+    }
+
+    .manager-view-shell [class*="max-h-[92vh]"],
+    .manager-view-shell [class*="max-h-[90vh]"],
+    .manager-view-shell [class*="h-[80vh]"] {
+        max-height: calc(100vh - 2rem) !important;
+        height: auto !important;
+    }
+}
+
+@media (max-width: 767px) {
+    html,
+    body,
+    #root {
+        width: 100%;
+        min-width: 0;
+        overflow-x: hidden;
+    }
+
+    .manager-view-shell {
+        padding: 0;
+    }
+
+    .manager-view-shell > [class*="border-y"] {
+        border-left: 0;
+        border-right: 0;
+    }
+
+    .manager-view-shell [class*="rounded-3xl"],
+    .manager-view-shell [class*="rounded-[2rem]"],
+    .manager-view-shell [class*="rounded-[2.5rem]"] {
+        border-radius: 1rem;
+    }
+
+    .manager-view-shell .p-8 {
+        padding: 1rem;
+    }
+
+    .manager-view-shell .px-8 {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+    .manager-view-shell .py-6 {
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+    }
+
+    .manager-view-shell .text-3xl {
+        font-size: 1.5rem;
+        line-height: 2rem;
+    }
+
+    .manager-view-shell .text-2xl {
+        font-size: 1.25rem;
+        line-height: 1.75rem;
+    }
+
+    .manager-view-shell [class*="grid-cols-2"],
+    .manager-view-shell [class*="grid-cols-3"],
+    .manager-view-shell [class*="grid-cols-4"],
+    .manager-view-shell [class*="grid-cols-5"],
+    .manager-view-shell [class*="grid-cols-12"] {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .manager-view-shell [class*="fixed inset-0"] {
+        padding: 0.75rem !important;
+    }
+
+    .manager-view-shell [class*="max-w-6xl"],
+    .manager-view-shell [class*="max-w-5xl"],
+    .manager-view-shell [class*="max-w-4xl"],
+    .manager-view-shell [class*="max-w-2xl"],
+    .manager-view-shell [class*="max-w-xl"],
+    .manager-view-shell [class*="max-w-lg"],
+    .manager-view-shell [class*="max-w-md"] {
+        max-width: 100% !important;
+    }
 }

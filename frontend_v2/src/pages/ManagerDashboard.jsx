@@ -138,7 +138,7 @@ export default function ManagerDashboard() {
     );
 
     return (
-        <div className="min-h-screen bg-slate-50 flex">
+        <div className="min-h-screen bg-slate-50 flex overflow-x-hidden">
             {/* Sidebar Component */}
             <Sidebar
                 activeView={sidebarActiveView}
@@ -148,17 +148,17 @@ export default function ManagerDashboard() {
             />
 
             {/* Main Content */}
-            <main className="flex-1 lg:ml-72 transition-all duration-300">
+            <main className="min-w-0 flex-1 lg:ml-72 transition-all duration-300">
                 {/* Header / Top Bar */}
-                <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200 px-8 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
+                <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200 px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0 flex items-center gap-3 sm:gap-4">
                         <button
                             onClick={() => setIsSidebarOpen(true)}
                             className="lg:hidden p-2 text-slate-600 hover:bg-slate-100 rounded-lg"
                         >
                             <Menu className="w-6 h-6" />
                         </button>
-                        <h1 className="text-xl font-bold text-slate-900 capitalize">
+                        <h1 className="truncate text-lg sm:text-xl font-bold text-slate-900 capitalize">
                             {headerTitle}
                         </h1>
                     </div>
@@ -166,7 +166,7 @@ export default function ManagerDashboard() {
                     {/* AI Search Bar - Global */}
                     <div 
                         onClick={() => setInsightModalOpen(true)}
-                        className="hidden md:flex flex-1 max-w-lg mx-6 bg-slate-100 hover:bg-slate-200 cursor-pointer transition-colors rounded-full items-center px-5 py-2 border border-transparent hover:border-indigo-300 hover:shadow-sm"
+                        className="hidden md:flex min-w-0 flex-1 max-w-lg mx-4 lg:mx-6 bg-slate-100 hover:bg-slate-200 cursor-pointer transition-colors rounded-full items-center px-5 py-2 border border-transparent hover:border-indigo-300 hover:shadow-sm"
                     >
                         <Sparkles className="w-4 h-4 text-indigo-500 mr-2 shrink-0" />
                         <span className="text-sm font-medium text-slate-400 truncate">Demander à l'IA...</span>
@@ -193,7 +193,7 @@ export default function ManagerDashboard() {
 
 
                 {/* View Container */}
-                <div className="p-8">
+                <div className="manager-view-shell p-0 sm:p-4 xl:p-8">
                     {activeView === 'dashboard' && renderDashboardView()}
                     {activeView === 'live' && renderLiveView()}
                     {activeView === 'workshop_supervisor' && <WorkshopSupervisorView />}
