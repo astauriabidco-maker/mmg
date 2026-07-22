@@ -41,7 +41,7 @@ export default function StockDashboard() {
     
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
-    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'inventory' | 'locations' | 'audit' | 'physical-inventory' | 'valuation'
+    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation'
     const [inventoryFocus, setInventoryFocus] = useState('catalog'); // 'catalog' | 'stock' | 'drafts' | 'services'
     const [todoRoleFilter, setTodoRoleFilter] = useState('me'); // 'me' | 'stock' | 'atelier' | 'catalogue' | 'achats' | 'manager'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
@@ -834,7 +834,7 @@ export default function StockDashboard() {
     };
 
     const selectInventoryFocus = (focus) => {
-        setCurrentMenu('inventory');
+        setCurrentMenu(focus);
         setInventoryFocus(focus);
         setSearchTerm('');
         setShowLowStockOnly(false);
@@ -1014,7 +1014,7 @@ export default function StockDashboard() {
     };
     const todoActions = {
         showLowStock: () => {
-            setCurrentMenu('inventory');
+            setCurrentMenu('stock');
             setInventoryFocus('stock');
             setShowDraftOnly(false);
             setShowLowStockOnly(true);
@@ -1040,6 +1040,8 @@ export default function StockDashboard() {
     const internalRootLocations = rootLocations.filter(location => location.usage === 'internal');
     const virtualLocations = locations.filter(location => location.usage !== 'internal');
     const productionLocations = locations.filter(location => location.usage === 'production');
+    const inventoryPageMenus = ['catalog', 'stock', 'services', 'drafts'];
+    const isInventoryPage = inventoryPageMenus.includes(currentMenu);
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
@@ -1063,70 +1065,17 @@ export default function StockDashboard() {
                                 value={searchTerm}
                                 onChange={(e) => {
                                     setSearchTerm(e.target.value);
-                                    if (currentMenu !== 'inventory') setCurrentMenu('inventory');
+                                    if (!inventoryPageMenus.includes(currentMenu)) {
+                                        setCurrentMenu('catalog');
+                                        setInventoryFocus('catalog');
+                                        setShowDraftOnly(false);
+                                    }
                                 }}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-11 pr-4 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500/30 placeholder-slate-400"
                             />
                         </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                        {isManager && (
-                            <>
-                                <button onClick={() => openNewProductModal('stockable')} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black shadow-sm">
-                                    <Plus className="w-4 h-4"/> Article
-                                </button>
-                                <button onClick={() => openNewProductModal('service')} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-sm">
-                                    <FileEdit className="w-4 h-4"/> Prestation
-                                </button>
-                                <button onClick={openReceptionModal} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-black shadow-sm">
-                                    <Truck className="w-4 h-4 text-emerald-600"/> Entrée stock
-                                </button>
-                                <button onClick={() => setShowImportModal(true)} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-black shadow-sm">
-                                    <FileText className="w-4 h-4 text-indigo-600"/> Import
-                                </button>
-                                <button onClick={() => setShowWorkshopDebitModal(true)} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-sm font-black shadow-sm">
-                                    <ArrowRight className="w-4 h-4"/> Débit atelier
-                                    {reservations.length > 0 && <span className="rounded-full bg-amber-500 text-white px-2 py-0.5 text-[10px]">{reservations.length}</span>}
-                                </button>
-                                {isAdmin && (
-                                    <button onClick={() => setCurrentMenu('locations')} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-black shadow-sm">
-                                        <MapPin className="w-4 h-4 text-blue-600"/> Zones
-                                    </button>
-                                )}
-                            </>
-                        )}
-                        <button onClick={handleExportExcel} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-black shadow-sm">
-                            <Download className="w-4 h-4 text-orange-600"/> Export
-                        </button>
-                    </div>
-
-                    {isManager && reservations.length > 0 && (
-                        <div className="flex gap-3 overflow-x-auto pb-1">
-                            {reservations.map(reservation => {
-                                const totalReserved = reservation.lines?.reduce((sum, line) => sum + (line.reserved_quantity || 0), 0) || 0;
-                                return (
-                                    <div key={reservation.id} className="min-w-[280px] rounded-xl bg-amber-50 border border-amber-200 p-3">
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div className="min-w-0">
-                                                <p className="text-xs font-black text-amber-950 truncate">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
-                                                <p className="text-[10px] font-bold text-amber-700">{reservation.lines?.length || 0} ligne(s) - {totalReserved.toLocaleString('fr-FR')} réservé</p>
-                                            </div>
-                                            <span className="text-[9px] font-black uppercase text-amber-900 bg-amber-200 rounded-lg px-2 py-1">réservé</span>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-2 mt-3">
-                                            <button onClick={() => consumeWorkshopReservation(reservation)} disabled={reservationActionId === reservation.id} className="py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 text-white text-[10px] font-black">
-                                                Débit réel
-                                            </button>
-                                            <button onClick={() => cancelWorkshopReservation(reservation)} disabled={reservationActionId === reservation.id} className="py-2 rounded-lg bg-white hover:bg-slate-50 disabled:bg-slate-100 text-slate-700 text-[10px] font-black border border-slate-200">
-                                                Annuler
-                                            </button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
                 </div>
             </div>
 
@@ -1135,8 +1084,8 @@ export default function StockDashboard() {
                 
                 {/* TOOLBAR */}
                 <div className="bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-4 px-6 py-3 shrink-0 z-10">
-                    <div className="flex flex-wrap items-center gap-3">
-                        <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center bg-slate-50 border border-slate-200 rounded-xl p-1 gap-1">
                             <button
                                 onClick={selectTodo}
                                 className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'todo' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
@@ -1150,9 +1099,27 @@ export default function StockDashboard() {
                             </button>
                             <button
                                 onClick={() => selectInventoryFocus('catalog')}
-                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'inventory' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'catalog' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                             >
-                                <LayoutGrid className="w-4 h-4"/> Articles & stock
+                                <Package className="w-4 h-4"/> Catalogue
+                            </button>
+                            <button
+                                onClick={() => selectInventoryFocus('stock')}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'stock' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <MapPin className="w-4 h-4"/> Stock réel
+                            </button>
+                            <button
+                                onClick={() => selectInventoryFocus('services')}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'services' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <FileEdit className="w-4 h-4"/> Prestations
+                            </button>
+                            <button
+                                onClick={() => selectInventoryFocus('drafts')}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'drafts' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <FileEdit className="w-4 h-4"/> Brouillons
                             </button>
                             <button
                                 onClick={() => setCurrentMenu('locations')}
@@ -1160,6 +1127,19 @@ export default function StockDashboard() {
                             >
                                 <MapPin className="w-4 h-4"/> Zones & emplacements
                             </button>
+                            {stockPermissions.reserveWorkshop && (
+                                <button
+                                    onClick={() => setCurrentMenu('workshop')}
+                                    className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'workshop' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                                >
+                                    <ArrowRight className="w-4 h-4"/> Débit atelier
+                                    {reservations.length > 0 && (
+                                        <span className={`ml-1 px-2 py-0.5 rounded-lg text-[10px] font-black ${currentMenu === 'workshop' ? 'bg-white/15 text-white' : 'bg-amber-100 text-amber-700'}`}>
+                                            {reservations.length}
+                                        </span>
+                                    )}
+                                </button>
+                            )}
                             <button
                                 onClick={() => setCurrentMenu('audit')}
                                 className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'audit' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
@@ -1172,6 +1152,12 @@ export default function StockDashboard() {
                             >
                                 <ClipboardCheck className="w-4 h-4"/> Inventaire physique
                             </button>
+                            <button
+                                onClick={() => setCurrentMenu('import-export')}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'import-export' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <Download className="w-4 h-4"/> Import / Export
+                            </button>
                             {isAdmin && (
                                 <button
                                     onClick={() => setCurrentMenu('valuation')}
@@ -1181,48 +1167,26 @@ export default function StockDashboard() {
                                 </button>
                             )}
                         </div>
-
-                        {currentMenu === 'inventory' && (
-                            <>
-                                <div className="flex items-center bg-slate-50 rounded-xl p-1 border border-slate-200">
-                                    <button onClick={() => setViewMode('list')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'list' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
-                                        <List className="w-4 h-4"/>
-                                    </button>
-                                    <button onClick={() => setViewMode('kanban')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'kanban' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
-                                        <LayoutGrid className="w-4 h-4"/>
-                                    </button>
-                                </div>
-                                <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1">
-                                    <button onClick={() => selectInventoryFocus('catalog')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${inventoryFocus === 'catalog' && !showDraftOnly ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
-                                        <Package className="w-4 h-4"/> Catalogue
-                                    </button>
-                                    <button onClick={() => selectInventoryFocus('stock')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${inventoryFocus === 'stock' && !showDraftOnly ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
-                                        <MapPin className="w-4 h-4"/> Stock réel
-                                    </button>
-                                    <button onClick={() => selectInventoryFocus('services')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${inventoryFocus === 'services' && !showDraftOnly ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
-                                        <FileEdit className="w-4 h-4"/> Prestations
-                                    </button>
-                                    <button onClick={() => selectInventoryFocus('drafts')} className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${showDraftOnly ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
-                                        <FileEdit className="w-4 h-4"/> Brouillons
-                                    </button>
-                                    {stockPermissions.reserveWorkshop && (
-                                        <button onClick={() => setShowWorkshopDebitModal(true)} className="px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black text-amber-700 hover:bg-amber-50 transition-all">
-                                            <ArrowRight className="w-4 h-4"/> Débit atelier
-                                        </button>
-                                    )}
-                                </div>
-                            </>
-                        )}
                     </div>
 
                     <div className="flex gap-3 items-center">
+                        {isInventoryPage && (
+                            <div className="flex items-center bg-slate-50 rounded-xl p-1 border border-slate-200">
+                                <button onClick={() => setViewMode('list')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'list' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
+                                    <List className="w-4 h-4"/>
+                                </button>
+                                <button onClick={() => setViewMode('kanban')} className={`px-4 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'kanban' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
+                                    <LayoutGrid className="w-4 h-4"/>
+                                </button>
+                            </div>
+                        )}
                         <button onClick={() => queryClient.invalidateQueries()} className="px-4 py-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-all flex items-center justify-center gap-2 font-bold text-sm">
                             <RefreshCw className="w-4 h-4"/> Actualiser
                         </button>
                     </div>
                 </div>
 
-                {currentMenu === 'inventory' && (
+                {currentMenu === 'stock' && (
                     <div className="px-6 py-3 bg-white border-b border-slate-200 shrink-0">
                         <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
                             <div>
@@ -1305,6 +1269,139 @@ export default function StockDashboard() {
                             actions={todoActions}
                             reservationActionId={reservationActionId}
                         />
+                    </div>
+                ) : currentMenu === 'workshop' ? (
+                    <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
+                        <div className="max-w-7xl mx-auto p-6 space-y-6">
+                            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                                <div className="px-6 py-5 bg-amber-50 border-b border-amber-100 flex flex-wrap items-start justify-between gap-4">
+                                    <div>
+                                        <p className="text-[10px] uppercase font-black tracking-widest text-amber-700 mb-2">Réservations atelier</p>
+                                        <h2 className="text-2xl font-black text-slate-950 flex items-center gap-3">
+                                            <ArrowRight className="w-6 h-6 text-amber-600" />
+                                            Débit atelier
+                                        </h2>
+                                        <p className="text-sm font-bold text-slate-600 mt-1 max-w-3xl">
+                                            Prévisualisez les fichiers Progers / Orgadata, réservez virtuellement le stock, puis transformez la réservation en débit réel au poste atelier.
+                                        </p>
+                                    </div>
+                                    {stockPermissions.reserveWorkshop && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowWorkshopDebitModal(true)}
+                                            className="px-4 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-white text-sm font-black inline-flex items-center gap-2 shadow-sm"
+                                        >
+                                            <FileText className="w-4 h-4" />
+                                            Importer débit atelier
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-6 border-b border-slate-100">
+                                    <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">Réservations ouvertes</p>
+                                        <p className="text-3xl font-black text-amber-800 mt-2">{reservations.length}</p>
+                                        <p className="text-xs font-bold text-amber-700 mt-1">À consommer ou à annuler.</p>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Règle</p>
+                                        <p className="text-lg font-black text-slate-950 mt-2">Réserver avant débit réel</p>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">Le stock physique ne baisse qu’au débit réel atelier.</p>
+                                    </div>
+                                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Contrôle</p>
+                                        <p className="text-lg font-black text-emerald-800 mt-2">Devis / ordre obligatoire</p>
+                                        <p className="text-xs font-bold text-emerald-700 mt-1">Aucune consommation sans contexte validé.</p>
+                                    </div>
+                                </div>
+                                <div className="p-6">
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden">
+                                        <div className="px-5 py-4 border-b border-slate-200 bg-white flex items-center justify-between">
+                                            <div>
+                                                <p className="text-xs uppercase tracking-widest font-black text-slate-400">À traiter</p>
+                                                <h3 className="text-xl font-black text-slate-900">Réservations atelier actives</h3>
+                                            </div>
+                                        </div>
+                                        {reservations.length > 0 ? (
+                                            <div className="divide-y divide-slate-200">
+                                                {reservations.map(reservation => {
+                                                    const totalReserved = reservation.lines?.reduce((sum, line) => sum + (line.reserved_quantity || 0), 0) || 0;
+                                                    return (
+                                                        <div key={reservation.id} className="p-5 flex flex-wrap items-center justify-between gap-4 bg-white">
+                                                            <div>
+                                                                <p className="font-black text-slate-950">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
+                                                                <p className="text-sm font-bold text-slate-500 mt-1">{reservation.lines?.length || 0} ligne(s) - {totalReserved.toLocaleString('fr-FR')} réservé</p>
+                                                            </div>
+                                                            <div className="flex gap-2">
+                                                                <button onClick={() => consumeWorkshopReservation(reservation)} disabled={reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white text-sm font-black">
+                                                                    Débit réel
+                                                                </button>
+                                                                <button onClick={() => cancelWorkshopReservation(reservation)} disabled={reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 disabled:bg-slate-100 text-slate-700 text-sm font-black border border-slate-200">
+                                                                    Annuler
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        ) : (
+                                            <div className="p-10 text-center bg-white">
+                                                <Check className="w-10 h-10 mx-auto text-emerald-400 mb-3" />
+                                                <p className="font-black text-slate-700">Aucune réservation atelier ouverte.</p>
+                                                <p className="text-sm font-bold text-slate-400 mt-1">Importez un débit atelier quand un devis ou ordre est prêt.</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ) : currentMenu === 'import-export' ? (
+                    <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
+                        <div className="max-w-7xl mx-auto p-6">
+                            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                                <div className="px-6 py-5 bg-slate-900 text-white flex flex-wrap items-start justify-between gap-4">
+                                    <div>
+                                        <p className="text-[10px] uppercase font-black tracking-widest text-blue-200 mb-2">Données stock</p>
+                                        <h2 className="text-2xl font-black flex items-center gap-3">
+                                            <Download className="w-6 h-6 text-blue-300" />
+                                            Import / Export
+                                        </h2>
+                                        <p className="text-sm font-bold text-slate-300 mt-1 max-w-3xl">
+                                            Centralisez ici les imports PIM, la mise à jour des brouillons catalogue et les exports d’inventaire.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-6">
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowImportModal(true)}
+                                        className="text-left rounded-2xl border border-blue-100 bg-blue-50 hover:bg-blue-100 p-5 transition-colors"
+                                    >
+                                        <FileText className="w-6 h-6 text-blue-600 mb-4" />
+                                        <p className="font-black text-slate-950">Importer catalogue / stock</p>
+                                        <p className="text-sm font-bold text-slate-600 mt-1">Template PIM, brouillons catalogue et fichiers Excel.</p>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleExportExcel}
+                                        className="text-left rounded-2xl border border-orange-100 bg-orange-50 hover:bg-orange-100 p-5 transition-colors"
+                                    >
+                                        <Download className="w-6 h-6 text-orange-600 mb-4" />
+                                        <p className="font-black text-slate-950">Exporter inventaire</p>
+                                        <p className="text-sm font-bold text-slate-600 mt-1">Télécharger l’état courant du stock au format Excel.</p>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => selectInventoryFocus('drafts')}
+                                        className="text-left rounded-2xl border border-amber-100 bg-amber-50 hover:bg-amber-100 p-5 transition-colors"
+                                    >
+                                        <FileEdit className="w-6 h-6 text-amber-600 mb-4" />
+                                        <p className="font-black text-slate-950">Qualifier les brouillons</p>
+                                        <p className="text-sm font-bold text-slate-600 mt-1">{totalDraftCount} fiche(s) catalogue à compléter.</p>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 ) : currentMenu === 'locations' ? (
                     <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
@@ -1495,7 +1592,7 @@ export default function StockDashboard() {
                     </div>
 
                     <div className="flex flex-wrap gap-2">
-                        {activeLocationId === 'global' && (
+                        {activeLocationId === 'global' && currentMenu !== 'services' && (
                             <div className="px-4 py-2 rounded-xl border border-slate-200 bg-slate-50 flex items-center gap-3">
                                 <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">Valorisation</span>
                                 <span className="text-lg font-black text-slate-950">{totalValuation.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
@@ -1506,7 +1603,9 @@ export default function StockDashboard() {
                                 onClick={() => {
                                     setShowLowStockOnly(false);
                                     setShowDraftOnly(false);
-                                    setInventoryFocus('catalog');
+                                    const targetFocus = currentMenu === 'stock' ? 'stock' : 'catalog';
+                                    setInventoryFocus(targetFocus);
+                                    setCurrentMenu(targetFocus);
                                     setSearchTerm('');
                                 }}
                                 className="px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 font-black text-xs uppercase tracking-widest"
@@ -1514,32 +1613,50 @@ export default function StockDashboard() {
                                 Tous
                             </button>
                         )}
-                        <button 
-                            onClick={() => {
-                                setShowLowStockOnly(prev => !prev);
-                                setShowDraftOnly(false);
-                                setInventoryFocus('stock');
-                                setSearchTerm('');
-                            }}
-                            className={`px-4 py-2 rounded-xl border inline-flex items-center gap-2 transition-all ${showLowStockOnly ? 'bg-red-600 border-red-600 hover:bg-red-500 text-white' : totalLowStockCount > 0 ? 'bg-white border-red-200 hover:bg-red-50 text-red-600' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500'}`}
-                        >
-                            <span className="text-[10px] uppercase font-black tracking-widest opacity-70">{showLowStockOnly ? 'Filtre actif' : 'Alertes Rupture'}</span>
-                            <span className="text-lg font-black tracking-tight">{totalLowStockCount}</span>
-                        </button>
-                        <button 
-                            onClick={() => {
-                                const nextDraftState = !showDraftOnly;
-                                setShowDraftOnly(nextDraftState);
-                                setInventoryFocus(nextDraftState ? 'drafts' : 'catalog');
-                                setShowLowStockOnly(false);
-                                setSearchTerm('');
-                                if (nextDraftState) setActiveLocationId('global');
-                            }}
-                            className={`px-4 py-2 rounded-xl border inline-flex items-center gap-2 transition-all ${showDraftOnly ? 'bg-amber-500 border-amber-500 hover:bg-amber-400 text-white' : totalDraftCount > 0 ? 'bg-white border-amber-200 hover:bg-amber-50 text-amber-700' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500'}`}
-                        >
-                            <span className="text-[10px] uppercase font-black tracking-widest opacity-70">{showDraftOnly ? 'Filtre actif' : 'Brouillons catalogue'}</span>
-                            <span className="text-lg font-black tracking-tight">{totalDraftCount}</span>
-                        </button>
+                        {currentMenu === 'catalog' && isManager && (
+                            <button onClick={() => openNewProductModal('stockable')} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black shadow-sm">
+                                <Plus className="w-4 h-4"/> Nouvel article
+                            </button>
+                        )}
+                        {currentMenu === 'services' && isManager && (
+                            <button onClick={() => openNewProductModal('service')} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-sm">
+                                <FileEdit className="w-4 h-4"/> Nouvelle prestation
+                            </button>
+                        )}
+                        {currentMenu === 'stock' && (
+                            <>
+                                {isManager && (
+                                    <button onClick={openReceptionModal} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-sm">
+                                        <Truck className="w-4 h-4"/> Réceptionner
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => {
+                                        setShowLowStockOnly(prev => !prev);
+                                        setShowDraftOnly(false);
+                                        setInventoryFocus('stock');
+                                        setSearchTerm('');
+                                    }}
+                                    className={`px-4 py-2 rounded-xl border inline-flex items-center gap-2 transition-all ${showLowStockOnly ? 'bg-red-600 border-red-600 hover:bg-red-500 text-white' : totalLowStockCount > 0 ? 'bg-white border-red-200 hover:bg-red-50 text-red-600' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500'}`}
+                                >
+                                    <span className="text-[10px] uppercase font-black tracking-widest opacity-70">{showLowStockOnly ? 'Filtre actif' : 'Ruptures'}</span>
+                                    <span className="text-lg font-black tracking-tight">{totalLowStockCount}</span>
+                                </button>
+                            </>
+                        )}
+                        {currentMenu === 'drafts' && (
+                            <>
+                                {isManager && (
+                                    <button onClick={() => setShowImportModal(true)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-white text-sm font-black shadow-sm">
+                                        <FileText className="w-4 h-4"/> Importer brouillons
+                                    </button>
+                                )}
+                                <div className="px-4 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-700 inline-flex items-center gap-2">
+                                    <span className="text-[10px] uppercase font-black tracking-widest">Brouillons</span>
+                                    <span className="text-lg font-black tracking-tight">{totalDraftCount}</span>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
 
