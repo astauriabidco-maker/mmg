@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
 from pydantic import BaseModel
 from typing import List, Optional
 import uuid
@@ -9,6 +9,7 @@ from backend.database import get_db
 from backend import models
 from backend.core import security
 from backend.services.stock_service import InventoryService
+from backend.services.stock_reservations import active_reserved_quantity, physical_quantity_all_internal
 from backend.services.document_sequences import next_number
 from ..core.time import utcnow
 
@@ -169,6 +170,82 @@ def _line_match_status(quantity_received: float, quantity_invoiced: float) -> st
         return "PARTIAL_MATCH"
     return "MATCHED"
 
+def _supplier_map(db: Session) -> dict[str, models.Supplier]:
+    return {
+        supplier.name.upper(): supplier
+        for supplier in db.query(models.Supplier).all()
+    }
+
+def _open_purchase_remaining_by_variant(db: Session) -> dict[int, float]:
+    lines = (
+        db.query(models.PurchaseOrderLine)
+        .join(models.PurchaseOrder, models.PurchaseOrderLine.order_id == models.PurchaseOrder.id)
+        .filter(models.PurchaseOrder.status != models.PurchaseOrderStatus.CANCELLED)
+        .all()
+    )
+    incoming: dict[int, float] = {}
+    for line in lines:
+        remaining = max(float(line.quantity or 0) - float(line.quantity_received or 0), 0.0)
+        if remaining > 0:
+            incoming[line.variant_id] = incoming.get(line.variant_id, 0.0) + remaining
+    return incoming
+
+def _need_priority(available_quantity: float, min_threshold: float, net_need_quantity: float) -> str:
+    if net_need_quantity <= 0:
+        return "COVERED"
+    if available_quantity <= 0:
+        return "CRITICAL"
+    if min_threshold > 0 and available_quantity < min_threshold:
+        return "URGENT"
+    return "TO_PLAN"
+
+def _need_origins(
+    available_quantity: float,
+    reserved_quantity: float,
+    min_threshold: float,
+    incoming_purchase_quantity: float,
+) -> list[str]:
+    origins = []
+    if available_quantity <= 0:
+        origins.append("OUT_OF_STOCK")
+    if min_threshold > 0 and available_quantity < min_threshold:
+        origins.append("UNDER_MIN_THRESHOLD")
+    if reserved_quantity > 0:
+        origins.append("ACTIVE_RESERVATIONS")
+    if incoming_purchase_quantity > 0:
+        origins.append("OPEN_PURCHASE_ORDER")
+    return origins
+
+def _need_reason(
+    priority: str,
+    available_quantity: float,
+    reserved_quantity: float,
+    min_threshold: float,
+    incoming_purchase_quantity: float,
+) -> str:
+    parts = []
+    if priority == "CRITICAL":
+        parts.append("Disponible nul ou négatif")
+    elif priority == "URGENT":
+        parts.append("Disponible sous seuil mini")
+    elif priority == "COVERED":
+        parts.append("Besoin couvert par commande fournisseur ouverte")
+    else:
+        parts.append("Disponible proche du seuil")
+    if reserved_quantity > 0:
+        parts.append(f"{reserved_quantity:g} unité(s) déjà réservée(s)")
+    if incoming_purchase_quantity > 0:
+        parts.append(f"{incoming_purchase_quantity:g} unité(s) déjà commandée(s)")
+    if min_threshold > 0:
+        parts.append(f"seuil {min_threshold:g}")
+    return " · ".join(parts)
+
+def _recommend_purchase_quantity(available_quantity: float, min_threshold: float, incoming_purchase_quantity: float) -> float:
+    if min_threshold <= 0:
+        return max(1.0 - available_quantity - incoming_purchase_quantity, 0.0)
+    target_quantity = min_threshold * 2
+    return max(target_quantity - available_quantity - incoming_purchase_quantity, 0.0)
+
 @router.get("/ai-recommendations")
 def get_ai_recommendations(db: Session = Depends(get_db)):
     variants = db.query(models.ProductVariant).all()
@@ -190,6 +267,168 @@ def get_ai_recommendations(db: Session = Depends(get_db)):
             })
             
     return recommendations
+
+@router.get("/needs")
+@router.get("/procurement-needs")
+def get_procurement_needs(
+    include_covered: bool = True,
+    db: Session = Depends(get_db),
+):
+    suppliers = _supplier_map(db)
+    incoming_by_variant = _open_purchase_remaining_by_variant(db)
+    needs = []
+
+    variants = (
+        db.query(models.ProductVariant)
+        .join(models.Product)
+        .filter(
+            models.Product.product_type != "service",
+            models.Product.catalog_status == "ACTIVE",
+        )
+        .order_by(models.Product.supplier, models.Product.name, models.ProductVariant.reference)
+        .all()
+    )
+
+    for variant in variants:
+        product = variant.product
+        if not product:
+            continue
+        min_threshold = float(variant.min_threshold or 0)
+        physical_quantity = physical_quantity_all_internal(db, variant)
+        reserved_quantity = active_reserved_quantity(db, variant.id)
+        available_quantity = max(physical_quantity - reserved_quantity, 0.0)
+        incoming_purchase_quantity = float(incoming_by_variant.get(variant.id, 0.0))
+
+        is_near_threshold = min_threshold > 0 and available_quantity <= min_threshold * 1.25
+        if available_quantity > 0 and not is_near_threshold:
+            continue
+        if min_threshold <= 0 and available_quantity > 0:
+            continue
+        gross_need_quantity = max((min_threshold * 2 if min_threshold > 0 else 1.0) - available_quantity, 0.0)
+        net_need_quantity = max(gross_need_quantity - incoming_purchase_quantity, 0.0)
+        if net_need_quantity <= 0 and not include_covered:
+            continue
+
+        supplier_name = (product.supplier or "").strip()
+        supplier = suppliers.get(supplier_name.upper()) if supplier_name else None
+        supplier_status = supplier.supplier_status if supplier else None
+        is_supplier_blocked = supplier_status == "BLOCKED" or bool(supplier and not supplier.is_active)
+        is_orderable = bool(supplier_name) and supplier is not None and not is_supplier_blocked and net_need_quantity > 0
+        priority = _need_priority(available_quantity, min_threshold, net_need_quantity)
+        suggested_quantity = _recommend_purchase_quantity(available_quantity, min_threshold, incoming_purchase_quantity)
+
+        if not supplier_name:
+            blocked_reason = "Aucun fournisseur renseigné sur l'article."
+        elif supplier is None:
+            blocked_reason = "Fournisseur absent du référentiel fournisseurs."
+        elif is_supplier_blocked:
+            blocked_reason = "Fournisseur bloqué."
+        else:
+            blocked_reason = None
+
+        needs.append({
+            "variant_id": variant.id,
+            "product_id": product.id,
+            "reference": variant.reference,
+            "supplier_reference": variant.supplier_reference,
+            "product_name": product.name,
+            "material_type": product.material_type,
+            "unit": product.unit,
+            "supplier": supplier_name or None,
+            "supplier_id": supplier.id if supplier else None,
+            "supplier_status": supplier_status,
+            "supplier_category": supplier.supplier_category if supplier else None,
+            "supplier_lead_time_days": supplier.lead_time_days if supplier else None,
+            "physical_quantity": physical_quantity,
+            "reserved_quantity": reserved_quantity,
+            "available_quantity": available_quantity,
+            "min_threshold": min_threshold,
+            "incoming_purchase_quantity": incoming_purchase_quantity,
+            "gross_need_quantity": gross_need_quantity,
+            "net_need_quantity": net_need_quantity,
+            "suggested_quantity": suggested_quantity,
+            "priority": priority,
+            "origins": _need_origins(available_quantity, reserved_quantity, min_threshold, incoming_purchase_quantity),
+            "reason": _need_reason(priority, available_quantity, reserved_quantity, min_threshold, incoming_purchase_quantity),
+            "is_orderable": is_orderable,
+            "blocked_reason": blocked_reason,
+            "recommended_action": (
+                "Créer bon fournisseur"
+                if is_orderable
+                else "Suivre réception fournisseur"
+                if net_need_quantity <= 0 and incoming_purchase_quantity > 0
+                else "Corriger référentiel fournisseur"
+                if blocked_reason
+                else "Surveiller"
+            ),
+            "estimated_delivery_date": (
+                (utcnow() + timedelta(days=supplier.lead_time_days)).date().isoformat()
+                if supplier and supplier.lead_time_days
+                else None
+            ),
+        })
+
+    priority_rank = {"CRITICAL": 0, "URGENT": 1, "TO_PLAN": 2, "COVERED": 3}
+    needs.sort(key=lambda item: (priority_rank.get(item["priority"], 9), item["supplier"] or "ZZZ", item["product_name"]))
+
+    groups_by_supplier: dict[str, dict] = {}
+    for need in needs:
+        key = need["supplier"] or "Sans fournisseur"
+        group = groups_by_supplier.setdefault(key, {
+            "supplier": need["supplier"],
+            "supplier_id": need["supplier_id"],
+            "supplier_status": need["supplier_status"],
+            "is_orderable": bool(need["supplier"]) and need["is_orderable"],
+            "blocked_reason": need["blocked_reason"],
+            "lines_count": 0,
+            "critical_count": 0,
+            "urgent_count": 0,
+            "to_plan_count": 0,
+            "covered_count": 0,
+            "incoming_purchase_quantity": 0.0,
+            "suggested_quantity": 0.0,
+            "suggested_lines": [],
+        })
+        group["lines_count"] += 1
+        if need["priority"] == "CRITICAL":
+            group["critical_count"] += 1
+        elif need["priority"] == "URGENT":
+            group["urgent_count"] += 1
+        elif need["priority"] == "TO_PLAN":
+            group["to_plan_count"] += 1
+        else:
+            group["covered_count"] += 1
+        group["incoming_purchase_quantity"] += need["incoming_purchase_quantity"]
+        group["suggested_quantity"] += need["suggested_quantity"]
+        if not need["is_orderable"]:
+            group["is_orderable"] = False
+            group["blocked_reason"] = group["blocked_reason"] or need["blocked_reason"]
+        group["suggested_lines"].append({
+            "variant_id": need["variant_id"],
+            "reference": need["reference"],
+            "product_name": need["product_name"],
+            "suggested_quantity": need["suggested_quantity"],
+            "incoming_purchase_quantity": need["incoming_purchase_quantity"],
+            "net_need_quantity": need["net_need_quantity"],
+            "priority": need["priority"],
+            "origins": need["origins"],
+        })
+
+    return {
+        "summary": {
+            "needs_count": len(needs),
+            "critical_count": sum(1 for need in needs if need["priority"] == "CRITICAL"),
+            "urgent_count": sum(1 for need in needs if need["priority"] == "URGENT"),
+            "to_plan_count": sum(1 for need in needs if need["priority"] == "TO_PLAN"),
+            "covered_count": sum(1 for need in needs if need["priority"] == "COVERED"),
+            "blocked_count": sum(1 for need in needs if not need["is_orderable"]),
+            "suppliers_count": len(groups_by_supplier),
+            "suggested_quantity": sum(float(need["suggested_quantity"] or 0) for need in needs),
+            "incoming_purchase_quantity": sum(float(need["incoming_purchase_quantity"] or 0) for need in needs),
+        },
+        "needs": needs,
+        "groups": list(groups_by_supplier.values()),
+    }
 
 @router.get("/")
 def get_purchase_orders(db: Session = Depends(get_db)):

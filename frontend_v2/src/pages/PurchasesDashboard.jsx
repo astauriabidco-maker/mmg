@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShoppingCart, Plus, FileText, Search, ArrowRight, CheckCircle, PackageOpen, X, Truck, Users, Phone, Mail, MapPin, Sparkles, BrainCircuit, Building2, Globe2 } from 'lucide-react';
+import { ShoppingCart, Plus, FileText, Search, ArrowRight, CheckCircle, PackageOpen, X, Truck, Users, Phone, Mail, MapPin, Sparkles, BrainCircuit, Building2, Globe2, AlertTriangle, Layers } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 const getStatusColor = (status) => {
@@ -13,21 +13,133 @@ const getStatusColor = (status) => {
     }
 };
 
+const UNKNOWN_SUPPLIER = 'Fournisseur à qualifier';
+
+const priorityLabel = (priority) => ({
+    CRITICAL: 'Critique',
+    URGENT: 'Urgent',
+    TO_PLAN: 'À prévoir',
+    COVERED: 'Couvert',
+    NORMAL: 'Normal',
+})[priority] || priority || 'À traiter';
+
+const priorityTone = (priority) => ({
+    CRITICAL: {
+        card: 'bg-red-50 border-red-100',
+        rail: 'bg-red-500',
+        badge: 'bg-red-100 text-red-700',
+    },
+    URGENT: {
+        card: 'bg-orange-50 border-orange-100',
+        rail: 'bg-orange-500',
+        badge: 'bg-orange-100 text-orange-700',
+    },
+    TO_PLAN: {
+        card: 'bg-indigo-50 border-indigo-100',
+        rail: 'bg-indigo-500',
+        badge: 'bg-indigo-100 text-indigo-700',
+    },
+    COVERED: {
+        card: 'bg-emerald-50 border-emerald-100',
+        rail: 'bg-emerald-500',
+        badge: 'bg-emerald-100 text-emerald-700',
+    },
+    NORMAL: {
+        card: 'bg-slate-50 border-slate-200',
+        rail: 'bg-slate-400',
+        badge: 'bg-slate-100 text-slate-600',
+    },
+})[priority] || {
+    card: 'bg-indigo-50 border-indigo-100',
+    rail: 'bg-indigo-500',
+    badge: 'bg-indigo-100 text-indigo-700',
+};
+
+const normalizePurchaseNeeds = (payload, variants, suppliers) => {
+    const rawNeeds = Array.isArray(payload) ? payload : payload?.needs || [];
+    const supplierByName = new Map(suppliers.map(s => [String(s.name || '').toUpperCase(), s]));
+    return rawNeeds.map((need) => {
+        const variant = variants.find(v => String(v.id) === String(need.variant_id));
+        const reference = need.reference || variant?.reference || '';
+        const parsedSupplier = reference.includes(':') ? reference.split(':')[0] : '';
+        const supplier = need.supplier || variant?.product_supplier || parsedSupplier || UNKNOWN_SUPPLIER;
+        const supplierRecord = supplierByName.get(String(supplier).toUpperCase());
+        const priority = need.priority || (Number(need.current_stock || 0) <= 0 ? 'CRITICAL' : 'URGENT');
+        const suggestedQuantity = Number(need.suggested_quantity ?? need.net_need_quantity ?? need.quantity_to_order ?? need.recommended_quantity ?? 0);
+        const isCatalogDraft = (need.catalog_status || variant?.catalog_status || '').toUpperCase().includes('DRAFT');
+        const isBlockedSupplier = supplierRecord?.supplier_status === 'BLOCKED';
+        const hasSupplier = supplier && supplier !== UNKNOWN_SUPPLIER;
+        const hasVariant = Boolean(need.variant_id || variant?.id);
+        const canOrder = Boolean(need.is_orderable ?? need.can_order ?? true) && hasVariant && hasSupplier && !isCatalogDraft && !isBlockedSupplier && suggestedQuantity > 0;
+        const blockedReason = !hasSupplier
+            ? 'Fournisseur non renseigné'
+            : !hasVariant
+                ? 'Variante catalogue introuvable'
+                : isCatalogDraft
+                    ? 'Article brouillon à qualifier'
+                    : isBlockedSupplier
+                        ? 'Fournisseur bloqué'
+                        : suggestedQuantity <= 0
+                            ? 'Quantité suggérée invalide'
+                            : '';
+        return {
+            ...need,
+            variant_id: need.variant_id || variant?.id,
+            reference,
+            product_name: need.product_name || variant?.product_name || 'Article stock',
+            supplier,
+            supplier_status: supplierRecord?.supplier_status || null,
+            current_stock: Number(need.current_stock ?? need.available_stock ?? variant?.quantity_in_stock ?? 0),
+            reserved_stock: Number(need.reserved_stock ?? need.reserved_quantity ?? 0),
+            min_threshold: Number(need.min_threshold ?? need.threshold ?? variant?.min_threshold ?? 0),
+            incoming_purchase_quantity: Number(need.incoming_purchase_quantity ?? 0),
+            net_need_quantity: Number(need.net_need_quantity ?? suggestedQuantity),
+            suggested_quantity: suggestedQuantity,
+            priority,
+            origin: need.origin || need.source || 'Seuil stock',
+            reason: need.reason || 'Besoin calculé depuis stock disponible et seuil mini.',
+            unit_price: Number(need.unit_price ?? need.cost_price ?? variant?.cost_price ?? 0),
+            can_order: canOrder,
+            blocked_reason: need.blocked_reason || blockedReason,
+        };
+    });
+};
+
+const groupNeedsBySupplier = (needs) => Object.values(needs.reduce((acc, need) => {
+    const key = need.supplier || UNKNOWN_SUPPLIER;
+    if (!acc[key]) {
+        acc[key] = {
+            supplier: key,
+            needs: [],
+            critical_count: 0,
+            urgent_count: 0,
+            total_quantity: 0,
+            orderable_count: 0,
+        };
+    }
+    acc[key].needs.push(need);
+    acc[key].critical_count += need.priority === 'CRITICAL' ? 1 : 0;
+    acc[key].urgent_count += need.priority === 'URGENT' ? 1 : 0;
+    acc[key].total_quantity += Number(need.suggested_quantity || 0);
+    acc[key].orderable_count += need.can_order ? 1 : 0;
+    return acc;
+}, {})).sort((a, b) => b.critical_count - a.critical_count || b.urgent_count - a.urgent_count || a.supplier.localeCompare(b.supplier));
+
 export default function PurchasesDashboard() {
-    const [currentTab, setCurrentTab] = useState('orders'); // 'orders', 'suppliers', or 'partners'
-    
+    const [currentTab, setCurrentTab] = useState('orders'); // 'orders', 'suppliers', or 'ai'
+
     // Orders state
     const [searchTerm, setSearchTerm] = useState("");
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [selectedPO, setSelectedPO] = useState(null);
     const [showReceiveModal, setShowReceiveModal] = useState(false);
     const [showSupplierInvoiceModal, setShowSupplierInvoiceModal] = useState(false);
-    
+
     // Suppliers state
     const [selectedSupplierId, setSelectedSupplierId] = useState(null);
-    
-    // AI Recommendations state
-    
+
+    // Smart purchasing state
+
     // Suppliers state
     const [showSupplierModal, setShowSupplierModal] = useState(false);
     const emptySupplierForm = {
@@ -50,11 +162,11 @@ export default function PurchasesDashboard() {
         notes: '',
     };
     const [newSupplier, setNewSupplier] = useState(emptySupplierForm);
-    
+
     // Create form
     const emptyPOForm = { supplier: '', expected_date: '', notes: '', global_discount_percent: 0, lines: [] };
     const [newPO, setNewPO] = useState(emptyPOForm);
-    
+
     // Receive form
     const [receiveTargetLoc, setReceiveTargetLoc] = useState('');
     const [receiveLines, setReceiveLines] = useState([]);
@@ -88,7 +200,7 @@ export default function PurchasesDashboard() {
             const flatVariants = [];
             stockRes.data.forEach(p => {
                 p.variants.forEach(v => {
-                    flatVariants.push({ ...v, product_name: p.name });
+                    flatVariants.push({ ...v, product_name: p.name, product_supplier: p.supplier, catalog_status: p.catalog_status });
                 });
             });
             return flatVariants;
@@ -103,11 +215,35 @@ export default function PurchasesDashboard() {
         }
     });
 
-    const { data: aiRecommendations = [], isLoading: loadingAi, refetch: refetchAiRecommendations } = useQuery({
-        queryKey: ['ai-recs'],
+    const { data: aiRecommendations = { summary: {}, needs: [], groups: [] }, isLoading: loadingAi, refetch: refetchAiRecommendations } = useQuery({
+        queryKey: ['purchase-needs'],
         queryFn: async () => {
-            const res = await api.get('/v2/purchases/ai-recommendations');
-            return res.data;
+            try {
+                const res = await api.get('/v2/purchases/needs');
+                return res.data;
+            } catch (error) {
+                const fallback = await api.get('/v2/purchases/ai-recommendations');
+                return {
+                    summary: {
+                        needs_count: fallback.data.length,
+                        critical_count: fallback.data.length,
+                        urgent_count: 0,
+                        to_plan_count: 0,
+                        blocked_count: 0,
+                        suppliers_count: 0,
+                    },
+                    needs: fallback.data.map(item => ({
+                        ...item,
+                        product_name: item.product_name,
+                        supplier: null,
+                        suggested_quantity: item.suggested_quantity,
+                        priority: 'CRITICAL',
+                        reason: item.reason,
+                        is_orderable: true,
+                    })),
+                    groups: [],
+                };
+            }
         },
         enabled: currentTab === 'ai'
     });
@@ -132,6 +268,42 @@ export default function PurchasesDashboard() {
     const poGlobalDiscountAmount = poAfterLineDiscount * (poGlobalDiscountPercent / 100);
     const poSubtotal = poAfterLineDiscount - poGlobalDiscountAmount;
     const validLines = newPO.lines.filter(line => line.variant_id && parseFloat(line.quantity || 0) > 0).length;
+    const purchaseNeeds = normalizePurchaseNeeds(aiRecommendations, availableVariants, suppliers);
+    const filteredPurchaseNeeds = purchaseNeeds.filter(need => {
+        const term = searchTerm.toLowerCase();
+        return !term
+            || need.product_name.toLowerCase().includes(term)
+            || need.reference.toLowerCase().includes(term)
+            || need.supplier.toLowerCase().includes(term)
+            || need.reason.toLowerCase().includes(term);
+    });
+    const purchaseNeedGroups = groupNeedsBySupplier(filteredPurchaseNeeds);
+    const purchaseNeedsSummary = {
+        needs_count: purchaseNeeds.length,
+        critical_count: purchaseNeeds.filter(need => need.priority === 'CRITICAL').length,
+        urgent_count: purchaseNeeds.filter(need => need.priority === 'URGENT').length,
+        blocked_count: purchaseNeeds.filter(need => !need.can_order).length,
+        suppliers_count: groupNeedsBySupplier(purchaseNeeds).length,
+        ...(Array.isArray(aiRecommendations) ? {} : aiRecommendations.summary || {}),
+    };
+
+    const preparePOFromNeeds = (needs, supplierName = '') => {
+        const targetSupplier = supplierName && supplierName !== UNKNOWN_SUPPLIER ? supplierName : (needs[0]?.supplier || '');
+        setNewPO({
+            ...emptyPOForm,
+            supplier: targetSupplier === UNKNOWN_SUPPLIER ? '' : targetSupplier,
+            notes: `Commande préparée depuis les besoins achats intelligents (${needs.length} ligne(s)).`,
+            lines: needs.map(need => ({
+                variant_id: need.variant_id,
+                quantity: need.suggested_quantity,
+                unit_price: need.unit_price || 0,
+                discount_percent: 0,
+            })),
+        });
+        setCurrentTab('orders');
+        setSelectedPO(null);
+        setShowCreateModal(true);
+    };
 
     const openCreatePOForSupplier = (supplierName = '') => {
         setNewPO({
@@ -216,7 +388,7 @@ export default function PurchasesDashboard() {
     const addLineToPO = () => {
         setNewPO({ ...newPO, lines: [...newPO.lines, { variant_id: '', quantity: 1, unit_price: 0, discount_percent: 0 }] });
     };
-    
+
     const updateLine = (index, field, value) => {
         const newLines = [...newPO.lines];
         newLines[index][field] = value;
@@ -320,49 +492,49 @@ export default function PurchasesDashboard() {
     };
 
 
-    const filteredPurchases = purchases.filter(p => 
-        p.reference.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    const filteredPurchases = purchases.filter(p =>
+        p.reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
         p.supplier.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
-            
+
             {/* LEFT SIDEBAR : PO LIST */}
             <div className="w-[400px] bg-white border-r border-slate-200 flex flex-col items-stretch h-full shadow-xl z-20 relative">
                 <div className="p-6 border-b border-slate-200 flex flex-col gap-4 relative z-10 bg-white">
                     <h3 className="font-black text-slate-900 flex items-center gap-3 tracking-tight text-xl">
                         <ShoppingCart className="text-blue-600 w-6 h-6"/> Achats & Appro.
                     </h3>
-                    
+
                     {/* TABS */}
                     <div className="flex bg-slate-100 p-1 rounded-xl">
-                        <button 
+                        <button
                             onClick={() => setCurrentTab('orders')}
                             className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'orders' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                             Commandes
                         </button>
-                        <button 
+                        <button
                             onClick={() => setCurrentTab('suppliers')}
                             className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'suppliers' ? 'bg-white shadow text-emerald-600' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                             Fournisseurs
                         </button>
-                        <button 
+                        <button
                             onClick={() => setCurrentTab('ai')}
                             className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'ai' ? 'bg-white shadow text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
-                            title="Anticipation des Stocks"
+                            title="Besoins d'achat nets"
                         >
-                            <Sparkles className="w-4 h-4 mx-auto"/>
+                            À commander
                         </button>
                     </div>
 
                     <div className="relative">
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                        <input 
-                            type="text" 
-                            placeholder={currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : "Rechercher une recommandation..."} 
+                        <input
+                            type="text"
+                            placeholder={currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : "Rechercher une recommandation..."}
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
@@ -380,7 +552,7 @@ export default function PurchasesDashboard() {
                     )}
                     {currentTab === 'ai' && (
                         <button onClick={() => refetchAiRecommendations()} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
-                            <BrainCircuit className="w-5 h-5"/> Relancer l'Analyse
+                            <BrainCircuit className="w-5 h-5"/> Recalculer besoins
                         </button>
                     )}
                 </div>
@@ -389,8 +561,8 @@ export default function PurchasesDashboard() {
                     {currentTab === 'orders' && (
                         <>
                             {filteredPurchases.map(po => (
-                                <div 
-                                    key={po.id} 
+                                <div
+                                    key={po.id}
                                     onClick={() => openPODetails(po.id)}
                                     className={`p-4 rounded-xl cursor-pointer border-2 transition-all ${selectedPO?.id === po.id ? 'bg-blue-50 border-blue-500 shadow-md' : 'bg-white border-slate-100 hover:border-slate-300 shadow-sm'}`}
                                 >
@@ -415,8 +587,8 @@ export default function PurchasesDashboard() {
                     {currentTab === 'suppliers' && (
                         <>
                             {suppliers.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase())).map(sup => (
-                                <div 
-                                    key={sup.id} 
+                                <div
+                                    key={sup.id}
                                     onClick={() => setSelectedSupplierId(sup.id)}
                                     className={`p-4 rounded-xl cursor-pointer border-2 transition-all ${selectedSupplierId === sup.id ? 'bg-emerald-50 border-emerald-500 shadow-md' : 'bg-white border-slate-100 hover:border-slate-300 shadow-sm'}`}
                                 >
@@ -438,47 +610,49 @@ export default function PurchasesDashboard() {
                             {loadingAi ? (
                                 <div className="text-center py-10 text-indigo-400 font-bold flex flex-col items-center">
                                     <BrainCircuit className="w-8 h-8 animate-pulse mb-2" />
-                                    Analyse SCM en cours...
+                                    Calcul des besoins...
                                 </div>
                             ) : (
                                 <>
-                                    {aiRecommendations.map((rec, idx) => (
-                                        <div key={idx} className="p-4 rounded-xl bg-indigo-50 border border-indigo-100 shadow-sm relative overflow-hidden">
-                                            <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500"></div>
+                                    {filteredPurchaseNeeds.map((rec) => (
+                                        <div key={`${rec.variant_id}-${rec.reference}`} className={`p-4 rounded-xl border shadow-sm relative overflow-hidden ${priorityTone(rec.priority).card}`}>
+                                            <div className={`absolute top-0 left-0 w-1 h-full ${priorityTone(rec.priority).rail}`}></div>
                                             <h4 className="font-black text-slate-800 text-sm flex items-start justify-between">
                                                 <span>{rec.product_name}</span>
-                                                <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded-full">{rec.confidence}% IA</span>
+                                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-black ${priorityTone(rec.priority).badge}`}>{priorityLabel(rec.priority)}</span>
                                             </h4>
                                             <p className="text-[10px] font-mono text-slate-500 mb-2">{rec.reference}</p>
-                                            
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">{rec.supplier}</p>
+
                                             <div className="flex justify-between items-center mb-2 bg-white rounded-lg p-2 border border-indigo-50">
                                                 <div className="text-center">
-                                                    <div className="text-[10px] font-bold text-slate-400 uppercase">Stock Actuel</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase">Disponible</div>
                                                     <div className="font-black text-red-500">{rec.current_stock}</div>
                                                 </div>
                                                 <div className="text-center">
-                                                    <div className="text-[10px] font-bold text-slate-400 uppercase">Qté Suggérée</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase">À commander</div>
                                                     <div className="font-black text-indigo-600">+{rec.suggested_quantity}</div>
                                                 </div>
                                             </div>
-                                            
+
                                             <p className="text-xs text-slate-600 font-medium leading-tight">
                                                 {rec.reason}
                                             </p>
-                                            
-                                            <button 
-                                                onClick={() => {
-                                                    setNewPO({ ...emptyPOForm, notes: 'Généré par IA SCM', lines: [{variant_id: rec.variant_id, quantity: rec.suggested_quantity, unit_price: 0, discount_percent: 0}] });
-                                                    setShowCreateModal(true);
-                                                }}
-                                                className="mt-3 w-full py-2 bg-white border border-indigo-200 hover:bg-indigo-100 text-indigo-700 text-xs font-black rounded-lg transition-colors"
+                                            {!rec.can_order && (
+                                                <p className="mt-2 text-[10px] font-black text-red-600 uppercase tracking-widest">{rec.blocked_reason}</p>
+                                            )}
+
+                                            <button
+                                                onClick={() => preparePOFromNeeds([rec], rec.supplier)}
+                                                disabled={!rec.can_order}
+                                                className="mt-3 w-full py-2 bg-white border border-indigo-200 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400 text-indigo-700 text-xs font-black rounded-lg transition-colors"
                                             >
-                                                Préparer Commande
+                                                Préparer commande
                                             </button>
                                         </div>
                                     ))}
-                                    {aiRecommendations.length === 0 && (
-                                        <div className="text-center py-10 text-slate-400 font-bold">Aucune recommandation critique. Stock optimal.</div>
+                                    {filteredPurchaseNeeds.length === 0 && (
+                                        <div className="text-center py-10 text-slate-400 font-bold">Aucun besoin d'achat à traiter.</div>
                                     )}
                                 </>
                             )}
@@ -489,13 +663,22 @@ export default function PurchasesDashboard() {
 
             {/* MAIN AREA : PO DETAILS */}
             <div className="flex-1 flex flex-col bg-slate-50 relative overflow-y-auto">
-                {currentTab === 'suppliers' ? (
+                {currentTab === 'ai' ? (
+                    <SmartPurchasingView
+                        needs={filteredPurchaseNeeds}
+                        groups={purchaseNeedGroups}
+                        summary={purchaseNeedsSummary}
+                        loading={loadingAi}
+                        refetch={refetchAiRecommendations}
+                        preparePOFromNeeds={preparePOFromNeeds}
+                    />
+                ) : currentTab === 'suppliers' ? (
                     selectedSupplierId ? (
-                        <SupplierProfile 
-                            sup={suppliers.find(s => s.id === selectedSupplierId)} 
-                            purchases={purchases} 
-                            openPODetails={openPODetails} 
-                            setCurrentTab={setCurrentTab} 
+                        <SupplierProfile
+                            sup={suppliers.find(s => s.id === selectedSupplierId)}
+                            purchases={purchases}
+                            openPODetails={openPODetails}
+                            setCurrentTab={setCurrentTab}
                             openCreatePOForSupplier={openCreatePOForSupplier}
                         />
                     ) : (
@@ -528,7 +711,7 @@ export default function PurchasesDashboard() {
                                     </span>
                                 </div>
                             </div>
-                            
+
                             <div className="p-8">
                                 <div className="grid grid-cols-2 xl:grid-cols-5 gap-4 mb-8">
                                     <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4">
@@ -1032,7 +1215,7 @@ export default function PurchasesDashboard() {
                             </div>
                             <button onClick={()=>setShowSupplierModal(false)} className="mr-6 mt-6 text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
                         </div>
-                        
+
                         <div className="px-8 pb-8 grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6">
                             <div className="space-y-4">
                                 <div>
@@ -1168,6 +1351,168 @@ export default function PurchasesDashboard() {
     );
 }
 
+const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, preparePOFromNeeds }) => {
+    const blockedNeeds = needs.filter(need => !need.can_order);
+    const criticalNeeds = needs.filter(need => need.priority === 'CRITICAL');
+    const urgentNeeds = needs.filter(need => need.priority === 'URGENT');
+    const firstOrderableGroup = groups.find(group => group.orderable_count > 0);
+
+    return (
+        <div className="p-8 w-full">
+            <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
+                <div className="px-8 py-6 border-b border-slate-100 bg-slate-900 text-white flex justify-between items-start relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-56 h-56 bg-indigo-500/20 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+                    <div className="relative z-10">
+                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-300/20 text-indigo-200 text-[10px] font-black uppercase tracking-widest mb-3">
+                            <BrainCircuit className="w-3.5 h-3.5" /> Intelligence achats
+                        </div>
+                        <h2 className="text-3xl font-black tracking-tight">À commander</h2>
+                        <p className="text-sm font-medium text-slate-300 mt-1">
+                            Besoins nets regroupés par fournisseur avant création des bons de commande.
+                        </p>
+                    </div>
+                    <button onClick={() => refetch()} className="relative z-10 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-black flex items-center gap-2">
+                        <BrainCircuit className="w-4 h-4" /> Recalculer
+                    </button>
+                </div>
+
+                <div className="p-8 space-y-8">
+                    <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
+                        <div className="rounded-2xl bg-slate-900 text-white p-5 shadow-lg">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Besoins</p>
+                            <p className="text-3xl font-black">{summary.needs_count ?? needs.length}</p>
+                        </div>
+                        <div className="rounded-2xl bg-red-50 border border-red-100 p-5">
+                            <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Critiques</p>
+                            <p className="text-3xl font-black text-red-700">{summary.critical_count ?? criticalNeeds.length}</p>
+                        </div>
+                        <div className="rounded-2xl bg-orange-50 border border-orange-100 p-5">
+                            <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Urgents</p>
+                            <p className="text-3xl font-black text-orange-700">{summary.urgent_count ?? urgentNeeds.length}</p>
+                        </div>
+                        <div className="rounded-2xl bg-indigo-50 border border-indigo-100 p-5">
+                            <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">Fournisseurs</p>
+                            <p className="text-3xl font-black text-indigo-700">{summary.suppliers_count ?? groups.length}</p>
+                        </div>
+                        <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5">
+                            <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Bloqués</p>
+                            <p className="text-3xl font-black text-amber-700">{summary.blocked_count ?? blockedNeeds.length}</p>
+                        </div>
+                    </div>
+
+                    {loading ? (
+                        <div className="rounded-3xl border-2 border-dashed border-indigo-100 bg-indigo-50/40 py-20 flex flex-col items-center justify-center text-indigo-500 font-black">
+                            <BrainCircuit className="w-12 h-12 animate-pulse mb-4" />
+                            Calcul des besoins achats...
+                        </div>
+                    ) : needs.length === 0 ? (
+                        <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 py-20 flex flex-col items-center justify-center text-slate-400 font-black">
+                            <CheckCircle className="w-12 h-12 mb-4 text-emerald-400" />
+                            Aucun achat prioritaire détecté.
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 2xl:grid-cols-[1fr_360px] gap-6">
+                            <div className="space-y-5">
+                                {groups.map(group => {
+                                    const orderableGroupNeeds = group.needs.filter(need => need.can_order);
+                                    return (
+                                        <div key={group.supplier} className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                                            <div className="px-5 py-4 bg-slate-50 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fournisseur proposé</p>
+                                                    <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                                                        <Truck className="w-5 h-5 text-indigo-500" /> {group.supplier}
+                                                    </h3>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    {group.critical_count > 0 && <span className="px-3 py-1 rounded-lg bg-red-100 text-red-700 text-xs font-black">{group.critical_count} critique(s)</span>}
+                                                    {group.urgent_count > 0 && <span className="px-3 py-1 rounded-lg bg-orange-100 text-orange-700 text-xs font-black">{group.urgent_count} urgent(s)</span>}
+                                                    <span className="px-3 py-1 rounded-lg bg-slate-100 text-slate-600 text-xs font-black">{group.needs.length} ligne(s)</span>
+                                                </div>
+                                                <button
+                                                    onClick={() => preparePOFromNeeds(orderableGroupNeeds, group.supplier)}
+                                                    disabled={orderableGroupNeeds.length === 0}
+                                                    className="px-4 py-3 rounded-xl bg-blue-600 disabled:bg-slate-300 text-white font-black hover:bg-blue-500 flex items-center gap-2"
+                                                >
+                                                    <Plus className="w-4 h-4" /> Créer bon fournisseur
+                                                </button>
+                                            </div>
+                                            <div className="divide-y divide-slate-100">
+                                                {group.needs.map(need => (
+                                                    <div key={`${need.variant_id}-${need.reference}`} className="px-5 py-4 grid grid-cols-[1fr_120px_120px_150px] gap-4 items-center">
+                                                        <div>
+                                                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                                                                <span className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest ${priorityTone(need.priority).badge}`}>
+                                                                    {priorityLabel(need.priority)}
+                                                                </span>
+                                                                {!need.can_order && (
+                                                                    <span className="text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest bg-red-50 text-red-600">
+                                                                        {need.blocked_reason}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <p className="font-black text-slate-900">{need.product_name}</p>
+                                                            <p className="text-[10px] font-mono font-black text-slate-400 uppercase">{need.reference}</p>
+                                                            <p className="mt-1 text-xs font-bold text-slate-500">{need.reason}</p>
+                                                        </div>
+                                                        <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-center">
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Disponible</p>
+                                                            <p className="text-xl font-black text-slate-900">{need.current_stock.toLocaleString('fr-FR')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3 text-center">
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Suggéré</p>
+                                                            <p className="text-xl font-black text-indigo-700">+{need.suggested_quantity.toLocaleString('fr-FR')}</p>
+                                                        </div>
+                                                        <button
+                                                            onClick={() => preparePOFromNeeds([need], need.supplier)}
+                                                            disabled={!need.can_order}
+                                                            className="px-4 py-3 rounded-xl bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black hover:bg-slate-800 flex items-center justify-center gap-2"
+                                                        >
+                                                            Commander <ArrowRight className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            <aside className="space-y-4">
+                                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                                    <h4 className="font-black text-slate-900 flex items-center gap-2 mb-4">
+                                        <Layers className="w-5 h-5 text-indigo-500" /> Règle de calcul
+                                    </h4>
+                                    <div className="space-y-3 text-sm font-bold text-slate-600">
+                                        <p>Le besoin part du stock disponible, des seuils mini et des futures réservations quand l’API les fournit.</p>
+                                        <p>Les articles brouillons, sans fournisseur ou avec fournisseur bloqué restent visibles mais non commandables.</p>
+                                        <p>La commande générée reste modifiable : prix, remises, dates et quantités doivent être validés par l’acheteur.</p>
+                                    </div>
+                                </div>
+                                <div className="rounded-2xl border border-amber-100 bg-amber-50 p-5">
+                                    <h4 className="font-black text-amber-900 flex items-center gap-2 mb-3">
+                                        <AlertTriangle className="w-5 h-5" /> À qualifier
+                                    </h4>
+                                    <p className="text-3xl font-black text-amber-700">{blockedNeeds.length}</p>
+                                    <p className="text-sm font-bold text-amber-700 mt-1">besoin(s) visibles mais non transformables en commande automatiquement.</p>
+                                </div>
+                                {firstOrderableGroup && (
+                                    <button
+                                        onClick={() => preparePOFromNeeds(firstOrderableGroup.needs.filter(need => need.can_order), firstOrderableGroup.supplier)}
+                                        className="w-full px-5 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-black shadow-lg flex items-center justify-center gap-2"
+                                    >
+                                        <Plus className="w-5 h-5" /> Préparer le fournisseur prioritaire
+                                    </button>
+                                )}
+                            </aside>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCreatePOForSupplier }) => {
     const [activeTab, setActiveTab] = useState('overview');
 
@@ -1260,7 +1605,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
         })
         .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
         .slice(0, 6);
-    
+
     // Average order value
     const avgOrderValue = totalOrders > 0 ? (totalSpent / totalOrders) : 0;
     const actionTiles = [
@@ -1309,7 +1654,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
             <div className="bg-slate-900 text-white shrink-0 relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
                 <div className="absolute bottom-0 left-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl translate-y-1/2 -translate-x-1/3"></div>
-                
+
                 <div className="px-10 pt-12 pb-6 relative z-10 max-w-6xl mx-auto w-full">
                     <div className="flex items-start gap-8">
                         <div className="w-28 h-28 rounded-3xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-white flex items-center justify-center font-black text-5xl shadow-2xl shadow-emerald-500/30 border-4 border-emerald-300/30 shrink-0">
@@ -1371,7 +1716,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
             {/* TAB CONTENT */}
             <div className="flex-1 overflow-y-auto">
                 <div className="max-w-6xl mx-auto w-full p-10 space-y-8">
-                    
+
                     {activeTab === 'overview' && (
                         <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                             <div className={`mb-8 rounded-3xl border p-6 shadow-sm ${canOrder ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200'}`}>
@@ -1514,7 +1859,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                                     <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Total Dépensé</p>
                                     <h3 className="text-2xl font-black text-slate-800">{formatCurrency(totalSpent)}</h3>
                                 </div>
-                                
+
                                 <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
                                     <div className="flex justify-between items-start mb-4">
                                         <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center">
@@ -1757,7 +2102,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                                                         {order.total_amount.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}
                                                     </td>
                                                     <td className="py-4 px-6 text-right">
-                                                        <button 
+                                                        <button
                                                             onClick={() => {
                                                                 setCurrentTab('orders');
                                                                 openPODetails(order.id);

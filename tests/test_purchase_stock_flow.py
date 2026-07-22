@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -19,6 +20,75 @@ def _auth_headers(session_factory, username: str, role: str = "ADMIN") -> dict:
             db.commit()
     token = security.create_access_token({"sub": username, "role": role})
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture()
+def purchase_test_client():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[database.get_db] = override_get_db
+
+    try:
+        yield TestClient(app), TestingSessionLocal
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def _seed_purchase_need_variant(
+    db,
+    *,
+    reference: str,
+    supplier: str = "Fournisseur test",
+    catalog_status: str = "ACTIVE",
+    supplier_status: str = "ACTIVE",
+    physical_quantity: float = 0,
+    min_threshold: float = 5,
+):
+    supplier_record = db.query(models.Supplier).filter_by(name=supplier).first()
+    if not supplier_record:
+        supplier_record = models.Supplier(name=supplier, supplier_status=supplier_status)
+        db.add(supplier_record)
+    else:
+        supplier_record.supplier_status = supplier_status
+
+    product = models.Product(
+        reference_base=reference,
+        name=f"Article besoin {reference}",
+        material_type="ACCESSOIRE",
+        unit="pce",
+        supplier=supplier,
+        product_type="stockable",
+        catalog_status=catalog_status,
+    )
+    db.add(product)
+    db.flush()
+    variant = models.ProductVariant(
+        product_id=product.id,
+        reference=reference,
+        supplier_reference=reference,
+        quantity_in_stock=physical_quantity,
+        min_threshold=min_threshold,
+    )
+    location = models.StockLocation(name=f"WH/{reference}", usage="internal", is_active=True)
+    db.add_all([variant, location])
+    db.flush()
+    db.add(models.StockQuant(variant_id=variant.id, location_id=location.id, quantity=physical_quantity))
+    db.commit()
+    return variant.id
 
 
 def test_purchase_order_receipt_creates_stock_move_and_quant():
@@ -603,3 +673,126 @@ def test_purchase_recommendations_use_real_stock_thresholds_without_fake_fallbac
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)
+
+
+def test_purchase_need_recommendation_is_created_when_stock_is_below_threshold(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "purchase-need-tester")
+
+    with TestingSessionLocal() as db:
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="NEED-LOW-STOCK",
+            supplier="CORTIZO",
+            physical_quantity=2,
+            min_threshold=5,
+        )
+
+    response = client.get("/v2/purchases/ai-recommendations", headers=headers)
+
+    assert response.status_code == 200, response.text
+    needs = response.json()
+    assert len(needs) == 1
+    assert needs[0]["variant_id"] == variant_id
+    assert needs[0]["reference"] == "NEED-LOW-STOCK"
+    assert needs[0]["current_stock"] == 2.0
+    assert needs[0]["suggested_quantity"] == 8.0
+    assert "seuil configuré" in needs[0]["reason"]
+
+
+def test_purchase_need_recommendation_is_not_created_when_available_stock_is_ok(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "purchase-ok-tester")
+
+    with TestingSessionLocal() as db:
+        _seed_purchase_need_variant(
+            db,
+            reference="NEED-STOCK-OK",
+            supplier="CORTIZO",
+            physical_quantity=8,
+            min_threshold=5,
+        )
+
+    response = client.get("/v2/purchases/ai-recommendations", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == []
+
+
+def test_purchase_need_recommendation_excludes_draft_catalog_items(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "purchase-draft-tester")
+
+    with TestingSessionLocal() as db:
+        _seed_purchase_need_variant(
+            db,
+            reference="NEED-DRAFT",
+            supplier="SEPALUMIC",
+            catalog_status="DRAFT",
+            physical_quantity=0,
+            min_threshold=5,
+        )
+
+    response = client.get("/v2/purchases/needs", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["needs"] == []
+
+
+def test_purchase_need_recommendation_flags_blocked_supplier_as_not_orderable(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "purchase-blocked-supplier-tester")
+
+    with TestingSessionLocal() as db:
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="NEED-BLOCKED-SUPPLIER",
+            supplier="Fournisseur bloqué",
+            supplier_status="BLOCKED",
+            physical_quantity=0,
+            min_threshold=5,
+        )
+
+    response = client.get("/v2/purchases/needs", headers=headers)
+
+    assert response.status_code == 200, response.text
+    [need] = [item for item in response.json()["needs"] if item["variant_id"] == variant_id]
+    assert need["supplier"] == "Fournisseur bloqué"
+    assert need["is_orderable"] is False
+    assert need["blocked_reason"] == "Fournisseur bloqué."
+
+
+def test_purchase_need_recommendations_expose_supplier_group_priority_and_net_need(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "purchase-group-priority-tester")
+
+    with TestingSessionLocal() as db:
+        critical_variant_id = _seed_purchase_need_variant(
+            db,
+            reference="NEED-CRITICAL",
+            supplier="CORTIZO",
+            physical_quantity=0,
+            min_threshold=5,
+        )
+        urgent_variant_id = _seed_purchase_need_variant(
+            db,
+            reference="NEED-URGENT",
+            supplier="CORTIZO",
+            physical_quantity=3,
+            min_threshold=5,
+        )
+
+    response = client.get("/v2/purchases/needs", headers=headers)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    by_variant = {item["variant_id"]: item for item in payload["needs"]}
+    assert by_variant[critical_variant_id]["supplier"] == "CORTIZO"
+    assert by_variant[critical_variant_id]["priority"] == "CRITICAL"
+    assert by_variant[critical_variant_id]["net_need_quantity"] == 10.0
+    assert by_variant[urgent_variant_id]["priority"] == "URGENT"
+    assert by_variant[urgent_variant_id]["net_need_quantity"] == 7.0
+    [group] = [item for item in payload["groups"] if item["supplier"] == "CORTIZO"]
+    assert group["critical_count"] == 1
+    assert group["urgent_count"] == 1
+    assert group["is_orderable"] is True
