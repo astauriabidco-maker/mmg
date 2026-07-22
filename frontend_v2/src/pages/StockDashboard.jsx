@@ -41,10 +41,17 @@ export default function StockDashboard() {
     const { data: workshopContexts = { sales: [], production_orders: [] } } = useQuery({ queryKey: ['workshop-debit-contexts'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/contexts'); return res.data; }});
     const { data: inventorySessions = [] } = useQuery({ queryKey: ['inventory-sessions'], queryFn: async () => { const res = await api.get('/v2/stock/inventory-sessions'); return res.data; }});
     const { data: purchases = [] } = useQuery({ queryKey: ['purchases'], queryFn: async () => { const res = await api.get('/v2/purchases/'); return res.data; }});
+    const { data: purchaseNeedsPayload = { summary: {}, needs: [], groups: [] }, isLoading: loadingPurchaseNeeds } = useQuery({
+        queryKey: ['purchase-needs', 'stock-risk'],
+        queryFn: async () => {
+            const res = await api.get('/v2/purchases/needs');
+            return res.data;
+        },
+    });
 
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
-    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation' | 'product-detail' | 'location-detail'
+    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'risk' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation' | 'product-detail' | 'location-detail'
     const [inventoryFocus, setInventoryFocus] = useState('catalog'); // 'catalog' | 'stock' | 'drafts' | 'services'
     const [todoRoleFilter, setTodoRoleFilter] = useState('me'); // 'me' | 'stock' | 'atelier' | 'catalogue' | 'achats' | 'manager'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
@@ -1210,6 +1217,13 @@ export default function StockDashboard() {
     const openPurchases = purchases
         .filter(po => ['DRAFT', 'SENT', 'PARTIAL'].includes(String(po.status || '').toUpperCase()))
         .sort((a, b) => new Date(a.expected_date || '2999-12-31') - new Date(b.expected_date || '2999-12-31'));
+    const purchaseNeeds = purchaseNeedsPayload.needs || [];
+    const purchaseRiskSummary = purchaseNeedsPayload.summary || {};
+    const criticalPurchaseNeeds = purchaseNeeds.filter(need => ['CRITICAL', 'URGENT'].includes(String(need.priority || '').toUpperCase()));
+    const blockedPurchaseNeeds = purchaseNeeds.filter(need => !need.is_orderable && Number(need.net_need_quantity || 0) > 0);
+    const coveredPurchaseNeeds = purchaseNeeds.filter(need => String(need.priority || '').toUpperCase() === 'COVERED');
+    const longLeadTimeNeeds = purchaseNeeds.filter(need => Number(need.supplier_lead_time_days || 0) >= 14);
+    const riskTotal = criticalPurchaseNeeds.length + blockedPurchaseNeeds.length;
     const recentManualAdjustments = transactions.filter(tx => {
         const documentType = String(tx.document_type || '').toLowerCase();
         const sourceScreen = String(tx.source_screen || '').toLowerCase();
@@ -1231,6 +1245,7 @@ export default function StockDashboard() {
             setShowDraftOnly(false);
             setShowLowStockOnly(true);
         },
+        openRisk: () => setCurrentMenu('risk'),
         showDrafts: () => selectInventoryFocus('drafts'),
         openWorkshopDebit: () => setShowWorkshopDebitModal(true),
         openPhysicalInventory: () => setCurrentMenu('physical-inventory'),
@@ -1322,6 +1337,17 @@ export default function StockDashboard() {
                                 {todoTotal > 0 && (
                                     <span className={`ml-1 px-2 py-0.5 rounded-lg text-[10px] font-black ${currentMenu === 'todo' ? 'bg-white/15 text-white' : 'bg-amber-100 text-amber-700'}`}>
                                         {todoTotal}
+                                    </span>
+                                )}
+                            </button>
+                            <button
+                                onClick={() => setCurrentMenu('risk')}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'risk' ? 'bg-red-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <AlertTriangle className="w-4 h-4"/> Stock à risque
+                                {riskTotal > 0 && (
+                                    <span className={`ml-1 px-2 py-0.5 rounded-lg text-[10px] font-black ${currentMenu === 'risk' ? 'bg-white/15 text-white' : 'bg-red-100 text-red-700'}`}>
+                                        {riskTotal}
                                     </span>
                                 )}
                             </button>
@@ -2116,6 +2142,23 @@ export default function StockDashboard() {
                             recentManualAdjustments={recentManualAdjustments}
                             actions={todoActions}
                             reservationActionId={reservationActionId}
+                        />
+                    </div>
+                ) : currentMenu === 'risk' ? (
+                    <div className="flex-1 overflow-y-auto w-full relative p-6 bg-slate-50">
+                        <StockRiskView
+                            loading={loadingPurchaseNeeds}
+                            needs={purchaseNeeds}
+                            summary={purchaseRiskSummary}
+                            criticalNeeds={criticalPurchaseNeeds}
+                            blockedNeeds={blockedPurchaseNeeds}
+                            coveredNeeds={coveredPurchaseNeeds}
+                            longLeadTimeNeeds={longLeadTimeNeeds}
+                            onOpenPurchases={goToPurchases}
+                            onOpenProduct={(productId) => {
+                                const product = products.find(item => item.id === productId);
+                                if (product) openProductDetail(null, product);
+                            }}
                         />
                     </div>
                 ) : currentMenu === 'workshop' ? (
@@ -3685,6 +3728,217 @@ export default function StockDashboard() {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+function StockRiskView({
+    loading,
+    needs,
+    summary,
+    criticalNeeds,
+    blockedNeeds,
+    coveredNeeds,
+    longLeadTimeNeeds,
+    onOpenPurchases,
+    onOpenProduct,
+}) {
+    const formatQty = value => Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+    const priorityLabel = priority => ({
+        CRITICAL: 'Rupture',
+        URGENT: 'Sous seuil',
+        TO_PLAN: 'À planifier',
+        COVERED: 'Couvert',
+    }[String(priority || '').toUpperCase()] || 'À surveiller');
+    const priorityClass = priority => ({
+        CRITICAL: 'bg-red-100 text-red-700 border-red-200',
+        URGENT: 'bg-amber-100 text-amber-700 border-amber-200',
+        TO_PLAN: 'bg-blue-100 text-blue-700 border-blue-200',
+        COVERED: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    }[String(priority || '').toUpperCase()] || 'bg-slate-100 text-slate-600 border-slate-200');
+    const formatOrigins = origins => {
+        const labels = {
+            OUT_OF_STOCK: 'rupture',
+            UNDER_MIN_THRESHOLD: 'seuil bas',
+            ACTIVE_RESERVATIONS: 'réservations',
+            OPEN_PURCHASE_ORDER: 'commande ouverte',
+            OPEN_PURCHASE_REQUEST: "demande d'achat",
+        };
+        return (origins || []).map(origin => labels[origin] || origin).join(' · ') || 'stock à surveiller';
+    };
+
+    const sortedNeeds = [...(needs || [])].sort((a, b) => {
+        const rank = { CRITICAL: 0, URGENT: 1, TO_PLAN: 2, COVERED: 3 };
+        return (rank[a.priority] ?? 9) - (rank[b.priority] ?? 9)
+            || Number(b.net_need_quantity || 0) - Number(a.net_need_quantity || 0)
+            || String(a.supplier || '').localeCompare(String(b.supplier || ''));
+    });
+
+    return (
+        <div className="mx-auto w-full max-w-7xl space-y-6">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-red-500">Pilotage intelligent stock</p>
+                    <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950">Stock à risque</h2>
+                    <p className="mt-2 max-w-3xl text-sm font-bold text-slate-500">
+                        Ruptures futures, seuils bas, fournisseurs bloquants, commandes entrantes et recommandations d'achat priorisées.
+                    </p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                    <button
+                        type="button"
+                        onClick={onOpenPurchases}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800"
+                    >
+                        <Truck className="h-4 w-4" />
+                        Aller aux achats
+                    </button>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <RiskMetric title="Critiques" value={summary.critical_count || criticalNeeds.length} tone="red" detail="Disponible nul ou négatif" />
+                <RiskMetric title="Sous seuil" value={summary.urgent_count || 0} tone="amber" detail="À sécuriser avant promesse" />
+                <RiskMetric title="Bloqués" value={summary.blocked_count || blockedNeeds.length} tone="rose" detail="Fournisseur absent/bloqué" />
+                <RiskMetric title="Couverts" value={summary.covered_count || coveredNeeds.length} tone="emerald" detail="Commande ou demande ouverte" />
+                <RiskMetric title="Délai long" value={longLeadTimeNeeds.length} tone="blue" detail="Fournisseur >= 14 jours" />
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[1fr_360px]">
+                <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                        <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Priorités articles</p>
+                            <h3 className="text-xl font-black text-slate-950">Références à sécuriser</h3>
+                        </div>
+                        <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-600">
+                            {sortedNeeds.length} ligne(s)
+                        </span>
+                    </div>
+
+                    {loading ? (
+                        <div className="p-10 text-center text-sm font-black text-slate-400">Analyse des risques stock...</div>
+                    ) : sortedNeeds.length === 0 ? (
+                        <div className="p-10 text-center">
+                            <Check className="mx-auto mb-3 h-10 w-10 text-emerald-400" />
+                            <p className="font-black text-slate-700">Aucun stock à risque détecté.</p>
+                            <p className="mt-1 text-sm font-bold text-slate-400">Les articles actifs semblent couverts par le stock et les approvisionnements.</p>
+                        </div>
+                    ) : (
+                        <div className="divide-y divide-slate-100">
+                            {sortedNeeds.map(need => (
+                                <div key={need.variant_id} className="grid grid-cols-1 gap-4 px-5 py-4 xl:grid-cols-[1.2fr_140px_140px_150px_170px] xl:items-center">
+                                    <div className="min-w-0">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${priorityClass(need.priority)}`}>
+                                                {priorityLabel(need.priority)}
+                                            </span>
+                                            {need.supplier_status === 'BLOCKED' && (
+                                                <span className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-red-700">
+                                                    fournisseur bloqué
+                                                </span>
+                                            )}
+                                            {Number(need.supplier_lead_time_days || 0) > 0 && (
+                                                <span className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                                    {need.supplier_lead_time_days} j
+                                                </span>
+                                            )}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => onOpenProduct?.(need.product_id)}
+                                            className="mt-2 block text-left text-base font-black text-slate-950 hover:text-blue-700"
+                                        >
+                                            {need.product_name}
+                                        </button>
+                                        <p className="mt-1 text-xs font-mono font-black text-slate-400">{need.reference}</p>
+                                        <p className="mt-2 text-xs font-bold text-slate-500">{need.reason || formatOrigins(need.origins)}</p>
+                                    </div>
+
+                                    <RiskQty label="Disponible" value={need.available_quantity} tone={Number(need.available_quantity || 0) <= 0 ? 'red' : 'slate'} />
+                                    <RiskQty label="Réservé" value={need.reserved_quantity} tone={Number(need.reserved_quantity || 0) > 0 ? 'amber' : 'slate'} />
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">À acheter net</p>
+                                        <p className="mt-1 text-lg font-black text-slate-950">{formatQty(need.net_need_quantity)}</p>
+                                        <p className="text-[11px] font-bold text-slate-400">suggéré {formatQty(need.suggested_quantity)}</p>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <p className="truncate text-xs font-black uppercase tracking-widest text-slate-400">{need.supplier || 'Sans fournisseur'}</p>
+                                        <p className="text-xs font-bold text-slate-500">{need.blocked_reason || need.recommended_action}</p>
+                                        <button
+                                            type="button"
+                                            onClick={onOpenPurchases}
+                                            className={`w-full rounded-xl px-3 py-2 text-xs font-black ${need.is_orderable ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
+                                        >
+                                            {need.is_orderable ? 'Commander' : 'Corriger / suivre'}
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </section>
+
+                <aside className="space-y-4">
+                    <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Lecture métier</p>
+                        <h3 className="mt-1 text-lg font-black text-slate-950">Ce que le système surveille</h3>
+                        <div className="mt-4 space-y-3 text-sm font-bold text-amber-900">
+                            <p>Stock disponible sous le seuil mini ou à zéro.</p>
+                            <p>Quantités déjà réservées pour ventes ou atelier.</p>
+                            <p>Commandes fournisseur et demandes d'achat déjà ouvertes.</p>
+                            <p>Fournisseurs absents, bloqués ou avec délai long.</p>
+                        </div>
+                    </section>
+
+                    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Approvisionnement</p>
+                        <h3 className="mt-1 text-lg font-black text-slate-950">Couverture achats</h3>
+                        <div className="mt-4 grid grid-cols-2 gap-3">
+                            <RiskMini label="Entrant fournisseur" value={summary.incoming_purchase_quantity} />
+                            <RiskMini label="Demandes achat" value={summary.open_purchase_request_quantity} />
+                            <RiskMini label="Quantité suggérée" value={summary.suggested_quantity} />
+                            <RiskMini label="Fournisseurs" value={summary.suppliers_count} />
+                        </div>
+                    </section>
+                </aside>
+            </div>
+        </div>
+    );
+}
+
+function RiskMetric({ title, value, detail, tone }) {
+    const toneClass = {
+        red: 'border-red-200 bg-red-50 text-red-700',
+        amber: 'border-amber-200 bg-amber-50 text-amber-700',
+        rose: 'border-rose-200 bg-rose-50 text-rose-700',
+        emerald: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+        blue: 'border-blue-200 bg-blue-50 text-blue-700',
+    }[tone] || 'border-slate-200 bg-white text-slate-700';
+    return (
+        <div className={`rounded-2xl border p-5 shadow-sm ${toneClass}`}>
+            <p className="text-[10px] font-black uppercase tracking-widest opacity-80">{title}</p>
+            <p className="mt-2 text-3xl font-black">{Number(value || 0).toLocaleString('fr-FR')}</p>
+            <p className="mt-1 text-xs font-bold opacity-80">{detail}</p>
+        </div>
+    );
+}
+
+function RiskQty({ label, value, tone }) {
+    const valueClass = tone === 'red' ? 'text-red-600' : tone === 'amber' ? 'text-amber-600' : 'text-slate-950';
+    return (
+        <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</p>
+            <p className={`mt-1 text-lg font-black ${valueClass}`}>{Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })}</p>
+        </div>
+    );
+}
+
+function RiskMini({ label, value }) {
+    return (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</p>
+            <p className="mt-1 text-lg font-black text-slate-950">{Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })}</p>
         </div>
     );
 }
