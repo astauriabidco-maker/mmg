@@ -313,7 +313,7 @@ export default function StockDashboard() {
         }
     };
 
-    // -------- RECEPTION (FOURNISSEUR -> DEPOT) --------
+    // -------- ENTREE STOCK MANUELLE (VIRTUAL SUPPLIER -> DEPOT) --------
     const openReceptionModal = () => {
         setReceptionData({ variant: null, targetLocId: '', qty: '' });
         setReceptionSearch('');
@@ -1485,7 +1485,7 @@ export default function StockDashboard() {
                                                 className="px-4 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white text-sm font-black inline-flex items-center gap-2 shadow-sm"
                                             >
                                                 <Truck className="w-4 h-4" />
-                                                Réceptionner ici
+                                                Entrée stock ici
                                             </button>
                                         )}
                                         {isAdmin && (
@@ -1830,7 +1830,7 @@ export default function StockDashboard() {
                                                             className="rounded-xl border border-emerald-100 bg-emerald-50 hover:bg-emerald-100 px-4 py-3 text-sm font-black text-emerald-700 inline-flex items-center justify-center gap-2"
                                                         >
                                                             <Truck className="w-4 h-4" />
-                                                            Réceptionner
+                                                            Entrée stock
                                                         </button>
                                                     )}
                                                     <button
@@ -1890,7 +1890,7 @@ export default function StockDashboard() {
                                                         className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black inline-flex items-center gap-2"
                                                     >
                                                         <Truck className="w-4 h-4" />
-                                                        Réceptionner
+                                                        Entrée stock
                                                     </button>
                                                 )}
                                             </div>
@@ -2432,9 +2432,9 @@ export default function StockDashboard() {
                         )}
                         {currentMenu === 'stock' && (
                             <>
-                                {isManager && (
+                                {stockPermissions.receive && (
                                     <button onClick={openReceptionModal} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-sm">
-                                        <Truck className="w-4 h-4"/> Réceptionner
+                                        <Truck className="w-4 h-4"/> Entrée stock
                                     </button>
                                 )}
                                 <button
@@ -2907,8 +2907,8 @@ export default function StockDashboard() {
                                 <Truck className="w-6 h-6" />
                             </div>
                             <div>
-                                <h3 className="font-black text-2xl text-slate-800">Réceptionner du Matériel</h3>
-                                <p className="text-sm font-medium text-slate-500">Ajouter du stock depuis un fournisseur</p>
+                                <h3 className="font-black text-2xl text-slate-800">Entrée stock manuelle</h3>
+                                <p className="text-sm font-medium text-slate-500">Initialiser ou corriger un stock hors bon fournisseur.</p>
                             </div>
                             <button onClick={()=>setShowReceptionModal(false)} className="ml-auto text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
                         </div>
@@ -2916,7 +2916,7 @@ export default function StockDashboard() {
                         <div className="space-y-5">
                             <div>
                                 <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center justify-between">
-                                    <span>Article Réceptionné</span>
+                                    <span>Article à ajuster</span>
                                 </label>
                                 <div className="mb-2 relative">
                                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
