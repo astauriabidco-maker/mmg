@@ -1520,7 +1520,7 @@ export default function StockDashboard() {
                                             <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
                                                 <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
                                                     <div>
-                                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Contenu réel</p>
+                                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Contenu stock</p>
                                                         <h3 className="text-lg font-black text-slate-950">Articles présents dans cette zone</h3>
                                                     </div>
                                                     <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-600">
@@ -1784,7 +1784,7 @@ export default function StockDashboard() {
                                             </div>
                                         </div>
                                         <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
-                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Identité catalogue</p>
+	                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Repères</p>
                                             <div>
                                                 <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Unité</p>
                                                 <p className="font-black text-slate-900">{selectedProduct.unit || 'pce'}</p>
@@ -1793,12 +1793,45 @@ export default function StockDashboard() {
                                                 <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Gammes compatibles</p>
                                                 <p className="text-sm font-bold text-slate-600">{selectedProduct.compatible_series || 'Non renseigné'}</p>
                                             </div>
-                                            <div>
-                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Déclinaisons</p>
-                                                <p className="font-black text-slate-900">{selectedProduct.variants?.length || 0}</p>
+	                                            <div>
+	                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Déclinaisons</p>
+	                                                <p className="font-black text-slate-900">{selectedProduct.variants?.length || 0}</p>
+	                                            </div>
+	                                        </div>
+                                            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Actions utiles</p>
+                                                <div className="mt-4 grid grid-cols-1 gap-2">
+                                                    {stockPermissions.receive && selectedProduct.variants?.[0] && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => openReceptionForVariant(selectedProduct.variants[0])}
+                                                            className="rounded-xl border border-emerald-100 bg-emerald-50 hover:bg-emerald-100 px-4 py-3 text-sm font-black text-emerald-700 inline-flex items-center justify-center gap-2"
+                                                        >
+                                                            <Truck className="w-4 h-4" />
+                                                            Réceptionner
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setCurrentMenu('audit')}
+                                                        className="rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 inline-flex items-center justify-center gap-2"
+                                                    >
+                                                        <Layers className="w-4 h-4" />
+                                                        Voir mouvements
+                                                    </button>
+                                                    {isManager && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(event) => openEditProduct(event, selectedProduct)}
+                                                            className="rounded-xl border border-blue-100 bg-blue-50 hover:bg-blue-100 px-4 py-3 text-sm font-black text-blue-700 inline-flex items-center justify-center gap-2"
+                                                        >
+                                                            <Edit3 className="w-4 h-4" />
+                                                            Modifier la fiche
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </div>
-                                        </div>
-                                    </div>
+	                                    </div>
 
                                     <div className="space-y-6 min-w-0">
                                         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -1823,7 +1856,7 @@ export default function StockDashboard() {
                                         <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
                                             <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
                                                 <div>
-                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Stock par emplacement</p>
+	                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Contenu stock</p>
                                                     <h3 className="text-lg font-black text-slate-950">Où se trouve cet article ?</h3>
                                                 </div>
                                                 {stockPermissions.receive && selectedProduct.variants?.[0] && (
@@ -4545,14 +4578,27 @@ function AuditLogs({ transactions }) {
                                     </div>
                                 </div>
 
-                                <button
-                                    type="button"
-                                    onClick={() => setSelectedMovementId(null)}
-                                    className="w-full rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 inline-flex items-center justify-center gap-2"
-                                >
-                                    <X className="w-4 h-4" />
-                                    Revenir au dernier mouvement
-                                </button>
+                                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Actions utiles</p>
+                                    <div className="mt-4 grid grid-cols-1 gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedMovementId(null)}
+                                            className="rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 inline-flex items-center justify-center gap-2"
+                                        >
+                                            <X className="w-4 h-4" />
+                                            Revenir au dernier mouvement
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={exportAudit}
+                                            className="rounded-xl border border-slate-900 bg-slate-900 hover:bg-slate-800 px-4 py-3 text-sm font-black text-white inline-flex items-center justify-center gap-2"
+                                        >
+                                            <Download className="w-4 h-4" />
+                                            Export audit
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
