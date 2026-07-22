@@ -30,6 +30,7 @@ export default function StockDashboard() {
         countInventory: can('inventory.count'),
         validateInventory: can('inventory.validate'),
         receivePurchases: can('purchases.receive'),
+        requestPurchases: can('purchases.request'),
     };
 
     const { data: appConfigs = [] } = useQuery({ queryKey: ['configs'], queryFn: async () => { const res = await api.get('/v2/config/app_configs'); return res.data; }});
@@ -111,6 +112,7 @@ export default function StockDashboard() {
     const [showCustomerIssueModal, setShowCustomerIssueModal] = useState(false);
     const [customerIssueData, setCustomerIssueData] = useState({ variant: null, sourceLocId: '', qty: '', reason: '' });
     const [customerIssueSearch, setCustomerIssueSearch] = useState('');
+    const [riskActionVariantId, setRiskActionVariantId] = useState(null);
 
     const handleFileUpload = async (file, setForm, currentForm, field = 'image_url') => {
         const formData = new FormData();
@@ -398,6 +400,50 @@ export default function StockDashboard() {
             await queryClient.invalidateQueries({ queryKey: ['transactions'] });
         } catch (e) {
             alert(e.response?.data?.detail || "Erreur lors de la sortie stock.");
+        }
+    };
+
+    const createPurchaseRequestFromRisk = async (need) => {
+        if (!need?.variant_id || !stockPermissions.requestPurchases) return;
+        const quantity = Number(need.suggested_quantity || need.net_need_quantity || 0);
+        if (quantity <= 0) {
+            alert("Aucune quantité positive à demander pour cette ligne.");
+            return;
+        }
+        if (!need.supplier) {
+            alert("Impossible de créer la demande : aucun fournisseur n'est renseigné sur l'article.");
+            return;
+        }
+
+        setRiskActionVariantId(need.variant_id);
+        try {
+            await api.post('/v2/purchases/requests', {
+                supplier: need.supplier,
+                expected_date: null,
+                global_discount_percent: 0,
+                sensitivity_reason: `Stock à risque - ${need.reference}`,
+                notes: [
+                    `Créé depuis Inventaire > Stock à risque.`,
+                    need.reason ? `Motif: ${need.reason}` : null,
+                    need.blocked_reason ? `Point bloquant: ${need.blocked_reason}` : null,
+                ].filter(Boolean).join('\n'),
+                lines: [{
+                    variant_id: need.variant_id,
+                    quantity,
+                    unit_price: 0,
+                    discount_percent: 0,
+                    need_priority: need.priority || null,
+                    need_reason: need.reason || need.blocked_reason || 'Stock à risque',
+                }],
+            });
+            await queryClient.invalidateQueries({ queryKey: ['purchase-needs'] });
+            await queryClient.invalidateQueries({ queryKey: ['purchase-needs', 'stock-risk'] });
+            await queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
+            alert("Demande d'achat créée depuis le stock à risque.");
+        } catch (e) {
+            alert(e.response?.data?.detail || "Erreur lors de la création de la demande d'achat.");
+        } finally {
+            setRiskActionVariantId(null);
         }
     };
 
@@ -2155,6 +2201,9 @@ export default function StockDashboard() {
                             coveredNeeds={coveredPurchaseNeeds}
                             longLeadTimeNeeds={longLeadTimeNeeds}
                             onOpenPurchases={goToPurchases}
+                            canCreatePurchaseRequest={stockPermissions.requestPurchases}
+                            riskActionVariantId={riskActionVariantId}
+                            onCreatePurchaseRequest={createPurchaseRequestFromRisk}
                             onOpenProduct={(productId) => {
                                 const product = products.find(item => item.id === productId);
                                 if (product) openProductDetail(null, product);
@@ -3741,6 +3790,9 @@ function StockRiskView({
     coveredNeeds,
     longLeadTimeNeeds,
     onOpenPurchases,
+    canCreatePurchaseRequest,
+    riskActionVariantId,
+    onCreatePurchaseRequest,
     onOpenProduct,
 }) {
     const formatQty = value => Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
@@ -3865,13 +3917,27 @@ function StockRiskView({
                                     <div className="space-y-2">
                                         <p className="truncate text-xs font-black uppercase tracking-widest text-slate-400">{need.supplier || 'Sans fournisseur'}</p>
                                         <p className="text-xs font-bold text-slate-500">{need.blocked_reason || need.recommended_action}</p>
-                                        <button
-                                            type="button"
-                                            onClick={onOpenPurchases}
-                                            className={`w-full rounded-xl px-3 py-2 text-xs font-black ${need.is_orderable ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
-                                        >
-                                            {need.is_orderable ? 'Commander' : 'Corriger / suivre'}
-                                        </button>
+                                        {need.is_orderable && Number(need.net_need_quantity || 0) > 0 ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => onCreatePurchaseRequest?.(need)}
+                                                disabled={!canCreatePurchaseRequest || riskActionVariantId === need.variant_id}
+                                                className="w-full rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-500 disabled:bg-slate-300 disabled:text-slate-500"
+                                            >
+                                                {riskActionVariantId === need.variant_id ? 'Création...' : "Créer demande d'achat"}
+                                            </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={onOpenPurchases}
+                                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                                            >
+                                                Corriger / suivre
+                                            </button>
+                                        )}
+                                        {need.is_orderable && !canCreatePurchaseRequest && (
+                                            <p className="text-[11px] font-bold text-amber-600">Permission achats requise.</p>
+                                        )}
                                     </div>
                                 </div>
                             ))}
