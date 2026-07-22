@@ -92,6 +92,22 @@ class InventoryService:
         location = db.query(models.StockLocation).filter_by(id=location_id, is_active=True).first()
         if not location or location.usage != "internal":
             return None
+        # La zone d'une campagne couvre sa cible ET tous ses descendants
+        # (miroir de ``_zone_location_ids`` côté router). Un mouvement sur un
+        # emplacement enfant d'une campagne ouverte sur l'entrepôt parent doit
+        # donc être bloqué : on remonte la chaîne ``parent_id`` depuis
+        # l'emplacement du mouvement et on bloque si une campagne gelée vise
+        # un ancêtre (ou est globale). La garde ``visited`` neutralise tout
+        # cycle parent_id corrompu.
+        ancestor_ids = []
+        visited = set()
+        current = location
+        while current is not None and current.id not in visited:
+            visited.add(current.id)
+            ancestor_ids.append(current.id)
+            if current.parent_id is None:
+                break
+            current = db.query(models.StockLocation).filter_by(id=current.parent_id).first()
         return (
             db.query(models.InventorySession)
             .filter(
@@ -99,7 +115,7 @@ class InventoryService:
                 models.InventorySession.status.in_(["draft", "counting"]),
                 or_(
                     models.InventorySession.location_id == None,
-                    models.InventorySession.location_id == location_id,
+                    models.InventorySession.location_id.in_(ancestor_ids),
                 ),
             )
             .order_by(models.InventorySession.created_at.desc())

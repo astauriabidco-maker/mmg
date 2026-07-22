@@ -133,6 +133,9 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
                 "variant_id": variant_id,
                 "location_id": target_location_id,
                 "quantity": 7.0,
+                # Emplacement interne sans réservation : exposés par M4.
+                "reserved_quantity": 0.0,
+                "available_quantity": 7.0,
                 "location": {
                     "id": target_location_id,
                     "name": "WH/Test Achats",

@@ -17,6 +17,7 @@ from ..services.bom_parser import parse_bom_file
 from ..services.stock_reservations import (
     InsufficientStockAtConsumptionError,
     annotate_variant_availability,
+    available_quantity_at_location,
     build_preview_payload,
     cancel_reservation,
     consume_reservation,
@@ -194,35 +195,11 @@ def _serialize_count_line(
     return response
 
 
-def _locked_inventory_session_for_location(db: Session, location_id: int) -> Optional[models.InventorySession]:
-    location = db.query(models.StockLocation).filter_by(id=location_id, is_active=True).first()
-    if not location or location.usage != "internal":
-        return None
-    return (
-        db.query(models.InventorySession)
-        .filter(
-            models.InventorySession.zone_locked == True,
-            models.InventorySession.status.in_(["draft", "counting"]),
-            or_(
-                models.InventorySession.location_id == None,
-                models.InventorySession.location_id == location_id,
-            ),
-        )
-        .order_by(models.InventorySession.created_at.desc())
-        .first()
-    )
-
-
-def _assert_location_not_locked(db: Session, location_id: int) -> None:
-    locked_session = _locked_inventory_session_for_location(db, location_id)
-    if locked_session:
-        raise HTTPException(
-            status_code=423,
-            detail=(
-                f"Zone gelée par la campagne d'inventaire {locked_session.reference}. "
-                "Validez ou annulez la campagne avant de créer un mouvement stock."
-            ),
-        )
+# Le gel de zone des campagnes d'inventaire est appliqué au niveau du moteur
+# de mouvements : ``InventoryService.assert_location_not_locked`` (appelé par
+# ``InventoryService.move_stock``) remonte la chaîne ``parent_id`` et bloque
+# tout mouvement sur un emplacement couvert par une campagne gelée ouverte,
+# y compris via un ancêtre. Ne pas réintroduire de duplicata local ici.
 
 
 def _sync_variant_internal_stock(db: Session, variant_id: int) -> None:
@@ -551,6 +528,11 @@ def export_inventory_session(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
+    # L'export embarque espéré/compté/écart en clair : en comptage aveugle, un
+    # simple compteur ne doit pas pouvoir s'exporter les espérés. On exige la
+    # même permission que la validation de campagne (miroir du masquage de
+    # ``_serialize_inventory_session``).
+    _require_permission(db, user, "inventory.validate")
     session = (
         db.query(models.InventorySession)
         .options(
@@ -796,8 +778,18 @@ def create_transaction(tx: schemas.StockMoveCreate, background_tasks: Background
     return {"status": "success"}
 
 @router.get("/transactions")
-def get_recent_transactions(db: Session = Depends(get_db)):
-    moves = db.query(models.StockMove).options(joinedload(models.StockMove.variant).joinedload(models.ProductVariant.product)).order_by(models.StockMove.date.desc()).limit(100).all()
+def get_recent_transactions(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    moves = (
+        db.query(models.StockMove)
+        .options(
+            joinedload(models.StockMove.variant).joinedload(models.ProductVariant.product),
+            joinedload(models.StockMove.source_location),
+            joinedload(models.StockMove.dest_location),
+        )
+        .order_by(models.StockMove.date.desc())
+        .limit(100)
+        .all()
+    )
     result = []
     for m in moves:
         item_name = f"{m.variant.product.name} ({m.variant.color or 'Std'})" if m.variant and m.variant.product else "Inconnu"
@@ -819,6 +811,13 @@ def get_recent_transactions(db: Session = Depends(get_db)):
             "quantity_change": m.quantity,
             "transaction_type": "Débit atelier réel" if is_workshop_debit else f"{src_name} ➔ {dest_name}",
             "movement_kind": "workshop_debit" if is_workshop_debit else "stock_move",
+            # Ids + noms des emplacements source/destination (None si virtuel :
+            # réception fournisseur, livraison client, perte). Permet au
+            # frontend de filtrer les mouvements d'une fiche emplacement.
+            "location_id": m.location_id,
+            "location_dest_id": m.location_dest_id,
+            "location_from_name": m.source_location.name if m.source_location else None,
+            "location_to_name": m.dest_location.name if m.dest_location else None,
             "created_at": m.date,
             "author": m.author or "Admin",
             "notes": m.notes,
@@ -1162,7 +1161,7 @@ def cancel_workshop_reservation(
     return {"status": "success", **stats}
 
 @router.get("/locations", response_model=List[schemas.StockLocationResponse])
-def get_locations(db: Session = Depends(get_db)):
+def get_locations(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     # On renvoie uniquement les emplacements actifs pour cacher les archivés
     return db.query(models.StockLocation).filter(models.StockLocation.is_active == True).all()
 
@@ -1274,14 +1273,29 @@ def delete_location(loc_id: int, db: Session = Depends(get_db), role: str = Depe
         return {"status": "deleted"}
 
 @router.get("/quants", response_model=List[schemas.StockQuantResponse])
-def get_all_quants(db: Session = Depends(get_db)):
-    # Renvoie tous les quants dont la quantité est > 0 pour l'affichage Odoo
-    return db.query(models.StockQuant).filter(models.StockQuant.quantity > 0).all()
+def get_all_quants(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    # Renvoie tous les quants dont la quantité est > 0 pour l'affichage Odoo.
+    # Sur les emplacements internes, le réservé ferme et le disponible sont
+    # calculés PAR EMPLACEMENT (une réservation ancrée ne pèse que sur son
+    # emplacement) — les totaux globaux de la variante ne s'appliquent pas à
+    # une fiche emplacement et y créeraient du double comptage.
+    quants = (
+        db.query(models.StockQuant)
+        .options(joinedload(models.StockQuant.location))
+        .filter(models.StockQuant.quantity > 0)
+        .all()
+    )
+    for quant in quants:
+        if quant.location and quant.location.usage == "internal":
+            _physical, reserved, available = available_quantity_at_location(db, quant.variant_id, quant.location_id)
+            quant.reserved_quantity = reserved
+            quant.available_quantity = available
+    return quants
 
 # --- CHATTER (AUDIT LOG) CHANNELS ---
 
 @router.get("/chatter/{model_name}/{record_id}", response_model=List[schemas.ChatterMessageResponse])
-def get_chatter(model_name: str, record_id: int, db: Session = Depends(get_db)):
+def get_chatter(model_name: str, record_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return db.query(models.ChatterMessage).filter(
         models.ChatterMessage.model_name == model_name,
         models.ChatterMessage.record_id == record_id
@@ -1431,7 +1445,11 @@ async def upload_import_file(file: UploadFile = File(...), db: Session = Depends
     return {"message": f"Import réussi : {created_products} familles créées, {created_variants} déclinaisons ajoutées."}
 
 @router.get("/export/inventory")
-def export_inventory_xlsx(db: Session = Depends(get_db)):
+def export_inventory_xlsx(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    # Document comptable (prix d'achat + valorisation) : même permission que
+    # l'export d'audit des mouvements (/transactions/export) — stock.adjust
+    # est détenue par ADMIN/MANAGER/CHEF_STOCK dans la matrice.
+    _require_permission(db, user, "stock.adjust")
     from sqlalchemy.orm import joinedload
     # Document comptable : seul le stock physiquement détenu (emplacements
     # internes actifs) est exporté. Les emplacements virtuels `customer`
@@ -1492,7 +1510,10 @@ def export_inventory_xlsx(db: Session = Depends(get_db)):
     return response
 
 @router.get("/catalog/drafts/export")
-def export_draft_catalog_xlsx(db: Session = Depends(get_db)):
+def export_draft_catalog_xlsx(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    # Pendant export du POST /catalog/drafts/import : même permission
+    # catalog.qualify (ADMIN/MANAGER/CHEF_STOCK dans la matrice).
+    _require_permission(db, user, "catalog.qualify")
     drafts = (
         db.query(models.Product)
         .options(joinedload(models.Product.variants))

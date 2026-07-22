@@ -372,6 +372,10 @@ class StockQuantBase(BaseModel):
 class StockQuantResponse(StockQuantBase):
     id: int
     location: StockLocationResponse
+    # Renseignés uniquement sur les emplacements internes : réservé ferme et
+    # disponible calculés PAR EMPLACEMENT (None ailleurs).
+    reserved_quantity: Optional[float] = None
+    available_quantity: Optional[float] = None
     model_config = ConfigDict(from_attributes=True)
 
 class StockMoveCreate(BaseModel):
