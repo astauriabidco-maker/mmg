@@ -17,16 +17,19 @@ export default function StockDashboard() {
     const isManager = user?.role === 'ADMIN' || user?.role === 'MANAGER';
     const isAdmin = user?.role === 'ADMIN';
     const can = (permission) => user?.permissions?.includes('*') || user?.permissions?.includes(permission);
+    // Aligné strictement sur les permissions fines du backend (v2_stock.py /
+    // seed_permissions.py) : pas de fallback STOCK_EDIT legacy, sinon un rôle
+    // ne possédant que STOCK_EDIT verrait des boutons actifs aboutissant à un 403.
     const stockPermissions = {
-        receive: can('stock.receive') || can('STOCK_EDIT'),
-        transfer: can('stock.transfer') || can('STOCK_EDIT'),
-        adjust: can('stock.adjust') || can('STOCK_EDIT'),
-        qualifyCatalog: can('catalog.qualify') || can('STOCK_EDIT'),
-        reserveWorkshop: can('workshop.reserve_stock') || can('STOCK_EDIT'),
-        consumeWorkshop: can('workshop.consume_stock') || can('planning:consume_stock'),
-        countInventory: can('inventory.count') || can('STOCK_EDIT'),
-        validateInventory: can('inventory.validate') || can('STOCK_EDIT'),
-        receivePurchases: can('purchases.receive') || can('STOCK_EDIT'),
+        receive: can('stock.receive'),
+        transfer: can('stock.transfer'),
+        adjust: can('stock.adjust'),
+        qualifyCatalog: can('catalog.qualify'),
+        reserveWorkshop: can('workshop.reserve_stock'),
+        consumeWorkshop: can('workshop.consume_stock'),
+        countInventory: can('inventory.count'),
+        validateInventory: can('inventory.validate'),
+        receivePurchases: can('purchases.receive'),
     };
 
     const { data: appConfigs = [] } = useQuery({ queryKey: ['configs'], queryFn: async () => { const res = await api.get('/v2/config/app_configs'); return res.data; }});
@@ -50,6 +53,9 @@ export default function StockDashboard() {
     const [expandedProducts, setExpandedProducts] = useState({});
     const [selectedProductId, setSelectedProductId] = useState(null);
     const [selectedLocationId, setSelectedLocationId] = useState(null);
+    // Mémorise l'écran d'origine de la fiche produit (catalogue, fiche
+    // emplacement...) pour que "Retour" restaure le bon contexte.
+    const [productDetailReturnMenu, setProductDetailReturnMenu] = useState(null);
     
     // Inline edit states
     const [addingSubLocTo, setAddingSubLocTo] = useState(null);
@@ -964,8 +970,15 @@ export default function StockDashboard() {
             .map(quant => {
                 const { product, variant } = getVariantContext(quant.variant_id);
                 const quantLocation = locations.find(item => item.id === quant.location_id);
-                const reservedQuantity = Number(variant?.reserved_quantity || 0);
-                const availableQuantity = Number(variant?.available_quantity ?? Math.max(Number(quant.quantity || 0) - reservedQuantity, 0));
+                // Réservé / disponible PAR EMPLACEMENT (renvoyés par /quants sur
+                // les emplacements internes) — jamais les totaux globaux de la
+                // variante, qui seraient double-comptés en les sommant ici.
+                const reservedQuantity = quant.reserved_quantity != null
+                    ? Number(quant.reserved_quantity)
+                    : Number(variant?.reserved_quantity || 0);
+                const availableQuantity = quant.available_quantity != null
+                    ? Number(quant.available_quantity)
+                    : Math.max(Number(quant.quantity || 0) - reservedQuantity, 0);
                 return {
                     ...quant,
                     product,
@@ -999,13 +1012,18 @@ export default function StockDashboard() {
 
     const openProductDetail = (event, product) => {
         event?.stopPropagation?.();
+        setProductDetailReturnMenu(currentMenu);
         setSelectedProductId(product.id);
         setCurrentMenu('product-detail');
         setShowLowStockOnly(false);
     };
 
     const closeProductDetail = () => {
-        setCurrentMenu(inventoryFocus || 'catalog');
+        const target = productDetailReturnMenu && productDetailReturnMenu !== 'product-detail'
+            ? productDetailReturnMenu
+            : (inventoryFocus || 'catalog');
+        setProductDetailReturnMenu(null);
+        setCurrentMenu(target);
     };
 
     const openLocationDetail = (event, location) => {
@@ -1142,12 +1160,10 @@ export default function StockDashboard() {
     });
     const inventoryIssueCount = openInventorySessions.reduce((sum, session) => {
         const lines = session.lines || [];
-        return sum + lines.filter(line => {
-            const status = String(line.status || line.line_status || '').toUpperCase();
-            const expected = Number(line.expected_quantity ?? line.theoretical_quantity ?? line.expected_qty ?? 0);
-            const counted = Number(line.counted_quantity ?? line.counted_qty ?? expected);
-            return status.includes('VARIANCE') || status.includes('ECART') || status.includes('RECOUNT') || status.includes('RECOMP') || Math.abs(counted - expected) > 0;
-        }).length;
+        // Compteur basé uniquement sur le statut réel de la ligne : en comptage
+        // aveugle expected_quantity est null, comparer les quantités créerait
+        // de faux écarts sur chaque ligne comptée.
+        return sum + lines.filter(line => ['variance', 'recount'].includes(String(line.status || '').toLowerCase())).length;
     }, 0);
     const openPurchases = purchases
         .filter(po => ['DRAFT', 'SENT', 'PARTIAL'].includes(String(po.status || '').toUpperCase()))
@@ -1297,7 +1313,7 @@ export default function StockDashboard() {
                             >
                                 <MapPin className="w-4 h-4"/> Zones & emplacements
                             </button>
-                            {stockPermissions.reserveWorkshop && (
+                            {(stockPermissions.reserveWorkshop || stockPermissions.consumeWorkshop) && (
                                 <button
                                     onClick={() => setCurrentMenu('workshop')}
                                     className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-black transition-all ${currentMenu === 'workshop' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
@@ -1509,10 +1525,12 @@ export default function StockDashboard() {
                                             <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Disponible</p>
                                             <p className="mt-2 text-3xl font-black text-emerald-700">{formatQty(selectedLocationSummary.available)}</p>
                                         </div>
-                                        <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm text-white">
-                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-300">Valorisation</p>
-                                            <p className="mt-2 text-3xl font-black">{selectedLocationSummary.valuation.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</p>
-                                        </div>
+                                        {isAdmin && (
+                                            <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm text-white">
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-300">Valorisation</p>
+                                                <p className="mt-2 text-3xl font-black">{selectedLocationSummary.valuation.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</p>
+                                            </div>
+                                        )}
                                     </div>
 
                                     <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6">
@@ -1596,6 +1614,10 @@ export default function StockDashboard() {
                                                     <div className="divide-y divide-slate-100">
                                                         {selectedLocationMovements.map(tx => {
                                                             const isIncoming = tx.location_dest_id && getLocationDescendantIds(selectedLocation.id).includes(tx.location_dest_id);
+                                                            // Les emplacements virtuels (fournisseur/client) n'ont
+                                                            // pas de nom côté backend : libellé lisible selon le sens.
+                                                            const fromLabel = tx.location_from_name || (isIncoming ? 'Fournisseurs' : selectedLocation.name);
+                                                            const toLabel = tx.location_to_name || (isIncoming ? selectedLocation.name : 'Clients');
                                                             return (
                                                                 <div key={tx.id} className="grid grid-cols-1 md:grid-cols-[140px_1fr_90px] gap-3 px-5 py-4 items-center">
                                                                     <div>
@@ -1610,7 +1632,7 @@ export default function StockDashboard() {
                                                                             <span className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-600">{tx.transaction_type || tx.movement_kind || 'Mouvement'}</span>
                                                                             <span className="truncate text-[11px] font-mono font-bold text-slate-400">{tx.reference}</span>
                                                                         </div>
-                                                                        <p className="mt-1 text-xs font-bold text-slate-500 truncate">{tx.notes || `${tx.location_from_name || 'Origine'} -> ${tx.location_to_name || 'Destination'}`}</p>
+                                                                        <p className="mt-1 text-xs font-bold text-slate-500 truncate">{tx.notes || `${fromLabel} -> ${toLabel}`}</p>
                                                                     </div>
                                                                     <p className={`text-right text-lg font-black ${isIncoming ? 'text-emerald-600' : 'text-orange-600'}`}>
                                                                         {isIncoming ? '+' : '-'}{formatQty(Math.abs(Number(tx.quantity_change || 0)))}
@@ -1690,7 +1712,7 @@ export default function StockDashboard() {
                                                         <Box className="w-4 h-4" />
                                                         Voir comme filtre stock
                                                     </button>
-                                                    {stockPermissions.countInventory && selectedLocation.usage === 'internal' && (
+                                                    {stockPermissions.validateInventory && selectedLocation.usage === 'internal' && (
                                                         <button
                                                             type="button"
                                                             onClick={() => setCurrentMenu('physical-inventory')}
@@ -1847,10 +1869,12 @@ export default function StockDashboard() {
                                                 <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Disponible</p>
                                                 <p className="mt-2 text-3xl font-black text-emerald-700">{formatQty(selectedProductSummary.available)}</p>
                                             </div>
-                                            <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm text-white">
-                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-300">Valorisation</p>
-                                                <p className="mt-2 text-3xl font-black">{selectedProductSummary.valuation.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</p>
-                                            </div>
+                                            {isAdmin && (
+                                                <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm text-white">
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-300">Valorisation</p>
+                                                    <p className="mt-2 text-3xl font-black">{selectedProductSummary.valuation.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</p>
+                                                </div>
+                                            )}
                                         </div>
 
                                         <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
@@ -2114,10 +2138,10 @@ export default function StockDashboard() {
                                                                 <p className="text-sm font-bold text-slate-500 mt-1">{reservation.lines?.length || 0} ligne(s) - {totalReserved.toLocaleString('fr-FR')} réservé</p>
                                                             </div>
                                                             <div className="flex gap-2">
-                                                                <button onClick={() => consumeWorkshopReservation(reservation)} disabled={reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white text-sm font-black">
+                                                                <button onClick={() => consumeWorkshopReservation(reservation)} disabled={!stockPermissions.consumeWorkshop || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white text-sm font-black">
                                                                     Débit réel
                                                                 </button>
-                                                                <button onClick={() => cancelWorkshopReservation(reservation)} disabled={reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 disabled:bg-slate-100 text-slate-700 text-sm font-black border border-slate-200">
+                                                                <button onClick={() => cancelWorkshopReservation(reservation)} disabled={!stockPermissions.reserveWorkshop || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 disabled:bg-slate-100 text-slate-700 text-sm font-black border border-slate-200">
                                                                     Annuler
                                                                 </button>
                                                             </div>
@@ -2352,7 +2376,8 @@ export default function StockDashboard() {
                             products={products}
                             locations={locations}
                             quants={quants}
-                            isManager={isManager}
+                            canCount={stockPermissions.countInventory}
+                            canValidate={stockPermissions.validateInventory}
                             queryClient={queryClient}
                         />
                     </div>
@@ -2374,7 +2399,7 @@ export default function StockDashboard() {
                     </div>
 
                     <div className="flex flex-wrap gap-2">
-                        {activeLocationId === 'global' && currentMenu !== 'services' && (
+                        {activeLocationId === 'global' && currentMenu !== 'services' && isAdmin && (
                             <div className="px-4 py-2 rounded-xl border border-slate-200 bg-slate-50 flex items-center gap-3">
                                 <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">Valorisation</span>
                                 <span className="text-lg font-black text-slate-950">{totalValuation.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
@@ -3854,7 +3879,7 @@ function RoleRule({ icon: Icon, title, text }) {
     );
 }
 
-function PhysicalInventoryView({ sessions, products, locations, quants, isManager, queryClient }) {
+function PhysicalInventoryView({ sessions, products, locations, quants, canCount, canValidate, queryClient }) {
     const [selectedSessionId, setSelectedSessionId] = useState(sessions[0]?.id || null);
     const [newSession, setNewSession] = useState({ name: '', location_id: '', notes: '', include_all_variants: false, blind_counting: false });
     const [lineForm, setLineForm] = useState({ variant_id: '', location_id: '', counted_quantity: '', reason: '' });
@@ -4093,13 +4118,13 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                 onChange={event => setNewSession(prev => ({ ...prev, name: event.target.value }))}
                                 placeholder="Ex: Comptage WH semaine 29"
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                disabled={!isManager || busy}
+                                disabled={!canValidate || busy}
                             />
                             <select
                                 value={newSession.location_id}
                                 onChange={event => setNewSession(prev => ({ ...prev, location_id: event.target.value }))}
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                disabled={!isManager || busy}
+                                disabled={!canValidate || busy}
                             >
                                 <option value="">Tous emplacements internes</option>
                                 {internalLocations.map(location => (
@@ -4111,7 +4136,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                 onChange={event => setNewSession(prev => ({ ...prev, notes: event.target.value }))}
                                 placeholder="Note optionnelle"
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                disabled={!isManager || busy}
+                                disabled={!canValidate || busy}
                             />
                             <label className="flex items-start gap-2 text-xs font-bold text-slate-600 cursor-pointer">
                                 <input
@@ -4119,7 +4144,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                     checked={newSession.include_all_variants}
                                     onChange={event => setNewSession(prev => ({ ...prev, include_all_variants: event.target.checked }))}
                                     className="mt-0.5"
-                                    disabled={!isManager || busy}
+                                    disabled={!canValidate || busy}
                                 />
                                 <span>Inclure toutes les variantes actives (espéré 0) pour détecter les oublis</span>
                             </label>
@@ -4129,13 +4154,13 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                     checked={newSession.blind_counting}
                                     onChange={event => setNewSession(prev => ({ ...prev, blind_counting: event.target.checked }))}
                                     className="mt-0.5"
-                                    disabled={!isManager || busy}
+                                    disabled={!canValidate || busy}
                                 />
                                 <span>Comptage aveugle (espéré masqué jusqu'à validation)</span>
                             </label>
                             <button
                                 type="submit"
-                                disabled={!isManager || busy || !newSession.name.trim()}
+                                disabled={!canValidate || busy || !newSession.name.trim()}
                                 className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black text-sm"
                             >
                                 Créer la campagne
@@ -4224,16 +4249,16 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                         )}
                                     </div>
                                     <div className="flex gap-2">
-                                        <button onClick={exportSession} disabled={busy || !selectedSession.lines?.length} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm inline-flex items-center gap-2">
+                                        <button onClick={exportSession} disabled={!canValidate || busy || !selectedSession.lines?.length} title={!canValidate ? 'Réservé à la validation d\'inventaire' : undefined} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm inline-flex items-center gap-2">
                                             <Download className="w-4 h-4" />
                                             Rapport
                                         </button>
                                         {['draft', 'counting'].includes(selectedSession.status) && (
                                             <>
-                                                <button onClick={cancelSession} disabled={!isManager || busy} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm">
+                                                <button onClick={cancelSession} disabled={!canValidate || busy} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm">
                                                     Annuler
                                                 </button>
-                                                <button onClick={validateSession} disabled={!isManager || busy || !selectedSession.lines?.length || hasRecountLines || hasPendingLines} title={hasPendingLines ? 'Toutes les lignes doivent être comptées avant validation' : undefined} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
+                                                <button onClick={validateSession} disabled={!canValidate || busy || !selectedSession.lines?.length || hasRecountLines || hasPendingLines} title={hasPendingLines ? 'Toutes les lignes doivent être comptées avant validation' : undefined} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
                                                     Valider les écarts
                                                 </button>
                                             </>
@@ -4256,7 +4281,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                 }}
                                                 placeholder="Scanner ou taper une réf."
                                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                                disabled={!isManager || busy}
+                                                disabled={!canCount || busy}
                                             />
                                         </label>
                                         <label className="space-y-1">
@@ -4265,7 +4290,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                 value={lineForm.variant_id}
                                                 onChange={event => setLineForm(prev => ({ ...prev, variant_id: event.target.value }))}
                                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                                disabled={!isManager || busy}
+                                                disabled={!canCount || busy}
                                             >
                                                 <option value="">Sélectionner une référence</option>
                                                 {stockVariants.map(variant => (
@@ -4279,7 +4304,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                 value={selectedSession.location_id || lineForm.location_id}
                                                 onChange={event => setLineForm(prev => ({ ...prev, location_id: event.target.value }))}
                                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                                disabled={!isManager || busy || !!selectedSession.location_id}
+                                                disabled={!canCount || busy || !!selectedSession.location_id}
                                             >
                                                 <option value="">Choisir</option>
                                                 {internalLocations.map(location => (
@@ -4296,7 +4321,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                 value={lineForm.counted_quantity}
                                                 onChange={event => setLineForm(prev => ({ ...prev, counted_quantity: event.target.value }))}
                                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-black outline-none focus:ring-2 focus:ring-blue-500"
-                                                disabled={!isManager || busy}
+                                                disabled={!canCount || busy}
                                             />
                                         </label>
                                         <label className="space-y-1">
@@ -4306,12 +4331,12 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                 onChange={event => setLineForm(prev => ({ ...prev, reason: event.target.value }))}
                                                 placeholder="Casse, erreur, retour..."
                                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                                disabled={!isManager || busy}
+                                                disabled={!canCount || busy}
                                             />
                                         </label>
                                         <button
                                             type="submit"
-                                            disabled={!isManager || busy || !lineForm.variant_id || !selectedLocationId || lineForm.counted_quantity === ''}
+                                            disabled={!canCount || busy || !lineForm.variant_id || !selectedLocationId || lineForm.counted_quantity === ''}
                                             className="px-5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-black text-sm"
                                         >
                                             Ajouter
@@ -4380,7 +4405,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                             <button
                                                                 type="button"
                                                                 onClick={() => focusLine(line)}
-                                                                disabled={!isManager || busy}
+                                                                disabled={!canCount || busy}
                                                                 className="px-3 py-2 rounded-lg border border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 text-xs font-black"
                                                             >
                                                                 Saisir
@@ -4390,7 +4415,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, isManage
                                                             <button
                                                                 type="button"
                                                                 onClick={() => requestRecount(line)}
-                                                                disabled={!isManager || busy}
+                                                                disabled={!canValidate || busy}
                                                                 className="px-3 py-2 rounded-lg border border-red-100 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50 text-xs font-black"
                                                             >
                                                                 Demander recompte
