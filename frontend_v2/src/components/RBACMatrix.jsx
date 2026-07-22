@@ -98,6 +98,7 @@ export default function RBACMatrix() {
     const [createdAccess, setCreatedAccess] = useState(null);
     const [applyingPreset, setApplyingPreset] = useState(null);
     const [selectedRoleName, setSelectedRoleName] = useState('MAGASINIER');
+    const [rbacView, setRbacView] = useState('overview');
 
     const fetchData = async () => {
         try {
@@ -273,9 +274,67 @@ export default function RBACMatrix() {
     }, {});
     const isBuiltinFullAccess = ['ADMIN', 'SUPER_ADMIN'].includes(selectedRole?.name);
     const inputClass = "w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500";
+    const pendingInvitations = users.filter(user => ['PENDING', 'INVITED'].includes(user.invitation_status)).length;
+    const atelierUsers = users.filter(user => ['PIN', 'HYBRID'].includes(user.access_mode)).length;
+    const rbacViews = [
+        { id: 'overview', label: "Vue d'ensemble", helper: 'Modèles et état global', icon: Eye },
+        { id: 'users', label: 'Utilisateurs', helper: 'Comptes, PIN, invitations', icon: Users },
+        { id: 'profiles', label: 'Profils métier', helper: 'Qui peut faire quoi', icon: ShieldCheck },
+        { id: 'matrix', label: 'Permissions avancées', helper: 'Exceptions et droits fins', icon: Settings2 },
+    ];
 
     return (
-        <div className="mt-12 space-y-6 font-sans">
+        <div className="space-y-6 font-sans">
+            <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="p-6 border-b border-slate-100 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+                    <div>
+                        <p className="text-[11px] font-black uppercase tracking-widest text-blue-500">Accès plateforme</p>
+                        <h2 className="text-2xl font-black text-slate-900 mt-1">Utilisateurs & profils</h2>
+                        <p className="text-sm font-semibold text-slate-500 mt-1 max-w-3xl">
+                            Créez les comptes, appliquez des profils métier et gardez la matrice fine pour les exceptions.
+                        </p>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 min-w-[320px]">
+                        <RoleMetric icon={Users} label="Utilisateurs" value={users.length} />
+                        <RoleMetric icon={ShieldCheck} label="Profils" value={roles.length} />
+                        <RoleMetric icon={Mail} label="Invitations" value={pendingInvitations} />
+                    </div>
+                </div>
+                <div className="p-3 bg-slate-50 border-b border-slate-200">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                        {rbacViews.map(view => {
+                            const Icon = view.icon;
+                            const active = rbacView === view.id;
+                            return (
+                                <button
+                                    key={view.id}
+                                    type="button"
+                                    onClick={() => setRbacView(view.id)}
+                                    className={`rounded-2xl border p-4 text-left transition-all ${active ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-200 hover:text-blue-700'}`}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <Icon className="w-4 h-4" />
+                                        <span className="font-black text-sm">{view.label}</span>
+                                    </div>
+                                    <span className={`block mt-1 text-[11px] font-bold ${active ? 'text-white/60' : 'text-slate-400'}`}>
+                                        {view.helper}
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            </div>
+
+            {rbacView === 'overview' && (
+                <>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <RoleMetric icon={KeyRound} label="Accès atelier" value={atelierUsers} />
+                        <RoleMetric icon={Mail} label="Invitations en attente" value={pendingInvitations} />
+                        <RoleMetric icon={ShieldAlert} label="Rôles personnalisés" value={roles.filter(role => !ROLE_PRESETS.some(preset => preset.name === role.name) && !ROLE_FALLBACKS[role.name]).length} />
+                        <RoleMetric icon={Settings2} label="Permissions" value={permissions.length} />
+                    </div>
+
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-6 border-b border-slate-100 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
                     <div>
@@ -323,7 +382,10 @@ export default function RBACMatrix() {
                     })}
                 </div>
             </div>
+                </>
+            )}
 
+            {rbacView === 'users' && (
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-6 border-b border-slate-100 flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
                     <div>
@@ -447,8 +509,9 @@ export default function RBACMatrix() {
                     </div>
                 )}
             </div>
+            )}
 
-            {selectedRole && (
+            {rbacView === 'profiles' && selectedRole && (
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] min-h-[520px]">
                         <aside className="border-r border-slate-200 bg-slate-50 p-5">
@@ -610,6 +673,7 @@ export default function RBACMatrix() {
                 </div>
             )}
 
+            {rbacView === 'matrix' && (
             <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
             <div className="p-8 bg-slate-900 text-white flex items-center justify-between">
                 <div>
@@ -736,6 +800,7 @@ export default function RBACMatrix() {
                 </div>
             )}
             </div>
+            )}
         </div>
     );
 }
