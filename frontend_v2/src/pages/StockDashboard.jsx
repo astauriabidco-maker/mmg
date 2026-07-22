@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { downloadFileWithFeedback } from '../services/pdf';
-import { 
-    Package, MapPin, Search, Plus, Trash2, Layers, 
-    ArrowRight, Box, Hash, ChevronRight, ChevronDown, 
+import {
+    Package, MapPin, Search, Plus, Trash2, Layers,
+    ArrowRight, Box, Hash, ChevronRight, ChevronDown,
     Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download, TrendingUp, ClipboardCheck, AlertTriangle, ArrowLeft
 } from 'lucide-react';
 import ChatterWidget from '../components/ChatterWidget';
@@ -41,7 +41,7 @@ export default function StockDashboard() {
     const { data: workshopContexts = { sales: [], production_orders: [] } } = useQuery({ queryKey: ['workshop-debit-contexts'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/contexts'); return res.data; }});
     const { data: inventorySessions = [] } = useQuery({ queryKey: ['inventory-sessions'], queryFn: async () => { const res = await api.get('/v2/stock/inventory-sessions'); return res.data; }});
     const { data: purchases = [] } = useQuery({ queryKey: ['purchases'], queryFn: async () => { const res = await api.get('/v2/purchases/'); return res.data; }});
-    
+
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
     const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation' | 'product-detail' | 'location-detail'
@@ -56,18 +56,18 @@ export default function StockDashboard() {
     // Mémorise l'écran d'origine de la fiche produit (catalogue, fiche
     // emplacement...) pour que "Retour" restaure le bon contexte.
     const [productDetailReturnMenu, setProductDetailReturnMenu] = useState(null);
-    
+
     // Inline edit states
     const [addingSubLocTo, setAddingSubLocTo] = useState(null);
     const [newSubLocName, setNewSubLocName] = useState('');
-    
+
     const [editingQuant, setEditingQuant] = useState(null); // { variantId: 1, locId: 2 }
     const [quantInputValue, setQuantInputValue] = useState('');
-    
+
     // Modals
     const [showTransferModal, setShowTransferModal] = useState(false);
     const [transferData, setTransferData] = useState({ variant: null, sourceLocId: null, targetLocId: '', qty: '' });
-    
+
     const [showNewProductModal, setShowNewProductModal] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
     const [showLocationManagerModal, setShowLocationManagerModal] = useState(false);
@@ -101,7 +101,10 @@ export default function StockDashboard() {
     const [showReceptionModal, setShowReceptionModal] = useState(false);
     const [receptionData, setReceptionData] = useState({ variant: null, targetLocId: '', qty: '' });
     const [receptionSearch, setReceptionSearch] = useState('');
-    
+    const [showCustomerIssueModal, setShowCustomerIssueModal] = useState(false);
+    const [customerIssueData, setCustomerIssueData] = useState({ variant: null, sourceLocId: '', qty: '', reason: '' });
+    const [customerIssueSearch, setCustomerIssueSearch] = useState('');
+
     const handleFileUpload = async (file, setForm, currentForm, field = 'image_url') => {
         const formData = new FormData();
         formData.append("file", file);
@@ -168,7 +171,7 @@ export default function StockDashboard() {
     const handleAddSubLocation = async (e, parentId) => {
         if (e && e.preventDefault) e.preventDefault();
         if (!newSubLocName.trim()) { setAddingSubLocTo(null); return; }
-        
+
         // Find parent to inherit usage, or default to internal
         const parent = locations.find(l => l.id === parentId);
         const usage = parent ? parent.usage : 'internal';
@@ -194,7 +197,7 @@ export default function StockDashboard() {
             const res = await api.delete(`/v2/stock/locations/${id}`);
             if (activeLocationId === id) setActiveLocationId('global');
             await queryClient.invalidateQueries({ queryKey: ['locations'] });
-            
+
             if (res.data && res.data.status === 'archived') {
                 alert("Information : Cet emplacement ayant un historique de mouvements, il n'a pas été supprimé mais Archivé.");
             } else {
@@ -254,7 +257,7 @@ export default function StockDashboard() {
         const { variantId, locId } = editingQuant;
         const currentQuant = quants.find(q => q.variant_id === variantId && q.location_id === locId);
         const currentQty = currentQuant ? currentQuant.quantity : 0;
-        
+
         const diff = newVal - currentQty;
         if (diff === 0) { setEditingQuant(null); return; }
 
@@ -334,7 +337,7 @@ export default function StockDashboard() {
 
     const submitReception = async () => {
         if (!receptionData.variant || !receptionData.targetLocId || !receptionData.qty || isNaN(receptionData.qty) || receptionData.qty <= 0) return;
-        
+
         const supplierLoc = locations.find(l => l.usage === 'supplier');
 
         try {
@@ -349,6 +352,45 @@ export default function StockDashboard() {
             queryClient.invalidateQueries();
         } catch (e) {
             alert("Erreur lors de la réception.");
+        }
+    };
+
+    // -------- SORTIE STOCK MANUELLE (DEPOT -> CLIENT / EXTERNE) --------
+    const openCustomerIssueModal = () => {
+        setCustomerIssueData({ variant: null, sourceLocId: '', qty: '', reason: '' });
+        setCustomerIssueSearch('');
+        setShowCustomerIssueModal(true);
+    };
+
+    const openCustomerIssueForVariant = (variant, sourceLocId = '') => {
+        setCustomerIssueData({ variant, sourceLocId: sourceLocId ? String(sourceLocId) : '', qty: '', reason: '' });
+        setCustomerIssueSearch(variant?.reference || '');
+        setShowCustomerIssueModal(true);
+    };
+
+    const submitCustomerIssue = async () => {
+        const qty = parseFloat(customerIssueData.qty);
+        const reason = customerIssueData.reason.trim();
+        if (!customerIssueData.variant || !customerIssueData.sourceLocId || !qty || isNaN(qty) || qty <= 0 || !reason) return;
+
+        const customerLoc = locations.find(l => l.usage === 'customer' && l.is_active !== false);
+        try {
+            await api.post('/v2/stock/transaction', {
+                variant_id: customerIssueData.variant.id,
+                quantity: qty,
+                location_id: parseInt(customerIssueData.sourceLocId),
+                location_dest_id: customerLoc?.id || null,
+                notes: `Sortie stock manuelle client/externe - ${reason}`,
+                reason,
+                source_screen: 'stock.manual_customer_issue',
+                document_type: 'manual_customer_issue',
+            });
+            setShowCustomerIssueModal(false);
+            await queryClient.invalidateQueries({ queryKey: ['products'] });
+            await queryClient.invalidateQueries({ queryKey: ['quants'] });
+            await queryClient.invalidateQueries({ queryKey: ['transactions'] });
+        } catch (e) {
+            alert(e.response?.data?.detail || "Erreur lors de la sortie stock.");
         }
     };
 
@@ -431,7 +473,7 @@ export default function StockDashboard() {
     const submitImportFile = async (e) => {
         e.preventDefault();
         if (!massImportFile) return;
-        
+
         const formData = new FormData();
         formData.append("file", massImportFile);
 
@@ -703,7 +745,7 @@ export default function StockDashboard() {
 
         return (
             <div key={parentLoc.id} className="w-full">
-                <div 
+                <div
                     className={`group flex items-center justify-between py-2.5 px-3 cursor-pointer rounded-xl transition-all border mb-1 ${isActive ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900'}`}
                     style={{ paddingLeft: `${depth * 16 + 12}px` }}
                     onClick={() => {
@@ -734,17 +776,17 @@ export default function StockDashboard() {
                 {addingSubLocTo === parentLoc.id && (
                     <div className="pl-4 py-1" style={{ paddingLeft: `${(depth+1) * 16 + 12}px` }}>
                         <div className="flex items-center gap-2">
-                            <input 
-                                autoFocus 
-                                value={newSubLocName} 
-                                onChange={e=>setNewSubLocName(e.target.value)} 
-                                onBlur={() => setAddingSubLocTo(null)} 
+                            <input
+                                autoFocus
+                                value={newSubLocName}
+                                onChange={e=>setNewSubLocName(e.target.value)}
+                                onBlur={() => setAddingSubLocTo(null)}
                                 onKeyDown={e => {
                                     if (e.key === 'Escape') setAddingSubLocTo(null);
                                     if (e.key === 'Enter') handleAddSubLocation(e, parentLoc.id);
-                                }} 
-                                className="flex-1 text-sm p-2 bg-white border border-slate-200 rounded-lg text-slate-900 placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-500/30 transition-all" 
-                                placeholder="Nom sous-lieu... Entrée" 
+                                }}
+                                className="flex-1 text-sm p-2 bg-white border border-slate-200 rounded-lg text-slate-900 placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-500/30 transition-all"
+                                placeholder="Nom sous-lieu... Entrée"
                             />
                         </div>
                     </div>
@@ -1085,19 +1127,19 @@ export default function StockDashboard() {
                     return [id, ...children.flatMap(getDescendants)];
                 };
                 const validLocIds = getDescendants(activeLocationId);
-                
+
                 const totalInSubTree = quants.filter(q => q.variant_id === v.id && validLocIds.includes(q.location_id)).reduce((acc, curr) => acc + curr.quantity, 0);
                 stockToDisplay = totalInSubTree;
                 locId = activeLocationId;
             }
 
-            const matchSearch = searchTerm === '' || 
-                p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+            const matchSearch = searchTerm === '' ||
+                p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 p.reference_base.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 v.reference.toLowerCase().includes(searchTerm.toLowerCase());
 
             const isVisibleBase = searchTerm ? matchSearch : (activeLocationId === 'global' ? true : stockToDisplay > 0);
-            
+
             const isLowStock = !isServiceProduct && stockToDisplay <= (v.min_threshold || 0);
             if (activeLocationId === 'global' && !isServiceProduct) {
                 totalValuation += stockToDisplay * (v.cost_price || 0);
@@ -1267,7 +1309,7 @@ export default function StockDashboard() {
 
             {/* MAIN CONTENT : GRID / AUDIT */}
             <div className="flex-1 flex flex-col bg-white relative min-h-0">
-                
+
                 {/* TOOLBAR */}
                 <div className="bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-4 px-6 py-3 shrink-0 z-10">
                     <div className="flex flex-wrap items-center gap-2">
@@ -2437,6 +2479,11 @@ export default function StockDashboard() {
                                         <Truck className="w-4 h-4"/> Entrée stock
                                     </button>
                                 )}
+                                {stockPermissions.adjust && (
+                                    <button onClick={openCustomerIssueModal} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-black shadow-sm">
+                                        <ArrowRight className="w-4 h-4"/> Sortie stock
+                                    </button>
+                                )}
                                 <button
                                     onClick={() => {
                                         setShowLowStockOnly(prev => !prev);
@@ -2501,7 +2548,7 @@ export default function StockDashboard() {
                                                             {isExpanded ? <ChevronDown className="w-5 h-5"/> : <ChevronRight className="w-5 h-5"/>}
                                                         </button>
                                                         <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-slate-50 border border-slate-200 shrink-0 overflow-hidden relative">
-                                                            {product.image_url ? 
+                                                            {product.image_url ?
                                                                 <img src={product.image_url} alt={product.name} className="w-full h-full object-cover" /> :
                                                                 <Image className="w-5 h-5 text-slate-300" />
                                                             }
@@ -2547,15 +2594,15 @@ export default function StockDashboard() {
                                                             </button>
                                                             {isManager && (
                                                                 <>
-                                                                    <button 
-                                                                        onClick={(e) => { e.stopPropagation(); openAddVariant(e, product); }} 
+                                                                    <button
+                                                                        onClick={(e) => { e.stopPropagation(); openAddVariant(e, product); }}
                                                                         className="px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-lg border border-emerald-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
                                                                         title="Ajouter une déclinaison"
                                                                     >
                                                                         <Plus className="w-3.5 h-3.5"/> Ajouter Variante
                                                                     </button>
-                                                                    <button 
-                                                                        onClick={(e) => { e.stopPropagation(); openEditProduct(e, product); }} 
+                                                                    <button
+                                                                        onClick={(e) => { e.stopPropagation(); openEditProduct(e, product); }}
                                                                         className="px-3 py-1.5 bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-800 rounded-lg border border-slate-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
                                                                     >
                                                                         <Edit3 className="w-3.5 h-3.5"/> Modifier
@@ -2565,7 +2612,7 @@ export default function StockDashboard() {
                                                         </div>
                                                     </td>
                                                 </tr>
-                                                
+
                                                 {/* EXPANDED VARIANTS SUB-TABLE */}
                                                 {isExpanded && variants.map((v) => {
                                                     const isEditing = editingQuant?.variantId === v.variantId && editingQuant?.locId === v.locId;
@@ -2608,11 +2655,11 @@ export default function StockDashboard() {
                                                                             <div className="text-right flex items-center gap-3 bg-white border border-slate-200 shadow-sm rounded-xl pr-1 overflow-hidden">
                                                                                 <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest pl-3 bg-slate-50 h-full py-2 border-r border-slate-100">{inventoryFocus === 'services' ? 'Prix HT' : 'STOCK'}</span>
                                                                                 {isEditing ? (
-                                                                                    <input 
+                                                                                    <input
                                                                                         autoFocus type="number" value={quantInputValue} onChange={(e) => setQuantInputValue(e.target.value)} onKeyDown={handleQuantInputKeyDown} onBlur={submitQuantEdit} className="w-20 text-center py-1 border-none text-lg font-black bg-blue-50 text-blue-700 outline-none focus:ring-0"
                                                                                     />
                                                                                 ) : (
-                                                                                    <div 
+                                                                                    <div
                                                                                         className={`inline-block px-3 py-1 min-w-[3.5rem] text-center border-2 border-transparent hover:border-blue-200 hover:bg-blue-50 transition-colors font-black text-lg rounded-lg mx-1 ${inventoryFocus === 'services' ? 'text-emerald-600' : v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${inventoryFocus === 'services' || !canEditInline || !isManager ? 'cursor-not-allowed opacity-50' : 'cursor-text'}`}
                                                                                         onClick={() => (canEditInline && isManager) && startEditingQuant(v.variantId, v.locId, v.stockToDisplay)}
                                                                                         title={inventoryFocus === 'services' ? "Le tarif se modifie depuis la fiche variante" : (canEditInline && isManager) ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible (Vue globale ou permissions insuffisantes)"}
@@ -2715,7 +2762,7 @@ export default function StockDashboard() {
                                         <div className="p-5 flex-1 flex flex-col">
                                             <p className="text-xs font-bold text-slate-400 mb-1">{product.reference_base}</p>
                                             <h3 className="font-black text-lg text-slate-800 leading-tight mb-4 group-hover:text-blue-600 transition-colors">{product.name}</h3>
-                                            
+
                                             <div className="mt-auto space-y-3">
                                                 <div className="flex items-end justify-between items-center py-2 border-t border-slate-100 mt-2">
                                                     <div>
@@ -2866,11 +2913,11 @@ export default function StockDashboard() {
                             <button onClick={()=>setShowTransferModal(false)} className="text-slate-400 hover:bg-slate-100 p-1.5 rounded"><X className="w-5 h-5"/></button>
                         </div>
                         <p className="text-sm font-bold text-slate-500 mb-4">{transferData.variant?.reference}</p>
-                        
+
                         <div className="space-y-4">
                             <div>
                                 <label className="block text-xs font-black text-slate-400 uppercase mb-1">Destination (Interne)</label>
-                                <select 
+                                <select
                                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
                                     value={transferData.targetLocId} onChange={e=>setTransferData({...transferData, targetLocId: e.target.value})}
                                 >
@@ -2882,8 +2929,8 @@ export default function StockDashboard() {
                             </div>
                             <div>
                                 <label className="block text-xs font-black text-slate-400 uppercase mb-1">Quantité (Total Pces/M)</label>
-                                <input 
-                                    type="number" 
+                                <input
+                                    type="number"
                                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 font-black text-2xl text-center outline-none focus:ring-2 focus:ring-blue-500"
                                     value={transferData.qty} onChange={e=>setTransferData({...transferData, qty: e.target.value})} placeholder="0"
                                     autoFocus
@@ -2912,7 +2959,7 @@ export default function StockDashboard() {
                             </div>
                             <button onClick={()=>setShowReceptionModal(false)} className="ml-auto text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
                         </div>
-                        
+
                         <div className="space-y-5">
                             <div>
                                 <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center justify-between">
@@ -2920,15 +2967,15 @@ export default function StockDashboard() {
                                 </label>
                                 <div className="mb-2 relative">
                                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                                    <input 
-                                        type="text" 
-                                        placeholder="Rechercher (Nom, Réf, Gencod)..." 
+                                    <input
+                                        type="text"
+                                        placeholder="Rechercher (Nom, Réf, Gencod)..."
                                         className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 pl-10 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                                         value={receptionSearch}
                                         onChange={(e) => setReceptionSearch(e.target.value)}
                                     />
                                 </div>
-                                <select 
+                                <select
                                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                                     onChange={e => {
                                         const v = products.flatMap(p => p.variants).find(vx => vx.id === parseInt(e.target.value));
@@ -2938,8 +2985,8 @@ export default function StockDashboard() {
                                 >
                                     <option value="">-- Choisir parmi les résultats --</option>
                                     {products.map(p => {
-                                        const filteredVariants = p.variants.filter(v => 
-                                            !receptionSearch 
+                                        const filteredVariants = p.variants.filter(v =>
+                                            !receptionSearch
                                             || p.name.toLowerCase().includes(receptionSearch.toLowerCase())
                                             || p.reference_base.toLowerCase().includes(receptionSearch.toLowerCase())
                                             || v.reference.toLowerCase().includes(receptionSearch.toLowerCase())
@@ -2954,11 +3001,11 @@ export default function StockDashboard() {
                                     })}
                                 </select>
                             </div>
-                            
+
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Ranger dans le lieu</label>
-                                    <select 
+                                    <select
                                         className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                                         value={receptionData.targetLocId} onChange={e=>setReceptionData({...receptionData, targetLocId: e.target.value})}
                                     >
@@ -2970,8 +3017,8 @@ export default function StockDashboard() {
                                 </div>
                                 <div>
                                     <label className="block text-xs font-black text-emerald-500 uppercase tracking-widest mb-1.5">Quantité (Qté)</label>
-                                    <input 
-                                        type="number" 
+                                    <input
+                                        type="number"
                                         className="w-full bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl p-3 font-black text-2xl text-center outline-none focus:ring-2 focus:ring-emerald-500 shadow-inner placeholder-emerald-300"
                                         value={receptionData.qty} onChange={e=>setReceptionData({...receptionData, qty: e.target.value})} placeholder="0"
                                     />
@@ -2986,9 +3033,119 @@ export default function StockDashboard() {
                 </div>
             )}
 
+            {/* -------- CUSTOMER ISSUE MODAL -------- */}
+            {showCustomerIssueModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-xl w-full border border-slate-100">
+                        <div className="flex items-center gap-3 mb-6 border-b border-slate-100 pb-4">
+                            <div className="w-12 h-12 rounded-full bg-slate-900 flex items-center justify-center text-white shadow-inner">
+                                <ArrowRight className="w-6 h-6" />
+                            </div>
+                            <div>
+                                <h3 className="font-black text-2xl text-slate-800">Sortie stock manuelle</h3>
+                                <p className="text-sm font-medium text-slate-500">Débiter un stock hors devis/BL, avec motif obligatoire.</p>
+                            </div>
+                            <button onClick={()=>setShowCustomerIssueModal(false)} className="ml-auto text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                        </div>
+
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 mb-5 text-sm font-bold text-amber-800">
+                            Pour une vente signée, utilisez plutôt la fiche devis : elle créera la sortie client et le bon de livraison liés.
+                            Cette sortie est réservée aux cas exceptionnels : casse, prélèvement client sans devis, régularisation ou don.
+                        </div>
+
+                        <div className="space-y-5">
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                                    Article à sortir
+                                </label>
+                                <div className="mb-2 relative">
+                                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                                    <input
+                                        type="text"
+                                        placeholder="Rechercher (Nom, Réf, Gencod)..."
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 pl-10 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-900"
+                                        value={customerIssueSearch}
+                                        onChange={(e) => setCustomerIssueSearch(e.target.value)}
+                                    />
+                                </div>
+                                <select
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-900"
+                                    onChange={e => {
+                                        const v = products.flatMap(p => p.variants || []).find(vx => vx.id === parseInt(e.target.value));
+                                        setCustomerIssueData({...customerIssueData, variant: v});
+                                    }}
+                                    value={customerIssueData.variant?.id || ''}
+                                >
+                                    <option value="">-- Choisir parmi les résultats --</option>
+                                    {products
+                                        .filter(p => (p.product_type || 'stockable').toLowerCase() !== 'service')
+                                        .map(p => {
+                                            const filteredVariants = (p.variants || []).filter(v =>
+                                                !customerIssueSearch
+                                                || p.name.toLowerCase().includes(customerIssueSearch.toLowerCase())
+                                                || p.reference_base.toLowerCase().includes(customerIssueSearch.toLowerCase())
+                                                || v.reference.toLowerCase().includes(customerIssueSearch.toLowerCase())
+                                                || (v.barcode && v.barcode.includes(customerIssueSearch))
+                                            );
+                                            if (filteredVariants.length === 0) return null;
+                                            return (
+                                                <optgroup key={p.id} label={p.name}>
+                                                    {filteredVariants.map(v => <option key={v.id} value={v.id}>{v.reference} ({v.color || 'Std'})</option>)}
+                                                </optgroup>
+                                            );
+                                        })}
+                                </select>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Sortir depuis</label>
+                                    <select
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-900"
+                                        value={customerIssueData.sourceLocId} onChange={e=>setCustomerIssueData({...customerIssueData, sourceLocId: e.target.value})}
+                                    >
+                                        <option value="">- Emplacement physique -</option>
+                                        {locations.filter(l => l.usage === 'internal').map(l => (
+                                            <option key={l.id} value={l.id}>{getFullLocationName(l)}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-red-500 uppercase tracking-widest mb-1.5">Quantité à sortir</label>
+                                    <input
+                                        type="number"
+                                        className="w-full bg-red-50 border border-red-200 text-red-700 rounded-xl p-3 font-black text-2xl text-center outline-none focus:ring-2 focus:ring-red-500 shadow-inner placeholder-red-300"
+                                        value={customerIssueData.qty} onChange={e=>setCustomerIssueData({...customerIssueData, qty: e.target.value})} placeholder="0"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Motif obligatoire</label>
+                                <textarea
+                                    className="w-full min-h-[92px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-900"
+                                    value={customerIssueData.reason}
+                                    onChange={e=>setCustomerIssueData({...customerIssueData, reason: e.target.value})}
+                                    placeholder="Ex: remise client comptoir, casse constatée, régularisation inventaire..."
+                                />
+                            </div>
+
+                            <button
+                                onClick={submitCustomerIssue}
+                                disabled={!customerIssueData.variant || !customerIssueData.sourceLocId || !customerIssueData.qty || !customerIssueData.reason.trim()}
+                                className="w-full py-4 mt-2 bg-slate-900 disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-slate-800 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 text-lg"
+                            >
+                                <ArrowRight className="w-5 h-5" />
+                                Valider la sortie stock
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* -------- EDIT PRODUCT MODAL -------- */}
             {showEditProductModal && editProductForm && (
-                <div 
+                <div
                     className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
                     onPaste={e => handlePaste(e, setEditProductForm, editProductForm)}
                 >
@@ -3116,7 +3273,7 @@ export default function StockDashboard() {
                             </div>
                         </div>
                         <button onClick={submitEditVariant} className="w-full mt-6 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-lg shadow-lg mb-6">Enregistrer Modifications</button>
-                        
+
                         <div className="border-t border-slate-200 pt-6">
                             <ChatterWidget modelName="variant" recordId={editVariantForm.id} />
                         </div>
@@ -3171,7 +3328,7 @@ export default function StockDashboard() {
 
             {/* -------- NEW PRODUCT MODAL (QUICK) -------- */}
             {showNewProductModal && (
-                <div 
+                <div
                     className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
                     onPaste={e => handlePaste(e, setNewProductForm, newProductForm)}
                 >
@@ -3189,7 +3346,7 @@ export default function StockDashboard() {
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Nom Commercial / Description</label>
                                 <input value={newProductForm.name} onChange={e=>setNewProductForm({...newProductForm, name: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" placeholder="Dormant 70mm..."/>
                             </div>
-                            
+
                             {/* Nouveaux Champs PIM : Catégorie, Unité, Fournisseur */}
                             <div className="col-span-1">
                                 <label className="text-xs font-black text-slate-400 mb-1 block">{newProductForm.product_type === 'service' ? 'Famille prestation' : 'Catégorie Matériau'}</label>
@@ -3231,7 +3388,7 @@ export default function StockDashboard() {
                                     </datalist>
                                 </div>
                             </div>
-                            
+
                             <div className="col-span-2 border-t border-slate-100 my-2 pt-4">
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Gammes Compatibles (Séparées par virgule, ex: COR 60, COR 70)</label>
                                 <input value={newProductForm.compatible_series} onChange={e=>setNewProductForm({...newProductForm, compatible_series: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" placeholder="Applicable pour quelles gammes ?"/>
@@ -3278,17 +3435,17 @@ export default function StockDashboard() {
                                     <span className="font-bold text-sm text-slate-700">Visible dans l'Application Vente (PDV)</span>
                                 </label>
                             </div>
-                            
+
                             <div className="col-span-2 border-t border-slate-100 my-2 pt-4">
                                 <label className="text-xs font-black text-emerald-500 mb-1 block">{newProductForm.product_type === 'service' ? 'Référence prestation' : 'Déclinaison Initiale (Réf Interne)'}</label>
                                 <input value={newProductForm.variant_ref} onChange={e=>setNewProductForm({...newProductForm, variant_ref: e.target.value})} className="w-full p-3 bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 rounded-xl" placeholder={newProductForm.product_type === 'service' ? 'SERV-POSE-001' : 'VEK-70-BLANC'}/>
                             </div>
-                            
+
                             <div className="col-span-1">
                                 <label className="text-xs font-black text-blue-500 mb-1 block">Code Barre / EAN13</label>
                                 <input value={newProductForm.barcode} onChange={e=>setNewProductForm({...newProductForm, barcode: e.target.value})} className="w-full p-3 bg-blue-50 text-blue-700 font-mono border border-blue-200 rounded-xl" placeholder="Scanner ici..."/>
                             </div>
-                            
+
                             <div>
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Spécificités (Couleur, Sens, Finition...)</label>
                                 <input list="specs-list" value={newProductForm.color} onChange={e=>setNewProductForm({...newProductForm, color: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="Ex: ANODISÉ - DROIT"/>
@@ -3485,7 +3642,7 @@ export default function StockDashboard() {
                             </h3>
                             <button onClick={()=>setShowImportModal(false)} className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
                         </div>
-                        
+
                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 mb-8 w-full">
                             <p className="text-sm font-medium text-slate-600 mb-4 font-sans">
                                 Générez et remplissez le template officiel pour importer de multiples familles de produits et leurs déclinaisons instantanément.
@@ -4462,6 +4619,7 @@ function AuditLogs({ transactions }) {
         if (!tx) return 'Mouvement';
         if (tx.movement_kind === 'workshop_debit' || tx.reference?.startsWith('DEBIT-ATELIER')) return 'Débit atelier réel';
         if (tx.source_screen === 'sales.customer_delivery') return 'Sortie client';
+        if (tx.source_screen === 'stock.manual_customer_issue') return 'Sortie stock manuelle';
         if (tx.source_screen === 'sales.customer_return') return 'Retour client';
         if (tx.source_screen === 'purchases.receipt') return 'Réception fournisseur';
         if (tx.source_screen === 'stock.physical_inventory') return 'Inventaire physique';
@@ -4470,7 +4628,7 @@ function AuditLogs({ transactions }) {
     };
     const getMovementTone = (tx) => {
         if (!tx) return 'slate';
-        if (tx.movement_kind === 'workshop_debit' || tx.source_screen === 'sales.customer_delivery') return 'orange';
+        if (tx.movement_kind === 'workshop_debit' || tx.source_screen === 'sales.customer_delivery' || tx.source_screen === 'stock.manual_customer_issue') return 'orange';
         if (tx.source_screen === 'sales.customer_return' || tx.source_screen === 'purchases.receipt') return 'emerald';
         if (tx.source_screen === 'stock.physical_inventory') return 'blue';
         return 'slate';
@@ -4629,7 +4787,7 @@ function AuditLogs({ transactions }) {
                     </div>
                 </div>
             )}
-            
+
             <div className="w-full p-0">
                 <table className="w-full text-left border-collapse">
                     <thead className="bg-slate-50 sticky top-0 z-10">
