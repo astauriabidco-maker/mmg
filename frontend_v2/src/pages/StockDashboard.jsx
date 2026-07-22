@@ -24,6 +24,7 @@ export default function StockDashboard() {
         receive: can('stock.receive'),
         transfer: can('stock.transfer'),
         adjust: can('stock.adjust'),
+        manageLocations: can('stock.locations.manage'),
         qualifyCatalog: can('catalog.qualify'),
         reserveWorkshop: can('workshop.reserve_stock'),
         consumeWorkshop: can('workshop.consume_stock'),
@@ -32,6 +33,7 @@ export default function StockDashboard() {
         receivePurchases: can('purchases.receive'),
         requestPurchases: can('purchases.request'),
     };
+    const canManageLocations = isAdmin || stockPermissions.manageLocations;
 
     const { data: appConfigs = [] } = useQuery({ queryKey: ['configs'], queryFn: async () => { const res = await api.get('/v2/config/app_configs'); return res.data; }});
     const { data: products = [], isLoading: loadingProducts } = useQuery({ queryKey: ['products'], queryFn: async () => { const res = await api.get('/v2/stock/products'); return res.data; }});
@@ -195,7 +197,7 @@ export default function StockDashboard() {
             setAddingSubLocTo(null);
             queryClient.invalidateQueries();
         } catch (e) {
-            alert("Erreur lors de la création du lieu.");
+            alert(e.response?.data?.detail || "Erreur lors de la création du lieu.");
         }
     };
 
@@ -813,7 +815,7 @@ export default function StockDashboard() {
                         <span className={`text-sm ${isActive ? 'font-black' : 'font-bold'}`}>{parentLoc.name}</span>
                         {!isInternal && <span className="text-[9px] uppercase font-black bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-md border border-emerald-500/20">{parentLoc.usage}</span>}
                     </div>
-                    {isAdmin && (
+                    {canManageLocations && (
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button type="button" onClick={(e) => { e.stopPropagation(); setAddingSubLocTo(parentLoc.id); }} className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600 transition-colors">
                                 <Plus className="w-3.5 h-3.5" />
@@ -1486,7 +1488,7 @@ export default function StockDashboard() {
                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Filtrer par emplacement</p>
                             </div>
                             <div className="flex items-center gap-2">
-                                {isAdmin && (
+                                {canManageLocations && (
                                     <>
                                         <button
                                             type="button"
@@ -1595,7 +1597,7 @@ export default function StockDashboard() {
                                                 Entrée stock ici
                                             </button>
                                         )}
-                                        {isAdmin && (
+                                        {canManageLocations && (
                                             <>
                                                 <button
                                                     type="button"
@@ -2352,7 +2354,7 @@ export default function StockDashboard() {
                                         </p>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
-                                        {isAdmin ? (
+                                        {canManageLocations ? (
                                             <>
                                                 <button
                                                     type="button"
@@ -2402,7 +2404,7 @@ export default function StockDashboard() {
                                     </div>
                                 </div>
 
-                                {addingSubLocTo === 'root' && isAdmin && (
+                                {addingSubLocTo === 'root' && canManageLocations && (
                                     <div className="px-6 py-4 border-b border-blue-100 bg-blue-50">
                                         <div className="max-w-xl">
                                             <p className="text-[10px] uppercase tracking-widest font-black text-blue-700 mb-2">Créer une zone principale</p>
@@ -2430,7 +2432,7 @@ export default function StockDashboard() {
                                         </div>
                                         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
                                             {internalRootLocations.map(location => (
-                                                isAdmin ? renderManagedLocationTree(location) : renderLocationTree(location)
+                                                canManageLocations ? renderManagedLocationTree(location) : renderLocationTree(location)
                                             ))}
                                             {internalRootLocations.length === 0 && (
                                                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center">
@@ -2461,7 +2463,7 @@ export default function StockDashboard() {
                                                     <p className="text-xs uppercase tracking-widest font-black text-slate-400">Lieux système</p>
                                                     <h3 className="font-black text-slate-900">Virtuels</h3>
                                                 </div>
-                                                {isAdmin && (
+                                                {canManageLocations && (
                                                     <button
                                                         type="button"
                                                         onClick={() => setShowLocationManagerModal(true)}

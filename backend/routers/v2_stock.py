@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from ..database import get_db
 from .. import models, schemas
-from ..core.security import assert_permission, get_current_user, get_current_user_role
+from ..core.security import assert_permission, get_current_user
 import time
 import io
 import tempfile
@@ -1166,22 +1166,43 @@ def get_locations(db: Session = Depends(get_db), user: dict = Depends(get_curren
     return db.query(models.StockLocation).filter(models.StockLocation.is_active == True).all()
 
 @router.post("/locations", response_model=schemas.StockLocationResponse)
-def create_location(loc: schemas.StockLocationCreate, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
-    if role not in ["ADMIN"]:
-        raise HTTPException(status_code=403, detail="Seul un Administrateur peut structurer les entrepôts.")
-        
-    existing = db.query(models.StockLocation).filter(models.StockLocation.name == loc.name).first()
-    if existing: raise HTTPException(400, "Location name already exists")
-    db_loc = models.StockLocation(**loc.model_dump())
+def create_location(loc: schemas.StockLocationCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _require_permission(db, user, "stock.locations.manage")
+
+    name = (loc.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nom d'emplacement obligatoire.")
+
+    usage = loc.usage or "internal"
+    parent_id = loc.parent_id
+    if parent_id:
+        parent = db.query(models.StockLocation).filter_by(id=parent_id, is_active=True).first()
+        if not parent:
+            raise HTTPException(status_code=400, detail="Zone parente introuvable ou archivée.")
+        usage = parent.usage
+
+    existing = (
+        db.query(models.StockLocation)
+        .filter(models.StockLocation.name == name, models.StockLocation.parent_id == parent_id)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="Un emplacement porte déjà ce nom.")
+
+    db_loc = models.StockLocation(
+        name=name,
+        usage=usage,
+        parent_id=parent_id,
+        is_active=loc.is_active,
+    )
     db.add(db_loc)
     db.commit()
     db.refresh(db_loc)
     return db_loc
 
 @router.put("/locations/{loc_id}", response_model=schemas.StockLocationResponse)
-def update_location(loc_id: int, payload: schemas.StockLocationUpdate, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
-    if role not in ["ADMIN"]:
-        raise HTTPException(status_code=403, detail="Seul un Administrateur peut structurer les entrepôts.")
+def update_location(loc_id: int, payload: schemas.StockLocationUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _require_permission(db, user, "stock.locations.manage")
 
     loc = db.query(models.StockLocation).filter(models.StockLocation.id == loc_id).first()
     if not loc:
@@ -1194,7 +1215,11 @@ def update_location(loc_id: int, payload: schemas.StockLocationUpdate, db: Sessi
             raise HTTPException(status_code=400, detail="Nom d'emplacement obligatoire.")
         existing = (
             db.query(models.StockLocation)
-            .filter(models.StockLocation.name == name, models.StockLocation.id != loc_id)
+            .filter(
+                models.StockLocation.name == name,
+                models.StockLocation.parent_id == loc.parent_id,
+                models.StockLocation.id != loc_id,
+            )
             .first()
         )
         if existing:
@@ -1205,6 +1230,11 @@ def update_location(loc_id: int, payload: schemas.StockLocationUpdate, db: Sessi
     if "parent_id" in data:
         if data["parent_id"] == loc_id:
             raise HTTPException(status_code=400, detail="Un emplacement ne peut pas être son propre parent.")
+        if data["parent_id"]:
+            parent = db.query(models.StockLocation).filter_by(id=data["parent_id"], is_active=True).first()
+            if not parent:
+                raise HTTPException(status_code=400, detail="Zone parente introuvable ou archivée.")
+            loc.usage = parent.usage
         loc.parent_id = data["parent_id"]
     if "is_active" in data and data["is_active"] is not None:
         loc.is_active = data["is_active"]
@@ -1214,9 +1244,8 @@ def update_location(loc_id: int, payload: schemas.StockLocationUpdate, db: Sessi
     return loc
 
 @router.delete("/locations/{loc_id}")
-def delete_location(loc_id: int, db: Session = Depends(get_db), role: str = Depends(get_current_user_role)):
-    if role not in ["ADMIN", "SUPER_ADMIN"]:
-        raise HTTPException(status_code=403, detail="Seuls les administrateurs peuvent supprimer ou archiver des emplacements.")
+def delete_location(loc_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _require_permission(db, user, "stock.locations.manage")
 
     loc = db.query(models.StockLocation).filter(models.StockLocation.id == loc_id).first()
     if not loc:

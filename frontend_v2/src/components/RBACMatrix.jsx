@@ -15,7 +15,7 @@ const ROLE_PRESETS = [
         label: 'Chef stock',
         description: 'Pilote le stock, les inventaires, les corrections et le catalogue.',
         scope: 'Stock',
-        permissions: ['STOCK_VIEW', 'STOCK_EDIT', 'stock.receive', 'stock.transfer', 'stock.adjust', 'catalog.qualify', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count', 'inventory.validate', 'purchases.request', 'purchases.approve', 'purchases.order', 'purchases.receive'],
+        permissions: ['STOCK_VIEW', 'STOCK_EDIT', 'stock.receive', 'stock.transfer', 'stock.adjust', 'stock.locations.manage', 'catalog.qualify', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count', 'inventory.validate', 'purchases.request', 'purchases.approve', 'purchases.order', 'purchases.receive'],
     },
     {
         name: 'DEBIT_OPERATOR',
