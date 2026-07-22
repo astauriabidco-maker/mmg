@@ -29,6 +29,7 @@ DOC_KIND_FORMATS = {
     "invoice": ("F", 4),           # Factures :          F-YYYY-XXXX
     "credit_note": ("AV", 4),      # Avoirs :            AV-YYYY-XXXX
     "quote": ("DEV", 4),           # Devis :             DEV-YYYY-XXXX
+    "purchase_request": ("PR", 4), # Demandes d'achat :  PR-YYYY-XXXX
     "purchase_order": ("PO", 4),   # Commandes fourn.:   PO-YYYY-XXXX
     "supplier_invoice": ("FF", 4), # Factures fourn.:    FF-YYYY-XXXX
     "delivery_note": ("BL", 4),    # Bons de livraison : BL-YYYY-XXXX
@@ -40,6 +41,7 @@ DOC_KIND_MODELS = {
     "invoice": models.Invoice,
     "credit_note": models.Invoice,
     "quote": models.SaleOrder,
+    "purchase_request": models.PurchaseRequest,
     "purchase_order": models.PurchaseOrder,
     "supplier_invoice": models.SupplierInvoice,
     "delivery_note": models.DeliveryNote,

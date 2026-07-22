@@ -554,6 +554,54 @@ class PurchaseOrderStatus(str, enum.Enum):
     RECEIVED = "RECEIVED"
     CANCELLED = "CANCELLED"
 
+class PurchaseRequestStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    CONVERTED = "CONVERTED"
+    CANCELLED = "CANCELLED"
+
+class PurchaseRequest(Base):
+    __tablename__ = "purchase_requests"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True)
+    supplier = Column(String)
+    expected_date = Column(DateTime, nullable=True)
+    status = Column(SAEnum(PurchaseRequestStatus), default=PurchaseRequestStatus.PENDING_APPROVAL)
+    total_amount = Column(Numeric(14, 2), default=0.0)
+    global_discount_percent = Column(Float, default=0.0)
+    sensitivity_reason = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    requested_by = Column(String, default="Système")
+    approved_by = Column(String, nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    rejected_by = Column(String, nullable=True)
+    rejected_at = Column(DateTime, nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    converted_by = Column(String, nullable=True)
+    converted_at = Column(DateTime, nullable=True)
+    purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    lines = relationship("PurchaseRequestLine", back_populates="request", cascade="all, delete-orphan")
+    purchase_order = relationship("PurchaseOrder")
+
+class PurchaseRequestLine(Base):
+    __tablename__ = "purchase_request_lines"
+    id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(Integer, ForeignKey("purchase_requests.id"))
+    variant_id = Column(Integer, ForeignKey("product_variants.id"))
+    quantity = Column(Float, default=1.0)
+    unit_price = Column(Numeric(14, 2), default=0.0)
+    discount_percent = Column(Float, default=0.0)
+    need_priority = Column(String, nullable=True)
+    need_reason = Column(Text, nullable=True)
+
+    request = relationship("PurchaseRequest", back_populates="lines")
+    variant = relationship("ProductVariant")
+
 class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
     id = Column(Integer, primary_key=True, index=True)

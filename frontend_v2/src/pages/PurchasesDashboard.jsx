@@ -126,7 +126,7 @@ const groupNeedsBySupplier = (needs) => Object.values(needs.reduce((acc, need) =
 }, {})).sort((a, b) => b.critical_count - a.critical_count || b.urgent_count - a.urgent_count || a.supplier.localeCompare(b.supplier));
 
 export default function PurchasesDashboard() {
-    const [currentTab, setCurrentTab] = useState('orders'); // 'orders', 'suppliers', or 'ai'
+    const [currentTab, setCurrentTab] = useState('orders'); // orders, requests, suppliers, ai
 
     // Orders state
     const [searchTerm, setSearchTerm] = useState("");
@@ -166,6 +166,7 @@ export default function PurchasesDashboard() {
     // Create form
     const emptyPOForm = { supplier: '', expected_date: '', notes: '', global_discount_percent: 0, lines: [] };
     const [newPO, setNewPO] = useState(emptyPOForm);
+    const [createMode, setCreateMode] = useState('order');
 
     // Receive form
     const [receiveTargetLoc, setReceiveTargetLoc] = useState('');
@@ -176,11 +177,24 @@ export default function PurchasesDashboard() {
     const [supplierInvoiceLines, setSupplierInvoiceLines] = useState([]);
 
     const queryClient = useQueryClient();
+    const userPermissions = JSON.parse(localStorage.getItem('permissions') || '[]');
+    const can = (permission) => userPermissions.includes('*') || userPermissions.includes(permission);
+    const canCreatePurchaseOrder = can('purchases.order');
+    const canCreatePurchaseRequest = can('purchases.request');
+    const canApprovePurchaseRequest = can('purchases.approve');
 
     const { data: purchases = [] } = useQuery({
         queryKey: ['purchases'],
         queryFn: async () => {
             const res = await api.get('/v2/purchases/');
+            return res.data;
+        }
+    });
+
+    const { data: purchaseRequests = [], refetch: refetchPurchaseRequests } = useQuery({
+        queryKey: ['purchase-requests'],
+        queryFn: async () => {
+            const res = await api.get('/v2/purchases/requests');
             return res.data;
         }
     });
@@ -289,10 +303,11 @@ export default function PurchasesDashboard() {
 
     const preparePOFromNeeds = (needs, supplierName = '') => {
         const targetSupplier = supplierName && supplierName !== UNKNOWN_SUPPLIER ? supplierName : (needs[0]?.supplier || '');
+        const nextMode = canCreatePurchaseOrder ? 'order' : 'request';
         setNewPO({
             ...emptyPOForm,
             supplier: targetSupplier === UNKNOWN_SUPPLIER ? '' : targetSupplier,
-            notes: `Commande préparée depuis les besoins achats intelligents (${needs.length} ligne(s)).`,
+            notes: `${nextMode === 'order' ? 'Commande' : 'Demande'} préparée depuis les besoins achats intelligents (${needs.length} ligne(s)).`,
             lines: needs.map(need => ({
                 variant_id: need.variant_id,
                 quantity: need.suggested_quantity,
@@ -300,18 +315,20 @@ export default function PurchasesDashboard() {
                 discount_percent: 0,
             })),
         });
-        setCurrentTab('orders');
+        setCreateMode(nextMode);
+        setCurrentTab(nextMode === 'order' ? 'orders' : 'requests');
         setSelectedPO(null);
         setShowCreateModal(true);
     };
 
     const openCreatePOForSupplier = (supplierName = '') => {
+        setCreateMode(canCreatePurchaseOrder ? 'order' : 'request');
         setNewPO({
             ...emptyPOForm,
             supplier: supplierName,
-            notes: supplierName ? `Commande fournisseur ${supplierName}` : '',
+            notes: supplierName ? `${canCreatePurchaseOrder ? 'Commande' : 'Demande'} fournisseur ${supplierName}` : '',
         });
-        setCurrentTab('orders');
+        setCurrentTab(canCreatePurchaseOrder ? 'orders' : 'requests');
         setSelectedPO(null);
         setShowCreateModal(true);
     };
@@ -342,13 +359,62 @@ export default function PurchasesDashboard() {
                 unit_price: parseFloat(l.unit_price),
                 discount_percent: Math.max(0, Math.min(parseFloat(l.discount_percent || 0), 100)),
             }));
-            await api.post('/v2/purchases/', { ...newPO, lines });
+            const endpoint = createMode === 'request' ? '/v2/purchases/requests' : '/v2/purchases/';
+            await api.post(endpoint, {
+                ...newPO,
+                sensitivity_reason: createMode === 'request' ? 'Demande à valider avant engagement fournisseur' : undefined,
+                lines
+            });
             setShowCreateModal(false);
             setNewPO(emptyPOForm);
             queryClient.invalidateQueries(['purchases']);
+            queryClient.invalidateQueries(['purchase-requests']);
+            if (createMode === 'request') {
+                setCurrentTab('requests');
+            }
         } catch (err) {
             console.error(err);
-            alert("Erreur lors de la création de la commande.");
+            alert(err.response?.data?.detail || `Erreur lors de la création ${createMode === 'request' ? 'de la demande' : 'de la commande'}.`);
+        }
+    };
+
+    const handleApprovePurchaseRequest = async (requestId) => {
+        try {
+            await api.post(`/v2/purchases/requests/${requestId}/approve`);
+            queryClient.invalidateQueries(['purchase-requests']);
+            await refetchPurchaseRequests();
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de la validation de la demande.");
+        }
+    };
+
+    const handleRejectPurchaseRequest = async (requestId) => {
+        const reason = window.prompt("Motif du refus achat :");
+        if (!reason || !reason.trim()) return;
+        try {
+            await api.post(`/v2/purchases/requests/${requestId}/reject`, { reason: reason.trim() });
+            queryClient.invalidateQueries(['purchase-requests']);
+            await refetchPurchaseRequests();
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors du refus de la demande.");
+        }
+    };
+
+    const handleConvertPurchaseRequest = async (requestId) => {
+        try {
+            const res = await api.post(`/v2/purchases/requests/${requestId}/convert`);
+            queryClient.invalidateQueries(['purchase-requests']);
+            queryClient.invalidateQueries(['purchases']);
+            await refetchPurchaseRequests();
+            if (res.data?.purchase_order?.id) {
+                await openPODetails(res.data.purchase_order.id);
+                setCurrentTab('orders');
+            }
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de la conversion en bon fournisseur.");
         }
     };
 
@@ -516,6 +582,12 @@ export default function PurchasesDashboard() {
                             Commandes
                         </button>
                         <button
+                            onClick={() => setCurrentTab('requests')}
+                            className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'requests' ? 'bg-white shadow text-amber-600' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Demandes
+                        </button>
+                        <button
                             onClick={() => setCurrentTab('suppliers')}
                             className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'suppliers' ? 'bg-white shadow text-emerald-600' : 'text-slate-500 hover:text-slate-700'}`}
                         >
@@ -534,7 +606,7 @@ export default function PurchasesDashboard() {
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
                             type="text"
-                            placeholder={currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : "Rechercher une recommandation..."}
+                            placeholder={currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'requests' ? "Rechercher demande achat..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : "Rechercher une recommandation..."}
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
@@ -542,7 +614,12 @@ export default function PurchasesDashboard() {
                     </div>
                     {currentTab === 'orders' && (
                         <button onClick={() => openCreatePOForSupplier()} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
-                            <Plus className="w-5 h-5"/> Créer Commande
+                            <Plus className="w-5 h-5"/> {canCreatePurchaseOrder ? 'Créer Commande' : 'Créer Demande'}
+                        </button>
+                    )}
+                    {currentTab === 'requests' && (
+                        <button disabled={!canCreatePurchaseRequest} onClick={() => openCreatePOForSupplier()} className="w-full py-3 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-300 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
+                            <Plus className="w-5 h-5"/> Nouvelle demande
                         </button>
                     )}
                     {currentTab === 'suppliers' && (
@@ -581,6 +658,45 @@ export default function PurchasesDashboard() {
                             ))}
                             {filteredPurchases.length === 0 && (
                                 <div className="text-center py-10 text-slate-400 font-bold">Aucune commande trouvée.</div>
+                            )}
+                        </>
+                    )}
+                    {currentTab === 'requests' && (
+                        <>
+                            {purchaseRequests
+                                .filter(req => {
+                                    const term = searchTerm.toLowerCase();
+                                    return !term
+                                        || String(req.reference || '').toLowerCase().includes(term)
+                                        || String(req.supplier || '').toLowerCase().includes(term)
+                                        || String(req.requested_by || '').toLowerCase().includes(term);
+                                })
+                                .map(req => (
+                                    <div
+                                        key={req.id}
+                                        className="p-4 rounded-xl border-2 bg-white border-slate-100 shadow-sm"
+                                    >
+                                        <div className="flex justify-between items-start mb-2">
+                                            <span className="font-black text-slate-900">{req.reference}</span>
+                                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-md ${
+                                                req.status === 'PENDING_APPROVAL' ? 'bg-amber-100 text-amber-700'
+                                                    : req.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-700'
+                                                        : req.status === 'CONVERTED' ? 'bg-blue-100 text-blue-700'
+                                                            : req.status === 'REJECTED' ? 'bg-red-100 text-red-700'
+                                                                : 'bg-slate-100 text-slate-600'
+                                            }`}>{req.status}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center text-sm">
+                                            <span className="font-bold text-slate-600">{req.supplier}</span>
+                                            <span className="font-black text-slate-800">{Number(req.total_amount || 0).toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
+                                        </div>
+                                        <div className="text-xs text-slate-400 mt-2 font-medium flex items-center gap-1">
+                                            <FileText className="w-3 h-3"/> {req.lines_count} ligne(s) · demandé par {req.requested_by || 'Système'}
+                                        </div>
+                                    </div>
+                                ))}
+                            {purchaseRequests.length === 0 && (
+                                <div className="text-center py-10 text-slate-400 font-bold">Aucune demande d'achat.</div>
                             )}
                         </>
                     )}
@@ -663,7 +779,16 @@ export default function PurchasesDashboard() {
 
             {/* MAIN AREA : PO DETAILS */}
             <div className="flex-1 flex flex-col bg-slate-50 relative overflow-y-auto">
-                {currentTab === 'ai' ? (
+                {currentTab === 'requests' ? (
+                    <PurchaseRequestsView
+                        requests={purchaseRequests}
+                        canApprove={canApprovePurchaseRequest}
+                        canOrder={canCreatePurchaseOrder}
+                        onApprove={handleApprovePurchaseRequest}
+                        onReject={handleRejectPurchaseRequest}
+                        onConvert={handleConvertPurchaseRequest}
+                    />
+                ) : currentTab === 'ai' ? (
                     <SmartPurchasingView
                         needs={filteredPurchaseNeeds}
                         groups={purchaseNeedGroups}
@@ -671,6 +796,7 @@ export default function PurchasesDashboard() {
                         loading={loadingAi}
                         refetch={refetchAiRecommendations}
                         preparePOFromNeeds={preparePOFromNeeds}
+                        canCreatePurchaseOrder={canCreatePurchaseOrder}
                     />
                 ) : currentTab === 'suppliers' ? (
                     selectedSupplierId ? (
@@ -836,10 +962,14 @@ export default function PurchasesDashboard() {
                         <div className="px-8 py-6 bg-slate-900 text-white flex justify-between items-start">
                             <div>
                                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-300/20 text-blue-200 text-[10px] font-black uppercase tracking-widest mb-3">
-                                    <Plus className="w-3.5 h-3.5" /> Achat fournisseur
+                                    <Plus className="w-3.5 h-3.5" /> {createMode === 'request' ? 'Demande achat' : 'Achat fournisseur'}
                                 </div>
-                                <h3 className="font-black text-3xl">Nouveau bon de commande</h3>
-                                <p className="text-sm font-medium text-slate-300 mt-1">Sélection fournisseur, articles, prix et conditions avant validation.</p>
+                                <h3 className="font-black text-3xl">{createMode === 'request' ? "Nouvelle demande d'achat" : 'Nouveau bon de commande'}</h3>
+                                <p className="text-sm font-medium text-slate-300 mt-1">
+                                    {createMode === 'request'
+                                        ? "La demande devra être validée avant création du bon fournisseur."
+                                        : "Sélection fournisseur, articles, prix et conditions avant validation."}
+                                </p>
                             </div>
                             <button onClick={()=>setShowCreateModal(false)} className="text-slate-300 hover:bg-white/10 p-2 rounded-full"><X className="w-5 h-5"/></button>
                         </div>
@@ -1003,7 +1133,7 @@ export default function PurchasesDashboard() {
                         <div className="px-8 py-5 bg-white border-t border-slate-100 flex justify-between items-center">
                             <button onClick={()=>setShowCreateModal(false)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50">Annuler</button>
                             <button onClick={handleCreatePO} disabled={!newPO.supplier || validLines === 0} className="px-8 py-4 bg-blue-600 disabled:bg-slate-300 hover:bg-blue-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg shrink-0">
-                                Valider la commande
+                                {createMode === 'request' ? "Soumettre la demande" : "Valider la commande"}
                             </button>
                         </div>
                     </div>
@@ -1351,7 +1481,114 @@ export default function PurchasesDashboard() {
     );
 }
 
-const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, preparePOFromNeeds }) => {
+const PurchaseRequestsView = ({ requests, canApprove, canOrder, onApprove, onReject, onConvert }) => {
+    const pending = requests.filter(request => request.status === 'PENDING_APPROVAL');
+    const approved = requests.filter(request => request.status === 'APPROVED');
+    const closed = requests.filter(request => ['CONVERTED', 'REJECTED', 'CANCELLED'].includes(request.status));
+
+    const renderRequest = (request) => (
+        <div key={request.id} className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="px-5 py-4 bg-slate-50 border-b border-slate-100 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Demande d'achat</p>
+                    <h3 className="text-xl font-black text-slate-900">{request.reference}</h3>
+                    <p className="text-sm font-bold text-slate-500">{request.supplier} · demandé par {request.requested_by || 'Système'}</p>
+                </div>
+                <div className="text-right">
+                    <span className={`inline-flex px-3 py-1 rounded-lg text-xs font-black ${
+                        request.status === 'PENDING_APPROVAL' ? 'bg-amber-100 text-amber-700'
+                            : request.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-700'
+                                : request.status === 'CONVERTED' ? 'bg-blue-100 text-blue-700'
+                                    : 'bg-red-100 text-red-700'
+                    }`}>{request.status}</span>
+                    <p className="mt-2 text-2xl font-black text-slate-900">{Number(request.total_amount || 0).toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</p>
+                </div>
+            </div>
+            <div className="p-5 grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-4">
+                <div className="space-y-3">
+                    {(request.lines || []).map(line => (
+                        <div key={line.id} className="grid grid-cols-[1fr_80px_100px] gap-3 items-center rounded-xl bg-slate-50 border border-slate-100 p-3">
+                            <div>
+                                <p className="font-black text-slate-900">{line.product_name}</p>
+                                <p className="text-[10px] font-mono font-black text-slate-400 uppercase">{line.variant_ref}</p>
+                            </div>
+                            <div className="text-center">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Qté</p>
+                                <p className="font-black text-slate-900">{Number(line.quantity || 0).toLocaleString('fr-FR')}</p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total</p>
+                                <p className="font-black text-slate-900">{Number(line.line_total || 0).toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                <aside className="rounded-2xl border border-slate-200 bg-white p-4 h-fit">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contrôle achat</p>
+                    <p className="mt-2 text-sm font-bold text-slate-600">{request.sensitivity_reason || 'Validation achat requise avant engagement fournisseur.'}</p>
+                    {request.rejection_reason && (
+                        <p className="mt-3 rounded-xl bg-red-50 border border-red-100 p-3 text-xs font-bold text-red-700">{request.rejection_reason}</p>
+                    )}
+                    <div className="mt-4 space-y-2">
+                        {request.status === 'PENDING_APPROVAL' && (
+                            <>
+                                <button disabled={!canApprove} onClick={() => onApprove(request.id)} className="w-full py-3 rounded-xl bg-emerald-600 disabled:bg-slate-300 text-white font-black">Valider</button>
+                                <button disabled={!canApprove} onClick={() => onReject(request.id)} className="w-full py-3 rounded-xl border border-red-200 text-red-600 disabled:text-slate-400 disabled:border-slate-200 font-black">Refuser</button>
+                            </>
+                        )}
+                        {request.status === 'APPROVED' && (
+                            <button disabled={!canOrder} onClick={() => onConvert(request.id)} className="w-full py-3 rounded-xl bg-blue-600 disabled:bg-slate-300 text-white font-black">Créer le bon fournisseur</button>
+                        )}
+                        {request.purchase_order_id && (
+                            <p className="text-xs font-bold text-blue-700 bg-blue-50 rounded-xl p-3">Bon fournisseur lié #{request.purchase_order_id}</p>
+                        )}
+                    </div>
+                </aside>
+            </div>
+        </div>
+    );
+
+    return (
+        <div className="p-8 w-full">
+            <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
+                <div className="px-8 py-6 border-b border-slate-100 bg-slate-900 text-white">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-300/20 text-amber-200 text-[10px] font-black uppercase tracking-widest mb-3">
+                        <FileText className="w-3.5 h-3.5" /> Validation achats
+                    </div>
+                    <h2 className="text-3xl font-black tracking-tight">Demandes d'achat</h2>
+                    <p className="text-sm font-medium text-slate-300 mt-1">Aucun engagement fournisseur sans validation quand l'achat est sensible.</p>
+                </div>
+                <div className="p-8 space-y-8">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5">
+                            <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest">À valider</p>
+                            <p className="text-3xl font-black text-amber-700">{pending.length}</p>
+                        </div>
+                        <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-5">
+                            <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Validées</p>
+                            <p className="text-3xl font-black text-emerald-700">{approved.length}</p>
+                        </div>
+                        <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Traitées</p>
+                            <p className="text-3xl font-black text-slate-900">{closed.length}</p>
+                        </div>
+                    </div>
+                    <div className="space-y-5">
+                        {requests.map(renderRequest)}
+                        {requests.length === 0 && (
+                            <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 py-20 flex flex-col items-center justify-center text-slate-400 font-black">
+                                <CheckCircle className="w-12 h-12 mb-4 text-emerald-400" />
+                                Aucune demande d'achat à traiter.
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, preparePOFromNeeds, canCreatePurchaseOrder }) => {
     const blockedNeeds = needs.filter(need => !need.can_order);
     const criticalNeeds = needs.filter(need => need.priority === 'CRITICAL');
     const urgentNeeds = needs.filter(need => need.priority === 'URGENT');
@@ -1434,7 +1671,7 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
                                                     disabled={orderableGroupNeeds.length === 0}
                                                     className="px-4 py-3 rounded-xl bg-blue-600 disabled:bg-slate-300 text-white font-black hover:bg-blue-500 flex items-center gap-2"
                                                 >
-                                                    <Plus className="w-4 h-4" /> Créer bon fournisseur
+                                                    <Plus className="w-4 h-4" /> {canCreatePurchaseOrder ? 'Créer bon fournisseur' : 'Créer demande'}
                                                 </button>
                                             </div>
                                             <div className="divide-y divide-slate-100">
@@ -1468,7 +1705,7 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
                                                             disabled={!need.can_order}
                                                             className="px-4 py-3 rounded-xl bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black hover:bg-slate-800 flex items-center justify-center gap-2"
                                                         >
-                                                            Commander <ArrowRight className="w-4 h-4" />
+                                                            {canCreatePurchaseOrder ? 'Commander' : 'Demander'} <ArrowRight className="w-4 h-4" />
                                                         </button>
                                                     </div>
                                                 ))}

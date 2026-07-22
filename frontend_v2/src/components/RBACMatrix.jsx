@@ -8,14 +8,14 @@ const ROLE_PRESETS = [
         label: 'Magasinier',
         description: 'Réceptionne, range, transfère et compte le stock.',
         scope: 'Stock',
-        permissions: ['STOCK_VIEW', 'stock.receive', 'stock.transfer', 'inventory.count', 'purchases.receive'],
+        permissions: ['STOCK_VIEW', 'stock.receive', 'stock.transfer', 'inventory.count', 'purchases.request', 'purchases.receive'],
     },
     {
         name: 'CHEF_STOCK',
         label: 'Chef stock',
         description: 'Pilote le stock, les inventaires, les corrections et le catalogue.',
         scope: 'Stock',
-        permissions: ['STOCK_VIEW', 'STOCK_EDIT', 'stock.receive', 'stock.transfer', 'stock.adjust', 'catalog.qualify', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count', 'inventory.validate', 'purchases.receive'],
+        permissions: ['STOCK_VIEW', 'STOCK_EDIT', 'stock.receive', 'stock.transfer', 'stock.adjust', 'catalog.qualify', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count', 'inventory.validate', 'purchases.request', 'purchases.approve', 'purchases.order', 'purchases.receive'],
     },
     {
         name: 'DEBIT_OPERATOR',
@@ -36,7 +36,7 @@ const ROLE_PRESETS = [
         label: 'Achats',
         description: 'Suit les commandes fournisseurs et les réceptions attendues.',
         scope: 'Achats',
-        permissions: ['STOCK_VIEW', 'purchases.receive'],
+        permissions: ['STOCK_VIEW', 'purchases.request', 'purchases.approve', 'purchases.order', 'purchases.receive'],
     },
     {
         name: 'SALES',

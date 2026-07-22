@@ -45,6 +45,9 @@ def seed_permissions():
             {"code": "workshop.consume_stock", "module": "Stock - Atelier", "description": "Transformer une réservation atelier en débit réel"},
             {"code": "inventory.count", "module": "Stock - Inventaire physique", "description": "Saisir un comptage physique"},
             {"code": "inventory.validate", "module": "Stock - Inventaire physique", "description": "Valider les écarts d'inventaire"},
+            {"code": "purchases.request", "module": "Achats", "description": "Créer une demande d'achat à valider"},
+            {"code": "purchases.approve", "module": "Achats", "description": "Valider ou refuser une demande d'achat"},
+            {"code": "purchases.order", "module": "Achats", "description": "Créer un bon de commande fournisseur"},
             {"code": "purchases.receive", "module": "Achats", "description": "Réceptionner une commande fournisseur"},
             # Production
             {"code": "PROD_VIEW", "module": "Atelier", "description": "Voir l'Atelier Live"},
@@ -99,6 +102,9 @@ def seed_permissions():
                 "workshop.consume_stock",
                 "inventory.count",
                 "inventory.validate",
+                "purchases.request",
+                "purchases.approve",
+                "purchases.order",
                 "purchases.receive",
             ],
             "DEBIT_OPERATOR": [
@@ -115,6 +121,7 @@ def seed_permissions():
                 "stock.receive",
                 "stock.transfer",
                 "inventory.count",
+                "purchases.request",
                 "purchases.receive",
             ],
             "CHEF_STOCK": [
@@ -128,10 +135,16 @@ def seed_permissions():
                 "workshop.consume_stock",
                 "inventory.count",
                 "inventory.validate",
+                "purchases.request",
+                "purchases.approve",
+                "purchases.order",
                 "purchases.receive",
             ],
             "ACHATS": [
                 "STOCK_VIEW",
+                "purchases.request",
+                "purchases.approve",
+                "purchases.order",
                 "purchases.receive",
             ],
             "QUALITY_CONTROLLER": [

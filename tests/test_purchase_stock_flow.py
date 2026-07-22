@@ -91,6 +91,23 @@ def _seed_purchase_need_variant(
     return variant.id
 
 
+def _grant_role_permissions(db, role_name: str, permission_codes: list[str]) -> None:
+    role = db.query(models.Role).filter_by(name=role_name).first()
+    if not role:
+        role = models.Role(name=role_name, description=f"Test role {role_name}")
+        db.add(role)
+        db.flush()
+    for code in permission_codes:
+        permission = db.query(models.Permission).filter_by(code=code).first()
+        if not permission:
+            permission = models.Permission(code=code, module="Tests", description=code)
+            db.add(permission)
+            db.flush()
+        if permission not in role.permissions:
+            role.permissions.append(permission)
+    db.commit()
+
+
 def test_purchase_order_receipt_creates_stock_move_and_quant():
     engine = create_engine(
         "sqlite:///:memory:",
@@ -796,3 +813,125 @@ def test_purchase_need_recommendations_expose_supplier_group_priority_and_net_ne
     assert group["critical_count"] == 1
     assert group["urgent_count"] == 1
     assert group["is_orderable"] is True
+
+
+def test_purchase_order_direct_creation_requires_order_permission(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "magasinier-no-order", role="MAGASINIER")
+
+    with TestingSessionLocal() as db:
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="REQ-NO-DIRECT-ORDER",
+            supplier="CORTIZO",
+            physical_quantity=0,
+            min_threshold=5,
+        )
+
+    response = client.post(
+        "/v2/purchases/",
+        headers=headers,
+        json={
+            "supplier": "CORTIZO",
+            "lines": [{"variant_id": variant_id, "quantity": 1, "unit_price": 10}],
+        },
+    )
+
+    assert response.status_code == 403
+    assert "purchases.order" in response.json()["detail"]
+
+
+def test_purchase_request_can_be_approved_and_converted_to_order(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+
+    with TestingSessionLocal() as db:
+        _grant_role_permissions(db, "MAGASINIER", ["purchases.request"])
+        _grant_role_permissions(db, "ACHATS", ["purchases.approve", "purchases.order"])
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="REQ-APPROVE-CONVERT",
+            supplier="CORTIZO",
+            physical_quantity=0,
+            min_threshold=5,
+        )
+
+    request_headers = _auth_headers(TestingSessionLocal, "magasinier-requester", role="MAGASINIER")
+    approval_headers = _auth_headers(TestingSessionLocal, "buyer-approver", role="ACHATS")
+
+    create_response = client.post(
+        "/v2/purchases/requests",
+        headers=request_headers,
+        json={
+            "supplier": "CORTIZO",
+            "notes": "Rupture atelier",
+            "sensitivity_reason": "Achat sensible validé par achats",
+            "lines": [{"variant_id": variant_id, "quantity": 4, "unit_price": 12.5}],
+        },
+    )
+    assert create_response.status_code == 200, create_response.text
+    request_payload = create_response.json()
+    assert request_payload["reference"].startswith("PR-")
+    assert request_payload["status"] == "PENDING_APPROVAL"
+    assert request_payload["total_amount"] == 50.0
+    request_id = request_payload["id"]
+
+    approve_response = client.post(f"/v2/purchases/requests/{request_id}/approve", headers=approval_headers)
+    assert approve_response.status_code == 200, approve_response.text
+    assert approve_response.json()["status"] == "APPROVED"
+    assert approve_response.json()["approved_by"] == "buyer-approver"
+
+    convert_response = client.post(f"/v2/purchases/requests/{request_id}/convert", headers=approval_headers)
+    assert convert_response.status_code == 200, convert_response.text
+    converted = convert_response.json()
+    assert converted["request"]["status"] == "CONVERTED"
+    assert converted["purchase_order"]["reference"].startswith("PO-")
+
+    orders_response = client.get("/v2/purchases/", headers=approval_headers)
+    assert orders_response.status_code == 200, orders_response.text
+    [po] = [item for item in orders_response.json() if item["id"] == converted["purchase_order"]["id"]]
+    assert po["supplier"] == "CORTIZO"
+    assert po["total_amount"] == 50.0
+
+
+def test_purchase_request_rejection_requires_reason(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+
+    with TestingSessionLocal() as db:
+        _grant_role_permissions(db, "MAGASINIER", ["purchases.request"])
+        _grant_role_permissions(db, "ACHATS", ["purchases.approve"])
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="REQ-REJECT",
+            supplier="CORTIZO",
+            physical_quantity=0,
+            min_threshold=5,
+        )
+
+    request_headers = _auth_headers(TestingSessionLocal, "magasinier-reject-request", role="MAGASINIER")
+    approval_headers = _auth_headers(TestingSessionLocal, "buyer-reject", role="ACHATS")
+
+    create_response = client.post(
+        "/v2/purchases/requests",
+        headers=request_headers,
+        json={
+            "supplier": "CORTIZO",
+            "lines": [{"variant_id": variant_id, "quantity": 1, "unit_price": 10}],
+        },
+    )
+    request_id = create_response.json()["id"]
+
+    empty_reason = client.post(
+        f"/v2/purchases/requests/{request_id}/reject",
+        headers=approval_headers,
+        json={"reason": "   "},
+    )
+    assert empty_reason.status_code == 400
+
+    reject_response = client.post(
+        f"/v2/purchases/requests/{request_id}/reject",
+        headers=approval_headers,
+        json={"reason": "Prix à renégocier"},
+    )
+    assert reject_response.status_code == 200, reject_response.text
+    assert reject_response.json()["status"] == "REJECTED"
+    assert reject_response.json()["rejection_reason"] == "Prix à renégocier"

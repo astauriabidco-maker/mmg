@@ -32,6 +32,12 @@ class PurchaseOrderCreate(BaseModel):
     notes: Optional[str] = None
     lines: List[PurchaseOrderLineInput] = []
 
+class PurchaseRequestCreate(PurchaseOrderCreate):
+    sensitivity_reason: Optional[str] = None
+
+class PurchaseRequestRejectInput(BaseModel):
+    reason: str
+
 class PurchaseOrderReceiveLineInput(BaseModel):
     line_id: int
     quantity: float
@@ -54,6 +60,99 @@ class SupplierInvoiceCreate(BaseModel):
 def _supplier_invoice_reference(db: Session) -> str:
     # Format: FF-YYYY-XXXX — séquence transactionnelle inaltérable (NF525)
     return next_number(db, "supplier_invoice")
+
+def _purchase_request_reference(db: Session) -> str:
+    return next_number(db, "purchase_request")
+
+def _line_total(quantity: float, unit_price: float, discount_percent: float) -> float:
+    return quantity * unit_price * (1 - discount_percent / 100)
+
+def _purchase_payload_total(data: PurchaseOrderCreate) -> float:
+    subtotal = 0.0
+    for line in data.lines:
+        quantity = max(float(line.quantity or 0), 0)
+        unit_price = max(float(line.unit_price or 0), 0)
+        discount_percent = max(0, min(float(line.discount_percent or 0), 100))
+        subtotal += _line_total(quantity, unit_price, discount_percent)
+    global_discount_percent = max(0, min(float(data.global_discount_percent or 0), 100))
+    return subtotal * (1 - global_discount_percent / 100)
+
+def _serialize_purchase_request(request: models.PurchaseRequest) -> dict:
+    return {
+        "id": request.id,
+        "reference": request.reference,
+        "supplier": request.supplier,
+        "expected_date": request.expected_date,
+        "status": request.status,
+        "total_amount": request.total_amount,
+        "global_discount_percent": request.global_discount_percent or 0,
+        "sensitivity_reason": request.sensitivity_reason,
+        "notes": request.notes,
+        "requested_by": request.requested_by,
+        "approved_by": request.approved_by,
+        "approved_at": request.approved_at,
+        "rejected_by": request.rejected_by,
+        "rejected_at": request.rejected_at,
+        "rejection_reason": request.rejection_reason,
+        "converted_by": request.converted_by,
+        "converted_at": request.converted_at,
+        "purchase_order_id": request.purchase_order_id,
+        "created_at": request.created_at,
+        "updated_at": request.updated_at,
+        "lines_count": len(request.lines),
+        "lines": [
+            {
+                "id": line.id,
+                "variant_id": line.variant_id,
+                "variant_ref": line.variant.reference if line.variant else "Inconnu",
+                "product_name": line.variant.product.name if line.variant and line.variant.product else "Article fournisseur",
+                "quantity": line.quantity,
+                "unit_price": line.unit_price,
+                "discount_percent": line.discount_percent or 0,
+                "line_total": _line_total(float(line.quantity or 0), float(line.unit_price or 0), float(line.discount_percent or 0)),
+                "need_priority": line.need_priority,
+                "need_reason": line.need_reason,
+            }
+            for line in request.lines
+        ],
+    }
+
+def _create_purchase_order_from_data(
+    data: PurchaseOrderCreate,
+    db: Session,
+    author: str,
+) -> models.PurchaseOrder:
+    ref = next_number(db, "purchase_order")
+    po = models.PurchaseOrder(
+        reference=ref,
+        supplier=data.supplier,
+        expected_date=data.expected_date,
+        global_discount_percent=max(0, min(float(data.global_discount_percent or 0), 100)),
+        notes=data.notes,
+        status=models.PurchaseOrderStatus.DRAFT,
+        author=author,
+    )
+    db.add(po)
+    db.flush()
+
+    total = 0.0
+    for line in data.lines:
+        quantity = max(float(line.quantity or 0), 0)
+        unit_price = max(float(line.unit_price or 0), 0)
+        discount_percent = max(0, min(float(line.discount_percent or 0), 100))
+        new_line = models.PurchaseOrderLine(
+            order_id=po.id,
+            variant_id=line.variant_id,
+            quantity=quantity,
+            unit_price=unit_price,
+            discount_percent=discount_percent,
+            quantity_received=0,
+        )
+        db.add(new_line)
+        total += _line_total(quantity, unit_price, discount_percent)
+
+    po.total_amount = total * (1 - po.global_discount_percent / 100)
+    return po
 
 def _invoiced_quantities_by_po_line(db: Session, po_id: int) -> dict[int, float]:
     invoice_lines = (
@@ -460,44 +559,152 @@ def get_purchase_orders(db: Session = Depends(get_db)):
         })
     return result
 
+@router.get("/requests")
+def get_purchase_requests(db: Session = Depends(get_db)):
+    requests = (
+        db.query(models.PurchaseRequest)
+        .order_by(models.PurchaseRequest.created_at.desc(), models.PurchaseRequest.id.desc())
+        .all()
+    )
+    return [_serialize_purchase_request(request) for request in requests]
+
+@router.post("/requests")
+def create_purchase_request(
+    data: PurchaseRequestCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.request")
+    if not data.lines:
+        raise HTTPException(status_code=400, detail="La demande d'achat doit contenir au moins une ligne.")
+
+    total = _purchase_payload_total(data)
+    request = models.PurchaseRequest(
+        reference=_purchase_request_reference(db),
+        supplier=data.supplier,
+        expected_date=data.expected_date,
+        status=models.PurchaseRequestStatus.PENDING_APPROVAL,
+        total_amount=total,
+        global_discount_percent=max(0, min(float(data.global_discount_percent or 0), 100)),
+        sensitivity_reason=data.sensitivity_reason or ("Montant sensible" if total >= 1000 else "Validation achat requise"),
+        notes=data.notes,
+        requested_by=current_user.get("sub", "unknown"),
+    )
+    db.add(request)
+    db.flush()
+
+    created_lines = 0
+    for line in data.lines:
+        quantity = max(float(line.quantity or 0), 0)
+        if quantity <= 0:
+            continue
+        db.add(models.PurchaseRequestLine(
+            request_id=request.id,
+            variant_id=line.variant_id,
+            quantity=quantity,
+            unit_price=max(float(line.unit_price or 0), 0),
+            discount_percent=max(0, min(float(line.discount_percent or 0), 100)),
+        ))
+        created_lines += 1
+
+    if created_lines == 0:
+        raise HTTPException(status_code=400, detail="Aucune quantité positive dans la demande d'achat.")
+
+    db.commit()
+    db.refresh(request)
+    return _serialize_purchase_request(request)
+
+@router.post("/requests/{request_id}/approve")
+def approve_purchase_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.approve")
+    request = db.query(models.PurchaseRequest).filter(models.PurchaseRequest.id == request_id).first()
+    if not request:
+        raise HTTPException(status_code=404, detail="Demande d'achat introuvable.")
+    if request.status != models.PurchaseRequestStatus.PENDING_APPROVAL:
+        raise HTTPException(status_code=400, detail="Seules les demandes en attente peuvent être validées.")
+    request.status = models.PurchaseRequestStatus.APPROVED
+    request.approved_by = current_user.get("sub", "unknown")
+    request.approved_at = utcnow()
+    db.commit()
+    db.refresh(request)
+    return _serialize_purchase_request(request)
+
+@router.post("/requests/{request_id}/reject")
+def reject_purchase_request(
+    request_id: int,
+    data: PurchaseRequestRejectInput,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.approve")
+    reason = (data.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Le motif de refus est obligatoire.")
+    request = db.query(models.PurchaseRequest).filter(models.PurchaseRequest.id == request_id).first()
+    if not request:
+        raise HTTPException(status_code=404, detail="Demande d'achat introuvable.")
+    if request.status != models.PurchaseRequestStatus.PENDING_APPROVAL:
+        raise HTTPException(status_code=400, detail="Seules les demandes en attente peuvent être refusées.")
+    request.status = models.PurchaseRequestStatus.REJECTED
+    request.rejected_by = current_user.get("sub", "unknown")
+    request.rejected_at = utcnow()
+    request.rejection_reason = reason
+    db.commit()
+    db.refresh(request)
+    return _serialize_purchase_request(request)
+
+@router.post("/requests/{request_id}/convert")
+def convert_purchase_request_to_order(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.order")
+    request = db.query(models.PurchaseRequest).filter(models.PurchaseRequest.id == request_id).first()
+    if not request:
+        raise HTTPException(status_code=404, detail="Demande d'achat introuvable.")
+    if request.status != models.PurchaseRequestStatus.APPROVED:
+        raise HTTPException(status_code=400, detail="La demande doit être validée avant création du bon fournisseur.")
+    if request.purchase_order_id:
+        raise HTTPException(status_code=400, detail="Cette demande a déjà été convertie en bon fournisseur.")
+
+    po_data = PurchaseOrderCreate(
+        supplier=request.supplier,
+        expected_date=request.expected_date,
+        global_discount_percent=float(request.global_discount_percent or 0),
+        notes=f"Créé depuis {request.reference}. {request.notes or ''}".strip(),
+        lines=[
+            PurchaseOrderLineInput(
+                variant_id=line.variant_id,
+                quantity=float(line.quantity or 0),
+                unit_price=float(line.unit_price or 0),
+                discount_percent=float(line.discount_percent or 0),
+            )
+            for line in request.lines
+        ],
+    )
+    po = _create_purchase_order_from_data(po_data, db, current_user.get("sub", "unknown"))
+    request.status = models.PurchaseRequestStatus.CONVERTED
+    request.converted_by = current_user.get("sub", "unknown")
+    request.converted_at = utcnow()
+    request.purchase_order_id = po.id
+    db.commit()
+    db.refresh(request)
+    db.refresh(po)
+    return {"request": _serialize_purchase_request(request), "purchase_order": {"id": po.id, "reference": po.reference}}
+
 @router.post("/")
 def create_purchase_order(
     data: PurchaseOrderCreate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(security.get_current_user),
 ):
-    # Generate PO reference — séquence transactionnelle (NF525)
-    ref = next_number(db, "purchase_order")
-    
-    po = models.PurchaseOrder(
-        reference=ref,
-        supplier=data.supplier,
-        expected_date=data.expected_date,
-        global_discount_percent=max(0, min(float(data.global_discount_percent or 0), 100)),
-        notes=data.notes,
-        status=models.PurchaseOrderStatus.DRAFT,
-        author=current_user.get("sub", "unknown")
-    )
-    db.add(po)
-    db.flush()
-    
-    total = 0
-    for line in data.lines:
-        quantity = max(float(line.quantity or 0), 0)
-        unit_price = max(float(line.unit_price or 0), 0)
-        discount_percent = max(0, min(float(line.discount_percent or 0), 100))
-        new_line = models.PurchaseOrderLine(
-            order_id=po.id,
-            variant_id=line.variant_id,
-            quantity=quantity,
-            unit_price=unit_price,
-            discount_percent=discount_percent,
-            quantity_received=0
-        )
-        db.add(new_line)
-        total += quantity * unit_price * (1 - discount_percent / 100)
-        
-    po.total_amount = total * (1 - po.global_discount_percent / 100)
+    security.assert_permission(db, current_user, "purchases.order")
+    po = _create_purchase_order_from_data(data, db, current_user.get("sub", "unknown"))
     db.commit()
     db.refresh(po)
     return {"id": po.id, "reference": po.reference}
