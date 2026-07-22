@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Square, Clock, List, LogOut, ChevronDown, Repeat, AlertTriangle, CheckCircle2, Users } from 'lucide-react';
 import api, { API_BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { getDefaultPathForUser, isAtelierRole } from '../utils/roleNavigation';
 
 export default function OperatorDashboard() {
     const { logout, user } = useAuth();
@@ -36,6 +37,12 @@ export default function OperatorDashboard() {
 
     const getStatusMeta = (status) => statusMeta[status] || statusMeta.PENDING;
 
+    useEffect(() => {
+        if (user?.role && !isAtelierRole(user.role)) {
+            navigate(getDefaultPathForUser(user), { replace: true });
+        }
+    }, [navigate, user]);
+
     // Fetch Queue
     const fetchQueue = async () => {
         try {
@@ -61,6 +68,7 @@ export default function OperatorDashboard() {
 
     // WebSocket Connection
     useEffect(() => {
+        if (user?.role && !isAtelierRole(user.role)) return;
         fetchQueue();
         const wsBaseUrl = API_BASE_URL.replace(/^http/, 'ws').replace(/\/$/, '');
         const wsToken = encodeURIComponent(localStorage.getItem('token') || '');
@@ -71,7 +79,7 @@ export default function OperatorDashboard() {
         };
         ws.current.onerror = (event) => console.warn("WS error", event);
         return () => ws.current?.close();
-    }, [STATION]); // Re-connect/fetch if station changes
+    }, [STATION, user?.role]); // Re-connect/fetch if station changes
 
     // ... timer logic and handlers ...
 

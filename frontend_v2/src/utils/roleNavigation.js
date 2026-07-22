@@ -1,6 +1,10 @@
 const STOCK_HOME_ROLES = new Set(['MAGASINIER', 'CHEF_STOCK']);
 const ATELIER_HOME_ROLES = new Set(['OPERATOR', 'DEBIT_OPERATOR', 'QUALITY_CONTROLLER', 'WORKSHOP_LEAD']);
 
+export function isAtelierRole(role) {
+    return ATELIER_HOME_ROLES.has(role);
+}
+
 export function getDefaultPathForUser(user) {
     const role = user?.role;
     if (role === 'ADMIN' || role === 'MANAGER') return '/manager';
