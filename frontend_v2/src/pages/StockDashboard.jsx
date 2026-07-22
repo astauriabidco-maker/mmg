@@ -5,7 +5,7 @@ import { downloadFileWithFeedback } from '../services/pdf';
 import { 
     Package, MapPin, Search, Plus, Trash2, Layers, 
     ArrowRight, Box, Hash, ChevronRight, ChevronDown, 
-    Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download, TrendingUp, ClipboardCheck, AlertTriangle
+    Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download, TrendingUp, ClipboardCheck, AlertTriangle, ArrowLeft
 } from 'lucide-react';
 import ChatterWidget from '../components/ChatterWidget';
 import StockValuationView from '../components/StockValuationView';
@@ -41,13 +41,14 @@ export default function StockDashboard() {
     
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
-    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation'
+    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation' | 'product-detail'
     const [inventoryFocus, setInventoryFocus] = useState('catalog'); // 'catalog' | 'stock' | 'drafts' | 'services'
     const [todoRoleFilter, setTodoRoleFilter] = useState('me'); // 'me' | 'stock' | 'atelier' | 'catalogue' | 'achats' | 'manager'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
     const [showDraftOnly, setShowDraftOnly] = useState(false);
     const [expandedProducts, setExpandedProducts] = useState({});
+    const [selectedProductId, setSelectedProductId] = useState(null);
     
     // Inline edit states
     const [addingSubLocTo, setAddingSubLocTo] = useState(null);
@@ -309,6 +310,12 @@ export default function StockDashboard() {
     const openReceptionModal = () => {
         setReceptionData({ variant: null, targetLocId: '', qty: '' });
         setReceptionSearch('');
+        setShowReceptionModal(true);
+    };
+
+    const openReceptionForVariant = (variant) => {
+        setReceptionData({ variant, targetLocId: '', qty: '' });
+        setReceptionSearch(variant?.reference || '');
         setShowReceptionModal(true);
     };
 
@@ -864,6 +871,74 @@ export default function StockDashboard() {
             .slice(0, 5);
     };
 
+    const getInternalStockForVariant = (variantId) => {
+        return quants
+            .filter(quant => quant.variant_id === variantId && locations.find(location => location.id === quant.location_id)?.usage === 'internal')
+            .reduce((sum, quant) => sum + Number(quant.quantity || 0), 0);
+    };
+
+    const getProductSummary = (product) => {
+        const variants = product?.variants || [];
+        return variants.reduce((summary, variant) => {
+            const physicalStock = getInternalStockForVariant(variant.id);
+            const reservedQuantity = Number(variant.reserved_quantity || 0);
+            const availableQuantity = Number(variant.available_quantity ?? Math.max(physicalStock - reservedQuantity, 0));
+            const threshold = Number(variant.min_threshold || 0);
+            return {
+                physicalStock: summary.physicalStock + physicalStock,
+                reserved: summary.reserved + reservedQuantity,
+                available: summary.available + availableQuantity,
+                valuation: summary.valuation + (physicalStock * Number(variant.cost_price || 0)),
+                lowStockVariants: summary.lowStockVariants + (physicalStock <= threshold ? 1 : 0),
+            };
+        }, { physicalStock: 0, reserved: 0, available: 0, valuation: 0, lowStockVariants: 0 });
+    };
+
+    const getProductLocationRows = (product) => {
+        const variantById = new Map((product?.variants || []).map(variant => [variant.id, variant]));
+        return quants
+            .filter(quant => variantById.has(quant.variant_id))
+            .map(quant => {
+                const location = locations.find(item => item.id === quant.location_id);
+                return {
+                    ...quant,
+                    variant: variantById.get(quant.variant_id),
+                    location,
+                    locationName: location ? getFullLocationName(location) : 'Emplacement inconnu',
+                };
+            })
+            .filter(row => row.location?.usage === 'internal' && Number(row.quantity || 0) !== 0)
+            .sort((a, b) => a.locationName.localeCompare(b.locationName));
+    };
+
+    const getProductMovements = (product) => {
+        const variantIds = new Set((product?.variants || []).map(variant => variant.id));
+        return transactions
+            .filter(tx => variantIds.has(tx.variant_id))
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(0, 10);
+    };
+
+    const getProductReservations = (product) => {
+        const variantIds = new Set((product?.variants || []).map(variant => variant.id));
+        const variantRefs = new Set((product?.variants || []).map(variant => variant.reference));
+        return reservations.filter(reservation => {
+            const lines = reservation.lines || reservation.items || [];
+            return lines.some(line => variantIds.has(line.variant_id) || variantRefs.has(line.variant_reference || line.reference));
+        });
+    };
+
+    const openProductDetail = (event, product) => {
+        event?.stopPropagation?.();
+        setSelectedProductId(product.id);
+        setCurrentMenu('product-detail');
+        setShowLowStockOnly(false);
+    };
+
+    const closeProductDetail = () => {
+        setCurrentMenu(inventoryFocus || 'catalog');
+    };
+
     const inventoryTitle = showDraftOnly
         ? "Brouillons catalogue"
         : inventoryFocus === 'stock'
@@ -1042,6 +1117,11 @@ export default function StockDashboard() {
     const productionLocations = locations.filter(location => location.usage === 'production');
     const inventoryPageMenus = ['catalog', 'stock', 'services', 'drafts'];
     const isInventoryPage = inventoryPageMenus.includes(currentMenu);
+    const selectedProduct = products.find(product => product.id === selectedProductId);
+    const selectedProductSummary = selectedProduct ? getProductSummary(selectedProduct) : null;
+    const selectedProductLocationRows = selectedProduct ? getProductLocationRows(selectedProduct) : [];
+    const selectedProductMovements = selectedProduct ? getProductMovements(selectedProduct) : [];
+    const selectedProductReservations = selectedProduct ? getProductReservations(selectedProduct) : [];
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
@@ -1250,7 +1330,298 @@ export default function StockDashboard() {
                     </div>
                 )}
 
-                {currentMenu === 'todo' ? (
+                {currentMenu === 'product-detail' && selectedProduct ? (
+                    <div className="flex-1 overflow-y-auto w-full bg-slate-50">
+                        <div className="max-w-7xl mx-auto p-6 space-y-6">
+                            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                                <div className="px-6 py-5 bg-slate-950 text-white flex flex-wrap items-start justify-between gap-4">
+                                    <div className="min-w-0">
+                                        <button
+                                            type="button"
+                                            onClick={closeProductDetail}
+                                            className="mb-4 inline-flex items-center gap-2 rounded-xl bg-white/10 hover:bg-white/15 px-3 py-2 text-xs font-black text-slate-200 transition-colors"
+                                        >
+                                            <ArrowLeft className="w-4 h-4" />
+                                            Retour inventaire
+                                        </button>
+                                        <div className="flex flex-wrap items-center gap-2 mb-3">
+                                            <span className="rounded-lg bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-blue-100">
+                                                {selectedProduct.product_type === 'service' ? 'Prestation' : 'Article stock'}
+                                            </span>
+                                            {isDraftProduct(selectedProduct) && (
+                                                <span className="rounded-lg bg-amber-400/20 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-100">
+                                                    Brouillon catalogue
+                                                </span>
+                                            )}
+                                        </div>
+                                        <h2 className="text-3xl font-black leading-tight truncate">{selectedProduct.name}</h2>
+                                        <p className="mt-2 text-sm font-bold text-slate-300">
+                                            {selectedProduct.reference_base} · {selectedProduct.supplier || 'Fournisseur non renseigné'} · {selectedProduct.material_type || 'Catégorie non renseignée'}
+                                        </p>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        {selectedProduct.technical_doc_url && (
+                                            <a
+                                                href={selectedProduct.technical_doc_url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm font-black inline-flex items-center gap-2"
+                                            >
+                                                <FileText className="w-4 h-4" />
+                                                Fiche technique
+                                            </a>
+                                        )}
+                                        {isManager && (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={(event) => openAddVariant(event, selectedProduct)}
+                                                    className="px-4 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white text-sm font-black inline-flex items-center gap-2 shadow-sm"
+                                                >
+                                                    <Plus className="w-4 h-4" />
+                                                    Variante
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={(event) => openEditProduct(event, selectedProduct)}
+                                                    className="px-4 py-3 rounded-xl bg-white text-slate-950 text-sm font-black inline-flex items-center gap-2 shadow-sm"
+                                                >
+                                                    <Edit3 className="w-4 h-4" />
+                                                    Modifier
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="p-6 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
+                                    <div className="space-y-4">
+                                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                            <div className="aspect-square rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center overflow-hidden">
+                                                {selectedProduct.image_url ? (
+                                                    <img src={selectedProduct.image_url} alt={selectedProduct.name} className="w-full h-full object-cover" />
+                                                ) : (
+                                                    <Image className="w-12 h-12 text-slate-300" />
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Identité catalogue</p>
+                                            <div>
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Unité</p>
+                                                <p className="font-black text-slate-900">{selectedProduct.unit || 'pce'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Gammes compatibles</p>
+                                                <p className="text-sm font-bold text-slate-600">{selectedProduct.compatible_series || 'Non renseigné'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Déclinaisons</p>
+                                                <p className="font-black text-slate-900">{selectedProduct.variants?.length || 0}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-6 min-w-0">
+                                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Stock physique</p>
+                                                <p className="mt-2 text-3xl font-black text-slate-950">{formatQty(selectedProductSummary.physicalStock)}</p>
+                                            </div>
+                                            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">Réservé</p>
+                                                <p className="mt-2 text-3xl font-black text-amber-700">{formatQty(selectedProductSummary.reserved)}</p>
+                                            </div>
+                                            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Disponible</p>
+                                                <p className="mt-2 text-3xl font-black text-emerald-700">{formatQty(selectedProductSummary.available)}</p>
+                                            </div>
+                                            <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm text-white">
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-300">Valorisation</p>
+                                                <p className="mt-2 text-3xl font-black">{selectedProductSummary.valuation.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                            <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Stock par emplacement</p>
+                                                    <h3 className="text-lg font-black text-slate-950">Où se trouve cet article ?</h3>
+                                                </div>
+                                                {stockPermissions.receive && selectedProduct.variants?.[0] && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openReceptionForVariant(selectedProduct.variants[0])}
+                                                        className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black inline-flex items-center gap-2"
+                                                    >
+                                                        <Truck className="w-4 h-4" />
+                                                        Réceptionner
+                                                    </button>
+                                                )}
+                                            </div>
+                                            {selectedProductLocationRows.length > 0 ? (
+                                                <div className="divide-y divide-slate-100">
+                                                    {selectedProductLocationRows.map(row => {
+                                                        const reservedQuantity = Number(row.variant?.reserved_quantity || 0);
+                                                        const availableQuantity = Number(row.variant?.available_quantity ?? Math.max(Number(row.quantity || 0) - reservedQuantity, 0));
+                                                        return (
+                                                            <div key={`${row.variant_id}-${row.location_id}`} className="grid grid-cols-1 md:grid-cols-[1fr_150px_130px_140px_120px] gap-3 px-5 py-4 items-center">
+                                                                <div className="min-w-0">
+                                                                    <p className="font-black text-slate-900 truncate">{row.locationName}</p>
+                                                                    <p className="text-xs font-bold text-slate-400">{row.variant?.reference || 'Référence inconnue'}</p>
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Physique</p>
+                                                                    <p className="text-lg font-black text-slate-950">{formatQty(row.quantity)}</p>
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Réservé</p>
+                                                                    <p className="text-lg font-black text-amber-600">{formatQty(reservedQuantity)}</p>
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Disponible global</p>
+                                                                    <p className="text-lg font-black text-emerald-600">{formatQty(availableQuantity)}</p>
+                                                                </div>
+                                                                <div className="flex items-center justify-end gap-2">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handlePrintBarcode(row.variant.id)}
+                                                                        className="p-2 rounded-xl border border-slate-200 text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+                                                                        title="Imprimer l'étiquette"
+                                                                    >
+                                                                        <Hash className="w-4 h-4" />
+                                                                    </button>
+                                                                    {stockPermissions.transfer && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => openTransferModal(row.variant, row.location_id)}
+                                                                            className="px-3 py-2 rounded-xl bg-slate-900 text-white text-xs font-black inline-flex items-center gap-1.5"
+                                                                        >
+                                                                            Transférer <ArrowRight className="w-3.5 h-3.5" />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            ) : (
+                                                <div className="px-5 py-8 text-center text-sm font-bold text-slate-400">
+                                                    Aucun stock physique trouvé sur les emplacements internes.
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                                <div className="px-5 py-4 border-b border-slate-100">
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Déclinaisons</p>
+                                                    <h3 className="text-lg font-black text-slate-950">Références exploitables</h3>
+                                                </div>
+                                                <div className="divide-y divide-slate-100">
+                                                    {(selectedProduct.variants || []).map(variant => {
+                                                        const stock = getInternalStockForVariant(variant.id);
+                                                        const reservedQuantity = Number(variant.reserved_quantity || 0);
+                                                        const availableQuantity = Number(variant.available_quantity ?? Math.max(stock - reservedQuantity, 0));
+                                                        return (
+                                                            <div key={variant.id} className="px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+                                                                <div>
+                                                                    <p className="font-black text-slate-900">{variant.color || 'Standard'}</p>
+                                                                    <p className="text-xs font-mono font-bold text-slate-400">{variant.reference}</p>
+                                                                    {variant.supplier_reference && <p className="text-[11px] font-bold text-slate-400">Fournisseur : {variant.supplier_reference}</p>}
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-600">Stock {formatQty(stock)}</span>
+                                                                    <span className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">Rés. {formatQty(reservedQuantity)}</span>
+                                                                    <span className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">Disp. {formatQty(availableQuantity)}</span>
+                                                                    {isManager && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(event) => openEditVariant(event, variant)}
+                                                                            className="p-2 rounded-xl border border-slate-200 text-slate-500 hover:text-blue-600 hover:bg-blue-50"
+                                                                            title="Modifier la variante"
+                                                                        >
+                                                                            <FileEdit className="w-4 h-4" />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+
+                                            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                                <div className="px-5 py-4 border-b border-slate-100">
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Réservations actives</p>
+                                                    <h3 className="text-lg font-black text-slate-950">Stock bloqué</h3>
+                                                </div>
+                                                {selectedProductReservations.length > 0 ? (
+                                                    <div className="divide-y divide-slate-100">
+                                                        {selectedProductReservations.map(reservation => (
+                                                            <div key={reservation.id || reservation.reference} className="px-5 py-4">
+                                                                <div className="flex items-center justify-between gap-3">
+                                                                    <p className="font-black text-slate-900">{reservation.reference || reservation.reservation_ref || `Réservation #${reservation.id}`}</p>
+                                                                    <span className="rounded-lg bg-amber-50 text-amber-700 border border-amber-200 px-2 py-1 text-[10px] font-black uppercase">{reservation.status || 'active'}</span>
+                                                                </div>
+                                                                <p className="mt-1 text-xs font-bold text-slate-500">{reservation.source_label || reservation.sale_reference || reservation.order_reference || 'Document lié non renseigné'}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <div className="px-5 py-8 text-center text-sm font-bold text-slate-400">
+                                                        Aucune réservation active connue pour cet article.
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                                                <div>
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Traçabilité</p>
+                                                    <h3 className="text-lg font-black text-slate-950">Derniers mouvements</h3>
+                                                </div>
+                                                <button type="button" onClick={() => setCurrentMenu('audit')} className="text-xs font-black text-blue-600 hover:text-blue-700">
+                                                    Voir tous les mouvements
+                                                </button>
+                                            </div>
+                                            {selectedProductMovements.length > 0 ? (
+                                                <div className="divide-y divide-slate-100">
+                                                    {selectedProductMovements.map(tx => {
+                                                        const isNegative = Number(tx.quantity_change || 0) < 0 || tx.movement_kind === 'workshop_debit';
+                                                        return (
+                                                            <div key={tx.id} className="grid grid-cols-1 md:grid-cols-[140px_1fr_100px] gap-3 px-5 py-4 items-center">
+                                                                <div>
+                                                                    <p className="text-xs font-black text-slate-700">{new Date(tx.created_at).toLocaleDateString('fr-FR')}</p>
+                                                                    <p className="text-[10px] font-mono text-slate-400">{new Date(tx.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
+                                                                </div>
+                                                                <div className="min-w-0">
+                                                                    <div className="flex flex-wrap items-center gap-2">
+                                                                        <span className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-600">{tx.transaction_type || tx.movement_kind || 'Mouvement'}</span>
+                                                                        <span className="truncate text-[11px] font-mono font-bold text-slate-400">{tx.reference}</span>
+                                                                    </div>
+                                                                    <p className="mt-1 text-xs font-bold text-slate-500 truncate">{tx.notes || `${tx.location_from_name || 'Origine'} -> ${tx.location_to_name || 'Destination'}`}</p>
+                                                                </div>
+                                                                <p className={`text-right text-lg font-black ${isNegative ? 'text-orange-600' : 'text-emerald-600'}`}>
+                                                                    {isNegative ? '' : '+'}{formatQty(tx.quantity_change)}
+                                                                </p>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            ) : (
+                                                <div className="px-5 py-8 text-center text-sm font-bold text-slate-400">
+                                                    Aucun mouvement enregistré pour cet article.
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ) : currentMenu === 'todo' ? (
                     <div className="flex-1 overflow-y-auto w-full relative p-6 bg-slate-50">
                         <StockTodoView
                             userRole={user?.role}
@@ -1730,6 +2101,14 @@ export default function StockDashboard() {
                                                     <td className="py-4 px-6 text-right">
                                                         <div className="flex items-center justify-end gap-3">
                                                             <span className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-black border border-blue-100">{variants.length} {variants.length > 1 ? 'déclinaisons' : 'déclinaison'}</span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => openProductDetail(e, product)}
+                                                                className="px-3 py-1.5 bg-slate-900 text-white hover:bg-slate-800 rounded-lg border border-slate-900 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
+                                                                title="Ouvrir la fiche article"
+                                                            >
+                                                                <Box className="w-3.5 h-3.5"/> Fiche
+                                                            </button>
                                                             {isManager && (
                                                                 <>
                                                                     <button 
@@ -1911,6 +2290,14 @@ export default function StockDashboard() {
                                                         <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5"><Layers className="w-3.5 h-3.5" /> {variants.length} réf.</span>
                                                     </div>
                                                 </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => openProductDetail(e, product)}
+                                                    className="w-full rounded-xl bg-slate-900 hover:bg-slate-800 text-white py-2.5 text-sm font-black inline-flex items-center justify-center gap-2"
+                                                >
+                                                    <Box className="w-4 h-4" />
+                                                    Ouvrir la fiche
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
