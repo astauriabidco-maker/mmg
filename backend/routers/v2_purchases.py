@@ -24,6 +24,8 @@ class PurchaseOrderLineInput(BaseModel):
     quantity: float
     unit_price: float
     discount_percent: float = 0.0
+    need_priority: Optional[str] = None
+    need_reason: Optional[str] = None
 
 class PurchaseOrderCreate(BaseModel):
     supplier: str
@@ -289,6 +291,23 @@ def _open_purchase_remaining_by_variant(db: Session) -> dict[int, float]:
             incoming[line.variant_id] = incoming.get(line.variant_id, 0.0) + remaining
     return incoming
 
+def _open_purchase_request_quantity_by_variant(db: Session) -> dict[int, float]:
+    lines = (
+        db.query(models.PurchaseRequestLine)
+        .join(models.PurchaseRequest, models.PurchaseRequestLine.request_id == models.PurchaseRequest.id)
+        .filter(models.PurchaseRequest.status.in_([
+            models.PurchaseRequestStatus.PENDING_APPROVAL,
+            models.PurchaseRequestStatus.APPROVED,
+        ]))
+        .all()
+    )
+    requested: dict[int, float] = {}
+    for line in lines:
+        quantity = max(float(line.quantity or 0), 0.0)
+        if quantity > 0:
+            requested[line.variant_id] = requested.get(line.variant_id, 0.0) + quantity
+    return requested
+
 def _need_priority(available_quantity: float, min_threshold: float, net_need_quantity: float) -> str:
     if net_need_quantity <= 0:
         return "COVERED"
@@ -303,6 +322,7 @@ def _need_origins(
     reserved_quantity: float,
     min_threshold: float,
     incoming_purchase_quantity: float,
+    open_request_quantity: float = 0.0,
 ) -> list[str]:
     origins = []
     if available_quantity <= 0:
@@ -313,6 +333,8 @@ def _need_origins(
         origins.append("ACTIVE_RESERVATIONS")
     if incoming_purchase_quantity > 0:
         origins.append("OPEN_PURCHASE_ORDER")
+    if open_request_quantity > 0:
+        origins.append("OPEN_PURCHASE_REQUEST")
     return origins
 
 def _need_reason(
@@ -321,6 +343,7 @@ def _need_reason(
     reserved_quantity: float,
     min_threshold: float,
     incoming_purchase_quantity: float,
+    open_request_quantity: float = 0.0,
 ) -> str:
     parts = []
     if priority == "CRITICAL":
@@ -335,15 +358,22 @@ def _need_reason(
         parts.append(f"{reserved_quantity:g} unité(s) déjà réservée(s)")
     if incoming_purchase_quantity > 0:
         parts.append(f"{incoming_purchase_quantity:g} unité(s) déjà commandée(s)")
+    if open_request_quantity > 0:
+        parts.append(f"{open_request_quantity:g} unité(s) en demande d'achat")
     if min_threshold > 0:
         parts.append(f"seuil {min_threshold:g}")
     return " · ".join(parts)
 
-def _recommend_purchase_quantity(available_quantity: float, min_threshold: float, incoming_purchase_quantity: float) -> float:
+def _recommend_purchase_quantity(
+    available_quantity: float,
+    min_threshold: float,
+    incoming_purchase_quantity: float,
+    open_request_quantity: float = 0.0,
+) -> float:
     if min_threshold <= 0:
-        return max(1.0 - available_quantity - incoming_purchase_quantity, 0.0)
+        return max(1.0 - available_quantity - incoming_purchase_quantity - open_request_quantity, 0.0)
     target_quantity = min_threshold * 2
-    return max(target_quantity - available_quantity - incoming_purchase_quantity, 0.0)
+    return max(target_quantity - available_quantity - incoming_purchase_quantity - open_request_quantity, 0.0)
 
 @router.get("/ai-recommendations")
 def get_ai_recommendations(db: Session = Depends(get_db)):
@@ -375,6 +405,7 @@ def get_procurement_needs(
 ):
     suppliers = _supplier_map(db)
     incoming_by_variant = _open_purchase_remaining_by_variant(db)
+    open_requests_by_variant = _open_purchase_request_quantity_by_variant(db)
     needs = []
 
     variants = (
@@ -397,6 +428,7 @@ def get_procurement_needs(
         reserved_quantity = active_reserved_quantity(db, variant.id)
         available_quantity = max(physical_quantity - reserved_quantity, 0.0)
         incoming_purchase_quantity = float(incoming_by_variant.get(variant.id, 0.0))
+        open_request_quantity = float(open_requests_by_variant.get(variant.id, 0.0))
 
         is_near_threshold = min_threshold > 0 and available_quantity <= min_threshold * 1.25
         if available_quantity > 0 and not is_near_threshold:
@@ -404,7 +436,7 @@ def get_procurement_needs(
         if min_threshold <= 0 and available_quantity > 0:
             continue
         gross_need_quantity = max((min_threshold * 2 if min_threshold > 0 else 1.0) - available_quantity, 0.0)
-        net_need_quantity = max(gross_need_quantity - incoming_purchase_quantity, 0.0)
+        net_need_quantity = max(gross_need_quantity - incoming_purchase_quantity - open_request_quantity, 0.0)
         if net_need_quantity <= 0 and not include_covered:
             continue
 
@@ -414,7 +446,12 @@ def get_procurement_needs(
         is_supplier_blocked = supplier_status == "BLOCKED" or bool(supplier and not supplier.is_active)
         is_orderable = bool(supplier_name) and supplier is not None and not is_supplier_blocked and net_need_quantity > 0
         priority = _need_priority(available_quantity, min_threshold, net_need_quantity)
-        suggested_quantity = _recommend_purchase_quantity(available_quantity, min_threshold, incoming_purchase_quantity)
+        suggested_quantity = _recommend_purchase_quantity(
+            available_quantity,
+            min_threshold,
+            incoming_purchase_quantity,
+            open_request_quantity,
+        )
 
         if not supplier_name:
             blocked_reason = "Aucun fournisseur renseigné sur l'article."
@@ -443,12 +480,26 @@ def get_procurement_needs(
             "available_quantity": available_quantity,
             "min_threshold": min_threshold,
             "incoming_purchase_quantity": incoming_purchase_quantity,
+            "open_purchase_request_quantity": open_request_quantity,
             "gross_need_quantity": gross_need_quantity,
             "net_need_quantity": net_need_quantity,
             "suggested_quantity": suggested_quantity,
             "priority": priority,
-            "origins": _need_origins(available_quantity, reserved_quantity, min_threshold, incoming_purchase_quantity),
-            "reason": _need_reason(priority, available_quantity, reserved_quantity, min_threshold, incoming_purchase_quantity),
+            "origins": _need_origins(
+                available_quantity,
+                reserved_quantity,
+                min_threshold,
+                incoming_purchase_quantity,
+                open_request_quantity,
+            ),
+            "reason": _need_reason(
+                priority,
+                available_quantity,
+                reserved_quantity,
+                min_threshold,
+                incoming_purchase_quantity,
+                open_request_quantity,
+            ),
             "is_orderable": is_orderable,
             "blocked_reason": blocked_reason,
             "recommended_action": (
@@ -485,6 +536,7 @@ def get_procurement_needs(
             "to_plan_count": 0,
             "covered_count": 0,
             "incoming_purchase_quantity": 0.0,
+            "open_purchase_request_quantity": 0.0,
             "suggested_quantity": 0.0,
             "suggested_lines": [],
         })
@@ -498,6 +550,7 @@ def get_procurement_needs(
         else:
             group["covered_count"] += 1
         group["incoming_purchase_quantity"] += need["incoming_purchase_quantity"]
+        group["open_purchase_request_quantity"] += need["open_purchase_request_quantity"]
         group["suggested_quantity"] += need["suggested_quantity"]
         if not need["is_orderable"]:
             group["is_orderable"] = False
@@ -508,6 +561,7 @@ def get_procurement_needs(
             "product_name": need["product_name"],
             "suggested_quantity": need["suggested_quantity"],
             "incoming_purchase_quantity": need["incoming_purchase_quantity"],
+            "open_purchase_request_quantity": need["open_purchase_request_quantity"],
             "net_need_quantity": need["net_need_quantity"],
             "priority": need["priority"],
             "origins": need["origins"],
@@ -524,6 +578,7 @@ def get_procurement_needs(
             "suppliers_count": len(groups_by_supplier),
             "suggested_quantity": sum(float(need["suggested_quantity"] or 0) for need in needs),
             "incoming_purchase_quantity": sum(float(need["incoming_purchase_quantity"] or 0) for need in needs),
+            "open_purchase_request_quantity": sum(float(need["open_purchase_request_quantity"] or 0) for need in needs),
         },
         "needs": needs,
         "groups": list(groups_by_supplier.values()),
@@ -578,6 +633,37 @@ def create_purchase_request(
     if not data.lines:
         raise HTTPException(status_code=400, detail="La demande d'achat doit contenir au moins une ligne.")
 
+    requested_variant_ids = {
+        line.variant_id
+        for line in data.lines
+        if line.variant_id and float(line.quantity or 0) > 0
+    }
+    if requested_variant_ids:
+        duplicate_lines = (
+            db.query(models.PurchaseRequestLine)
+            .join(models.PurchaseRequest, models.PurchaseRequestLine.request_id == models.PurchaseRequest.id)
+            .filter(
+                models.PurchaseRequest.status.in_([
+                    models.PurchaseRequestStatus.PENDING_APPROVAL,
+                    models.PurchaseRequestStatus.APPROVED,
+                ]),
+                models.PurchaseRequestLine.variant_id.in_(requested_variant_ids),
+            )
+            .all()
+        )
+        if duplicate_lines:
+            refs = []
+            for duplicate in duplicate_lines[:8]:
+                refs.append(
+                    duplicate.variant.reference
+                    if duplicate.variant
+                    else f"variante #{duplicate.variant_id}"
+                )
+            raise HTTPException(
+                status_code=409,
+                detail="Demande d'achat déjà ouverte pour: " + ", ".join(refs),
+            )
+
     total = _purchase_payload_total(data)
     request = models.PurchaseRequest(
         reference=_purchase_request_reference(db),
@@ -604,6 +690,8 @@ def create_purchase_request(
             quantity=quantity,
             unit_price=max(float(line.unit_price or 0), 0),
             discount_percent=max(0, min(float(line.discount_percent or 0), 100)),
+            need_priority=line.need_priority,
+            need_reason=line.need_reason,
         ))
         created_lines += 1
 

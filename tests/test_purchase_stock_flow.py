@@ -935,3 +935,77 @@ def test_purchase_request_rejection_requires_reason(purchase_test_client):
     assert reject_response.status_code == 200, reject_response.text
     assert reject_response.json()["status"] == "REJECTED"
     assert reject_response.json()["rejection_reason"] == "Prix à renégocier"
+
+
+def test_purchase_request_keeps_procurement_need_context(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "need-context-requester")
+
+    with TestingSessionLocal() as db:
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="REQ-NEED-CONTEXT",
+            supplier="CORTIZO",
+            physical_quantity=0,
+            min_threshold=5,
+        )
+
+    needs_response = client.get("/v2/purchases/needs", headers=headers)
+    assert needs_response.status_code == 200, needs_response.text
+    [need] = [item for item in needs_response.json()["needs"] if item["variant_id"] == variant_id]
+    assert need["priority"] == "CRITICAL"
+    assert need["net_need_quantity"] == 10.0
+
+    create_response = client.post(
+        "/v2/purchases/requests",
+        headers=headers,
+        json={
+            "supplier": "CORTIZO",
+            "notes": "Besoin automatique depuis seuil stock",
+            "lines": [{
+                "variant_id": variant_id,
+                "quantity": need["suggested_quantity"],
+                "unit_price": 12,
+                "need_priority": need["priority"],
+                "need_reason": need["reason"],
+            }],
+        },
+    )
+
+    assert create_response.status_code == 200, create_response.text
+    request_payload = create_response.json()
+    assert request_payload["lines"][0]["need_priority"] == "CRITICAL"
+    assert "Disponible nul" in request_payload["lines"][0]["need_reason"]
+
+    updated_needs_response = client.get("/v2/purchases/needs", headers=headers)
+    assert updated_needs_response.status_code == 200, updated_needs_response.text
+    [updated_need] = [item for item in updated_needs_response.json()["needs"] if item["variant_id"] == variant_id]
+    assert updated_need["open_purchase_request_quantity"] == 10.0
+    assert updated_need["net_need_quantity"] == 0.0
+    assert updated_need["priority"] == "COVERED"
+    assert "OPEN_PURCHASE_REQUEST" in updated_need["origins"]
+
+
+def test_purchase_request_refuses_duplicate_open_need_line(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "need-duplicate-requester")
+
+    with TestingSessionLocal() as db:
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="REQ-DUPLICATE-NEED",
+            supplier="CORTIZO",
+            physical_quantity=0,
+            min_threshold=5,
+        )
+
+    payload = {
+        "supplier": "CORTIZO",
+        "lines": [{"variant_id": variant_id, "quantity": 4, "unit_price": 10}],
+    }
+    first_response = client.post("/v2/purchases/requests", headers=headers, json=payload)
+    assert first_response.status_code == 200, first_response.text
+
+    duplicate_response = client.post("/v2/purchases/requests", headers=headers, json=payload)
+    assert duplicate_response.status_code == 409
+    assert "REQ-DUPLICATE-NEED" in duplicate_response.json()["detail"]

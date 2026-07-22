@@ -93,6 +93,7 @@ const normalizePurchaseNeeds = (payload, variants, suppliers) => {
             reserved_stock: Number(need.reserved_stock ?? need.reserved_quantity ?? 0),
             min_threshold: Number(need.min_threshold ?? need.threshold ?? variant?.min_threshold ?? 0),
             incoming_purchase_quantity: Number(need.incoming_purchase_quantity ?? 0),
+            open_purchase_request_quantity: Number(need.open_purchase_request_quantity ?? 0),
             net_need_quantity: Number(need.net_need_quantity ?? suggestedQuantity),
             suggested_quantity: suggestedQuantity,
             priority,
@@ -303,16 +304,18 @@ export default function PurchasesDashboard() {
 
     const preparePOFromNeeds = (needs, supplierName = '') => {
         const targetSupplier = supplierName && supplierName !== UNKNOWN_SUPPLIER ? supplierName : (needs[0]?.supplier || '');
-        const nextMode = canCreatePurchaseOrder ? 'order' : 'request';
+        const nextMode = canCreatePurchaseRequest ? 'request' : canCreatePurchaseOrder ? 'order' : 'request';
         setNewPO({
             ...emptyPOForm,
             supplier: targetSupplier === UNKNOWN_SUPPLIER ? '' : targetSupplier,
-            notes: `${nextMode === 'order' ? 'Commande' : 'Demande'} préparée depuis les besoins achats intelligents (${needs.length} ligne(s)).`,
+            notes: `${nextMode === 'order' ? 'Commande' : 'Demande'} préparée depuis les besoins achats réels (${needs.length} ligne(s)) : seuil bas, rupture, réservation ou commande client.`,
             lines: needs.map(need => ({
                 variant_id: need.variant_id,
                 quantity: need.suggested_quantity,
                 unit_price: need.unit_price || 0,
                 discount_percent: 0,
+                need_priority: need.priority,
+                need_reason: `${priorityLabel(need.priority)} · ${need.reason || 'Besoin achat calculé.'}`,
             })),
         });
         setCreateMode(nextMode);
@@ -358,6 +361,8 @@ export default function PurchasesDashboard() {
                 quantity: parseFloat(l.quantity),
                 unit_price: parseFloat(l.unit_price),
                 discount_percent: Math.max(0, Math.min(parseFloat(l.discount_percent || 0), 100)),
+                need_priority: l.need_priority || null,
+                need_reason: l.need_reason || null,
             }));
             const endpoint = createMode === 'request' ? '/v2/purchases/requests' : '/v2/purchases/';
             await api.post(endpoint, {
@@ -1509,8 +1514,16 @@ const PurchaseRequestsView = ({ requests, canApprove, canOrder, onApprove, onRej
                     {(request.lines || []).map(line => (
                         <div key={line.id} className="grid grid-cols-[1fr_80px_100px] gap-3 items-center rounded-xl bg-slate-50 border border-slate-100 p-3">
                             <div>
+                                {line.need_priority && (
+                                    <span className={`inline-flex mb-1 text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest ${priorityTone(line.need_priority).badge}`}>
+                                        {priorityLabel(line.need_priority)}
+                                    </span>
+                                )}
                                 <p className="font-black text-slate-900">{line.product_name}</p>
                                 <p className="text-[10px] font-mono font-black text-slate-400 uppercase">{line.variant_ref}</p>
+                                {line.need_reason && (
+                                    <p className="mt-1 text-xs font-bold text-slate-500">{line.need_reason}</p>
+                                )}
                             </div>
                             <div className="text-center">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Qté</p>
@@ -1691,6 +1704,11 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
                                                             <p className="font-black text-slate-900">{need.product_name}</p>
                                                             <p className="text-[10px] font-mono font-black text-slate-400 uppercase">{need.reference}</p>
                                                             <p className="mt-1 text-xs font-bold text-slate-500">{need.reason}</p>
+                                                            {need.open_purchase_request_quantity > 0 && (
+                                                                <p className="mt-1 text-xs font-black text-blue-600">
+                                                                    {need.open_purchase_request_quantity.toLocaleString('fr-FR')} déjà en demande d'achat
+                                                                </p>
+                                                            )}
                                                         </div>
                                                         <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-center">
                                                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Disponible</p>
