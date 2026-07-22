@@ -41,7 +41,7 @@ export default function StockDashboard() {
     
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
-    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation' | 'product-detail'
+    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation' | 'product-detail' | 'location-detail'
     const [inventoryFocus, setInventoryFocus] = useState('catalog'); // 'catalog' | 'stock' | 'drafts' | 'services'
     const [todoRoleFilter, setTodoRoleFilter] = useState('me'); // 'me' | 'stock' | 'atelier' | 'catalogue' | 'achats' | 'manager'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
@@ -49,6 +49,7 @@ export default function StockDashboard() {
     const [showDraftOnly, setShowDraftOnly] = useState(false);
     const [expandedProducts, setExpandedProducts] = useState({});
     const [selectedProductId, setSelectedProductId] = useState(null);
+    const [selectedLocationId, setSelectedLocationId] = useState(null);
     
     // Inline edit states
     const [addingSubLocTo, setAddingSubLocTo] = useState(null);
@@ -313,9 +314,15 @@ export default function StockDashboard() {
         setShowReceptionModal(true);
     };
 
-    const openReceptionForVariant = (variant) => {
-        setReceptionData({ variant, targetLocId: '', qty: '' });
+    const openReceptionForVariant = (variant, targetLocId = '') => {
+        setReceptionData({ variant, targetLocId, qty: '' });
         setReceptionSearch(variant?.reference || '');
+        setShowReceptionModal(true);
+    };
+
+    const openReceptionForLocation = (location) => {
+        setReceptionData({ variant: null, targetLocId: location?.id ? String(location.id) : '', qty: '' });
+        setReceptionSearch('');
         setShowReceptionModal(true);
     };
 
@@ -784,11 +791,19 @@ export default function StockDashboard() {
                             </p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setActiveLocationId(parentLoc.id);
+	                    <div className="flex items-center gap-2 shrink-0">
+	                        <button
+	                            type="button"
+	                            onClick={(event) => openLocationDetail(event, parentLoc)}
+	                            className="px-3 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 text-xs font-black inline-flex items-center gap-1"
+	                        >
+	                            <MapPin className="w-3.5 h-3.5" />
+	                            Fiche
+	                        </button>
+	                        <button
+	                            type="button"
+	                            onClick={() => {
+	                                setActiveLocationId(parentLoc.id);
                                 setInventoryFocus('stock');
                                 setShowDraftOnly(false);
                                 setSearchTerm('');
@@ -833,6 +848,11 @@ export default function StockDashboard() {
         if (!loc.parent_id) return loc.name;
         const parent = locations.find(l => l.id === loc.parent_id);
         return parent ? `${getFullLocationName(parent)} > ${loc.name}` : loc.name;
+    };
+
+    const getLocationDescendantIds = (locationId) => {
+        const children = locations.filter(location => location.parent_id === locationId);
+        return [locationId, ...children.flatMap(child => getLocationDescendantIds(child.id))];
     };
 
     const isDraftProduct = (product) => {
@@ -928,6 +948,55 @@ export default function StockDashboard() {
         });
     };
 
+    const getVariantContext = (variantId) => {
+        for (const product of products) {
+            const variant = (product.variants || []).find(item => item.id === variantId);
+            if (variant) return { product, variant };
+        }
+        return { product: null, variant: null };
+    };
+
+    const getLocationStockRows = (location) => {
+        if (!location) return [];
+        const locationIds = getLocationDescendantIds(location.id);
+        return quants
+            .filter(quant => locationIds.includes(quant.location_id) && Number(quant.quantity || 0) !== 0)
+            .map(quant => {
+                const { product, variant } = getVariantContext(quant.variant_id);
+                const quantLocation = locations.find(item => item.id === quant.location_id);
+                const reservedQuantity = Number(variant?.reserved_quantity || 0);
+                const availableQuantity = Number(variant?.available_quantity ?? Math.max(Number(quant.quantity || 0) - reservedQuantity, 0));
+                return {
+                    ...quant,
+                    product,
+                    variant,
+                    location: quantLocation,
+                    locationName: quantLocation ? getFullLocationName(quantLocation) : 'Emplacement inconnu',
+                    reservedQuantity,
+                    availableQuantity,
+                    valuation: Number(quant.quantity || 0) * Number(variant?.cost_price || 0),
+                };
+            })
+            .sort((a, b) => `${a.locationName} ${a.product?.name || ''}`.localeCompare(`${b.locationName} ${b.product?.name || ''}`));
+    };
+
+    const getLocationMovements = (location) => {
+        if (!location) return [];
+        const locationIds = getLocationDescendantIds(location.id);
+        return transactions
+            .filter(tx => locationIds.includes(tx.location_id) || locationIds.includes(tx.location_dest_id))
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(0, 10);
+    };
+
+    const getLocationInventorySessions = (location) => {
+        if (!location) return [];
+        const locationIds = getLocationDescendantIds(location.id);
+        return inventorySessions
+            .filter(session => locationIds.includes(session.location_id) || (session.lines || []).some(line => locationIds.includes(line.location_id)))
+            .slice(0, 6);
+    };
+
     const openProductDetail = (event, product) => {
         event?.stopPropagation?.();
         setSelectedProductId(product.id);
@@ -937,6 +1006,16 @@ export default function StockDashboard() {
 
     const closeProductDetail = () => {
         setCurrentMenu(inventoryFocus || 'catalog');
+    };
+
+    const openLocationDetail = (event, location) => {
+        event?.stopPropagation?.();
+        setSelectedLocationId(location.id);
+        setCurrentMenu('location-detail');
+    };
+
+    const closeLocationDetail = () => {
+        setCurrentMenu('locations');
     };
 
     const inventoryTitle = showDraftOnly
@@ -1122,6 +1201,17 @@ export default function StockDashboard() {
     const selectedProductLocationRows = selectedProduct ? getProductLocationRows(selectedProduct) : [];
     const selectedProductMovements = selectedProduct ? getProductMovements(selectedProduct) : [];
     const selectedProductReservations = selectedProduct ? getProductReservations(selectedProduct) : [];
+    const selectedLocation = locations.find(location => location.id === selectedLocationId);
+    const selectedLocationStockRows = selectedLocation ? getLocationStockRows(selectedLocation) : [];
+    const selectedLocationMovements = selectedLocation ? getLocationMovements(selectedLocation) : [];
+    const selectedLocationInventorySessions = selectedLocation ? getLocationInventorySessions(selectedLocation) : [];
+    const selectedLocationChildren = selectedLocation ? locations.filter(location => location.parent_id === selectedLocation.id) : [];
+    const selectedLocationSummary = selectedLocationStockRows.reduce((summary, row) => ({
+        physicalStock: summary.physicalStock + Number(row.quantity || 0),
+        reserved: summary.reserved + Number(row.reservedQuantity || 0),
+        available: summary.available + Number(row.availableQuantity || 0),
+        valuation: summary.valuation + Number(row.valuation || 0),
+    }), { physicalStock: 0, reserved: 0, available: 0, valuation: 0 });
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
@@ -1330,7 +1420,295 @@ export default function StockDashboard() {
                     </div>
                 )}
 
-                {currentMenu === 'product-detail' && selectedProduct ? (
+                {currentMenu === 'location-detail' && selectedLocation ? (
+                    <div className="flex-1 overflow-y-auto w-full bg-slate-50">
+                        <div className="max-w-7xl mx-auto p-6 space-y-6">
+                            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                                <div className="px-6 py-5 bg-slate-950 text-white flex flex-wrap items-start justify-between gap-4">
+                                    <div className="min-w-0">
+                                        <button
+                                            type="button"
+                                            onClick={closeLocationDetail}
+                                            className="mb-4 inline-flex items-center gap-2 rounded-xl bg-white/10 hover:bg-white/15 px-3 py-2 text-xs font-black text-slate-200 transition-colors"
+                                        >
+                                            <ArrowLeft className="w-4 h-4" />
+                                            Retour zones
+                                        </button>
+                                        <div className="flex flex-wrap items-center gap-2 mb-3">
+                                            <span className="rounded-lg bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-blue-100">
+                                                {locationUsageLabels[selectedLocation.usage] || selectedLocation.usage}
+                                            </span>
+                                            {selectedLocationChildren.length > 0 && (
+                                                <span className="rounded-lg bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-200">
+                                                    {selectedLocationChildren.length} sous-zone(s)
+                                                </span>
+                                            )}
+                                        </div>
+                                        <h2 className="text-3xl font-black leading-tight truncate">{selectedLocation.name}</h2>
+                                        <p className="mt-2 text-sm font-bold text-slate-300">{getFullLocationName(selectedLocation)}</p>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setActiveLocationId(selectedLocation.id);
+                                                setInventoryFocus('stock');
+                                                setShowDraftOnly(false);
+                                                setSearchTerm('');
+                                                setCurrentMenu('stock');
+                                            }}
+                                            className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white text-sm font-black inline-flex items-center gap-2"
+                                        >
+                                            <Box className="w-4 h-4" />
+                                            Voir stock réel
+                                        </button>
+                                        {stockPermissions.receive && selectedLocation.usage === 'internal' && (
+                                            <button
+                                                type="button"
+                                                onClick={() => openReceptionForLocation(selectedLocation)}
+                                                className="px-4 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white text-sm font-black inline-flex items-center gap-2 shadow-sm"
+                                            >
+                                                <Truck className="w-4 h-4" />
+                                                Réceptionner ici
+                                            </button>
+                                        )}
+                                        {isAdmin && (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setLocationForm({ name: '', usage: selectedLocation.usage, parent_id: String(selectedLocation.id) })}
+                                                    className="px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black inline-flex items-center gap-2 shadow-sm"
+                                                >
+                                                    <Plus className="w-4 h-4" />
+                                                    Sous-zone
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => startEditLocation(selectedLocation)}
+                                                    className="px-4 py-3 rounded-xl bg-white text-slate-950 text-sm font-black inline-flex items-center gap-2 shadow-sm"
+                                                >
+                                                    <Edit3 className="w-4 h-4" />
+                                                    Renommer
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="p-6 space-y-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Stock physique</p>
+                                            <p className="mt-2 text-3xl font-black text-slate-950">{formatQty(selectedLocationSummary.physicalStock)}</p>
+                                        </div>
+                                        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+                                            <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">Réservé</p>
+                                            <p className="mt-2 text-3xl font-black text-amber-700">{formatQty(selectedLocationSummary.reserved)}</p>
+                                        </div>
+                                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+                                            <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Disponible</p>
+                                            <p className="mt-2 text-3xl font-black text-emerald-700">{formatQty(selectedLocationSummary.available)}</p>
+                                        </div>
+                                        <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm text-white">
+                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-300">Valorisation</p>
+                                            <p className="mt-2 text-3xl font-black">{selectedLocationSummary.valuation.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6">
+                                        <div className="space-y-6 min-w-0">
+                                            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                                <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                                                    <div>
+                                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Contenu réel</p>
+                                                        <h3 className="text-lg font-black text-slate-950">Articles présents dans cette zone</h3>
+                                                    </div>
+                                                    <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-600">
+                                                        {selectedLocationStockRows.length} référence(s)
+                                                    </span>
+                                                </div>
+                                                {selectedLocationStockRows.length > 0 ? (
+                                                    <div className="divide-y divide-slate-100">
+                                                        {selectedLocationStockRows.map(row => (
+                                                            <div key={`${row.variant_id}-${row.location_id}`} className="grid grid-cols-1 md:grid-cols-[1fr_150px_130px_120px] gap-3 px-5 py-4 items-center">
+                                                                <div className="min-w-0">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={(event) => row.product && openProductDetail(event, row.product)}
+                                                                        className="text-left font-black text-slate-900 hover:text-blue-700 transition-colors"
+                                                                    >
+                                                                        {row.product?.name || 'Produit inconnu'}
+                                                                    </button>
+                                                                    <p className="text-xs font-mono font-bold text-slate-400">{row.variant?.reference || `Variante #${row.variant_id}`}</p>
+                                                                    <p className="text-[11px] font-bold text-slate-400">{row.locationName}</p>
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Physique</p>
+                                                                    <p className="text-lg font-black text-slate-950">{formatQty(row.quantity)}</p>
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Disponible</p>
+                                                                    <p className="text-lg font-black text-emerald-600">{formatQty(row.availableQuantity)}</p>
+                                                                </div>
+                                                                <div className="flex items-center justify-end gap-2">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => row.variant && handlePrintBarcode(row.variant.id)}
+                                                                        className="p-2 rounded-xl border border-slate-200 text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+                                                                        title="Imprimer l'étiquette"
+                                                                        disabled={!row.variant}
+                                                                    >
+                                                                        <Hash className="w-4 h-4" />
+                                                                    </button>
+                                                                    {stockPermissions.transfer && row.variant && selectedLocation.usage === 'internal' && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => openTransferModal(row.variant, row.location_id)}
+                                                                            className="px-3 py-2 rounded-xl bg-slate-900 text-white text-xs font-black inline-flex items-center gap-1.5"
+                                                                        >
+                                                                            Transférer <ArrowRight className="w-3.5 h-3.5" />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <div className="px-5 py-10 text-center">
+                                                        <MapPin className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                                                        <p className="font-black text-slate-600">Aucun article stocké ici.</p>
+                                                        <p className="text-sm font-bold text-slate-400 mt-1">Réceptionnez du stock ou transférez une référence vers cet emplacement.</p>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                                                    <div>
+                                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Mouvements récents</p>
+                                                        <h3 className="text-lg font-black text-slate-950">Entrées, sorties et transferts</h3>
+                                                    </div>
+                                                    <button type="button" onClick={() => setCurrentMenu('audit')} className="text-xs font-black text-blue-600 hover:text-blue-700">
+                                                        Audit global
+                                                    </button>
+                                                </div>
+                                                {selectedLocationMovements.length > 0 ? (
+                                                    <div className="divide-y divide-slate-100">
+                                                        {selectedLocationMovements.map(tx => {
+                                                            const isIncoming = tx.location_dest_id && getLocationDescendantIds(selectedLocation.id).includes(tx.location_dest_id);
+                                                            return (
+                                                                <div key={tx.id} className="grid grid-cols-1 md:grid-cols-[140px_1fr_90px] gap-3 px-5 py-4 items-center">
+                                                                    <div>
+                                                                        <p className="text-xs font-black text-slate-700">{new Date(tx.created_at).toLocaleDateString('fr-FR')}</p>
+                                                                        <p className="text-[10px] font-mono text-slate-400">{new Date(tx.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
+                                                                    </div>
+                                                                    <div className="min-w-0">
+                                                                        <div className="flex flex-wrap items-center gap-2">
+                                                                            <span className={`rounded-lg px-2 py-1 text-[10px] font-black uppercase ${isIncoming ? 'bg-emerald-50 text-emerald-700' : 'bg-orange-50 text-orange-700'}`}>
+                                                                                {isIncoming ? 'Entrée zone' : 'Sortie zone'}
+                                                                            </span>
+                                                                            <span className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-600">{tx.transaction_type || tx.movement_kind || 'Mouvement'}</span>
+                                                                            <span className="truncate text-[11px] font-mono font-bold text-slate-400">{tx.reference}</span>
+                                                                        </div>
+                                                                        <p className="mt-1 text-xs font-bold text-slate-500 truncate">{tx.notes || `${tx.location_from_name || 'Origine'} -> ${tx.location_to_name || 'Destination'}`}</p>
+                                                                    </div>
+                                                                    <p className={`text-right text-lg font-black ${isIncoming ? 'text-emerald-600' : 'text-orange-600'}`}>
+                                                                        {isIncoming ? '+' : '-'}{formatQty(Math.abs(Number(tx.quantity_change || 0)))}
+                                                                    </p>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                ) : (
+                                                    <div className="px-5 py-8 text-center text-sm font-bold text-slate-400">
+                                                        Aucun mouvement récent sur cette zone.
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-6">
+                                            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                                <div className="px-5 py-4 border-b border-slate-100">
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Sous-zones</p>
+                                                    <h3 className="text-lg font-black text-slate-950">Organisation interne</h3>
+                                                </div>
+                                                <div className="p-4 space-y-2 max-h-[320px] overflow-y-auto">
+                                                    {selectedLocationChildren.length > 0 ? selectedLocationChildren.map(child => (
+                                                        <button
+                                                            key={child.id}
+                                                            type="button"
+                                                            onClick={(event) => openLocationDetail(event, child)}
+                                                            className="w-full rounded-xl border border-slate-200 bg-slate-50 hover:bg-blue-50 hover:border-blue-200 p-3 text-left transition-colors"
+                                                        >
+                                                            <p className="font-black text-slate-900">{child.name}</p>
+                                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">{locationUsageLabels[child.usage] || child.usage}</p>
+                                                        </button>
+                                                    )) : (
+                                                        <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm font-bold text-slate-400 text-center">Aucune sous-zone.</p>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                                <div className="px-5 py-4 border-b border-slate-100">
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Inventaires liés</p>
+                                                    <h3 className="text-lg font-black text-slate-950">Contrôles physiques</h3>
+                                                </div>
+                                                <div className="p-4 space-y-2">
+                                                    {selectedLocationInventorySessions.length > 0 ? selectedLocationInventorySessions.map(session => (
+                                                        <button
+                                                            key={session.id}
+                                                            type="button"
+                                                            onClick={() => setCurrentMenu('physical-inventory')}
+                                                            className="w-full rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 p-3 text-left transition-colors"
+                                                        >
+                                                            <div className="flex items-center justify-between gap-2">
+                                                                <p className="font-black text-slate-900">{session.name || session.reference}</p>
+                                                                <span className="rounded-lg bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-500 border border-slate-200">{session.status || '-'}</span>
+                                                            </div>
+                                                            <p className="text-[11px] font-bold text-slate-400 mt-1">{session.lines?.length || 0} ligne(s)</p>
+                                                        </button>
+                                                    )) : (
+                                                        <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm font-bold text-slate-400 text-center">Aucune campagne liée.</p>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Actions utiles</p>
+                                                <div className="mt-4 grid grid-cols-1 gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setActiveLocationId(selectedLocation.id);
+                                                            setCurrentMenu('stock');
+                                                            setInventoryFocus('stock');
+                                                        }}
+                                                        className="rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 inline-flex items-center justify-center gap-2"
+                                                    >
+                                                        <Box className="w-4 h-4" />
+                                                        Voir comme filtre stock
+                                                    </button>
+                                                    {stockPermissions.countInventory && selectedLocation.usage === 'internal' && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setCurrentMenu('physical-inventory')}
+                                                            className="rounded-xl border border-blue-100 bg-blue-50 hover:bg-blue-100 px-4 py-3 text-sm font-black text-blue-700 inline-flex items-center justify-center gap-2"
+                                                        >
+                                                            <ClipboardCheck className="w-4 h-4" />
+                                                            Lancer / ouvrir inventaire
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ) : currentMenu === 'product-detail' && selectedProduct ? (
                     <div className="flex-1 overflow-y-auto w-full bg-slate-50">
                         <div className="max-w-7xl mx-auto p-6 space-y-6">
                             <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
