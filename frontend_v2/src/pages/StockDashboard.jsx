@@ -24,6 +24,7 @@ export default function StockDashboard() {
         receive: can('stock.receive'),
         transfer: can('stock.transfer'),
         adjust: can('stock.adjust'),
+        issueCustomer: can('stock.adjust'),
         manageLocations: can('stock.locations.manage'),
         qualifyCatalog: can('catalog.qualify'),
         reserveWorkshop: can('workshop.reserve_stock'),
@@ -1310,6 +1311,7 @@ export default function StockDashboard() {
         openPhysicalInventory: () => setCurrentMenu('physical-inventory'),
         openMovements: () => setCurrentMenu('audit'),
         openReception: openReceptionModal,
+        openCustomerIssue: openCustomerIssueModal,
         openPurchases: goToPurchases,
         consumeReservation: consumeWorkshopReservation,
         cancelReservation: cancelWorkshopReservation,
@@ -4141,6 +4143,90 @@ function StockTodoView({
         normal: 'border-blue-200 bg-blue-50 text-blue-700',
         ok: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     };
+    const workflowCards = [
+        {
+            id: 'receive',
+            Icon: Truck,
+            title: 'Recevoir',
+            subtitle: 'Entrée stock, réception fournisseur, rangement.',
+            badge: `${counts.purchases || 0} commande(s) à suivre`,
+            primaryLabel: 'Entrée stock',
+            onPrimary: actions.openReception,
+            canPrimary: permissions.receive,
+            secondaryLabel: 'Achats',
+            onSecondary: actions.openPurchases,
+            canSecondary: permissions.receivePurchases || permissions.requestPurchases,
+            tone: 'emerald',
+        },
+        {
+            id: 'issue',
+            Icon: ArrowRight,
+            title: 'Sortir',
+            subtitle: 'Sortie client, débit atelier ou correction documentée.',
+            badge: `${counts.reservations || 0} réservation(s) atelier`,
+            primaryLabel: 'Sortie stock',
+            onPrimary: actions.openCustomerIssue,
+            canPrimary: permissions.issueCustomer,
+            secondaryLabel: 'Débit atelier',
+            onSecondary: actions.openWorkshopDebit,
+            canSecondary: permissions.reserveWorkshop || permissions.consumeWorkshop,
+            tone: 'slate',
+        },
+        {
+            id: 'control',
+            Icon: ClipboardCheck,
+            title: 'Contrôler',
+            subtitle: 'Inventaire physique, écarts, audit des mouvements.',
+            badge: `${counts.inventory || 0} inventaire(s) ouvert(s)`,
+            primaryLabel: 'Inventaire',
+            onPrimary: actions.openPhysicalInventory,
+            canPrimary: permissions.countInventory || permissions.validateInventory,
+            secondaryLabel: 'Mouvements',
+            onSecondary: actions.openMovements,
+            canSecondary: true,
+            tone: 'blue',
+        },
+        {
+            id: 'prepare',
+            Icon: AlertTriangle,
+            title: 'Préparer',
+            subtitle: 'Ruptures futures, brouillons et demandes d’achat.',
+            badge: `${counts.lowStock || 0} risque(s) stock`,
+            primaryLabel: 'Stock à risque',
+            onPrimary: actions.openRisk,
+            canPrimary: true,
+            secondaryLabel: 'Brouillons',
+            onSecondary: actions.showDrafts,
+            canSecondary: permissions.qualifyCatalog,
+            tone: 'amber',
+        },
+    ];
+    const workflowToneClasses = {
+        emerald: {
+            frame: 'border-emerald-200 bg-emerald-50/70',
+            icon: 'bg-emerald-600 text-white',
+            primary: 'bg-emerald-600 hover:bg-emerald-500 text-white',
+            badge: 'bg-emerald-100 text-emerald-700',
+        },
+        slate: {
+            frame: 'border-slate-200 bg-white',
+            icon: 'bg-slate-900 text-white',
+            primary: 'bg-slate-900 hover:bg-slate-800 text-white',
+            badge: 'bg-slate-100 text-slate-600',
+        },
+        blue: {
+            frame: 'border-blue-200 bg-blue-50/70',
+            icon: 'bg-blue-600 text-white',
+            primary: 'bg-blue-600 hover:bg-blue-500 text-white',
+            badge: 'bg-blue-100 text-blue-700',
+        },
+        amber: {
+            frame: 'border-amber-200 bg-amber-50/70',
+            icon: 'bg-amber-500 text-white',
+            primary: 'bg-amber-500 hover:bg-amber-400 text-white',
+            badge: 'bg-amber-100 text-amber-700',
+        },
+    };
 
     return (
         <div className="w-full space-y-4">
@@ -4164,7 +4250,53 @@ function StockTodoView({
                 </div>
             </div>
 
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-3">
+                {workflowCards.map(card => {
+                    const Icon = card.Icon;
+                    const tone = workflowToneClasses[card.tone] || workflowToneClasses.slate;
+                    return (
+                        <div key={card.id} className={`rounded-2xl border p-4 shadow-sm ${tone.frame}`}>
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <span className={`w-10 h-10 rounded-xl inline-flex items-center justify-center shrink-0 ${tone.icon}`}>
+                                        <Icon className="w-5 h-5" />
+                                    </span>
+                                    <div className="min-w-0">
+                                        <h3 className="font-black text-slate-900 leading-tight">{card.title}</h3>
+                                        <p className="text-xs font-bold text-slate-500 mt-0.5 leading-snug">{card.subtitle}</p>
+                                    </div>
+                                </div>
+                                <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black ${tone.badge}`}>{card.badge}</span>
+                            </div>
+                            <div className="mt-4 flex flex-wrap gap-2">
+                                <button
+                                    onClick={card.onPrimary}
+                                    disabled={!card.canPrimary}
+                                    className={`px-3 py-2 rounded-xl text-xs font-black disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed ${tone.primary}`}
+                                >
+                                    {card.primaryLabel}
+                                </button>
+                                {card.secondaryLabel && (
+                                    <button
+                                        onClick={card.onSecondary}
+                                        disabled={!card.canSecondary}
+                                        className="px-3 py-2 rounded-xl text-xs font-black bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                    >
+                                        {card.secondaryLabel}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Filtrer par rôle</p>
+                    <span className="text-[11px] font-black text-slate-400">{visibleCards.length} priorité(s) affichée(s)</span>
+                </div>
+                <div className="flex gap-2 overflow-x-auto pb-1">
                 {roleTabs.map(tab => (
                     <button
                         key={tab.id}
@@ -4175,6 +4307,7 @@ function StockTodoView({
                         <span className={`block text-[10px] font-bold mt-0.5 ${roleFilter === tab.id ? 'text-white/60' : 'text-slate-400'}`}>{tab.helper}</span>
                     </button>
                 ))}
+                </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
