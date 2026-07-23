@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -20,11 +20,13 @@ from openpyxl import load_workbook
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from backend.database import SessionLocal
 from backend import models
+from backend.database import SessionLocal
+from backend.services.stock_service import InventoryService
 
 
 EXPECTED_HEADERS = ["Réf", "Nom de l'accessoire", "Quant", "Gamme", "iIlustration"]
+INVALID_REFERENCE_VALUES = {"/", "-", "x", "xx", "?", "nc", "n/a", "na"}
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,22 @@ def clean_text(value: Any) -> str:
     return " ".join(str(value).replace("\xa0", " ").split()).strip()
 
 
+def normalize_supplier(value: Any) -> str:
+    supplier = clean_text(value)
+    if "/" in supplier:
+        supplier = supplier.split("/", 1)[0]
+    return supplier.strip().upper()
+
+
+def normalize_header(value: Any) -> str:
+    return clean_text(value).lower().replace("é", "e").replace("è", "e").replace("'", "")
+
+
+def is_invalid_reference(reference: str) -> bool:
+    normalized = reference.strip().lower()
+    return normalized in INVALID_REFERENCE_VALUES
+
+
 def parse_quantity(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -70,15 +88,70 @@ def parse_quantity(value: Any) -> float | None:
 def iter_supplier_blocks(rows: list[tuple[Any, ...]], max_column: int) -> list[tuple[int, str]]:
     blocks: list[tuple[int, str]] = []
     current_supplier = ""
+    expected_headers = [normalize_header(header) for header in EXPECTED_HEADERS]
     for start in range(0, max_column, 6):
-        supplier = clean_text(rows[0][start] if start < len(rows[0]) else None)
+        supplier = normalize_supplier(rows[0][start] if start < len(rows[0]) else None)
         if supplier:
             current_supplier = supplier
 
-        headers = [clean_text(value) for value in rows[2][start : start + 5]]
-        if current_supplier and headers[:5] == EXPECTED_HEADERS:
+        headers = [normalize_header(value) for value in rows[2][start : start + 5]]
+        if current_supplier and headers[:5] == expected_headers:
             blocks.append((start, current_supplier))
     return blocks
+
+
+def duplicate_issue_analysis(records: list[StockRecord]) -> list[StockIssue]:
+    issues: list[StockIssue] = []
+    groups: dict[tuple[str, str], list[StockRecord]] = defaultdict(list)
+    for record in records:
+        groups[(record.supplier, record.reference)].append(record)
+
+    for (supplier, reference), group in sorted(groups.items()):
+        if len(group) <= 1:
+            continue
+
+        names = {record.designation.strip().lower() for record in group if record.designation}
+        quantities = {float(record.quantity or 0) for record in group}
+        rows = ", ".join(str(record.row) for record in group[:8])
+        suffix = "..." if len(group) > 8 else ""
+
+        if len(names) > 1:
+            issues.append(
+                StockIssue(
+                    "error",
+                    "duplicate_reference_conflict",
+                    None,
+                    supplier,
+                    reference,
+                    f"Référence présente {len(group)} fois avec désignations différentes (lignes {rows}{suffix}); "
+                    "groupe ignoré jusqu'à arbitrage manuel.",
+                )
+            )
+        elif len(quantities) > 1:
+            issues.append(
+                StockIssue(
+                    "warning",
+                    "duplicate_quantity_disagreement",
+                    None,
+                    supplier,
+                    reference,
+                    f"Référence présente {len(group)} fois avec quantités différentes (lignes {rows}{suffix}); "
+                    "quantité conservée une seule fois, sans cumul automatique.",
+                )
+            )
+        else:
+            issues.append(
+                StockIssue(
+                    "warning",
+                    "duplicate_supplier_reference",
+                    None,
+                    supplier,
+                    reference,
+                    f"Référence présente {len(group)} fois; gammes fusionnées, quantité non cumulée.",
+                )
+            )
+
+    return issues
 
 
 def parse_workbook(path: Path) -> tuple[list[StockRecord], list[StockIssue]]:
@@ -131,6 +204,18 @@ def parse_workbook(path: Path) -> tuple[list[StockRecord], list[StockIssue]]:
                     )
                 )
                 continue
+            if is_invalid_reference(reference):
+                issues.append(
+                    StockIssue(
+                        "error",
+                        "invalid_reference",
+                        row_number,
+                        supplier,
+                        reference,
+                        "Ligne ignorée: référence non exploitable.",
+                    )
+                )
+                continue
             if not name:
                 issues.append(
                     StockIssue(
@@ -167,39 +252,40 @@ def parse_workbook(path: Path) -> tuple[list[StockRecord], list[StockIssue]]:
                 )
             )
 
-    duplicate_counts = Counter((record.supplier, record.reference) for record in records)
-    for (supplier, reference), count in duplicate_counts.items():
-        if count > 1:
-            issues.append(
-                StockIssue(
-                    "warning",
-                    "duplicate_supplier_reference",
-                    None,
-                    supplier,
-                    reference,
-                    f"Référence présente {count} fois pour ce fournisseur; les quantités seront cumulées.",
-                )
-            )
+    issues.extend(duplicate_issue_analysis(records))
 
     return records, issues
 
 
 def consolidate_records(records: list[StockRecord]) -> list[StockRecord]:
+    conflict_keys = {
+        (issue.supplier, issue.reference)
+        for issue in duplicate_issue_analysis(records)
+        if issue.code == "duplicate_reference_conflict"
+    }
     consolidated: dict[tuple[str, str], StockRecord] = {}
     for record in records:
         key = (record.supplier, record.reference)
+        if key in conflict_keys:
+            continue
         existing = consolidated.get(key)
         if not existing:
             consolidated[key] = record
             continue
+
+        gammes = [value for value in (existing.gamme, record.gamme) if value]
+        merged_gamme = ", ".join(dict.fromkeys(part.strip() for gamme in gammes for part in gamme.split(",") if part.strip()))
+        existing_qty = float(existing.quantity or 0)
+        record_qty = float(record.quantity or 0)
+        quantity = existing_qty if existing_qty > 0 else record_qty
 
         consolidated[key] = StockRecord(
             row=existing.row,
             supplier=existing.supplier,
             reference=existing.reference,
             designation=existing.designation or record.designation,
-            quantity=(existing.quantity or 0) + (record.quantity or 0),
-            gamme=existing.gamme if record.gamme in existing.gamme else clean_text(f"{existing.gamme} {record.gamme}"),
+            quantity=quantity,
+            gamme=merged_gamme,
             unit=existing.unit,
             material_type=existing.material_type,
             product_type=existing.product_type,
@@ -223,6 +309,34 @@ def build_summary(records: list[StockRecord], issues: list[StockIssue]) -> dict[
     }
 
 
+def compare_database(records: list[StockRecord]) -> dict[str, Any]:
+    consolidated = consolidate_records(records)
+    db = SessionLocal()
+    try:
+        planned_refs = {f"{record.supplier}:{record.reference}" for record in consolidated}
+        existing_products = {
+            product.reference_base
+            for product in db.query(models.Product.reference_base).all()
+            if product.reference_base
+        }
+        existing_variants = {
+            variant.reference
+            for variant in db.query(models.ProductVariant.reference).all()
+            if variant.reference
+        }
+        existing_refs = existing_products | existing_variants
+        matching_refs = sorted(planned_refs & existing_refs)
+        return {
+            "planned_records": len(planned_refs),
+            "existing_matches": len(matching_refs),
+            "new_references": len(planned_refs - existing_refs),
+            "existing_not_in_file": len(existing_refs - planned_refs),
+            "matching_reference_sample": matching_refs[:25],
+        }
+    finally:
+        db.close()
+
+
 def get_or_create_location(db, name: str) -> models.StockLocation:
     location = db.query(models.StockLocation).filter_by(name=name, usage="internal").first()
     if location:
@@ -234,7 +348,7 @@ def get_or_create_location(db, name: str) -> models.StockLocation:
     return location
 
 
-def import_records(records: list[StockRecord], location_name: str, dry_run: bool) -> dict[str, int]:
+def import_records(records: list[StockRecord], location_name: str, dry_run: bool, source_document: str = "import_real_stock") -> dict[str, int]:
     consolidated = consolidate_records(records)
     stats = {
         "created_products": 0,
@@ -244,6 +358,7 @@ def import_records(records: list[StockRecord], location_name: str, dry_run: bool
         "created_quants": 0,
         "updated_quants": 0,
         "created_moves": 0,
+        "skipped_conflicting_records": len(records) - len(consolidated),
     }
 
     if dry_run:
@@ -252,6 +367,7 @@ def import_records(records: list[StockRecord], location_name: str, dry_run: bool
     db = SessionLocal()
     try:
         location = get_or_create_location(db, location_name)
+        inventory_location = InventoryService.get_or_create_location(db, "Virtual/Inventory", "inventory")
         now_ref = datetime.utcnow().strftime("%Y%m%d%H%M%S")
 
         for record in consolidated:
@@ -287,7 +403,7 @@ def import_records(records: list[StockRecord], location_name: str, dry_run: bool
                     product_id=product.id,
                     reference=variant_reference,
                     supplier_reference=record.reference,
-                    quantity_in_stock=record.quantity or 0,
+                    quantity_in_stock=0,
                     min_threshold=0,
                     location=location_name,
                 )
@@ -297,31 +413,36 @@ def import_records(records: list[StockRecord], location_name: str, dry_run: bool
             else:
                 variant.product_id = product.id
                 variant.supplier_reference = record.reference
-                variant.quantity_in_stock = record.quantity or 0
                 variant.location = location_name
                 stats["updated_variants"] += 1
 
             quant = db.query(models.StockQuant).filter_by(variant_id=variant.id, location_id=location.id).first()
-            previous_qty = quant.quantity if quant else 0
-            if not quant:
-                quant = models.StockQuant(variant_id=variant.id, location_id=location.id, quantity=record.quantity or 0)
-                db.add(quant)
-                stats["created_quants"] += 1
-            else:
-                quant.quantity = record.quantity or 0
+            previous_qty = float(quant.quantity if quant else 0)
+            target_qty = float(record.quantity or 0)
+            if quant:
                 stats["updated_quants"] += 1
+            else:
+                InventoryService.get_or_create_quant(db, variant.id, location.id)
+                stats["created_quants"] += 1
 
-            if previous_qty != (record.quantity or 0):
-                db.add(
-                    models.StockMove(
-                        reference=f"INIT-STOCK-{now_ref}",
-                        variant_id=variant.id,
-                        location_dest_id=location.id,
-                        quantity=(record.quantity or 0) - previous_qty,
-                        state="done",
-                        notes=f"Import stock réel fournisseur {record.supplier}",
-                        author="Import stock réel",
-                    )
+            delta = target_qty - previous_qty
+            if abs(delta) > 1e-9:
+                source_location_id = inventory_location.id if delta > 0 else location.id
+                dest_location_id = location.id if delta > 0 else inventory_location.id
+                InventoryService.move_stock(
+                    db,
+                    variant_id=variant.id,
+                    quantity=abs(delta),
+                    source_location_id=source_location_id,
+                    dest_location_id=dest_location_id,
+                    reference=f"INIT-STOCK-{now_ref}",
+                    notes=f"Import stock réel fournisseur {record.supplier}",
+                    author="Import stock réel",
+                    source_screen="scripts/import_real_stock.py",
+                    document_type="stock_import",
+                    document_reference=source_document,
+                    business_reason="Initialisation stock réel validée",
+                    allow_negative_source=True,
                 )
                 stats["created_moves"] += 1
 
@@ -334,9 +455,16 @@ def import_records(records: list[StockRecord], location_name: str, dry_run: bool
         db.close()
 
 
-def write_json(path: Path, records: list[StockRecord], issues: list[StockIssue], summary: dict[str, Any]) -> None:
+def write_json(
+    path: Path,
+    records: list[StockRecord],
+    issues: list[StockIssue],
+    summary: dict[str, Any],
+    db_comparison: dict[str, Any] | None = None,
+) -> None:
     payload = {
         "summary": summary,
+        "db_comparison": db_comparison,
         "issues": [asdict(issue) for issue in issues],
         "records": [asdict(record) for record in consolidate_records(records)],
     }
@@ -349,6 +477,7 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="Importe réellement en base. Sans cette option: prévisualisation.")
     parser.add_argument("--location", default="WH/Stock", help="Emplacement interne cible pour les quantités.")
     parser.add_argument("--json-out", type=Path, help="Écrit la prévisualisation complète en JSON.")
+    parser.add_argument("--compare-db", action="store_true", help="Compare les références du fichier avec la base active.")
     parser.add_argument("--fail-on-errors", action="store_true", help="Retourne 1 si des erreurs bloquantes sont détectées.")
     parser.add_argument("--allow-errors", action="store_true", help="Autorise --apply malgré des erreurs bloquantes ignorées.")
     args = parser.parse_args()
@@ -359,10 +488,14 @@ def main() -> int:
 
     records, issues = parse_workbook(args.file)
     summary = build_summary(records, issues)
+    db_comparison = compare_database(records) if args.compare_db else None
     blocking_errors = [issue for issue in issues if issue.severity == "error"]
 
     print("# Prévisualisation import stock réel")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if db_comparison:
+        print("# Comparaison base active")
+        print(json.dumps(db_comparison, ensure_ascii=False, indent=2))
 
     for issue in issues[:30]:
         location = f"ligne {issue.row}" if issue.row else "global"
@@ -371,7 +504,7 @@ def main() -> int:
         print(f"INFO: {len(issues) - 30} autres alertes non affichées. Utiliser --json-out pour le détail.")
 
     if args.json_out:
-        write_json(args.json_out, records, issues, summary)
+        write_json(args.json_out, records, issues, summary, db_comparison)
         print(f"JSON: {args.json_out}")
 
     if args.fail_on_errors and blocking_errors:
@@ -381,7 +514,7 @@ def main() -> int:
         print("FAIL: erreurs bloquantes détectées. Corriger le fichier ou relancer avec --allow-errors.", file=sys.stderr)
         return 1
 
-    stats = import_records(records, args.location, dry_run=not args.apply)
+    stats = import_records(records, args.location, dry_run=not args.apply, source_document=args.file.name)
     if args.apply:
         print("# Import appliqué")
     else:

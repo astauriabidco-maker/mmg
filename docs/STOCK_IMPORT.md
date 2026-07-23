@@ -8,12 +8,18 @@ Format reconnu :
 - ligne 3 : bloc répété `Réf`, `Nom de l'accessoire`, `Quant`, `Gamme`, `iIlustration` ;
 - lignes suivantes : articles.
 
-Le script consolide les doublons par couple `fournisseur + référence`.
+Le script consolide prudemment les doublons par couple `fournisseur + référence` :
+
+- même référence + même désignation : une seule fiche est conservée, les gammes sont fusionnées, la quantité n'est pas cumulée ;
+- même référence + quantité différente : alerte de contrôle, la quantité est conservée une seule fois ;
+- même référence + désignation différente : conflit bloquant, la référence est ignorée jusqu'à arbitrage manuel ;
+- référence vide, `/`, `x`, etc. : ligne ignorée.
 
 ## Prévisualiser sans écrire
 
 ```bash
 python3 scripts/import_real_stock.py "/chemin/tableau à envoyer.xlsx" \
+  --compare-db \
   --json-out ./stock-preview.json
 ```
 
@@ -24,6 +30,7 @@ La prévisualisation remonte :
 - quantités vides ou invalides ;
 - désignations vides ;
 - nombre d'articles importables.
+- comparaison optionnelle avec la base active (`--compare-db`) : références déjà présentes, nouvelles références, échantillon des correspondances.
 
 ## Importer en base
 
@@ -44,6 +51,8 @@ L'import crée ou met à jour :
 - `product_variants` avec `reference = fournisseur:référence` et `supplier_reference = référence` ;
 - `stock_quants` sur l'emplacement choisi ;
 - `stock_moves` d'initialisation quand la quantité change.
+
+Les quantités passent par `InventoryService` et créent des mouvements entre `Virtual/Inventory` et l'emplacement cible. Le script ne modifie pas directement le stock sans trace.
 
 Valeurs par défaut :
 
