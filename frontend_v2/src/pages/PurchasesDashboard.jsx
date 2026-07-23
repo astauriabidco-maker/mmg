@@ -137,6 +137,7 @@ export default function PurchasesDashboard() {
     const [showReceiveModal, setShowReceiveModal] = useState(false);
     const [showSupplierInvoiceModal, setShowSupplierInvoiceModal] = useState(false);
     const [selectedSupplierInvoice, setSelectedSupplierInvoice] = useState(null);
+    const [selectedSupplierDispute, setSelectedSupplierDispute] = useState(null);
     const [supplierPaymentTarget, setSupplierPaymentTarget] = useState(null);
     const [supplierPaymentForm, setSupplierPaymentForm] = useState({ amount: '', method: 'TRANSFER', reference: '', notes: '' });
     const [showDisputeModal, setShowDisputeModal] = useState(false);
@@ -620,6 +621,17 @@ export default function PurchasesDashboard() {
         setSelectedSupplierInvoice({ invoice: fullInvoice, purchaseOrder: po });
     };
 
+    const openSupplierDisputeDetail = async (dispute, purchaseOrder = selectedPO) => {
+        if (!dispute) return;
+        let po = purchaseOrder;
+        if ((!po || po.id !== dispute.purchase_order_id) && dispute.purchase_order_id) {
+            po = await openPODetails(dispute.purchase_order_id);
+        }
+        const fullDispute = po?.disputes?.find(item => item.id === dispute.id) || dispute;
+        const linkedInvoice = po?.supplier_invoices?.find(invoice => invoice.id === fullDispute.supplier_invoice_id) || null;
+        setSelectedSupplierDispute({ dispute: fullDispute, purchaseOrder: po, invoice: linkedInvoice });
+    };
+
     const addLineToPO = () => {
         setNewPO({ ...newPO, lines: [...newPO.lines, { variant_id: '', quantity: 1, unit_price: 0, discount_percent: 0 }] });
     };
@@ -1061,6 +1073,7 @@ export default function PurchasesDashboard() {
                             setCurrentTab={setCurrentTab}
                             openCreatePOForSupplier={openCreatePOForSupplier}
                             openDisputeModal={openDisputeModal}
+                            openSupplierDisputeDetail={openSupplierDisputeDetail}
                             onStartDispute={handleStartDispute}
                             onResolveDispute={handleResolveDispute}
                         />
@@ -1284,10 +1297,10 @@ export default function PurchasesDashboard() {
                                             {(selectedPO.disputes || []).length > 0 ? selectedPO.disputes.map(dispute => (
                                                 <div key={dispute.id} className="rounded-xl bg-white border border-red-100 p-3">
                                                     <div className="flex items-start justify-between gap-3">
-                                                        <div>
+                                                        <button onClick={() => openSupplierDisputeDetail(dispute, selectedPO)} className="text-left">
                                                             <p className="font-black text-sm text-red-950">{dispute.title}</p>
                                                             <p className="text-[10px] font-black uppercase tracking-widest text-red-500">{dispute.reference} · {dispute.category} · {dispute.severity} · {dispute.status}</p>
-                                                        </div>
+                                                        </button>
                                                         <div className="flex flex-wrap gap-1 justify-end">
                                                             {dispute.blocks_receipt && <span className="text-[9px] font-black uppercase tracking-widest bg-red-100 text-red-700 px-2 py-1 rounded-md">bloque réception</span>}
                                                             {dispute.blocks_payment && <span className="text-[9px] font-black uppercase tracking-widest bg-orange-100 text-orange-700 px-2 py-1 rounded-md">bloque facture</span>}
@@ -1305,6 +1318,9 @@ export default function PurchasesDashboard() {
                                                     {dispute.expected_action && <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Action attendue: {dispute.expected_action}</p>}
                                                     {dispute.status !== 'RESOLVED' && (
                                                         <div className="mt-3 flex flex-wrap gap-2">
+                                                            <button onClick={() => openSupplierDisputeDetail(dispute, selectedPO)} className="text-[10px] font-black text-slate-700 bg-slate-100 px-2 py-1 rounded-lg">
+                                                                Fiche
+                                                            </button>
                                                             {dispute.status === 'OPEN' && (
                                                                 <button onClick={() => handleStartDispute(dispute.id)} className="text-[10px] font-black text-blue-700 bg-blue-100 px-2 py-1 rounded-lg">
                                                                     Prendre en charge
@@ -1780,6 +1796,19 @@ export default function PurchasesDashboard() {
                     onClose={() => setSelectedSupplierInvoice(null)}
                     onPay={openSupplierPaymentModal}
                     onOpenPO={openPODetails}
+                    onOpenDispute={openSupplierDisputeDetail}
+                />
+            )}
+
+            {selectedSupplierDispute && (
+                <SupplierDisputeDetailModal
+                    dispute={selectedSupplierDispute.dispute}
+                    purchaseOrder={selectedSupplierDispute.purchaseOrder}
+                    invoice={selectedSupplierDispute.invoice}
+                    onClose={() => setSelectedSupplierDispute(null)}
+                    onOpenPO={openPODetails}
+                    onStart={handleStartDispute}
+                    onResolve={handleResolveDispute}
                 />
             )}
 
@@ -2049,7 +2078,7 @@ export default function PurchasesDashboard() {
     );
 }
 
-const SupplierInvoiceDetailModal = ({ invoice, purchaseOrder, disputes = [], onClose, onPay, onOpenPO }) => {
+const SupplierInvoiceDetailModal = ({ invoice, purchaseOrder, disputes = [], onClose, onPay, onOpenPO, onOpenDispute }) => {
     const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
     const remainingAmount = Number(invoice.remaining_amount || 0);
     const paidAmount = Number(invoice.paid_amount || 0);
@@ -2187,7 +2216,7 @@ const SupplierInvoiceDetailModal = ({ invoice, purchaseOrder, disputes = [], onC
                                 <p className="text-[10px] font-black uppercase tracking-widest text-red-500 mb-3">Litiges liés</p>
                                 <div className="space-y-3">
                                     {disputes.map(dispute => (
-                                        <div key={dispute.id} className="rounded-xl bg-white border border-red-100 p-4">
+                                        <button key={dispute.id} onClick={() => onOpenDispute?.(dispute, purchaseOrder)} className="w-full text-left rounded-xl bg-white border border-red-100 p-4 hover:bg-red-50">
                                             <div className="flex items-start justify-between gap-3">
                                                 <div>
                                                     <p className="font-black text-red-950">{dispute.title}</p>
@@ -2196,7 +2225,7 @@ const SupplierInvoiceDetailModal = ({ invoice, purchaseOrder, disputes = [], onC
                                                 {dispute.blocks_payment && <span className="text-[9px] font-black uppercase tracking-widest bg-orange-100 text-orange-700 px-2 py-1 rounded-md">bloque paiement</span>}
                                             </div>
                                             {dispute.impact_summary && <p className="text-xs font-bold text-red-700 mt-2">{dispute.impact_summary}</p>}
-                                        </div>
+                                        </button>
                                     ))}
                                     {disputes.length === 0 && (
                                         <p className="text-sm font-bold text-red-400">Aucun litige lié à cette facture.</p>
@@ -2210,6 +2239,183 @@ const SupplierInvoiceDetailModal = ({ invoice, purchaseOrder, disputes = [], onC
                                     <p className="text-sm font-bold text-amber-900 whitespace-pre-line">{invoice.notes}</p>
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const SupplierDisputeDetailModal = ({ dispute, purchaseOrder, invoice, onClose, onOpenPO, onStart, onResolve }) => {
+    const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+    const isOpen = ['OPEN', 'IN_PROGRESS'].includes(dispute.status);
+    const quantityGap = dispute.expected_quantity != null && dispute.received_quantity != null
+        ? Number(dispute.expected_quantity || 0) - Number(dispute.received_quantity || 0)
+        : null;
+    const priceGap = dispute.expected_unit_price != null && dispute.invoiced_unit_price != null
+        ? Number(dispute.invoiced_unit_price || 0) - Number(dispute.expected_unit_price || 0)
+        : null;
+    const statusTone = dispute.status === 'RESOLVED'
+        ? 'bg-emerald-50 border-emerald-100 text-emerald-700'
+        : dispute.status === 'IN_PROGRESS'
+            ? 'bg-blue-50 border-blue-100 text-blue-700'
+            : 'bg-red-50 border-red-100 text-red-700';
+
+    return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-6xl w-full border border-slate-100 max-h-[92vh] overflow-hidden flex flex-col">
+                <div className="px-8 py-6 bg-red-950 text-white flex justify-between items-start gap-6">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-red-200 mb-2">Fiche litige fournisseur</p>
+                        <h3 className="font-black text-3xl">{dispute.title}</h3>
+                        <p className="text-sm font-bold text-red-100 mt-1">
+                            {dispute.supplier} · {dispute.reference}
+                        </p>
+                    </div>
+                    <div className="flex items-start gap-3">
+                        {purchaseOrder?.id && (
+                            <button onClick={() => onOpenPO(purchaseOrder.id)} className="px-4 py-3 rounded-xl bg-white/10 border border-white/10 text-white font-black text-sm hover:bg-white/20">
+                                Ouvrir le bon
+                            </button>
+                        )}
+                        <button onClick={onClose} className="text-red-100 hover:bg-white/10 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                    </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto bg-slate-50 p-8 space-y-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                        <div className={`rounded-2xl border p-5 ${statusTone}`}>
+                            <p className="text-[10px] font-black uppercase tracking-widest opacity-70">Statut</p>
+                            <p className="text-3xl font-black mt-2">{dispute.status}</p>
+                        </div>
+                        <div className="rounded-2xl bg-white border border-slate-200 p-5">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Catégorie</p>
+                            <p className="text-2xl font-black text-slate-950 mt-2">{dispute.category}</p>
+                        </div>
+                        <div className="rounded-2xl bg-orange-50 border border-orange-100 p-5">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-orange-500">Sévérité</p>
+                            <p className="text-2xl font-black text-orange-700 mt-2">{dispute.severity}</p>
+                        </div>
+                        <div className="rounded-2xl bg-slate-900 text-white p-5">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Action attendue</p>
+                            <p className="text-xl font-black mt-2">{dispute.expected_action || 'À définir'}</p>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-6">
+                        <div className="space-y-6">
+                            <div className="rounded-2xl bg-white border border-slate-200 p-5">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Impact opérationnel</p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className={`rounded-xl border p-4 ${dispute.blocks_receipt ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
+                                        <p className={`text-[10px] font-black uppercase tracking-widest ${dispute.blocks_receipt ? 'text-red-500' : 'text-slate-400'}`}>Réception</p>
+                                        <p className={`font-black mt-1 ${dispute.blocks_receipt ? 'text-red-700' : 'text-slate-700'}`}>
+                                            {dispute.blocks_receipt ? 'Bloquée' : 'Non bloquée'}
+                                        </p>
+                                    </div>
+                                    <div className={`rounded-xl border p-4 ${dispute.blocks_payment ? 'bg-orange-50 border-orange-100' : 'bg-slate-50 border-slate-100'}`}>
+                                        <p className={`text-[10px] font-black uppercase tracking-widest ${dispute.blocks_payment ? 'text-orange-500' : 'text-slate-400'}`}>Paiement</p>
+                                        <p className={`font-black mt-1 ${dispute.blocks_payment ? 'text-orange-700' : 'text-slate-700'}`}>
+                                            {dispute.blocks_payment ? 'Bloqué' : 'Non bloqué'}
+                                        </p>
+                                    </div>
+                                </div>
+                                {dispute.impact_summary && (
+                                    <div className="mt-4 rounded-xl bg-red-50 border border-red-100 p-4">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-red-500 mb-1">Résumé impact</p>
+                                        <p className="font-bold text-red-950">{dispute.impact_summary}</p>
+                                    </div>
+                                )}
+                                {dispute.description && (
+                                    <div className="mt-4 rounded-xl bg-slate-50 border border-slate-100 p-4">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Description</p>
+                                        <p className="font-bold text-slate-700 whitespace-pre-line">{dispute.description}</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden">
+                                <div className="px-5 py-4 border-b border-slate-100">
+                                    <h4 className="font-black text-slate-900">Écarts constatés</h4>
+                                    <p className="text-xs font-bold text-slate-500">Quantité, prix et correction attendue.</p>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-5">
+                                    <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Qté attendue</p>
+                                        <p className="font-black text-xl text-slate-900 mt-1">{dispute.expected_quantity ?? '-'}</p>
+                                    </div>
+                                    <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Qté reçue</p>
+                                        <p className="font-black text-xl text-slate-900 mt-1">{dispute.received_quantity ?? '-'}</p>
+                                    </div>
+                                    <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Prix attendu</p>
+                                        <p className="font-black text-xl text-slate-900 mt-1">{dispute.expected_unit_price != null ? formatMoney(dispute.expected_unit_price) : '-'}</p>
+                                    </div>
+                                    <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Prix facturé</p>
+                                        <p className="font-black text-xl text-slate-900 mt-1">{dispute.invoiced_unit_price != null ? formatMoney(dispute.invoiced_unit_price) : '-'}</p>
+                                    </div>
+                                </div>
+                                {(quantityGap !== null || priceGap !== null) && (
+                                    <div className="px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        {quantityGap !== null && (
+                                            <div className="rounded-xl bg-red-50 border border-red-100 p-4">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-red-500">Écart quantité</p>
+                                                <p className="font-black text-red-700 mt-1">{quantityGap.toLocaleString('fr-FR')}</p>
+                                            </div>
+                                        )}
+                                        {priceGap !== null && (
+                                            <div className="rounded-xl bg-orange-50 border border-orange-100 p-4">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-orange-500">Écart prix unitaire</p>
+                                                <p className="font-black text-orange-700 mt-1">{formatMoney(priceGap)}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="space-y-6">
+                            <div className="rounded-2xl bg-white border border-slate-200 p-5">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Documents liés</p>
+                                <div className="space-y-3 text-sm font-bold text-slate-700">
+                                    <div className="flex justify-between gap-4"><span>Bon fournisseur</span><span>{purchaseOrder?.reference || '-'}</span></div>
+                                    <div className="flex justify-between gap-4"><span>Facture</span><span>{invoice?.supplier_reference || invoice?.reference || '-'}</span></div>
+                                    <div className="flex justify-between gap-4"><span>Créé le</span><span>{dispute.created_at ? new Date(dispute.created_at).toLocaleDateString('fr-FR') : '-'}</span></div>
+                                    <div className="flex justify-between gap-4"><span>Échéance</span><span>{dispute.due_date ? new Date(dispute.due_date).toLocaleDateString('fr-FR') : 'Non définie'}</span></div>
+                                    <div className="flex justify-between gap-4"><span>Créé par</span><span>{dispute.created_by || 'Système'}</span></div>
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl bg-white border border-slate-200 p-5">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Résolution</p>
+                                {dispute.status === 'RESOLVED' ? (
+                                    <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+                                        <p className="font-black text-emerald-800">Résolu le {dispute.closed_at ? new Date(dispute.closed_at).toLocaleDateString('fr-FR') : '-'}</p>
+                                        <p className="text-xs font-bold text-emerald-700 mt-2 whitespace-pre-line">{dispute.resolution_notes || 'Aucune note de résolution.'}</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {dispute.status === 'OPEN' && (
+                                            <button onClick={async () => { await onStart?.(dispute.id); onClose(); }} className="w-full px-5 py-4 rounded-xl bg-blue-600 text-white font-black hover:bg-blue-500">
+                                                Prendre en charge
+                                            </button>
+                                        )}
+                                        <button onClick={async () => { await onResolve?.(dispute.id); onClose(); }} className="w-full px-5 py-4 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500">
+                                            Résoudre le litige
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-amber-600 mb-2">Règle métier</p>
+                                <p className="text-sm font-bold text-amber-950">
+                                    Un litige ouvert peut bloquer la réception ou le paiement. Une fois résolu, les actions associées redeviennent possibles selon le workflow du bon fournisseur.
+                                </p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2698,7 +2904,7 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
     );
 };
 
-const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurrentTab, openCreatePOForSupplier, openDisputeModal, onStartDispute, onResolveDispute }) => {
+const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurrentTab, openCreatePOForSupplier, openDisputeModal, openSupplierDisputeDetail, onStartDispute, onResolveDispute }) => {
     const [activeTab, setActiveTab] = useState('overview');
 
     const supOrders = purchases.filter(p => p.supplier === sup.name);
@@ -3262,10 +3468,12 @@ const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurr
                                         {openSupplierDisputes.slice(0, 4).map(dispute => (
                                             <div key={dispute.id} className="rounded-2xl border border-red-100 bg-red-50 p-4 flex items-start justify-between gap-4">
                                                 <div>
-                                                    <p className="font-black text-red-950">{dispute.title}</p>
-                                                    <p className="text-[10px] font-black uppercase tracking-widest text-red-500 mt-1">
-                                                        {dispute.reference} · {dispute.category} · {dispute.severity} · {dispute.status}
-                                                    </p>
+                                                    <button onClick={() => openSupplierDisputeDetail?.(dispute)} className="text-left">
+                                                        <p className="font-black text-red-950">{dispute.title}</p>
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-red-500 mt-1">
+                                                            {dispute.reference} · {dispute.category} · {dispute.severity} · {dispute.status}
+                                                        </p>
+                                                    </button>
                                                     <div className="mt-2 flex flex-wrap gap-1">
                                                         {dispute.blocks_receipt && <span className="text-[9px] font-black uppercase tracking-widest bg-white text-red-700 px-2 py-1 rounded-md">réception bloquée</span>}
                                                         {dispute.blocks_payment && <span className="text-[9px] font-black uppercase tracking-widest bg-white text-orange-700 px-2 py-1 rounded-md">facture bloquée</span>}
@@ -3274,6 +3482,9 @@ const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurr
                                                     {dispute.impact_summary && <p className="mt-2 text-xs font-bold text-red-700">{dispute.impact_summary}</p>}
                                                 </div>
                                                 <div className="flex flex-col gap-2 shrink-0">
+                                                    <button onClick={() => openSupplierDisputeDetail?.(dispute)} className="px-3 py-2 rounded-xl bg-white border border-slate-100 text-slate-700 text-xs font-black hover:bg-slate-50">
+                                                        Fiche
+                                                    </button>
                                                     {dispute.status === 'OPEN' && (
                                                         <button onClick={() => onStartDispute?.(dispute.id)} className="px-3 py-2 rounded-xl bg-white border border-blue-100 text-blue-700 text-xs font-black hover:bg-blue-50">
                                                             Traiter
