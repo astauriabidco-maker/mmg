@@ -703,6 +703,15 @@ class SupplierDispute(Base):
     category = Column(String, default="OTHER")  # DELAY, QUANTITY, QUALITY, PRICE, DOCUMENT, OTHER
     severity = Column(String, default="MEDIUM")  # LOW, MEDIUM, HIGH, BLOCKING
     status = Column(String, default="OPEN", index=True)  # OPEN, IN_PROGRESS, RESOLVED, CANCELLED
+    expected_quantity = Column(Float, nullable=True)
+    received_quantity = Column(Float, nullable=True)
+    expected_unit_price = Column(Numeric(14, 2), nullable=True)
+    invoiced_unit_price = Column(Numeric(14, 2), nullable=True)
+    expected_action = Column(String, nullable=True)  # REDELIVER, CREDIT_NOTE, REPLACE, PRICE_CORRECTION, INFO
+    due_date = Column(DateTime, nullable=True)
+    blocks_receipt = Column(Boolean, default=False)
+    blocks_payment = Column(Boolean, default=False)
+    impact_summary = Column(Text, nullable=True)
     created_by = Column(String, default="Système")
     created_at = Column(DateTime, default=utcnow)
     closed_by = Column(String, nullable=True)

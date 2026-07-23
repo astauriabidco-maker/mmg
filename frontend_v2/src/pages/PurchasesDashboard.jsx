@@ -140,10 +140,20 @@ export default function PurchasesDashboard() {
     const [disputeForm, setDisputeForm] = useState({
         supplier: '',
         purchase_order_id: null,
+        supplier_invoice_id: null,
         title: '',
         category: 'OTHER',
         severity: 'MEDIUM',
         description: '',
+        expected_quantity: '',
+        received_quantity: '',
+        expected_unit_price: '',
+        invoiced_unit_price: '',
+        expected_action: 'INFO',
+        due_date: '',
+        blocks_receipt: false,
+        blocks_payment: false,
+        impact_summary: '',
     });
 
     // Suppliers state
@@ -366,10 +376,20 @@ export default function PurchasesDashboard() {
         setDisputeForm({
             supplier: supplier || '',
             purchase_order_id: purchaseOrderId,
+            supplier_invoice_id: null,
             title,
             category: 'OTHER',
             severity: 'MEDIUM',
             description: '',
+            expected_quantity: '',
+            received_quantity: '',
+            expected_unit_price: '',
+            invoiced_unit_price: '',
+            expected_action: 'INFO',
+            due_date: '',
+            blocks_receipt: false,
+            blocks_payment: false,
+            impact_summary: '',
         });
         setShowDisputeModal(true);
     };
@@ -381,6 +401,12 @@ export default function PurchasesDashboard() {
                 ...disputeForm,
                 title: disputeForm.title.trim(),
                 description: disputeForm.description.trim() || null,
+                expected_quantity: disputeForm.expected_quantity === '' ? null : Number(disputeForm.expected_quantity),
+                received_quantity: disputeForm.received_quantity === '' ? null : Number(disputeForm.received_quantity),
+                expected_unit_price: disputeForm.expected_unit_price === '' ? null : Number(disputeForm.expected_unit_price),
+                invoiced_unit_price: disputeForm.invoiced_unit_price === '' ? null : Number(disputeForm.invoiced_unit_price),
+                due_date: disputeForm.due_date || null,
+                impact_summary: disputeForm.impact_summary.trim() || null,
             });
             setShowDisputeModal(false);
             queryClient.invalidateQueries(['supplier-disputes']);
@@ -390,6 +416,19 @@ export default function PurchasesDashboard() {
         } catch (err) {
             console.error(err);
             alert(err.response?.data?.detail || "Erreur lors de la création du litige fournisseur.");
+        }
+    };
+
+    const handleStartDispute = async (disputeId) => {
+        try {
+            await api.post(`/v2/purchases/disputes/${disputeId}/start`);
+            queryClient.invalidateQueries(['supplier-disputes']);
+            queryClient.invalidateQueries(['purchases']);
+            queryClient.invalidateQueries(['purchase-dashboard']);
+            if (selectedPO?.id) await openPODetails(selectedPO.id);
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de la prise en charge du litige.");
         }
     };
 
@@ -972,6 +1011,7 @@ export default function PurchasesDashboard() {
                             setCurrentTab={setCurrentTab}
                             openCreatePOForSupplier={openCreatePOForSupplier}
                             openDisputeModal={openDisputeModal}
+                            onStartDispute={handleStartDispute}
                             onResolveDispute={handleResolveDispute}
                         />
                     ) : (
@@ -1181,12 +1221,37 @@ export default function PurchasesDashboard() {
                                         <div className="space-y-2">
                                             {(selectedPO.disputes || []).length > 0 ? selectedPO.disputes.map(dispute => (
                                                 <div key={dispute.id} className="rounded-xl bg-white border border-red-100 p-3">
-                                                    <p className="font-black text-sm text-red-950">{dispute.title}</p>
-                                                    <p className="text-[10px] font-black uppercase tracking-widest text-red-500">{dispute.reference} · {dispute.severity} · {dispute.status}</p>
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div>
+                                                            <p className="font-black text-sm text-red-950">{dispute.title}</p>
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-red-500">{dispute.reference} · {dispute.category} · {dispute.severity} · {dispute.status}</p>
+                                                        </div>
+                                                        <div className="flex flex-wrap gap-1 justify-end">
+                                                            {dispute.blocks_receipt && <span className="text-[9px] font-black uppercase tracking-widest bg-red-100 text-red-700 px-2 py-1 rounded-md">bloque réception</span>}
+                                                            {dispute.blocks_payment && <span className="text-[9px] font-black uppercase tracking-widest bg-orange-100 text-orange-700 px-2 py-1 rounded-md">bloque facture</span>}
+                                                        </div>
+                                                    </div>
+                                                    {dispute.impact_summary && <p className="mt-2 text-xs font-bold text-red-700">{dispute.impact_summary}</p>}
+                                                    {(dispute.expected_quantity !== null || dispute.received_quantity !== null || dispute.expected_unit_price !== null || dispute.invoiced_unit_price !== null) && (
+                                                        <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                                            {dispute.expected_quantity !== null && <span>Attendu: {Number(dispute.expected_quantity).toLocaleString('fr-FR')}</span>}
+                                                            {dispute.received_quantity !== null && <span>Reçu: {Number(dispute.received_quantity).toLocaleString('fr-FR')}</span>}
+                                                            {dispute.expected_unit_price !== null && <span>Prix attendu: {Number(dispute.expected_unit_price).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}</span>}
+                                                            {dispute.invoiced_unit_price !== null && <span>Prix facturé: {Number(dispute.invoiced_unit_price).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}</span>}
+                                                        </div>
+                                                    )}
+                                                    {dispute.expected_action && <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Action attendue: {dispute.expected_action}</p>}
                                                     {dispute.status !== 'RESOLVED' && (
-                                                        <button onClick={() => handleResolveDispute(dispute.id)} className="mt-2 text-[10px] font-black text-emerald-700 bg-emerald-100 px-2 py-1 rounded-lg">
-                                                            Résoudre
-                                                        </button>
+                                                        <div className="mt-3 flex flex-wrap gap-2">
+                                                            {dispute.status === 'OPEN' && (
+                                                                <button onClick={() => handleStartDispute(dispute.id)} className="text-[10px] font-black text-blue-700 bg-blue-100 px-2 py-1 rounded-lg">
+                                                                    Prendre en charge
+                                                                </button>
+                                                            )}
+                                                            <button onClick={() => handleResolveDispute(dispute.id)} className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2 py-1 rounded-lg">
+                                                                Résoudre
+                                                            </button>
+                                                        </div>
                                                     )}
                                                 </div>
                                             )) : (
@@ -1595,7 +1660,7 @@ export default function PurchasesDashboard() {
             {/* SUPPLIER DISPUTE MODAL */}
             {showDisputeModal && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full border border-slate-100 overflow-hidden">
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full border border-slate-100 overflow-hidden">
                         <div className="px-8 py-6 bg-red-950 text-white flex justify-between items-start">
                             <div>
                                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/15 border border-red-300/20 text-red-100 text-[10px] font-black uppercase tracking-widest mb-3">
@@ -1609,39 +1674,92 @@ export default function PurchasesDashboard() {
                             <button onClick={()=>setShowDisputeModal(false)} className="text-red-100 hover:bg-white/10 p-2 rounded-full"><X className="w-5 h-5"/></button>
                         </div>
 
-                        <div className="p-8 bg-slate-50 space-y-5">
-                            <div>
-                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Fournisseur</label>
-                                <input value={disputeForm.supplier} onChange={e=>setDisputeForm({...disputeForm, supplier: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500" placeholder="Nom fournisseur"/>
+                        <div className="p-8 bg-slate-50 space-y-6 max-h-[70vh] overflow-y-auto">
+                            <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-5">
+                                <div className="rounded-2xl bg-white border border-slate-200 p-5 space-y-4">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Identification</p>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Fournisseur</label>
+                                        <input value={disputeForm.supplier} onChange={e=>setDisputeForm({...disputeForm, supplier: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500" placeholder="Nom fournisseur"/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Catégorie</label>
+                                        <select value={disputeForm.category} onChange={e=>setDisputeForm({...disputeForm, category: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500">
+                                            <option value="DELAY">Retard livraison</option>
+                                            <option value="QUANTITY">Quantité manquante</option>
+                                            <option value="QUALITY">Article non conforme</option>
+                                            <option value="PRICE">Prix facture différent</option>
+                                            <option value="DOCUMENT">Document manquant</option>
+                                            <option value="OTHER">Autre</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Objet du litige</label>
+                                        <input value={disputeForm.title} onChange={e=>setDisputeForm({...disputeForm, title: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500" placeholder="Ex: Quantité manquante, prix facture incohérent..."/>
+                                    </div>
+                                </div>
+                                <div className="rounded-2xl bg-red-50 border border-red-100 p-5 space-y-4">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-red-500">Impact opérationnel</p>
+                                    <div>
+                                        <label className="block text-xs font-black text-red-400 uppercase tracking-widest mb-1.5">Sévérité</label>
+                                        <select value={disputeForm.severity} onChange={e=>setDisputeForm({...disputeForm, severity: e.target.value})} className="w-full bg-white border border-red-100 rounded-xl p-3 font-bold text-red-950 outline-none focus:ring-2 focus:ring-red-500">
+                                            <option value="LOW">Faible</option>
+                                            <option value="MEDIUM">Moyenne</option>
+                                            <option value="HIGH">Haute</option>
+                                            <option value="BLOCKING">Bloquant</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-red-400 uppercase tracking-widest mb-1.5">Action attendue</label>
+                                        <select value={disputeForm.expected_action} onChange={e=>setDisputeForm({...disputeForm, expected_action: e.target.value})} className="w-full bg-white border border-red-100 rounded-xl p-3 font-bold text-red-950 outline-none focus:ring-2 focus:ring-red-500">
+                                            <option value="INFO">Information fournisseur</option>
+                                            <option value="REDELIVER">Relivrer le manquant</option>
+                                            <option value="REPLACE">Remplacer / reprendre</option>
+                                            <option value="PRICE_CORRECTION">Corriger le prix</option>
+                                            <option value="CREDIT_NOTE">Émettre un avoir</option>
+                                            <option value="OTHER">Autre action</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-red-400 uppercase tracking-widest mb-1.5">Échéance attendue</label>
+                                        <input type="date" value={disputeForm.due_date} onChange={e=>setDisputeForm({...disputeForm, due_date: e.target.value})} className="w-full bg-white border border-red-100 rounded-xl p-3 font-bold text-red-950 outline-none focus:ring-2 focus:ring-red-500"/>
+                                    </div>
+                                    <label className="flex items-center gap-3 rounded-xl bg-white border border-red-100 p-3 text-sm font-black text-red-900">
+                                        <input type="checkbox" checked={disputeForm.blocks_receipt} onChange={e=>setDisputeForm({...disputeForm, blocks_receipt: e.target.checked})} className="w-4 h-4"/>
+                                        Bloquer les prochaines réceptions
+                                    </label>
+                                    <label className="flex items-center gap-3 rounded-xl bg-white border border-red-100 p-3 text-sm font-black text-red-900">
+                                        <input type="checkbox" checked={disputeForm.blocks_payment} onChange={e=>setDisputeForm({...disputeForm, blocks_payment: e.target.checked})} className="w-4 h-4"/>
+                                        Bloquer le rapprochement facture
+                                    </label>
+                                </div>
                             </div>
-                            <div>
-                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Objet du litige</label>
-                                <input value={disputeForm.title} onChange={e=>setDisputeForm({...disputeForm, title: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500" placeholder="Ex: Quantité manquante, prix facture incohérent..."/>
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                                 <div>
-                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Catégorie</label>
-                                    <select value={disputeForm.category} onChange={e=>setDisputeForm({...disputeForm, category: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500">
-                                        <option value="DELAY">Retard</option>
-                                        <option value="QUANTITY">Quantité</option>
-                                        <option value="QUALITY">Qualité</option>
-                                        <option value="PRICE">Prix</option>
-                                        <option value="DOCUMENT">Document</option>
-                                        <option value="OTHER">Autre</option>
-                                    </select>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Quantité attendue</label>
+                                    <input type="number" min="0" step="0.01" value={disputeForm.expected_quantity} onChange={e=>setDisputeForm({...disputeForm, expected_quantity: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500"/>
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Sévérité</label>
-                                    <select value={disputeForm.severity} onChange={e=>setDisputeForm({...disputeForm, severity: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500">
-                                        <option value="LOW">Faible</option>
-                                        <option value="MEDIUM">Moyenne</option>
-                                        <option value="HIGH">Haute</option>
-                                        <option value="BLOCKING">Bloquant</option>
-                                    </select>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Quantité reçue</label>
+                                    <input type="number" min="0" step="0.01" value={disputeForm.received_quantity} onChange={e=>setDisputeForm({...disputeForm, received_quantity: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500"/>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Prix attendu</label>
+                                    <input type="number" min="0" step="0.01" value={disputeForm.expected_unit_price} onChange={e=>setDisputeForm({...disputeForm, expected_unit_price: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500"/>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Prix facturé</label>
+                                    <input type="number" min="0" step="0.01" value={disputeForm.invoiced_unit_price} onChange={e=>setDisputeForm({...disputeForm, invoiced_unit_price: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500"/>
                                 </div>
                             </div>
+
                             <div>
-                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Description</label>
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Impact résumé</label>
+                                <input value={disputeForm.impact_summary} onChange={e=>setDisputeForm({...disputeForm, impact_summary: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500" placeholder="Ex: chantier bloqué, paiement suspendu, relivraison attendue..."/>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Description détaillée</label>
                                 <textarea value={disputeForm.description} onChange={e=>setDisputeForm({...disputeForm, description: e.target.value})} className="w-full min-h-[120px] bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500 resize-none" placeholder="Décrire l'écart constaté, les pièces concernées et l'action attendue."/>
                             </div>
                         </div>
@@ -2199,7 +2317,7 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
     );
 };
 
-const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurrentTab, openCreatePOForSupplier, openDisputeModal, onResolveDispute }) => {
+const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurrentTab, openCreatePOForSupplier, openDisputeModal, onStartDispute, onResolveDispute }) => {
     const [activeTab, setActiveTab] = useState('overview');
 
     const supOrders = purchases.filter(p => p.supplier === sup.name);
@@ -2765,12 +2883,25 @@ const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurr
                                                 <div>
                                                     <p className="font-black text-red-950">{dispute.title}</p>
                                                     <p className="text-[10px] font-black uppercase tracking-widest text-red-500 mt-1">
-                                                        {dispute.reference} · {dispute.category} · {dispute.severity}
+                                                        {dispute.reference} · {dispute.category} · {dispute.severity} · {dispute.status}
                                                     </p>
+                                                    <div className="mt-2 flex flex-wrap gap-1">
+                                                        {dispute.blocks_receipt && <span className="text-[9px] font-black uppercase tracking-widest bg-white text-red-700 px-2 py-1 rounded-md">réception bloquée</span>}
+                                                        {dispute.blocks_payment && <span className="text-[9px] font-black uppercase tracking-widest bg-white text-orange-700 px-2 py-1 rounded-md">facture bloquée</span>}
+                                                        {dispute.expected_action && <span className="text-[9px] font-black uppercase tracking-widest bg-white text-slate-600 px-2 py-1 rounded-md">{dispute.expected_action}</span>}
+                                                    </div>
+                                                    {dispute.impact_summary && <p className="mt-2 text-xs font-bold text-red-700">{dispute.impact_summary}</p>}
                                                 </div>
-                                                <button onClick={() => onResolveDispute?.(dispute.id)} className="px-3 py-2 rounded-xl bg-white border border-red-100 text-emerald-700 text-xs font-black hover:bg-emerald-50 shrink-0">
-                                                    Résoudre
-                                                </button>
+                                                <div className="flex flex-col gap-2 shrink-0">
+                                                    {dispute.status === 'OPEN' && (
+                                                        <button onClick={() => onStartDispute?.(dispute.id)} className="px-3 py-2 rounded-xl bg-white border border-blue-100 text-blue-700 text-xs font-black hover:bg-blue-50">
+                                                            Traiter
+                                                        </button>
+                                                    )}
+                                                    <button onClick={() => onResolveDispute?.(dispute.id)} className="px-3 py-2 rounded-xl bg-white border border-red-100 text-emerald-700 text-xs font-black hover:bg-emerald-50">
+                                                        Résoudre
+                                                    </button>
+                                                </div>
                                             </div>
                                         ))}
                                     </div>

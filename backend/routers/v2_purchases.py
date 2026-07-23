@@ -75,6 +75,15 @@ class SupplierDisputeCreate(BaseModel):
     description: Optional[str] = None
     category: str = "OTHER"
     severity: str = "MEDIUM"
+    expected_quantity: Optional[float] = None
+    received_quantity: Optional[float] = None
+    expected_unit_price: Optional[float] = None
+    invoiced_unit_price: Optional[float] = None
+    expected_action: Optional[str] = None
+    due_date: Optional[datetime] = None
+    blocks_receipt: bool = False
+    blocks_payment: bool = False
+    impact_summary: Optional[str] = None
 
 class SupplierDisputeResolveInput(BaseModel):
     resolution_notes: str
@@ -269,6 +278,15 @@ def _serialize_supplier_dispute(dispute: models.SupplierDispute) -> dict:
         "category": dispute.category,
         "severity": dispute.severity,
         "status": dispute.status,
+        "expected_quantity": dispute.expected_quantity,
+        "received_quantity": dispute.received_quantity,
+        "expected_unit_price": float(dispute.expected_unit_price) if dispute.expected_unit_price is not None else None,
+        "invoiced_unit_price": float(dispute.invoiced_unit_price) if dispute.invoiced_unit_price is not None else None,
+        "expected_action": dispute.expected_action,
+        "due_date": dispute.due_date,
+        "blocks_receipt": bool(dispute.blocks_receipt),
+        "blocks_payment": bool(dispute.blocks_payment),
+        "impact_summary": dispute.impact_summary,
         "created_by": dispute.created_by,
         "created_at": dispute.created_at,
         "closed_by": dispute.closed_by,
@@ -357,6 +375,20 @@ def _purchase_order_metrics(po: models.PurchaseOrder, db: Session) -> dict:
         "late_days": late_days,
         "invoiced_quantities": invoiced_quantities,
     }
+
+def _open_blocking_disputes(db: Session, po_id: int, block_field: str) -> List[models.SupplierDispute]:
+    if block_field not in {"blocks_receipt", "blocks_payment"}:
+        return []
+    return (
+        db.query(models.SupplierDispute)
+        .filter(
+            models.SupplierDispute.purchase_order_id == po_id,
+            models.SupplierDispute.status.in_(["OPEN", "IN_PROGRESS"]),
+            getattr(models.SupplierDispute, block_field) == True,  # noqa: E712
+        )
+        .order_by(models.SupplierDispute.created_at.desc(), models.SupplierDispute.id.desc())
+        .all()
+    )
 
 def _draw_pdf_text(pdf: canvas.Canvas, x: float, y: float, text: str, size: int = 9, bold: bool = False) -> None:
     pdf.setFont("Helvetica-Bold" if bold else "Helvetica", size)
@@ -894,6 +926,15 @@ def create_supplier_dispute(
         raise HTTPException(status_code=400, detail="Le fournisseur est obligatoire.")
     if not title:
         raise HTTPException(status_code=400, detail="Le titre du litige est obligatoire.")
+    category = (data.category or "OTHER").upper()
+    severity = (data.severity or "MEDIUM").upper()
+    expected_action = (data.expected_action or "").strip().upper() or None
+    if category not in {"DELAY", "QUANTITY", "QUALITY", "PRICE", "DOCUMENT", "OTHER"}:
+        raise HTTPException(status_code=400, detail="Catégorie de litige invalide.")
+    if severity not in {"LOW", "MEDIUM", "HIGH", "BLOCKING"}:
+        raise HTTPException(status_code=400, detail="Sévérité de litige invalide.")
+    if expected_action and expected_action not in {"REDELIVER", "CREDIT_NOTE", "REPLACE", "PRICE_CORRECTION", "INFO", "OTHER"}:
+        raise HTTPException(status_code=400, detail="Action attendue invalide.")
 
     if data.purchase_order_id:
         po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == data.purchase_order_id).first()
@@ -916,8 +957,17 @@ def create_supplier_dispute(
         supplier_invoice_id=data.supplier_invoice_id,
         title=title,
         description=data.description,
-        category=(data.category or "OTHER").upper(),
-        severity=(data.severity or "MEDIUM").upper(),
+        category=category,
+        severity=severity,
+        expected_quantity=data.expected_quantity,
+        received_quantity=data.received_quantity,
+        expected_unit_price=data.expected_unit_price,
+        invoiced_unit_price=data.invoiced_unit_price,
+        expected_action=expected_action,
+        due_date=data.due_date,
+        blocks_receipt=bool(data.blocks_receipt),
+        blocks_payment=bool(data.blocks_payment),
+        impact_summary=data.impact_summary,
         status="OPEN",
         created_by=current_user.get("sub", "unknown"),
     )
@@ -946,6 +996,23 @@ def resolve_supplier_dispute(
     dispute.closed_by = current_user.get("sub", "unknown")
     dispute.closed_at = utcnow()
     dispute.resolution_notes = notes
+    db.commit()
+    db.refresh(dispute)
+    return _serialize_supplier_dispute(dispute)
+
+@router.post("/disputes/{dispute_id}/start")
+def start_supplier_dispute(
+    dispute_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.receive")
+    dispute = db.query(models.SupplierDispute).filter(models.SupplierDispute.id == dispute_id).first()
+    if not dispute:
+        raise HTTPException(status_code=404, detail="Litige fournisseur introuvable.")
+    if dispute.status == "RESOLVED":
+        raise HTTPException(status_code=400, detail="Un litige résolu ne peut pas être repris.")
+    dispute.status = "IN_PROGRESS"
     db.commit()
     db.refresh(dispute)
     return _serialize_supplier_dispute(dispute)
@@ -1352,6 +1419,10 @@ def receive_purchase_order(
     po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po_id).first()
     if not po:
         raise HTTPException(status_code=404, detail="PO not found")
+    receipt_blockers = _open_blocking_disputes(db, po.id, "blocks_receipt")
+    if receipt_blockers:
+        refs = ", ".join(dispute.reference for dispute in receipt_blockers[:3])
+        raise HTTPException(status_code=409, detail=f"Réception bloquée par litige fournisseur ouvert: {refs}.")
         
     if po.status == models.PurchaseOrderStatus.RECEIVED:
         raise HTTPException(status_code=400, detail="PO already fully received")
@@ -1438,6 +1509,10 @@ def create_supplier_invoice(
     po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po_id).first()
     if not po:
         raise HTTPException(status_code=404, detail="PO not found")
+    payment_blockers = _open_blocking_disputes(db, po.id, "blocks_payment")
+    if payment_blockers:
+        refs = ", ".join(dispute.reference for dispute in payment_blockers[:3])
+        raise HTTPException(status_code=409, detail=f"Rapprochement facture bloqué par litige fournisseur ouvert: {refs}.")
     if not data.lines:
         raise HTTPException(status_code=400, detail="La facture fournisseur doit contenir au moins une ligne.")
 

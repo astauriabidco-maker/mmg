@@ -1026,15 +1026,51 @@ def test_supplier_dispute_can_be_opened_and_resolved_on_purchase_order(purchase_
             "category": "QUANTITY",
             "severity": "HIGH",
             "description": "La quantité reçue ne correspond pas au bon.",
+            "expected_quantity": 1,
+            "received_quantity": 0,
+            "expected_action": "REDELIVER",
+            "blocks_receipt": True,
+            "blocks_payment": True,
+            "impact_summary": "Chantier bloqué tant que la pièce manque.",
         },
     )
     assert dispute_response.status_code == 200, dispute_response.text
     dispute = dispute_response.json()
     assert dispute["reference"].startswith("LIT-")
     assert dispute["status"] == "OPEN"
+    assert dispute["expected_action"] == "REDELIVER"
+    assert dispute["blocks_receipt"] is True
+    assert dispute["blocks_payment"] is True
 
     details = client.get(f"/v2/purchases/{po_id}", headers=headers).json()
     assert details["disputes"][0]["reference"] == dispute["reference"]
+    assert details["disputes"][0]["impact_summary"] == "Chantier bloqué tant que la pièce manque."
+
+    blocked_receipt = client.post(
+        f"/v2/purchases/{po_id}/receive",
+        headers=headers,
+        json={"target_location_id": 1},
+    )
+    assert blocked_receipt.status_code == 409
+    assert "Réception bloquée" in blocked_receipt.json()["detail"]
+
+    blocked_invoice = client.post(
+        f"/v2/purchases/{po_id}/supplier-invoices",
+        headers=headers,
+        json={
+            "supplier_reference": "FAC-BLOCKED",
+            "lines": [],
+        },
+    )
+    assert blocked_invoice.status_code == 409
+    assert "Rapprochement facture bloqué" in blocked_invoice.json()["detail"]
+
+    start_response = client.post(
+        f"/v2/purchases/disputes/{dispute['id']}/start",
+        headers=headers,
+    )
+    assert start_response.status_code == 200, start_response.text
+    assert start_response.json()["status"] == "IN_PROGRESS"
 
     resolve_response = client.post(
         f"/v2/purchases/disputes/{dispute['id']}/resolve",
