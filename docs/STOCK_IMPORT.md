@@ -20,7 +20,8 @@ Le script consolide prudemment les doublons par couple `fournisseur + référenc
 ```bash
 python3 scripts/import_real_stock.py "/chemin/tableau à envoyer.xlsx" \
   --compare-db \
-  --json-out ./stock-preview.json
+  --json-out ./stock-preview.json \
+  --issues-csv ./stock-issues.csv
 ```
 
 La prévisualisation remonte :
@@ -31,6 +32,7 @@ La prévisualisation remonte :
 - désignations vides ;
 - nombre d'articles importables.
 - comparaison optionnelle avec la base active (`--compare-db`) : références déjà présentes, nouvelles références, échantillon des correspondances.
+- rapport CSV optionnel (`--issues-csv`) : liste exploitable des conflits, lignes sans référence, désignations manquantes et quantités à vérifier.
 
 ## Importer en base
 

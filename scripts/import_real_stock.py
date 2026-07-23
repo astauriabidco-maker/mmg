@@ -8,6 +8,7 @@ stock quants and initial inventory moves.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from collections import Counter, defaultdict
@@ -27,6 +28,15 @@ from backend.services.stock_service import InventoryService
 
 EXPECTED_HEADERS = ["Réf", "Nom de l'accessoire", "Quant", "Gamme", "iIlustration"]
 INVALID_REFERENCE_VALUES = {"/", "-", "x", "xx", "?", "nc", "n/a", "na"}
+ISSUE_DECISIONS = {
+    "duplicate_reference_conflict": "Arbitrer la bonne désignation puis réimporter.",
+    "duplicate_quantity_disagreement": "Contrôler la quantité réelle; le script ne cumule pas.",
+    "duplicate_supplier_reference": "Contrôler que le doublon est volontaire.",
+    "invalid_reference": "Corriger la référence ou ignorer la ligne.",
+    "missing_reference": "Renseigner la référence fournisseur.",
+    "missing_designation": "Compléter la désignation produit.",
+    "missing_or_invalid_quantity": "Renseigner une quantité réelle ou confirmer 0.",
+}
 
 
 @dataclass(frozen=True)
@@ -293,6 +303,13 @@ def consolidate_records(records: list[StockRecord]) -> list[StockRecord]:
     return list(consolidated.values())
 
 
+def records_by_supplier_reference(records: list[StockRecord]) -> dict[tuple[str, str], list[StockRecord]]:
+    grouped: dict[tuple[str, str], list[StockRecord]] = defaultdict(list)
+    for record in records:
+        grouped[(record.supplier, record.reference)].append(record)
+    return grouped
+
+
 def build_summary(records: list[StockRecord], issues: list[StockIssue]) -> dict[str, Any]:
     consolidated = consolidate_records(records)
     supplier_counts = Counter(record.supplier for record in consolidated)
@@ -307,6 +324,68 @@ def build_summary(records: list[StockRecord], issues: list[StockIssue]) -> dict[
         "suppliers": dict(sorted(supplier_counts.items())),
         "issues": dict(sorted(issue_counts.items())),
     }
+
+
+def build_issue_report_rows(records: list[StockRecord], issues: list[StockIssue]) -> list[dict[str, Any]]:
+    grouped = records_by_supplier_reference(records)
+    rows: list[dict[str, Any]] = []
+
+    for issue in issues:
+        related_records = grouped.get((issue.supplier or "", issue.reference or ""), [])
+        if not related_records:
+            rows.append(
+                {
+                    "severity": issue.severity,
+                    "code": issue.code,
+                    "supplier": issue.supplier or "",
+                    "reference": issue.reference or "",
+                    "source_row": issue.row or "",
+                    "designation": "",
+                    "quantity": "",
+                    "gamme": "",
+                    "decision": ISSUE_DECISIONS.get(issue.code, "Contrôler la ligne."),
+                    "message": issue.message,
+                }
+            )
+            continue
+
+        for record in related_records:
+            rows.append(
+                {
+                    "severity": issue.severity,
+                    "code": issue.code,
+                    "supplier": record.supplier,
+                    "reference": record.reference,
+                    "source_row": record.row,
+                    "designation": record.designation,
+                    "quantity": record.quantity if record.quantity is not None else "",
+                    "gamme": record.gamme,
+                    "decision": ISSUE_DECISIONS.get(issue.code, "Contrôler la ligne."),
+                    "message": issue.message,
+                }
+            )
+
+    return rows
+
+
+def write_issues_csv(path: Path, records: list[StockRecord], issues: list[StockIssue]) -> None:
+    fieldnames = [
+        "severity",
+        "code",
+        "supplier",
+        "reference",
+        "source_row",
+        "designation",
+        "quantity",
+        "gamme",
+        "decision",
+        "message",
+    ]
+    rows = build_issue_report_rows(records, issues)
+    with path.open("w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames, delimiter=";")
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def compare_database(records: list[StockRecord]) -> dict[str, Any]:
@@ -477,6 +556,7 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="Importe réellement en base. Sans cette option: prévisualisation.")
     parser.add_argument("--location", default="WH/Stock", help="Emplacement interne cible pour les quantités.")
     parser.add_argument("--json-out", type=Path, help="Écrit la prévisualisation complète en JSON.")
+    parser.add_argument("--issues-csv", type=Path, help="Écrit un rapport CSV des anomalies à traiter.")
     parser.add_argument("--compare-db", action="store_true", help="Compare les références du fichier avec la base active.")
     parser.add_argument("--fail-on-errors", action="store_true", help="Retourne 1 si des erreurs bloquantes sont détectées.")
     parser.add_argument("--allow-errors", action="store_true", help="Autorise --apply malgré des erreurs bloquantes ignorées.")
@@ -506,6 +586,9 @@ def main() -> int:
     if args.json_out:
         write_json(args.json_out, records, issues, summary, db_comparison)
         print(f"JSON: {args.json_out}")
+    if args.issues_csv:
+        write_issues_csv(args.issues_csv, records, issues)
+        print(f"ISSUES_CSV: {args.issues_csv}")
 
     if args.fail_on_errors and blocking_errors:
         return 1

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from scripts.import_real_stock import build_summary, consolidate_records, parse_workbook
+from scripts.import_real_stock import build_issue_report_rows, build_summary, consolidate_records, parse_workbook
 
 
 def write_stock_workbook(path: Path) -> None:
@@ -82,3 +82,16 @@ def test_consolidate_records_quarantines_conflicting_duplicate_references(tmp_pa
 
     assert not any(record.supplier == "CORTIZO" and record.reference == "A-001" for record in consolidated)
     assert any(issue.code == "duplicate_reference_conflict" for issue in issues)
+
+
+def test_build_issue_report_expands_conflicting_duplicate_rows(tmp_path):
+    path = tmp_path / "stock.xlsx"
+    write_conflicting_stock_workbook(path)
+
+    records, issues = parse_workbook(path)
+    report_rows = build_issue_report_rows(records, issues)
+    conflict_rows = [row for row in report_rows if row["code"] == "duplicate_reference_conflict"]
+
+    assert len(conflict_rows) == 2
+    assert {row["designation"] for row in conflict_rows} == {"Equerre", "Equerre autre"}
+    assert all(row["decision"] == "Arbitrer la bonne désignation puis réimporter." for row in conflict_rows)
