@@ -416,14 +416,25 @@ export default function PurchasesDashboard() {
     const handleRemindSupplier = async (poId) => {
         try {
             const note = window.prompt("Message de relance fournisseur :", "");
-            await api.post(`/v2/purchases/${poId}/remind`, {
+            const res = await api.post(`/v2/purchases/${poId}/remind`, {
                 channel: 'email',
                 message: note && note.trim() ? note.trim() : null,
+                include_pdf: true,
+                send_email: true,
             });
             queryClient.invalidateQueries(['purchases']);
             queryClient.invalidateQueries(['purchase-dashboard']);
             if (selectedPO?.id === poId) await openPODetails(poId);
-            alert("Relance fournisseur enregistrée dans la commande.");
+            const status = res.data?.status;
+            if (status === 'SENT') {
+                alert("Relance fournisseur envoyée avec le bon fournisseur en pièce jointe.");
+            } else if (status === 'SKIPPED') {
+                alert("Relance préparée mais non envoyée : SMTP non configuré.");
+            } else if (status === 'FAILED') {
+                alert(res.data?.reminder?.error_message || "Relance non envoyée.");
+            } else {
+                alert("Relance fournisseur enregistrée.");
+            }
         } catch (err) {
             console.error(err);
             alert(err.response?.data?.detail || "Erreur lors de la relance fournisseur.");
@@ -1003,7 +1014,7 @@ export default function PurchasesDashboard() {
                                                 onClick={() => handleRemindSupplier(selectedPO.id)}
                                                 className="px-3 py-2 rounded-xl bg-amber-400/15 border border-amber-200/20 text-amber-100 hover:bg-amber-400/25 text-xs font-black"
                                             >
-                                                Relancer
+                                                Envoyer relance
                                             </button>
                                         )}
                                     </div>
@@ -1077,6 +1088,51 @@ export default function PurchasesDashboard() {
                                         ))}
                                     </tbody>
                                 </table>
+
+                                <div className="mt-8 rounded-2xl border border-blue-100 bg-blue-50 p-5">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div>
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">Relances fournisseur</p>
+                                            <h4 className="font-black text-blue-950">Historique email et suivi d'envoi</h4>
+                                        </div>
+                                        {Number(selectedPO.quantity_remaining || 0) > 0 && (
+                                            <button onClick={() => handleRemindSupplier(selectedPO.id)} className="px-4 py-3 rounded-xl bg-blue-600 text-white font-black text-sm hover:bg-blue-500">
+                                                Envoyer une relance
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                        {(selectedPO.supplier_reminders || []).map(reminder => (
+                                            <div key={reminder.id} className="rounded-xl bg-white border border-blue-100 p-4">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div>
+                                                        <p className="font-black text-slate-900">{reminder.subject || 'Relance fournisseur'}</p>
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                                            {reminder.recipient || 'Sans destinataire'} · {new Date(reminder.created_at).toLocaleString('fr-FR')}
+                                                        </p>
+                                                    </div>
+                                                    <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
+                                                        reminder.status === 'SENT' ? 'bg-emerald-100 text-emerald-700'
+                                                            : reminder.status === 'FAILED' ? 'bg-red-100 text-red-700'
+                                                                : reminder.status === 'SKIPPED' ? 'bg-amber-100 text-amber-700'
+                                                                    : 'bg-slate-100 text-slate-600'
+                                                    }`}>
+                                                        {reminder.status}
+                                                    </span>
+                                                </div>
+                                                {reminder.error_message && (
+                                                    <p className="mt-2 text-xs font-bold text-red-600">{reminder.error_message}</p>
+                                                )}
+                                                <p className="mt-3 text-xs font-medium text-slate-600 line-clamp-3 whitespace-pre-line">{reminder.message}</p>
+                                            </div>
+                                        ))}
+                                        {(selectedPO.supplier_reminders || []).length === 0 && (
+                                            <div className="rounded-xl bg-white border border-blue-100 p-4 text-sm font-bold text-blue-400">
+                                                Aucune relance fournisseur enregistrée pour ce bon.
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
 
                                 <div className="mt-8 grid grid-cols-1 xl:grid-cols-[1fr_280px_280px] gap-4">
                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">

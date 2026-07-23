@@ -3,6 +3,7 @@ import logging
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 import os
 import re
 from datetime import datetime
@@ -51,7 +52,14 @@ def _smtp_settings() -> Optional[dict]:
     }
 
 
-def _send_smtp_email(recipient: str, subject: str, text_body: str, html_body: str) -> bool:
+def _send_smtp_email(
+    recipient: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+    attachments: Optional[list[dict]] = None,
+    cc: Optional[str] = None,
+) -> bool:
     """Envoie un email texte+HTML. False (sans lever) si SMTP non configuré.
 
     Toute erreur de transport (connexion, auth, refus) est propagée : c'est
@@ -67,12 +75,25 @@ def _send_smtp_email(recipient: str, subject: str, text_body: str, html_body: st
         )
         return False
 
-    msg = MIMEMultipart("alternative")
+    if attachments:
+        msg = MIMEMultipart("mixed")
+        body_part = MIMEMultipart("alternative")
+    else:
+        msg = MIMEMultipart("alternative")
+        body_part = msg
     msg["Subject"] = subject
     msg["From"] = settings["sender"]
     msg["To"] = recipient
-    msg.attach(MIMEText(text_body, "plain", "utf-8"))
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
+    if cc:
+        msg["Cc"] = cc
+    body_part.attach(MIMEText(text_body, "plain", "utf-8"))
+    body_part.attach(MIMEText(html_body, "html", "utf-8"))
+    if attachments:
+        msg.attach(body_part)
+        for attachment in attachments:
+            part = MIMEApplication(attachment["content"], _subtype=attachment.get("subtype", "octet-stream"))
+            part.add_header("Content-Disposition", "attachment", filename=attachment["filename"])
+            msg.attach(part)
 
     with smtplib.SMTP(settings["host"], settings["port"], timeout=_SMTP_TIMEOUT_SECONDS) as server:
         if settings["use_tls"]:

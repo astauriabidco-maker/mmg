@@ -622,9 +622,18 @@ def test_supplier_operational_purchase_list_exposes_late_purchase_orders():
         models.Base.metadata.drop_all(bind=engine)
 
 
-def test_purchase_dashboard_pdf_and_supplier_reminder(purchase_test_client):
+def test_purchase_dashboard_pdf_and_supplier_reminder(purchase_test_client, monkeypatch):
     client, TestingSessionLocal = purchase_test_client
     headers = _auth_headers(TestingSessionLocal, "purchase-dashboard-tester")
+    sent_email = {}
+
+    def fake_send_smtp_email(recipient, subject, text_body, html_body, attachments=None, cc=None):
+        sent_email["recipient"] = recipient
+        sent_email["subject"] = subject
+        sent_email["attachments"] = attachments or []
+        return True
+
+    monkeypatch.setattr("backend.routers.v2_purchases._send_smtp_email", fake_send_smtp_email)
     with TestingSessionLocal() as db:
         variant_id = _seed_purchase_need_variant(
             db,
@@ -661,14 +670,22 @@ def test_purchase_dashboard_pdf_and_supplier_reminder(purchase_test_client):
     reminder_response = client.post(
         f"/v2/purchases/{po_id}/remind",
         headers=headers,
-        json={"channel": "email", "message": "Merci de confirmer la date de livraison."},
+        json={
+            "channel": "email",
+            "recipient": "achats@dashboard-supplier.test",
+            "message": "Merci de confirmer la date de livraison.",
+        },
     )
     assert reminder_response.status_code == 200, reminder_response.text
-    assert reminder_response.json()["status"] == "recorded"
+    assert reminder_response.json()["status"] == "SENT"
+    assert reminder_response.json()["reminder"]["recipient"] == "achats@dashboard-supplier.test"
+    assert sent_email["recipient"] == "achats@dashboard-supplier.test"
+    assert sent_email["attachments"][0]["filename"].endswith(".pdf")
+    assert sent_email["attachments"][0]["content"].startswith(b"%PDF")
 
     details = client.get(f"/v2/purchases/{po_id}", headers=headers).json()
     assert "[RELANCE FOURNISSEUR]" in details["notes"]
-    assert "Merci de confirmer" in details["notes"]
+    assert details["supplier_reminders"][0]["message"] == "Merci de confirmer la date de livraison."
 
 
 def test_purchase_recommendations_use_real_stock_thresholds_without_fake_fallback():

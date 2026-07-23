@@ -6,6 +6,7 @@ from io import BytesIO
 from pydantic import BaseModel
 from typing import List, Optional
 import uuid
+import os
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -14,6 +15,7 @@ from reportlab.pdfgen import canvas
 from backend.database import get_db
 from backend import models
 from backend.core import security
+from backend.core.events import _send_smtp_email
 from backend.services.stock_service import InventoryService
 from backend.services.stock_reservations import active_reserved_quantity, physical_quantity_all_internal
 from backend.services.document_sequences import next_number
@@ -79,7 +81,12 @@ class SupplierDisputeResolveInput(BaseModel):
 
 class SupplierReminderCreate(BaseModel):
     channel: str = "email"
+    recipient: Optional[str] = None
+    cc: Optional[str] = None
+    subject: Optional[str] = None
     message: Optional[str] = None
+    include_pdf: bool = True
+    send_email: bool = True
 
 PURCHASE_DIRECT_ORDER_LIMIT = 1000.0
 
@@ -267,6 +274,24 @@ def _serialize_supplier_dispute(dispute: models.SupplierDispute) -> dict:
         "closed_by": dispute.closed_by,
         "closed_at": dispute.closed_at,
         "resolution_notes": dispute.resolution_notes,
+    }
+
+def _serialize_supplier_reminder(reminder: models.SupplierReminder) -> dict:
+    return {
+        "id": reminder.id,
+        "purchase_order_id": reminder.purchase_order_id,
+        "supplier": reminder.supplier,
+        "channel": reminder.channel,
+        "recipient": reminder.recipient,
+        "cc": reminder.cc,
+        "subject": reminder.subject,
+        "message": reminder.message,
+        "status": reminder.status,
+        "error_message": reminder.error_message,
+        "include_pdf": reminder.include_pdf,
+        "sent_at": reminder.sent_at,
+        "created_by": reminder.created_by,
+        "created_at": reminder.created_at,
     }
 
 def _purchase_order_metrics(po: models.PurchaseOrder, db: Session) -> dict:
@@ -1156,18 +1181,83 @@ def remind_purchase_order_supplier(
     channel = (data.channel or "email").strip().lower()
     if channel not in ["email", "phone", "portal", "other"]:
         raise HTTPException(status_code=400, detail="Canal de relance invalide.")
+    supplier_record = (
+        db.query(models.Supplier)
+        .filter(models.Supplier.name == po.supplier)
+        .first()
+    )
+    recipient = (data.recipient or (supplier_record.email if supplier_record else "") or "").strip()
+    cc = (data.cc or os.environ.get("PURCHASES_CC_EMAIL") or "").strip() or None
+    if data.send_email and channel == "email" and not recipient:
+        raise HTTPException(status_code=400, detail="Aucun email fournisseur disponible pour envoyer la relance.")
     timestamp = utcnow().strftime("%Y-%m-%d %H:%M")
     message = (data.message or "").strip() or (
-        f"Relance {po.supplier}: {metrics['quantity_remaining']:.2f} unité(s) restent à réceptionner"
-        + (f", retard {metrics['late_days']} jour(s)." if metrics["is_late"] else ".")
+        f"Bonjour,\n\n"
+        f"Sauf erreur de notre part, le bon fournisseur {po.reference} présente encore "
+        f"{metrics['quantity_remaining']:.2f} unité(s) à réceptionner."
+        + (f"\nLa livraison est en retard de {metrics['late_days']} jour(s)." if metrics["is_late"] else "")
+        + "\n\nMerci de nous confirmer la date de livraison prévue.\n\nCordialement,\nMMG Menuiseries"
     )
-    reminder_note = f"[RELANCE FOURNISSEUR] {timestamp} par {current_user.get('sub', 'unknown')} via {channel}: {message}"
+    subject = (data.subject or "").strip() or f"Relance livraison - bon fournisseur {po.reference}"
+    status = "PREPARED"
+    error_message = None
+    sent_at = None
+    if data.send_email and channel == "email":
+        text_body = message
+        html_body = (
+            "<html><body style=\"font-family: Arial, sans-serif; color: #1e293b;\">"
+            f"<p>Bonjour,</p>"
+            f"<p>Sauf erreur de notre part, le bon fournisseur <b>{po.reference}</b> présente encore "
+            f"<b>{metrics['quantity_remaining']:.2f} unité(s)</b> à réceptionner.</p>"
+            + (f"<p>La livraison est en retard de <b>{metrics['late_days']} jour(s)</b>.</p>" if metrics["is_late"] else "")
+            + "<p>Merci de nous confirmer la date de livraison prévue.</p>"
+            + "<p>Cordialement,<br/>MMG Menuiseries</p>"
+            + "</body></html>"
+        )
+        attachments = []
+        if data.include_pdf:
+            attachments.append({
+                "filename": f"bon-fournisseur-{po.reference}.pdf",
+                "content": _generate_purchase_order_pdf(po, db),
+                "subtype": "pdf",
+            })
+        try:
+            sent = _send_smtp_email(recipient, subject, text_body, html_body, attachments=attachments, cc=cc)
+            status = "SENT" if sent else "SKIPPED"
+            sent_at = utcnow() if sent else None
+            if not sent:
+                error_message = "SMTP non configuré: relance préparée mais non envoyée."
+        except Exception as exc:
+            status = "FAILED"
+            error_message = str(exc)
+
+    reminder = models.SupplierReminder(
+        purchase_order_id=po.id,
+        supplier=po.supplier,
+        channel=channel,
+        recipient=recipient or None,
+        cc=cc,
+        subject=subject,
+        message=message,
+        status=status,
+        error_message=error_message,
+        include_pdf=bool(data.include_pdf),
+        sent_at=sent_at,
+        created_by=current_user.get("sub", "unknown"),
+    )
+    db.add(reminder)
+    reminder_note = (
+        f"[RELANCE FOURNISSEUR] {timestamp} par {current_user.get('sub', 'unknown')} "
+        f"via {channel} vers {recipient or 'destinataire non renseigné'} ({status}): {subject}"
+    )
     po.notes = f"{po.notes or ''}\n{reminder_note}".strip()
     db.commit()
     db.refresh(po)
+    db.refresh(reminder)
     return {
-        "status": "recorded",
+        "status": status,
         "message": message,
+        "reminder": _serialize_supplier_reminder(reminder),
         "purchase_order": {
             "id": po.id,
             "reference": po.reference,
@@ -1240,6 +1330,13 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
             for dispute in db.query(models.SupplierDispute)
             .filter(models.SupplierDispute.purchase_order_id == po.id)
             .order_by(models.SupplierDispute.created_at.desc(), models.SupplierDispute.id.desc())
+            .all()
+        ],
+        "supplier_reminders": [
+            _serialize_supplier_reminder(reminder)
+            for reminder in db.query(models.SupplierReminder)
+            .filter(models.SupplierReminder.purchase_order_id == po.id)
+            .order_by(models.SupplierReminder.created_at.desc(), models.SupplierReminder.id.desc())
             .all()
         ],
     }

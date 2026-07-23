@@ -641,6 +641,7 @@ class PurchaseOrder(Base):
     
     lines = relationship("PurchaseOrderLine", back_populates="order", cascade="all, delete-orphan")
     supplier_invoices = relationship("SupplierInvoice", back_populates="purchase_order", cascade="all, delete-orphan")
+    supplier_reminders = relationship("SupplierReminder", back_populates="purchase_order", cascade="all, delete-orphan")
 
 class PurchaseOrderLine(Base):
     __tablename__ = "purchase_order_lines"
@@ -710,6 +711,25 @@ class SupplierDispute(Base):
 
     purchase_order = relationship("PurchaseOrder")
     supplier_invoice = relationship("SupplierInvoice")
+
+class SupplierReminder(Base):
+    __tablename__ = "supplier_reminders"
+    id = Column(Integer, primary_key=True, index=True)
+    purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=False, index=True)
+    supplier = Column(String, index=True)
+    channel = Column(String, default="email")
+    recipient = Column(String, nullable=True)
+    cc = Column(String, nullable=True)
+    subject = Column(String, nullable=True)
+    message = Column(Text, nullable=True)
+    status = Column(String, default="PREPARED", index=True)  # PREPARED, SENT, SKIPPED, FAILED
+    error_message = Column(Text, nullable=True)
+    include_pdf = Column(Boolean, default=True)
+    sent_at = Column(DateTime, nullable=True)
+    created_by = Column(String, default="Système")
+    created_at = Column(DateTime, default=utcnow)
+
+    purchase_order = relationship("PurchaseOrder", back_populates="supplier_reminders")
 
 # --- FACTURATION (FRANCE NF525) ---
 
