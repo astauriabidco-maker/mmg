@@ -16,6 +16,35 @@ const getStatusColor = (status) => {
 
 const UNKNOWN_SUPPLIER = 'Fournisseur à qualifier';
 
+const disputeStatusLabel = (status) => ({
+    OPEN: 'Ouvert',
+    IN_PROGRESS: 'En traitement',
+    RESOLVED: 'Résolu',
+})[status] || status || 'À traiter';
+
+const disputeCategoryLabel = (category) => ({
+    DELAY: 'Retard',
+    QUANTITY: 'Quantité',
+    QUALITY: 'Non conforme',
+    PRICE: 'Prix',
+    DOCUMENT: 'Document',
+    OTHER: 'Autre',
+})[category] || category || 'Autre';
+
+const disputeSeverityLabel = (severity) => ({
+    LOW: 'Faible',
+    MEDIUM: 'Moyen',
+    HIGH: 'Élevé',
+    CRITICAL: 'Critique',
+})[severity] || severity || 'Moyen';
+
+const isSupplierDisputeOpen = (dispute) => ['OPEN', 'IN_PROGRESS'].includes(dispute?.status);
+const isSupplierDisputeOverdue = (dispute) => (
+    isSupplierDisputeOpen(dispute)
+    && dispute?.due_date
+    && new Date(dispute.due_date) < new Date()
+);
+
 const priorityLabel = (priority) => ({
     CRITICAL: 'Critique',
     URGENT: 'Urgent',
@@ -128,7 +157,7 @@ const groupNeedsBySupplier = (needs) => Object.values(needs.reduce((acc, need) =
 }, {})).sort((a, b) => b.critical_count - a.critical_count || b.urgent_count - a.urgent_count || a.supplier.localeCompare(b.supplier));
 
 export default function PurchasesDashboard() {
-    const [currentTab, setCurrentTab] = useState('dashboard'); // dashboard, orders, requests, suppliers, ai
+    const [currentTab, setCurrentTab] = useState('dashboard'); // dashboard, orders, requests, suppliers, disputes, ai
 
     // Orders state
     const [searchTerm, setSearchTerm] = useState("");
@@ -816,6 +845,12 @@ export default function PurchasesDashboard() {
                             Fournisseurs
                         </button>
                         <button
+                            onClick={() => setCurrentTab('disputes')}
+                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'disputes' ? 'bg-white shadow text-red-600' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Litiges
+                        </button>
+                        <button
                             onClick={() => setCurrentTab('ai')}
                             className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'ai' ? 'bg-white shadow text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
                             title="Besoins d'achat nets"
@@ -828,7 +863,7 @@ export default function PurchasesDashboard() {
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
                             type="text"
-                            placeholder={currentTab === 'dashboard' ? "Rechercher action achat..." : currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'requests' ? "Rechercher demande achat..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : "Rechercher une recommandation..."}
+                            placeholder={currentTab === 'dashboard' ? "Rechercher action achat..." : currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'requests' ? "Rechercher demande achat..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : currentTab === 'disputes' ? "Rechercher litige, fournisseur..." : "Rechercher une recommandation..."}
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
@@ -847,6 +882,11 @@ export default function PurchasesDashboard() {
                     {currentTab === 'suppliers' && (
                         <button onClick={() => setShowSupplierModal(true)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
                             <Plus className="w-5 h-5"/> Nv. Fournisseur
+                        </button>
+                    )}
+                    {currentTab === 'disputes' && (
+                        <button onClick={() => openDisputeModal({})} className="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
+                            <AlertTriangle className="w-5 h-5"/> Nouveau litige
                         </button>
                     )}
                     {currentTab === 'ai' && (
@@ -978,6 +1018,59 @@ export default function PurchasesDashboard() {
                             )}
                         </>
                     )}
+                    {currentTab === 'disputes' && (
+                        <>
+                            {supplierDisputes
+                                .filter(dispute => {
+                                    const term = searchTerm.toLowerCase();
+                                    return !term
+                                        || String(dispute.reference || '').toLowerCase().includes(term)
+                                        || String(dispute.supplier || '').toLowerCase().includes(term)
+                                        || String(dispute.title || '').toLowerCase().includes(term)
+                                        || String(dispute.category || '').toLowerCase().includes(term);
+                                })
+                                .map(dispute => (
+                                    <button
+                                        key={dispute.id}
+                                        onClick={() => openSupplierDisputeDetail(dispute)}
+                                        className={`w-full text-left p-4 rounded-xl border-2 shadow-sm transition-all ${
+                                            dispute.status === 'RESOLVED'
+                                                ? 'bg-emerald-50 border-emerald-100 hover:border-emerald-300'
+                                                : isSupplierDisputeOverdue(dispute)
+                                                    ? 'bg-red-50 border-red-200 hover:border-red-400'
+                                                    : 'bg-white border-slate-100 hover:border-red-200'
+                                        }`}
+                                    >
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{dispute.reference}</p>
+                                                <h4 className="font-black text-slate-900 leading-tight mt-1">{dispute.title}</h4>
+                                                <p className="text-xs font-bold text-slate-500 mt-1">{dispute.supplier}</p>
+                                            </div>
+                                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
+                                                dispute.status === 'RESOLVED' ? 'bg-emerald-100 text-emerald-700'
+                                                    : dispute.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-700'
+                                                        : 'bg-red-100 text-red-700'
+                                            }`}>
+                                                {disputeStatusLabel(dispute.status)}
+                                            </span>
+                                        </div>
+                                        <div className="mt-3 flex flex-wrap gap-1">
+                                            <span className="text-[9px] font-black uppercase tracking-widest bg-slate-100 text-slate-600 px-2 py-1 rounded-md">{disputeCategoryLabel(dispute.category)}</span>
+                                            <span className="text-[9px] font-black uppercase tracking-widest bg-orange-100 text-orange-700 px-2 py-1 rounded-md">{disputeSeverityLabel(dispute.severity)}</span>
+                                            {dispute.blocks_receipt && <span className="text-[9px] font-black uppercase tracking-widest bg-red-100 text-red-700 px-2 py-1 rounded-md">réception</span>}
+                                            {dispute.blocks_payment && <span className="text-[9px] font-black uppercase tracking-widest bg-rose-100 text-rose-700 px-2 py-1 rounded-md">paiement</span>}
+                                        </div>
+                                        {isSupplierDisputeOverdue(dispute) && (
+                                            <p className="mt-2 text-[10px] font-black text-red-600 uppercase tracking-widest">Échéance dépassée</p>
+                                        )}
+                                    </button>
+                                ))}
+                            {supplierDisputes.length === 0 && (
+                                <div className="text-center py-10 text-slate-400 font-bold">Aucun litige fournisseur.</div>
+                            )}
+                        </>
+                    )}
                     {currentTab === 'ai' && (
                         <div className="space-y-4">
                             {loadingAi ? (
@@ -1042,16 +1135,27 @@ export default function PurchasesDashboard() {
                         setCurrentTab={setCurrentTab}
                         openPODetails={openPODetails}
                         openSupplierInvoiceDetail={openSupplierInvoiceDetail}
+                        openSupplierDisputeDetail={openSupplierDisputeDetail}
                         handleRemindSupplier={handleRemindSupplier}
+                        disputes={supplierDisputes}
                     />
                 ) : currentTab === 'requests' ? (
-                    <PurchaseRequestsView
-                        requests={purchaseRequests}
-                        canApprove={canApprovePurchaseRequest}
-                        canOrder={canCreatePurchaseOrder}
-                        onApprove={handleApprovePurchaseRequest}
-                        onReject={handleRejectPurchaseRequest}
-                        onConvert={handleConvertPurchaseRequest}
+                        <PurchaseRequestsView
+                            requests={purchaseRequests}
+                            canApprove={canApprovePurchaseRequest}
+                            canOrder={canCreatePurchaseOrder}
+                            onApprove={handleApprovePurchaseRequest}
+                            onReject={handleRejectPurchaseRequest}
+                            onConvert={handleConvertPurchaseRequest}
+                        />
+                ) : currentTab === 'disputes' ? (
+                    <SupplierDisputesBoard
+                        disputes={supplierDisputes}
+                        purchases={purchases}
+                        openSupplierDisputeDetail={openSupplierDisputeDetail}
+                        openDisputeModal={openDisputeModal}
+                        onStartDispute={handleStartDispute}
+                        onResolveDispute={handleResolveDispute}
                     />
                 ) : currentTab === 'ai' ? (
                     <SmartPurchasingView
@@ -2424,7 +2528,7 @@ const SupplierDisputeDetailModal = ({ dispute, purchaseOrder, invoice, onClose, 
     );
 };
 
-const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, openSupplierInvoiceDetail, handleRemindSupplier }) => {
+const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, openSupplierInvoiceDetail, openSupplierDisputeDetail, handleRemindSupplier, disputes = [] }) => {
     const summary = dashboard?.summary || {};
     const actions = dashboard?.actions || [];
     const paymentSchedule = dashboard?.payment_schedule || [];
@@ -2438,7 +2542,7 @@ const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, op
         { label: 'Factures à payer', value: summary.supplier_invoices_to_pay || 0, tone: 'bg-indigo-50 border-indigo-100 text-indigo-700', tab: 'orders' },
         { label: 'Paiements bloqués', value: summary.supplier_invoices_blocked || 0, tone: 'bg-rose-50 border-rose-100 text-rose-700', tab: 'suppliers' },
         { label: 'Demandes à valider', value: summary.pending_requests || 0, tone: 'bg-amber-50 border-amber-100 text-amber-700', tab: 'requests' },
-        { label: 'Litiges ouverts', value: summary.open_disputes || 0, tone: 'bg-rose-50 border-rose-100 text-rose-700', tab: 'suppliers' },
+        { label: 'Litiges ouverts', value: summary.open_disputes || 0, tone: 'bg-rose-50 border-rose-100 text-rose-700', tab: 'disputes' },
     ];
 
     return (
@@ -2582,7 +2686,15 @@ const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, op
                                                     Relancer
                                                 </button>
                                             )}
-                                            {action.purchase_order_id ? (
+                                            {action.type === 'DISPUTE' && action.dispute_id ? (
+                                                <button onClick={() => {
+                                                    const dispute = disputes.find(item => item.id === action.dispute_id);
+                                                    if (dispute) openSupplierDisputeDetail?.(dispute);
+                                                    else setCurrentTab('disputes');
+                                                }} className="px-3 py-2 rounded-xl bg-red-600 text-white font-black text-xs hover:bg-red-500">
+                                                    Fiche litige
+                                                </button>
+                                            ) : action.purchase_order_id ? (
                                                 <button onClick={() => openPODetails(action.purchase_order_id)} className="px-3 py-2 rounded-xl bg-slate-900 text-white font-black text-xs hover:bg-slate-800">
                                                     Ouvrir
                                                 </button>
@@ -2616,6 +2728,178 @@ const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, op
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const SupplierDisputesBoard = ({ disputes = [], purchases = [], openSupplierDisputeDetail, openDisputeModal, onStartDispute, onResolveDispute }) => {
+    const [statusFilter, setStatusFilter] = useState('open');
+    const [impactFilter, setImpactFilter] = useState('all');
+    const formatDate = (date) => date ? new Date(date).toLocaleDateString('fr-FR') : '-';
+    const purchaseById = new Map(purchases.map(po => [po.id, po]));
+    const openDisputes = disputes.filter(isSupplierDisputeOpen);
+    const overdueDisputes = disputes.filter(isSupplierDisputeOverdue);
+    const receiptBlockers = openDisputes.filter(dispute => dispute.blocks_receipt);
+    const paymentBlockers = openDisputes.filter(dispute => dispute.blocks_payment);
+    const resolvedDisputes = disputes.filter(dispute => dispute.status === 'RESOLVED');
+    const inProgressDisputes = disputes.filter(dispute => dispute.status === 'IN_PROGRESS');
+    const filteredDisputes = disputes
+        .filter(dispute => {
+            if (statusFilter === 'open') return isSupplierDisputeOpen(dispute);
+            if (statusFilter === 'overdue') return isSupplierDisputeOverdue(dispute);
+            if (statusFilter === 'resolved') return dispute.status === 'RESOLVED';
+            return true;
+        })
+        .filter(dispute => {
+            if (impactFilter === 'receipt') return dispute.blocks_receipt;
+            if (impactFilter === 'payment') return dispute.blocks_payment;
+            if (impactFilter === 'critical') return ['HIGH', 'CRITICAL'].includes(dispute.severity);
+            return true;
+        })
+        .sort((a, b) => {
+            if (isSupplierDisputeOverdue(a) !== isSupplierDisputeOverdue(b)) return isSupplierDisputeOverdue(a) ? -1 : 1;
+            if (a.status !== b.status) return a.status === 'OPEN' ? -1 : 1;
+            return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+        });
+
+    const kpis = [
+        { label: 'Ouverts', value: openDisputes.length, tone: 'bg-red-50 border-red-100 text-red-700' },
+        { label: 'En retard', value: overdueDisputes.length, tone: 'bg-orange-50 border-orange-100 text-orange-700' },
+        { label: 'Bloque réception', value: receiptBlockers.length, tone: 'bg-rose-50 border-rose-100 text-rose-700' },
+        { label: 'Bloque paiement', value: paymentBlockers.length, tone: 'bg-amber-50 border-amber-100 text-amber-700' },
+        { label: 'En traitement', value: inProgressDisputes.length, tone: 'bg-blue-50 border-blue-100 text-blue-700' },
+        { label: 'Résolus', value: resolvedDisputes.length, tone: 'bg-emerald-50 border-emerald-100 text-emerald-700' },
+    ];
+
+    return (
+        <div className="p-8 w-full space-y-6">
+            <div className="rounded-3xl bg-red-950 text-white border border-red-900 shadow-xl overflow-hidden">
+                <div className="p-8 flex flex-col xl:flex-row xl:items-start xl:justify-between gap-6">
+                    <div>
+                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-300/20 text-red-100 text-[10px] font-black uppercase tracking-widest mb-3">
+                            <AlertTriangle className="w-3.5 h-3.5" /> Pilotage litiges fournisseur
+                        </div>
+                        <h2 className="text-3xl font-black tracking-tight">Écarts, blocages et résolutions</h2>
+                        <p className="text-sm font-bold text-red-100 mt-1">Suivre ce qui bloque les réceptions, les paiements et la qualité fournisseur.</p>
+                    </div>
+                    <button onClick={() => openDisputeModal({})} className="px-5 py-4 rounded-2xl bg-white text-red-950 font-black shadow-lg hover:bg-red-50 flex items-center gap-2">
+                        <Plus className="w-5 h-5" /> Déclarer un litige
+                    </button>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 border-t border-white/10">
+                    {kpis.map(kpi => (
+                        <div key={kpi.label} className="p-5 border-r border-white/10 last:border-r-0">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-red-200">{kpi.label}</p>
+                            <p className="text-4xl font-black mt-1">{kpi.value}</p>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="rounded-3xl bg-white border border-slate-200 shadow-xl overflow-hidden">
+                <div className="px-6 py-5 border-b border-slate-100 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+                    <div>
+                        <h3 className="font-black text-2xl text-slate-900">File litiges</h3>
+                        <p className="text-sm font-bold text-slate-500">Priorisée par urgence, blocage et date de création.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {[
+                            ['open', 'Ouverts'],
+                            ['overdue', 'En retard'],
+                            ['resolved', 'Résolus'],
+                            ['all', 'Tous'],
+                        ].map(([value, label]) => (
+                            <button key={value} onClick={() => setStatusFilter(value)} className={`px-4 py-2 rounded-xl text-xs font-black border ${statusFilter === value ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap gap-2">
+                    {[
+                        ['all', 'Tous impacts'],
+                        ['receipt', 'Réception bloquée'],
+                        ['payment', 'Paiement bloqué'],
+                        ['critical', 'Sévérité élevée'],
+                    ].map(([value, label]) => (
+                        <button key={value} onClick={() => setImpactFilter(value)} className={`px-4 py-2 rounded-xl text-xs font-black border ${impactFilter === value ? 'bg-red-600 text-white border-red-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-red-50'}`}>
+                            {label}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="divide-y divide-slate-100">
+                    {filteredDisputes.map(dispute => {
+                        const po = purchaseById.get(dispute.purchase_order_id);
+                        const overdue = isSupplierDisputeOverdue(dispute);
+                        return (
+                            <div key={dispute.id} className={`p-6 flex flex-col 2xl:flex-row 2xl:items-center 2xl:justify-between gap-5 ${overdue ? 'bg-red-50/60' : 'bg-white'}`}>
+                                <button onClick={() => openSupplierDisputeDetail(dispute, po)} className="text-left flex-1">
+                                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                                        <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
+                                            dispute.status === 'RESOLVED' ? 'bg-emerald-100 text-emerald-700'
+                                                : dispute.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-700'
+                                                    : 'bg-red-100 text-red-700'
+                                        }`}>
+                                            {disputeStatusLabel(dispute.status)}
+                                        </span>
+                                        <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-slate-100 text-slate-600">{disputeCategoryLabel(dispute.category)}</span>
+                                        <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-orange-100 text-orange-700">{disputeSeverityLabel(dispute.severity)}</span>
+                                        {overdue && <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-red-600 text-white">En retard</span>}
+                                    </div>
+                                    <h4 className="font-black text-xl text-slate-950">{dispute.title}</h4>
+                                    <p className="text-sm font-bold text-slate-500 mt-1">
+                                        {dispute.supplier} · {dispute.reference}
+                                        {po?.reference ? ` · ${po.reference}` : ''}
+                                    </p>
+                                    {dispute.impact_summary && <p className="text-sm font-bold text-red-700 mt-2">{dispute.impact_summary}</p>}
+                                </button>
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 2xl:w-[560px]">
+                                    <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Échéance</p>
+                                        <p className={`font-black mt-1 ${overdue ? 'text-red-700' : 'text-slate-800'}`}>{formatDate(dispute.due_date)}</p>
+                                    </div>
+                                    <div className={`rounded-xl border p-3 ${dispute.blocks_receipt ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
+                                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Réception</p>
+                                        <p className={`font-black mt-1 ${dispute.blocks_receipt ? 'text-red-700' : 'text-slate-500'}`}>{dispute.blocks_receipt ? 'Bloquée' : 'OK'}</p>
+                                    </div>
+                                    <div className={`rounded-xl border p-3 ${dispute.blocks_payment ? 'bg-amber-50 border-amber-100' : 'bg-slate-50 border-slate-100'}`}>
+                                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Paiement</p>
+                                        <p className={`font-black mt-1 ${dispute.blocks_payment ? 'text-amber-700' : 'text-slate-500'}`}>{dispute.blocks_payment ? 'Bloqué' : 'OK'}</p>
+                                    </div>
+                                    <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Action</p>
+                                        <p className="font-black mt-1 text-slate-800">{dispute.expected_action || 'À définir'}</p>
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap gap-2 2xl:justify-end">
+                                    <button onClick={() => openSupplierDisputeDetail(dispute, po)} className="px-4 py-3 rounded-xl bg-slate-900 text-white font-black text-sm hover:bg-slate-800">
+                                        Fiche litige
+                                    </button>
+                                    {dispute.status === 'OPEN' && (
+                                        <button onClick={() => onStartDispute(dispute.id)} className="px-4 py-3 rounded-xl bg-blue-100 text-blue-700 font-black text-sm hover:bg-blue-200">
+                                            Prendre en charge
+                                        </button>
+                                    )}
+                                    {dispute.status !== 'RESOLVED' && (
+                                        <button onClick={() => onResolveDispute(dispute.id)} className="px-4 py-3 rounded-xl bg-emerald-100 text-emerald-700 font-black text-sm hover:bg-emerald-200">
+                                            Résoudre
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                    {filteredDisputes.length === 0 && (
+                        <div className="p-12 text-center text-slate-400">
+                            <AlertTriangle className="w-12 h-12 mx-auto text-slate-200 mb-3" />
+                            <p className="font-black text-lg">Aucun litige dans ce filtre.</p>
+                            <p className="text-sm font-bold mt-1">Changez le filtre ou déclarez un nouveau litige fournisseur.</p>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
