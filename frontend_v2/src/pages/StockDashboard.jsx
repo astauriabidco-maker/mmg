@@ -1453,14 +1453,15 @@ export default function StockDashboard() {
                     </div>
                 </div>
 
-                <div className="px-6 pb-4">
-                    <div className="grid grid-cols-1 xl:grid-cols-[260px_1fr_1fr] gap-3">
+                <div className="px-4 sm:px-6 pb-3">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
+                        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
                         {stockNavGroups.map(group => (
-                            <div key={group.label} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-2">
-                                <p className="px-2 pb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                            <div key={group.label} className="flex shrink-0 items-center gap-1.5">
+                                <p className="hidden lg:block pl-2 pr-1 text-[9px] font-black uppercase tracking-widest text-slate-400">
                                     {group.label}
                                 </p>
-                                <div className="flex flex-wrap gap-1.5">
+                                <div className="flex items-center gap-1.5">
                                     {group.items.map(item => {
                                         const Icon = item.Icon;
                                         const active = currentMenu === item.key;
@@ -1470,7 +1471,7 @@ export default function StockDashboard() {
                                                 key={item.key}
                                                 type="button"
                                                 onClick={item.onClick}
-                                                className={`inline-flex min-h-[38px] items-center gap-2 rounded-xl px-3 py-2 text-xs font-black transition-all ${active ? navToneClasses[item.tone] : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 hover:text-slate-950'}`}
+                                                className={`inline-flex min-h-[36px] items-center gap-2 rounded-xl px-3 py-2 text-xs font-black transition-all ${active ? navToneClasses[item.tone] : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 hover:text-slate-950'}`}
                                             >
                                                 <Icon className="w-4 h-4 shrink-0" />
                                                 <span className="whitespace-nowrap">{item.label}</span>
@@ -1483,8 +1484,12 @@ export default function StockDashboard() {
                                         );
                                     })}
                                 </div>
+                                {group.label !== 'Flux & contrôle' && (
+                                    <div className="mx-1 h-7 w-px bg-slate-200" />
+                                )}
                             </div>
                         ))}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -4138,11 +4143,11 @@ function StockTodoView({
     };
 
     return (
-        <div className="w-full space-y-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="w-full space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-600 mb-2">File d'actions stock</p>
-                    <h2 className="text-3xl font-black text-slate-900 tracking-tight">À traiter maintenant</h2>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-600 mb-1">File d'actions stock</p>
+                    <h2 className="text-2xl font-black text-slate-900 tracking-tight">À traiter maintenant</h2>
                     <p className="text-sm font-bold text-slate-500 mt-1">
                         Les priorités sont regroupées par rôle pour éviter de chercher l'action dans le catalogue.
                     </p>
@@ -4159,12 +4164,12 @@ function StockTodoView({
                 </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex gap-2 overflow-x-auto pb-1">
                 {roleTabs.map(tab => (
                     <button
                         key={tab.id}
                         onClick={() => setRoleFilter(tab.id)}
-                        className={`px-4 py-3 rounded-2xl border text-left transition-all ${roleFilter === tab.id ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-200 hover:text-blue-700'}`}
+                        className={`shrink-0 px-4 py-3 rounded-2xl border text-left transition-all ${roleFilter === tab.id ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-200 hover:text-blue-700'}`}
                     >
                         <span className="block text-sm font-black">{tab.label}</span>
                         <span className={`block text-[10px] font-bold mt-0.5 ${roleFilter === tab.id ? 'text-white/60' : 'text-slate-400'}`}>{tab.helper}</span>
@@ -4172,7 +4177,7 @@ function StockTodoView({
                 ))}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
                 {visibleCards.map(card => {
                     const Icon = card.icon;
                     return (
