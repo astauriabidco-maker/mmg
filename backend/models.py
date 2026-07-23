@@ -674,6 +674,7 @@ class SupplierInvoice(Base):
 
     purchase_order = relationship("PurchaseOrder", back_populates="supplier_invoices")
     lines = relationship("SupplierInvoiceLine", back_populates="invoice", cascade="all, delete-orphan")
+    payments = relationship("SupplierPayment", back_populates="invoice", cascade="all, delete-orphan")
 
 class SupplierInvoiceLine(Base):
     __tablename__ = "supplier_invoice_lines"
@@ -690,6 +691,21 @@ class SupplierInvoiceLine(Base):
     invoice = relationship("SupplierInvoice", back_populates="lines")
     purchase_order_line = relationship("PurchaseOrderLine")
     variant = relationship("ProductVariant")
+
+class SupplierPayment(Base):
+    __tablename__ = "supplier_payments"
+    id = Column(Integer, primary_key=True, index=True)
+    supplier_invoice_id = Column(Integer, ForeignKey("supplier_invoices.id"), nullable=False, index=True)
+    supplier = Column(String, index=True)
+    amount = Column(Numeric(14, 2), default=0.0)
+    method = Column(String, default="TRANSFER")
+    reference = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    payment_date = Column(DateTime, default=utcnow)
+    created_by = Column(String, default="Système")
+    created_at = Column(DateTime, default=utcnow)
+
+    invoice = relationship("SupplierInvoice", back_populates="payments")
 
 class SupplierDispute(Base):
     __tablename__ = "supplier_disputes"

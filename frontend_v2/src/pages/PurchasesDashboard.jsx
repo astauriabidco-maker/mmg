@@ -136,6 +136,8 @@ export default function PurchasesDashboard() {
     const [selectedPO, setSelectedPO] = useState(null);
     const [showReceiveModal, setShowReceiveModal] = useState(false);
     const [showSupplierInvoiceModal, setShowSupplierInvoiceModal] = useState(false);
+    const [supplierPaymentTarget, setSupplierPaymentTarget] = useState(null);
+    const [supplierPaymentForm, setSupplierPaymentForm] = useState({ amount: '', method: 'TRANSFER', reference: '', notes: '' });
     const [showDisputeModal, setShowDisputeModal] = useState(false);
     const [disputeForm, setDisputeForm] = useState({
         supplier: '',
@@ -712,6 +714,39 @@ export default function PurchasesDashboard() {
         }
     };
 
+    const openSupplierPaymentModal = (invoice) => {
+        const remaining = Number(invoice.remaining_amount ?? Math.max(Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0), 0));
+        setSupplierPaymentTarget(invoice);
+        setSupplierPaymentForm({
+            amount: remaining ? remaining.toFixed(2) : '',
+            method: 'TRANSFER',
+            reference: '',
+            notes: '',
+        });
+    };
+
+    const handlePaySupplierInvoice = async () => {
+        if (!supplierPaymentTarget) return;
+        const amount = Number(supplierPaymentForm.amount || 0);
+        if (amount <= 0) return alert("Montant de paiement invalide.");
+        try {
+            await api.post(`/v2/purchases/supplier-invoices/${supplierPaymentTarget.id}/pay`, {
+                amount,
+                method: supplierPaymentForm.method,
+                reference: supplierPaymentForm.reference.trim() || null,
+                notes: supplierPaymentForm.notes.trim() || null,
+            });
+            setSupplierPaymentTarget(null);
+            queryClient.invalidateQueries(['purchases']);
+            queryClient.invalidateQueries(['purchase-dashboard']);
+            if (selectedPO?.id) await openPODetails(selectedPO.id);
+            alert("Paiement fournisseur enregistré.");
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors du paiement fournisseur.");
+        }
+    };
+
 
     const filteredPurchases = purchases.filter(p =>
         p.reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1189,10 +1224,19 @@ export default function PurchasesDashboard() {
                                                     <div>
                                                         <p className="font-black text-slate-900">{invoice.supplier_reference || invoice.reference}</p>
                                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{invoice.reference} · {new Date(invoice.issue_date).toLocaleDateString('fr-FR')}</p>
+                                                        <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mt-1">
+                                                            Payé {Number(invoice.paid_amount || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}
+                                                            {' '}· Reste {Number(invoice.remaining_amount || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}
+                                                        </p>
                                                     </div>
                                                     <div className="text-right">
                                                         <p className="font-black text-slate-900">{Number(invoice.total_amount || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}</p>
                                                         <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest">{invoice.status}</p>
+                                                        {Number(invoice.remaining_amount || 0) > 0 && (
+                                                            <button onClick={() => openSupplierPaymentModal(invoice)} className="mt-2 px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-widest hover:bg-emerald-200">
+                                                                Payer
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </div>
                                             ))}
@@ -1651,6 +1695,56 @@ export default function PurchasesDashboard() {
                             <button onClick={()=>setShowSupplierInvoiceModal(false)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50">Annuler</button>
                             <button onClick={handleCreateSupplierInvoice} disabled={supplierInvoiceQuantityTotal <= 0} className="px-8 py-4 bg-orange-600 disabled:bg-slate-300 hover:bg-orange-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
                                 Valider le rapprochement
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* SUPPLIER PAYMENT MODAL */}
+            {supplierPaymentTarget && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-xl w-full border border-slate-100 overflow-hidden">
+                        <div className="px-8 py-6 bg-emerald-950 text-white flex justify-between items-start">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-200 mb-2">Paiement fournisseur</p>
+                                <h3 className="font-black text-3xl">{supplierPaymentTarget.supplier_reference || supplierPaymentTarget.reference}</h3>
+                                <p className="text-sm font-bold text-emerald-100 mt-1">
+                                    Reste à payer {Number(supplierPaymentTarget.remaining_amount || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}
+                                </p>
+                            </div>
+                            <button onClick={()=>setSupplierPaymentTarget(null)} className="text-emerald-100 hover:bg-white/10 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                        </div>
+                        <div className="p-8 bg-slate-50 space-y-5">
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Montant payé</label>
+                                <input type="number" min="0" step="0.01" value={supplierPaymentForm.amount} onChange={e=>setSupplierPaymentForm({...supplierPaymentForm, amount: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-black text-emerald-700 text-xl outline-none focus:ring-2 focus:ring-emerald-500"/>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Méthode</label>
+                                    <select value={supplierPaymentForm.method} onChange={e=>setSupplierPaymentForm({...supplierPaymentForm, method: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500">
+                                        <option value="TRANSFER">Virement</option>
+                                        <option value="CHEQUE">Chèque</option>
+                                        <option value="CARD">Carte</option>
+                                        <option value="CASH">Espèces</option>
+                                        <option value="OTHER">Autre</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Référence paiement</label>
+                                    <input value={supplierPaymentForm.reference} onChange={e=>setSupplierPaymentForm({...supplierPaymentForm, reference: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Réf. banque, chèque..."/>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Notes paiement</label>
+                                <textarea value={supplierPaymentForm.notes} onChange={e=>setSupplierPaymentForm({...supplierPaymentForm, notes: e.target.value})} className="w-full min-h-[90px] bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 resize-none" placeholder="Remarque comptable, échéance, justificatif..."/>
+                            </div>
+                        </div>
+                        <div className="px-8 py-5 bg-white border-t border-slate-100 flex justify-between items-center">
+                            <button onClick={()=>setSupplierPaymentTarget(null)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50">Annuler</button>
+                            <button onClick={handlePaySupplierInvoice} className="px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
+                                Enregistrer paiement
                             </button>
                         </div>
                     </div>

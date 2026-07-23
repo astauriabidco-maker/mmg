@@ -240,6 +240,7 @@ def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
         })
 
     for invoice in invoices:
+        paid_amount = sum(float(payment.amount or 0) for payment in invoice.payments)
         timeline.append({
             "type": "supplier_invoice",
             "label": "Facture fournisseur enregistrée",
@@ -248,6 +249,7 @@ def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
             "date": invoice.issue_date,
             "status": invoice.status,
             "amount": float(invoice.total_amount or 0),
+            "paid_amount": paid_amount,
         })
 
     for dispute in disputes:
@@ -314,6 +316,8 @@ def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
                 "due_date": invoice.due_date,
                 "status": invoice.status,
                 "total_amount": float(invoice.total_amount or 0),
+                "paid_amount": sum(float(payment.amount or 0) for payment in invoice.payments),
+                "remaining_amount": max(float(invoice.total_amount or 0) - sum(float(payment.amount or 0) for payment in invoice.payments), 0),
             }
             for invoice in invoices
         ],

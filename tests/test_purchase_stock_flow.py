@@ -379,6 +379,19 @@ def test_purchase_order_can_be_received_partially_then_completed():
         assert supplier_invoice["reference"].startswith("FF-")
         assert supplier_invoice["supplier_reference"] == "FAC-PARTIAL"
         assert supplier_invoice["total_amount"] == 20.0
+        assert supplier_invoice["paid_amount"] == 0.0
+        assert supplier_invoice["remaining_amount"] == 20.0
+
+        payment_response = client.post(
+            f"/v2/purchases/supplier-invoices/{supplier_invoice['id']}/pay",
+            headers=headers,
+            json={"amount": 5, "method": "TRANSFER", "reference": "VIR-001"},
+        )
+        assert payment_response.status_code == 200, payment_response.text
+        paid_invoice = payment_response.json()
+        assert paid_invoice["status"] == "PARTIAL"
+        assert paid_invoice["paid_amount"] == 5.0
+        assert paid_invoice["remaining_amount"] == 15.0
 
         details_response = client.get(f"/v2/purchases/{po_id}", headers=headers)
         details = details_response.json()
@@ -391,6 +404,7 @@ def test_purchase_order_can_be_received_partially_then_completed():
         assert details["lines"][0]["quantity_invoiceable"] == 1.0
         assert details["lines"][0]["invoice_match_status"] == "PARTIAL_MATCH"
         assert len(details["supplier_invoices"]) == 1
+        assert details["supplier_invoices"][0]["paid_amount"] == 5.0
 
         over_receive_response = client.post(
             f"/v2/purchases/{po_id}/receive",
@@ -423,6 +437,46 @@ def test_purchase_order_can_be_received_partially_then_completed():
             },
         )
         assert final_invoice_response.status_code == 200, final_invoice_response.text
+        final_invoice = final_invoice_response.json()
+
+        dispute_response = client.post(
+            "/v2/purchases/disputes",
+            headers=headers,
+            json={
+                "supplier": "Fournisseur test",
+                "purchase_order_id": po_id,
+                "supplier_invoice_id": final_invoice["id"],
+                "title": "Prix facture à vérifier",
+                "category": "PRICE",
+                "severity": "BLOCKING",
+                "expected_action": "PRICE_CORRECTION",
+                "blocks_payment": True,
+            },
+        )
+        assert dispute_response.status_code == 200, dispute_response.text
+
+        blocked_payment = client.post(
+            f"/v2/purchases/supplier-invoices/{final_invoice['id']}/pay",
+            headers=headers,
+            json={"amount": 10, "method": "TRANSFER"},
+        )
+        assert blocked_payment.status_code == 409, blocked_payment.text
+        assert "Paiement fournisseur bloqué" in blocked_payment.json()["detail"]
+
+        resolve_response = client.post(
+            f"/v2/purchases/disputes/{dispute_response.json()['id']}/resolve",
+            headers=headers,
+            json={"resolution_notes": "Prix confirmé par le fournisseur."},
+        )
+        assert resolve_response.status_code == 200, resolve_response.text
+
+        final_payment_response = client.post(
+            f"/v2/purchases/supplier-invoices/{final_invoice['id']}/pay",
+            headers=headers,
+            json={"amount": final_invoice["remaining_amount"], "method": "TRANSFER", "reference": "VIR-002"},
+        )
+        assert final_payment_response.status_code == 200, final_payment_response.text
+        assert final_payment_response.json()["status"] == "PAID"
 
         details_response = client.get(f"/v2/purchases/{po_id}", headers=headers)
         details = details_response.json()

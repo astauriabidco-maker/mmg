@@ -67,6 +67,13 @@ class SupplierInvoiceCreate(BaseModel):
     notes: Optional[str] = None
     lines: List[SupplierInvoiceLineInput]
 
+class SupplierPaymentCreate(BaseModel):
+    amount: float
+    method: str = "TRANSFER"
+    reference: Optional[str] = None
+    notes: Optional[str] = None
+    payment_date: Optional[datetime] = None
+
 class SupplierDisputeCreate(BaseModel):
     supplier: str
     purchase_order_id: Optional[int] = None
@@ -240,6 +247,9 @@ def _invoiced_quantities_by_po_line(db: Session, po_id: int) -> dict[int, float]
     return quantities
 
 def _serialize_supplier_invoice(invoice: models.SupplierInvoice) -> dict:
+    paid_amount = sum(float(payment.amount or 0) for payment in invoice.payments)
+    total_amount = float(invoice.total_amount or 0)
+    remaining_amount = max(total_amount - paid_amount, 0.0)
     return {
         "id": invoice.id,
         "reference": invoice.reference,
@@ -247,10 +257,25 @@ def _serialize_supplier_invoice(invoice: models.SupplierInvoice) -> dict:
         "issue_date": invoice.issue_date,
         "due_date": invoice.due_date,
         "status": invoice.status,
-        "subtotal": invoice.subtotal,
-        "discount_amount": invoice.discount_amount,
-        "total_amount": invoice.total_amount,
+        "subtotal": float(invoice.subtotal or 0),
+        "discount_amount": float(invoice.discount_amount or 0),
+        "total_amount": total_amount,
+        "paid_amount": paid_amount,
+        "remaining_amount": remaining_amount,
         "notes": invoice.notes,
+        "payments": [
+            {
+                "id": payment.id,
+                "amount": float(payment.amount or 0),
+                "method": payment.method,
+                "reference": payment.reference,
+                "notes": payment.notes,
+                "payment_date": payment.payment_date,
+                "created_by": payment.created_by,
+                "created_at": payment.created_at,
+            }
+            for payment in invoice.payments
+        ],
         "lines": [
             {
                 "id": line.id,
@@ -1578,6 +1603,52 @@ def create_supplier_invoice(
     invoice.subtotal = subtotal_before_global
     invoice.discount_amount = subtotal_before_global * (global_discount_percent / 100)
     invoice.total_amount = invoice.subtotal - invoice.discount_amount
+    db.commit()
+    db.refresh(invoice)
+    return _serialize_supplier_invoice(invoice)
+
+@router.post("/supplier-invoices/{invoice_id}/pay")
+def pay_supplier_invoice(
+    invoice_id: int,
+    data: SupplierPaymentCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.approve")
+    invoice = db.query(models.SupplierInvoice).filter(models.SupplierInvoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Facture fournisseur introuvable.")
+    if invoice.status == "CANCELLED":
+        raise HTTPException(status_code=400, detail="Facture fournisseur annulée.")
+    if invoice.purchase_order_id:
+        payment_blockers = _open_blocking_disputes(db, invoice.purchase_order_id, "blocks_payment")
+        if payment_blockers:
+            refs = ", ".join(dispute.reference for dispute in payment_blockers[:3])
+            raise HTTPException(status_code=409, detail=f"Paiement fournisseur bloqué par litige ouvert: {refs}.")
+
+    amount = float(data.amount or 0)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Le montant payé doit être positif.")
+    paid_amount = sum(float(payment.amount or 0) for payment in invoice.payments)
+    remaining_amount = max(float(invoice.total_amount or 0) - paid_amount, 0.0)
+    if remaining_amount <= 0:
+        raise HTTPException(status_code=400, detail="Cette facture fournisseur est déjà payée.")
+    if amount > remaining_amount:
+        raise HTTPException(status_code=400, detail=f"Paiement supérieur au reste à payer ({remaining_amount:.2f}).")
+
+    payment = models.SupplierPayment(
+        supplier_invoice_id=invoice.id,
+        supplier=invoice.supplier,
+        amount=amount,
+        method=(data.method or "TRANSFER").upper(),
+        reference=(data.reference or "").strip() or None,
+        notes=data.notes,
+        payment_date=data.payment_date or utcnow(),
+        created_by=current_user.get("sub", "unknown"),
+    )
+    db.add(payment)
+    new_paid_amount = paid_amount + amount
+    invoice.status = "PAID" if new_paid_amount >= float(invoice.total_amount or 0) else "PARTIAL"
     db.commit()
     db.refresh(invoice)
     return _serialize_supplier_invoice(invoice)
