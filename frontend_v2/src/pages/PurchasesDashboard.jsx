@@ -136,6 +136,7 @@ export default function PurchasesDashboard() {
     const [selectedPO, setSelectedPO] = useState(null);
     const [showReceiveModal, setShowReceiveModal] = useState(false);
     const [showSupplierInvoiceModal, setShowSupplierInvoiceModal] = useState(false);
+    const [selectedSupplierInvoice, setSelectedSupplierInvoice] = useState(null);
     const [supplierPaymentTarget, setSupplierPaymentTarget] = useState(null);
     const [supplierPaymentForm, setSupplierPaymentForm] = useState({ amount: '', method: 'TRANSFER', reference: '', notes: '' });
     const [showDisputeModal, setShowDisputeModal] = useState(false);
@@ -602,9 +603,21 @@ export default function PurchasesDashboard() {
         try {
             const res = await api.get(`/v2/purchases/${po_id}`);
             setSelectedPO(res.data);
+            return res.data;
         } catch (err) {
             console.error(err);
+            return null;
         }
+    };
+
+    const openSupplierInvoiceDetail = async (invoice, purchaseOrder = selectedPO) => {
+        if (!invoice) return;
+        let po = purchaseOrder;
+        if ((!po || po.id !== invoice.purchase_order_id) && invoice.purchase_order_id) {
+            po = await openPODetails(invoice.purchase_order_id);
+        }
+        const fullInvoice = po?.supplier_invoices?.find(item => item.id === (invoice.id || invoice.invoice_id)) || invoice;
+        setSelectedSupplierInvoice({ invoice: fullInvoice, purchaseOrder: po });
     };
 
     const addLineToPO = () => {
@@ -737,6 +750,7 @@ export default function PurchasesDashboard() {
                 notes: supplierPaymentForm.notes.trim() || null,
             });
             setSupplierPaymentTarget(null);
+            setSelectedSupplierInvoice(null);
             queryClient.invalidateQueries(['purchases']);
             queryClient.invalidateQueries(['purchase-dashboard']);
             if (selectedPO?.id) await openPODetails(selectedPO.id);
@@ -1015,6 +1029,7 @@ export default function PurchasesDashboard() {
                         dashboard={purchaseDashboard}
                         setCurrentTab={setCurrentTab}
                         openPODetails={openPODetails}
+                        openSupplierInvoiceDetail={openSupplierInvoiceDetail}
                         handleRemindSupplier={handleRemindSupplier}
                     />
                 ) : currentTab === 'requests' ? (
@@ -1221,17 +1236,20 @@ export default function PurchasesDashboard() {
                                         <div className="space-y-2">
                                             {(selectedPO.supplier_invoices || []).map(invoice => (
                                                 <div key={invoice.id} className="bg-white border border-slate-200 rounded-xl p-3 flex items-center justify-between">
-                                                    <div>
+                                                    <button onClick={() => openSupplierInvoiceDetail(invoice, selectedPO)} className="text-left">
                                                         <p className="font-black text-slate-900">{invoice.supplier_reference || invoice.reference}</p>
                                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{invoice.reference} · {new Date(invoice.issue_date).toLocaleDateString('fr-FR')}</p>
                                                         <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mt-1">
                                                             Payé {Number(invoice.paid_amount || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}
                                                             {' '}· Reste {Number(invoice.remaining_amount || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}
                                                         </p>
-                                                    </div>
+                                                    </button>
                                                     <div className="text-right">
                                                         <p className="font-black text-slate-900">{Number(invoice.total_amount || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'})}</p>
                                                         <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest">{invoice.status}</p>
+                                                        <button onClick={() => openSupplierInvoiceDetail(invoice, selectedPO)} className="mt-2 mr-2 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-[10px] font-black uppercase tracking-widest hover:bg-slate-200">
+                                                            Fiche
+                                                        </button>
                                                         {Number(invoice.remaining_amount || 0) > 0 && (
                                                             <button onClick={() => openSupplierPaymentModal(invoice)} className="mt-2 px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-widest hover:bg-emerald-200">
                                                                 Payer
@@ -1751,6 +1769,20 @@ export default function PurchasesDashboard() {
                 </div>
             )}
 
+            {selectedSupplierInvoice && (
+                <SupplierInvoiceDetailModal
+                    invoice={selectedSupplierInvoice.invoice}
+                    purchaseOrder={selectedSupplierInvoice.purchaseOrder}
+                    disputes={(selectedSupplierInvoice.purchaseOrder?.disputes || []).filter(dispute => (
+                        dispute.supplier_invoice_id === selectedSupplierInvoice.invoice.id
+                        || (!dispute.supplier_invoice_id && dispute.purchase_order_id === selectedSupplierInvoice.purchaseOrder?.id)
+                    ))}
+                    onClose={() => setSelectedSupplierInvoice(null)}
+                    onPay={openSupplierPaymentModal}
+                    onOpenPO={openPODetails}
+                />
+            )}
+
             {/* SUPPLIER DISPUTE MODAL */}
             {showDisputeModal && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -2017,7 +2049,176 @@ export default function PurchasesDashboard() {
     );
 }
 
-const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, handleRemindSupplier }) => {
+const SupplierInvoiceDetailModal = ({ invoice, purchaseOrder, disputes = [], onClose, onPay, onOpenPO }) => {
+    const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+    const remainingAmount = Number(invoice.remaining_amount || 0);
+    const paidAmount = Number(invoice.paid_amount || 0);
+    const totalAmount = Number(invoice.total_amount || 0);
+    const paidRatio = totalAmount > 0 ? Math.min((paidAmount / totalAmount) * 100, 100) : 0;
+    const isOverdue = invoice.due_date && remainingAmount > 0 && new Date(invoice.due_date) < new Date(new Date().toDateString());
+    const paymentBlocked = disputes.some(dispute => dispute.blocks_payment && ['OPEN', 'IN_PROGRESS'].includes(dispute.status));
+
+    return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-6xl w-full border border-slate-100 max-h-[92vh] overflow-hidden flex flex-col">
+                <div className="px-8 py-6 bg-slate-950 text-white flex justify-between items-start gap-6">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200 mb-2">Fiche facture fournisseur</p>
+                        <h3 className="font-black text-3xl">{invoice.supplier_reference || invoice.reference}</h3>
+                        <p className="text-sm font-bold text-slate-300 mt-1">
+                            {purchaseOrder?.supplier || invoice.supplier || 'Fournisseur'} · {invoice.reference}
+                        </p>
+                    </div>
+                    <div className="flex items-start gap-3">
+                        {purchaseOrder?.id && (
+                            <button onClick={() => onOpenPO(purchaseOrder.id)} className="px-4 py-3 rounded-xl bg-white/10 border border-white/10 text-white font-black text-sm hover:bg-white/20">
+                                Ouvrir le bon
+                            </button>
+                        )}
+                        <button onClick={onClose} className="text-slate-300 hover:bg-white/10 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                    </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto bg-slate-50 p-8 space-y-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                        <div className="rounded-2xl bg-white border border-slate-200 p-5">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total facture</p>
+                            <p className="text-3xl font-black text-slate-950 mt-2">{formatMoney(totalAmount)}</p>
+                        </div>
+                        <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-5">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">Déjà payé</p>
+                            <p className="text-3xl font-black text-emerald-700 mt-2">{formatMoney(paidAmount)}</p>
+                        </div>
+                        <div className={`rounded-2xl border p-5 ${remainingAmount > 0 ? 'bg-orange-50 border-orange-100' : 'bg-emerald-50 border-emerald-100'}`}>
+                            <p className={`text-[10px] font-black uppercase tracking-widest ${remainingAmount > 0 ? 'text-orange-500' : 'text-emerald-500'}`}>Reste à payer</p>
+                            <p className={`text-3xl font-black mt-2 ${remainingAmount > 0 ? 'text-orange-700' : 'text-emerald-700'}`}>{formatMoney(remainingAmount)}</p>
+                        </div>
+                        <div className={`rounded-2xl border p-5 ${paymentBlocked ? 'bg-rose-50 border-rose-100' : isOverdue ? 'bg-red-50 border-red-100' : 'bg-indigo-50 border-indigo-100'}`}>
+                            <p className={`text-[10px] font-black uppercase tracking-widest ${paymentBlocked ? 'text-rose-500' : isOverdue ? 'text-red-500' : 'text-indigo-500'}`}>Statut paiement</p>
+                            <p className={`text-2xl font-black mt-2 ${paymentBlocked ? 'text-rose-700' : isOverdue ? 'text-red-700' : 'text-indigo-700'}`}>
+                                {paymentBlocked ? 'Bloqué' : remainingAmount <= 0 ? 'Payée' : isOverdue ? 'En retard' : 'À payer'}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-6">
+                        <div className="space-y-6">
+                            <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden">
+                                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                                    <div>
+                                        <h4 className="font-black text-slate-900">Lignes rapprochées</h4>
+                                        <p className="text-xs font-bold text-slate-500">Quantités facturées issues des réceptions fournisseur.</p>
+                                    </div>
+                                    <span className="text-xs font-black text-slate-400">{invoice.lines?.length || 0} ligne(s)</span>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {(invoice.lines || []).map(line => (
+                                        <div key={line.id} className="grid grid-cols-[1fr_90px_110px_120px] gap-4 items-center p-5">
+                                            <div>
+                                                <p className="font-black text-slate-900">{line.description}</p>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Ligne achat #{line.purchase_order_line_id}</p>
+                                            </div>
+                                            <div className="text-center">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Qté</p>
+                                                <p className="font-black text-slate-900">{Number(line.quantity || 0).toLocaleString('fr-FR')}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">PU HT</p>
+                                                <p className="font-black text-slate-900">{formatMoney(line.unit_price)}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total</p>
+                                                <p className="font-black text-slate-950">{formatMoney(line.line_total)}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden">
+                                <div className="px-5 py-4 border-b border-slate-100">
+                                    <h4 className="font-black text-slate-900">Historique paiements</h4>
+                                    <p className="text-xs font-bold text-slate-500">Traçabilité des règlements enregistrés.</p>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {(invoice.payments || []).map(payment => (
+                                        <div key={payment.id} className="p-5 flex items-center justify-between gap-4">
+                                            <div>
+                                                <p className="font-black text-slate-900">{payment.method || 'Paiement'}</p>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                                    {payment.payment_date ? new Date(payment.payment_date).toLocaleDateString('fr-FR') : 'Date non renseignée'} · {payment.created_by || 'Système'}
+                                                </p>
+                                                {payment.reference && <p className="text-xs font-bold text-slate-500 mt-1">{payment.reference}</p>}
+                                            </div>
+                                            <p className="font-black text-emerald-700">{formatMoney(payment.amount)}</p>
+                                        </div>
+                                    ))}
+                                    {(invoice.payments || []).length === 0 && (
+                                        <div className="p-6 text-sm font-bold text-slate-400">Aucun paiement enregistré.</div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-6">
+                            <div className="rounded-2xl bg-white border border-slate-200 p-5">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Informations</p>
+                                <div className="space-y-3 text-sm font-bold text-slate-700">
+                                    <div className="flex justify-between gap-4"><span>Émission</span><span>{invoice.issue_date ? new Date(invoice.issue_date).toLocaleDateString('fr-FR') : '-'}</span></div>
+                                    <div className="flex justify-between gap-4"><span>Échéance</span><span>{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('fr-FR') : 'Sans échéance'}</span></div>
+                                    <div className="flex justify-between gap-4"><span>Statut</span><span>{invoice.status}</span></div>
+                                    <div className="flex justify-between gap-4"><span>Bon fournisseur</span><span>{purchaseOrder?.reference || '-'}</span></div>
+                                </div>
+                                <div className="mt-5 h-2 rounded-full bg-slate-100 overflow-hidden">
+                                    <div className="h-full bg-emerald-500" style={{ width: `${paidRatio}%` }} />
+                                </div>
+                                {remainingAmount > 0 && (
+                                    <button
+                                        onClick={() => onPay(invoice)}
+                                        disabled={paymentBlocked}
+                                        className="mt-5 w-full px-5 py-4 rounded-xl bg-emerald-600 disabled:bg-slate-300 text-white font-black hover:bg-emerald-500"
+                                    >
+                                        {paymentBlocked ? 'Paiement bloqué' : 'Enregistrer paiement'}
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="rounded-2xl bg-red-50 border border-red-100 p-5">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-red-500 mb-3">Litiges liés</p>
+                                <div className="space-y-3">
+                                    {disputes.map(dispute => (
+                                        <div key={dispute.id} className="rounded-xl bg-white border border-red-100 p-4">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <p className="font-black text-red-950">{dispute.title}</p>
+                                                    <p className="text-[10px] font-black uppercase tracking-widest text-red-500">{dispute.reference} · {dispute.status}</p>
+                                                </div>
+                                                {dispute.blocks_payment && <span className="text-[9px] font-black uppercase tracking-widest bg-orange-100 text-orange-700 px-2 py-1 rounded-md">bloque paiement</span>}
+                                            </div>
+                                            {dispute.impact_summary && <p className="text-xs font-bold text-red-700 mt-2">{dispute.impact_summary}</p>}
+                                        </div>
+                                    ))}
+                                    {disputes.length === 0 && (
+                                        <p className="text-sm font-bold text-red-400">Aucun litige lié à cette facture.</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            {invoice.notes && (
+                                <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-amber-500 mb-2">Notes rapprochement</p>
+                                    <p className="text-sm font-bold text-amber-900 whitespace-pre-line">{invoice.notes}</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, openSupplierInvoiceDetail, handleRemindSupplier }) => {
     const summary = dashboard?.summary || {};
     const actions = dashboard?.actions || [];
     const paymentSchedule = dashboard?.payment_schedule || [];
@@ -2125,8 +2326,8 @@ const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, ha
                                         <div className="text-right shrink-0">
                                             <p className="font-black text-slate-900">{formatMoney(invoice.remaining_amount)}</p>
                                             {invoice.purchase_order_id && (
-                                                <button onClick={() => openPODetails(invoice.purchase_order_id)} className="mt-2 px-3 py-2 rounded-xl bg-slate-900 text-white font-black text-xs hover:bg-slate-800">
-                                                    Ouvrir bon
+                                                <button onClick={() => openSupplierInvoiceDetail(invoice)} className="mt-2 px-3 py-2 rounded-xl bg-slate-900 text-white font-black text-xs hover:bg-slate-800">
+                                                    Fiche facture
                                                 </button>
                                             )}
                                         </div>
