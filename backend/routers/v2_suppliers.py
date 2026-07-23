@@ -198,6 +198,13 @@ def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
         .limit(30)
         .all()
     )
+    disputes = (
+        db.query(models.SupplierDispute)
+        .filter(models.SupplierDispute.supplier == supplier.name)
+        .order_by(models.SupplierDispute.created_at.desc(), models.SupplierDispute.id.desc())
+        .all()
+    )
+    open_disputes = [dispute for dispute in disputes if dispute.status in {"OPEN", "IN_PROGRESS"}]
 
     timeline = []
     for po in purchase_orders[:30]:
@@ -243,6 +250,18 @@ def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
             "amount": float(invoice.total_amount or 0),
         })
 
+    for dispute in disputes:
+        timeline.append({
+            "type": "supplier_dispute",
+            "label": "Litige fournisseur" if dispute.status != "RESOLVED" else "Litige fournisseur résolu",
+            "reference": dispute.reference,
+            "date": dispute.created_at,
+            "status": dispute.status,
+            "severity": dispute.severity,
+            "title": dispute.title,
+            "purchase_order_id": dispute.purchase_order_id,
+        })
+
     timeline.sort(key=lambda event: event["date"] or utcnow(), reverse=True)
 
     return {
@@ -271,7 +290,7 @@ def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
             "to_receive": len(to_receive),
             "to_invoice": len(to_invoice),
             "late_orders": len(late_orders),
-            "disputes": 0,
+            "disputes": len(open_disputes),
             "amount_committed": amount_committed,
         },
         "actions": [
@@ -279,7 +298,7 @@ def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
             {"code": "purchase.receive", "label": "Réceptionner", "enabled": len(to_receive) > 0},
             {"code": "purchase.match_invoice", "label": "Rapprocher facture", "enabled": len(to_invoice) > 0},
             {"code": "supplier.contact", "label": "Contacter", "enabled": bool(supplier.email or supplier.phone)},
-            {"code": "supplier.dispute", "label": "Ajouter litige", "enabled": False, "reason": "Les litiges fournisseur ne sont pas encore modélisés."},
+            {"code": "supplier.dispute", "label": "Ajouter litige", "enabled": True},
         ],
         "open_orders": open_orders,
         "to_receive": to_receive,
@@ -297,6 +316,24 @@ def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
                 "total_amount": float(invoice.total_amount or 0),
             }
             for invoice in invoices
+        ],
+        "disputes": [
+            {
+                "id": dispute.id,
+                "reference": dispute.reference,
+                "purchase_order_id": dispute.purchase_order_id,
+                "supplier_invoice_id": dispute.supplier_invoice_id,
+                "title": dispute.title,
+                "description": dispute.description,
+                "category": dispute.category,
+                "severity": dispute.severity,
+                "status": dispute.status,
+                "created_by": dispute.created_by,
+                "created_at": dispute.created_at,
+                "closed_at": dispute.closed_at,
+                "resolution_notes": dispute.resolution_notes,
+            }
+            for dispute in disputes[:8]
         ],
         "recent_stock_receipts": [
             {

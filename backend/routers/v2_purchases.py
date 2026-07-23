@@ -59,12 +59,29 @@ class SupplierInvoiceCreate(BaseModel):
     notes: Optional[str] = None
     lines: List[SupplierInvoiceLineInput]
 
+class SupplierDisputeCreate(BaseModel):
+    supplier: str
+    purchase_order_id: Optional[int] = None
+    supplier_invoice_id: Optional[int] = None
+    title: str
+    description: Optional[str] = None
+    category: str = "OTHER"
+    severity: str = "MEDIUM"
+
+class SupplierDisputeResolveInput(BaseModel):
+    resolution_notes: str
+
+PURCHASE_DIRECT_ORDER_LIMIT = 1000.0
+
 def _supplier_invoice_reference(db: Session) -> str:
     # Format: FF-YYYY-XXXX — séquence transactionnelle inaltérable (NF525)
     return next_number(db, "supplier_invoice")
 
 def _purchase_request_reference(db: Session) -> str:
     return next_number(db, "purchase_request")
+
+def _supplier_dispute_reference(db: Session) -> str:
+    return next_number(db, "supplier_dispute")
 
 def _line_total(quantity: float, unit_price: float, discount_percent: float) -> float:
     return quantity * unit_price * (1 - discount_percent / 100)
@@ -78,6 +95,31 @@ def _purchase_payload_total(data: PurchaseOrderCreate) -> float:
         subtotal += _line_total(quantity, unit_price, discount_percent)
     global_discount_percent = max(0, min(float(data.global_discount_percent or 0), 100))
     return subtotal * (1 - global_discount_percent / 100)
+
+def _purchase_approval_reason(data: PurchaseOrderCreate, db: Session) -> Optional[str]:
+    total = _purchase_payload_total(data)
+    supplier_name = (data.supplier or "").strip()
+    supplier = (
+        db.query(models.Supplier)
+        .filter(models.Supplier.name == supplier_name)
+        .first()
+        if supplier_name
+        else None
+    )
+    if supplier and supplier.supplier_status == "BLOCKED":
+        return "Fournisseur bloqué: demande achat impossible sans levée du blocage."
+    if supplier and supplier.supplier_status == "TO_QUALIFY":
+        return "Fournisseur à qualifier: une demande d'achat doit être validée avant engagement."
+    if total >= PURCHASE_DIRECT_ORDER_LIMIT:
+        return f"Montant achat sensible ({total:.2f} €): validation achat obligatoire."
+    priority_lines = [
+        line.need_priority
+        for line in data.lines
+        if str(line.need_priority or "").upper() in {"CRITICAL", "URGENT"}
+    ]
+    if priority_lines:
+        return "Besoin critique/urgent: validation achat obligatoire avant bon fournisseur."
+    return None
 
 def _serialize_purchase_request(request: models.PurchaseRequest) -> dict:
     return {
@@ -196,6 +238,25 @@ def _serialize_supplier_invoice(invoice: models.SupplierInvoice) -> dict:
             }
             for line in invoice.lines
         ],
+    }
+
+def _serialize_supplier_dispute(dispute: models.SupplierDispute) -> dict:
+    return {
+        "id": dispute.id,
+        "reference": dispute.reference,
+        "supplier": dispute.supplier,
+        "purchase_order_id": dispute.purchase_order_id,
+        "supplier_invoice_id": dispute.supplier_invoice_id,
+        "title": dispute.title,
+        "description": dispute.description,
+        "category": dispute.category,
+        "severity": dispute.severity,
+        "status": dispute.status,
+        "created_by": dispute.created_by,
+        "created_at": dispute.created_at,
+        "closed_by": dispute.closed_by,
+        "closed_at": dispute.closed_at,
+        "resolution_notes": dispute.resolution_notes,
     }
 
 def _purchase_order_metrics(po: models.PurchaseOrder, db: Session) -> dict:
@@ -611,8 +672,90 @@ def get_purchase_orders(db: Session = Depends(get_db)):
             "next_action": metrics["next_action"],
             "is_late": metrics["is_late"],
             "late_days": metrics["late_days"],
+            "open_disputes": db.query(models.SupplierDispute).filter(
+                models.SupplierDispute.purchase_order_id == po.id,
+                models.SupplierDispute.status.in_(["OPEN", "IN_PROGRESS"]),
+            ).count(),
         })
     return result
+
+@router.get("/disputes")
+def get_supplier_disputes(db: Session = Depends(get_db)):
+    disputes = (
+        db.query(models.SupplierDispute)
+        .order_by(models.SupplierDispute.created_at.desc(), models.SupplierDispute.id.desc())
+        .all()
+    )
+    return [_serialize_supplier_dispute(dispute) for dispute in disputes]
+
+@router.post("/disputes")
+def create_supplier_dispute(
+    data: SupplierDisputeCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.receive")
+    supplier = (data.supplier or "").strip()
+    title = (data.title or "").strip()
+    if not supplier:
+        raise HTTPException(status_code=400, detail="Le fournisseur est obligatoire.")
+    if not title:
+        raise HTTPException(status_code=400, detail="Le titre du litige est obligatoire.")
+
+    if data.purchase_order_id:
+        po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == data.purchase_order_id).first()
+        if not po:
+            raise HTTPException(status_code=404, detail="Bon fournisseur introuvable.")
+        if po.supplier != supplier:
+            raise HTTPException(status_code=400, detail="Le litige ne correspond pas au fournisseur du bon.")
+
+    if data.supplier_invoice_id:
+        invoice = db.query(models.SupplierInvoice).filter(models.SupplierInvoice.id == data.supplier_invoice_id).first()
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Facture fournisseur introuvable.")
+        if invoice.supplier != supplier:
+            raise HTTPException(status_code=400, detail="Le litige ne correspond pas au fournisseur de la facture.")
+
+    dispute = models.SupplierDispute(
+        reference=_supplier_dispute_reference(db),
+        supplier=supplier,
+        purchase_order_id=data.purchase_order_id,
+        supplier_invoice_id=data.supplier_invoice_id,
+        title=title,
+        description=data.description,
+        category=(data.category or "OTHER").upper(),
+        severity=(data.severity or "MEDIUM").upper(),
+        status="OPEN",
+        created_by=current_user.get("sub", "unknown"),
+    )
+    db.add(dispute)
+    db.commit()
+    db.refresh(dispute)
+    return _serialize_supplier_dispute(dispute)
+
+@router.post("/disputes/{dispute_id}/resolve")
+def resolve_supplier_dispute(
+    dispute_id: int,
+    data: SupplierDisputeResolveInput,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.approve")
+    notes = (data.resolution_notes or "").strip()
+    if not notes:
+        raise HTTPException(status_code=400, detail="Le compte rendu de résolution est obligatoire.")
+    dispute = db.query(models.SupplierDispute).filter(models.SupplierDispute.id == dispute_id).first()
+    if not dispute:
+        raise HTTPException(status_code=404, detail="Litige fournisseur introuvable.")
+    if dispute.status == "RESOLVED":
+        return _serialize_supplier_dispute(dispute)
+    dispute.status = "RESOLVED"
+    dispute.closed_by = current_user.get("sub", "unknown")
+    dispute.closed_at = utcnow()
+    dispute.resolution_notes = notes
+    db.commit()
+    db.refresh(dispute)
+    return _serialize_supplier_dispute(dispute)
 
 @router.get("/requests")
 def get_purchase_requests(db: Session = Depends(get_db)):
@@ -755,10 +898,17 @@ def convert_purchase_request_to_order(
     request = db.query(models.PurchaseRequest).filter(models.PurchaseRequest.id == request_id).first()
     if not request:
         raise HTTPException(status_code=404, detail="Demande d'achat introuvable.")
+    if request.status == models.PurchaseRequestStatus.CONVERTED and request.purchase_order_id:
+        po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == request.purchase_order_id).first()
+        if po:
+            return {"request": _serialize_purchase_request(request), "purchase_order": {"id": po.id, "reference": po.reference}}
     if request.status != models.PurchaseRequestStatus.APPROVED:
         raise HTTPException(status_code=400, detail="La demande doit être validée avant création du bon fournisseur.")
     if request.purchase_order_id:
-        raise HTTPException(status_code=400, detail="Cette demande a déjà été convertie en bon fournisseur.")
+        po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == request.purchase_order_id).first()
+        if po:
+            return {"request": _serialize_purchase_request(request), "purchase_order": {"id": po.id, "reference": po.reference}}
+        raise HTTPException(status_code=409, detail="Cette demande référence un bon fournisseur introuvable.")
 
     po_data = PurchaseOrderCreate(
         supplier=request.supplier,
@@ -792,6 +942,17 @@ def create_purchase_order(
     current_user: dict = Depends(security.get_current_user),
 ):
     security.assert_permission(db, current_user, "purchases.order")
+    approval_reason = _purchase_approval_reason(data, db)
+    if approval_reason:
+        detail = (
+            f"Bon fournisseur impossible. {approval_reason}"
+            if "bloqué" in approval_reason.lower()
+            else f"Demande d'achat obligatoire avant bon fournisseur. {approval_reason}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=detail,
+        )
     po = _create_purchase_order_from_data(data, db, current_user.get("sub", "unknown"))
     db.commit()
     db.refresh(po)
@@ -854,6 +1015,13 @@ def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):
         "late_days": metrics["late_days"],
         "lines": lines,
         "supplier_invoices": [_serialize_supplier_invoice(invoice) for invoice in po.supplier_invoices],
+        "disputes": [
+            _serialize_supplier_dispute(dispute)
+            for dispute in db.query(models.SupplierDispute)
+            .filter(models.SupplierDispute.purchase_order_id == po.id)
+            .order_by(models.SupplierDispute.created_at.desc(), models.SupplierDispute.id.desc())
+            .all()
+        ],
     }
 
 @router.post("/{po_id}/receive")

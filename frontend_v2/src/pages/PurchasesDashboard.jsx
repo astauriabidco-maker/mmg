@@ -135,6 +135,15 @@ export default function PurchasesDashboard() {
     const [selectedPO, setSelectedPO] = useState(null);
     const [showReceiveModal, setShowReceiveModal] = useState(false);
     const [showSupplierInvoiceModal, setShowSupplierInvoiceModal] = useState(false);
+    const [showDisputeModal, setShowDisputeModal] = useState(false);
+    const [disputeForm, setDisputeForm] = useState({
+        supplier: '',
+        purchase_order_id: null,
+        title: '',
+        category: 'OTHER',
+        severity: 'MEDIUM',
+        description: '',
+    });
 
     // Suppliers state
     const [selectedSupplierId, setSelectedSupplierId] = useState(null);
@@ -196,6 +205,14 @@ export default function PurchasesDashboard() {
         queryKey: ['purchase-requests'],
         queryFn: async () => {
             const res = await api.get('/v2/purchases/requests');
+            return res.data;
+        }
+    });
+
+    const { data: supplierDisputes = [] } = useQuery({
+        queryKey: ['supplier-disputes'],
+        queryFn: async () => {
+            const res = await api.get('/v2/purchases/disputes');
             return res.data;
         }
     });
@@ -325,15 +342,59 @@ export default function PurchasesDashboard() {
     };
 
     const openCreatePOForSupplier = (supplierName = '') => {
-        setCreateMode(canCreatePurchaseOrder ? 'order' : 'request');
+        setCreateMode(canCreatePurchaseRequest ? 'request' : 'order');
         setNewPO({
             ...emptyPOForm,
             supplier: supplierName,
-            notes: supplierName ? `${canCreatePurchaseOrder ? 'Commande' : 'Demande'} fournisseur ${supplierName}` : '',
+            notes: supplierName ? `${canCreatePurchaseRequest ? 'Demande' : 'Commande'} fournisseur ${supplierName}` : '',
         });
-        setCurrentTab(canCreatePurchaseOrder ? 'orders' : 'requests');
+        setCurrentTab(canCreatePurchaseRequest ? 'requests' : 'orders');
         setSelectedPO(null);
         setShowCreateModal(true);
+    };
+
+    const openDisputeModal = ({ supplier, purchaseOrderId = null, title = '' }) => {
+        setDisputeForm({
+            supplier: supplier || '',
+            purchase_order_id: purchaseOrderId,
+            title,
+            category: 'OTHER',
+            severity: 'MEDIUM',
+            description: '',
+        });
+        setShowDisputeModal(true);
+    };
+
+    const handleCreateDispute = async () => {
+        if (!disputeForm.supplier || !disputeForm.title.trim()) return;
+        try {
+            await api.post('/v2/purchases/disputes', {
+                ...disputeForm,
+                title: disputeForm.title.trim(),
+                description: disputeForm.description.trim() || null,
+            });
+            setShowDisputeModal(false);
+            queryClient.invalidateQueries(['supplier-disputes']);
+            queryClient.invalidateQueries(['purchases']);
+            if (selectedPO?.id) await openPODetails(selectedPO.id);
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de la création du litige fournisseur.");
+        }
+    };
+
+    const handleResolveDispute = async (disputeId) => {
+        const resolution = window.prompt("Compte rendu de résolution du litige :");
+        if (!resolution || !resolution.trim()) return;
+        try {
+            await api.post(`/v2/purchases/disputes/${disputeId}/resolve`, { resolution_notes: resolution.trim() });
+            queryClient.invalidateQueries(['supplier-disputes']);
+            queryClient.invalidateQueries(['purchases']);
+            if (selectedPO?.id) await openPODetails(selectedPO.id);
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de la résolution du litige.");
+        }
     };
 
     const handleCreateSupplier = async () => {
@@ -808,9 +869,12 @@ export default function PurchasesDashboard() {
                         <SupplierProfile
                             sup={suppliers.find(s => s.id === selectedSupplierId)}
                             purchases={purchases}
+                            disputes={supplierDisputes}
                             openPODetails={openPODetails}
                             setCurrentTab={setCurrentTab}
                             openCreatePOForSupplier={openCreatePOForSupplier}
+                            openDisputeModal={openDisputeModal}
+                            onResolveDispute={handleResolveDispute}
                         />
                     ) : (
                         <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
@@ -840,6 +904,12 @@ export default function PurchasesDashboard() {
                                     <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-md bg-blue-100 text-blue-700">
                                         {selectedPO.next_action || 'Contrôle achat'}
                                     </span>
+                                    <button
+                                        onClick={() => openDisputeModal({ supplier: selectedPO.supplier, purchaseOrderId: selectedPO.id, title: `Litige ${selectedPO.reference}` })}
+                                        className="mt-2 px-3 py-2 rounded-xl bg-red-500/15 border border-red-300/20 text-red-100 hover:bg-red-500/25 text-xs font-black"
+                                    >
+                                        Déclarer litige
+                                    </button>
                                 </div>
                             </div>
 
@@ -905,7 +975,7 @@ export default function PurchasesDashboard() {
                                     </tbody>
                                 </table>
 
-                                <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
+                                <div className="mt-8 grid grid-cols-1 xl:grid-cols-[1fr_280px_280px] gap-4">
                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
                                         <div className="flex items-center justify-between mb-4">
                                             <div>
@@ -938,6 +1008,32 @@ export default function PurchasesDashboard() {
                                         <button onClick={openSupplierInvoiceModal} disabled={Math.max(Number(selectedPO.quantity_received || 0) - Number(selectedPO.quantity_invoiced || 0), 0) <= 0} className="mt-4 w-full px-4 py-3 rounded-xl bg-orange-600 disabled:bg-slate-300 text-white font-black hover:bg-orange-500">
                                             Rapprocher facture
                                         </button>
+                                    </div>
+                                    <div className="rounded-2xl border border-red-100 bg-red-50 p-5">
+                                        <div className="flex items-start justify-between gap-3 mb-3">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-red-500">Litiges</p>
+                                                <h4 className="font-black text-red-950">Écarts fournisseur</h4>
+                                            </div>
+                                            <button onClick={() => openDisputeModal({ supplier: selectedPO.supplier, purchaseOrderId: selectedPO.id, title: `Litige ${selectedPO.reference}` })} className="text-xs font-black text-red-700 bg-white border border-red-100 px-3 py-2 rounded-xl">
+                                                Ajouter
+                                            </button>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {(selectedPO.disputes || []).length > 0 ? selectedPO.disputes.map(dispute => (
+                                                <div key={dispute.id} className="rounded-xl bg-white border border-red-100 p-3">
+                                                    <p className="font-black text-sm text-red-950">{dispute.title}</p>
+                                                    <p className="text-[10px] font-black uppercase tracking-widest text-red-500">{dispute.reference} · {dispute.severity} · {dispute.status}</p>
+                                                    {dispute.status !== 'RESOLVED' && (
+                                                        <button onClick={() => handleResolveDispute(dispute.id)} className="mt-2 text-[10px] font-black text-emerald-700 bg-emerald-100 px-2 py-1 rounded-lg">
+                                                            Résoudre
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )) : (
+                                                <p className="text-sm font-bold text-red-400">Aucun litige sur ce bon.</p>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
 
@@ -1331,6 +1427,70 @@ export default function PurchasesDashboard() {
                             <button onClick={()=>setShowSupplierInvoiceModal(false)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50">Annuler</button>
                             <button onClick={handleCreateSupplierInvoice} disabled={supplierInvoiceQuantityTotal <= 0} className="px-8 py-4 bg-orange-600 disabled:bg-slate-300 hover:bg-orange-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
                                 Valider le rapprochement
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* SUPPLIER DISPUTE MODAL */}
+            {showDisputeModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full border border-slate-100 overflow-hidden">
+                        <div className="px-8 py-6 bg-red-950 text-white flex justify-between items-start">
+                            <div>
+                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/15 border border-red-300/20 text-red-100 text-[10px] font-black uppercase tracking-widest mb-3">
+                                    <AlertTriangle className="w-3.5 h-3.5"/> Litige fournisseur
+                                </div>
+                                <h3 className="font-black text-3xl">Déclarer un litige</h3>
+                                <p className="text-sm font-medium text-red-100 mt-1">
+                                    {disputeForm.supplier || 'Fournisseur'} {disputeForm.purchase_order_id ? '· lié au bon sélectionné' : ''}
+                                </p>
+                            </div>
+                            <button onClick={()=>setShowDisputeModal(false)} className="text-red-100 hover:bg-white/10 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                        </div>
+
+                        <div className="p-8 bg-slate-50 space-y-5">
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Fournisseur</label>
+                                <input value={disputeForm.supplier} onChange={e=>setDisputeForm({...disputeForm, supplier: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500" placeholder="Nom fournisseur"/>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Objet du litige</label>
+                                <input value={disputeForm.title} onChange={e=>setDisputeForm({...disputeForm, title: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500" placeholder="Ex: Quantité manquante, prix facture incohérent..."/>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Catégorie</label>
+                                    <select value={disputeForm.category} onChange={e=>setDisputeForm({...disputeForm, category: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500">
+                                        <option value="DELAY">Retard</option>
+                                        <option value="QUANTITY">Quantité</option>
+                                        <option value="QUALITY">Qualité</option>
+                                        <option value="PRICE">Prix</option>
+                                        <option value="DOCUMENT">Document</option>
+                                        <option value="OTHER">Autre</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Sévérité</label>
+                                    <select value={disputeForm.severity} onChange={e=>setDisputeForm({...disputeForm, severity: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500">
+                                        <option value="LOW">Faible</option>
+                                        <option value="MEDIUM">Moyenne</option>
+                                        <option value="HIGH">Haute</option>
+                                        <option value="BLOCKING">Bloquant</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Description</label>
+                                <textarea value={disputeForm.description} onChange={e=>setDisputeForm({...disputeForm, description: e.target.value})} className="w-full min-h-[120px] bg-white border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-500 resize-none" placeholder="Décrire l'écart constaté, les pièces concernées et l'action attendue."/>
+                            </div>
+                        </div>
+
+                        <div className="px-8 py-5 bg-white border-t border-slate-100 flex justify-between items-center">
+                            <button onClick={()=>setShowDisputeModal(false)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50">Annuler</button>
+                            <button onClick={handleCreateDispute} disabled={!disputeForm.supplier || !disputeForm.title.trim()} className="px-8 py-4 bg-red-600 disabled:bg-slate-300 hover:bg-red-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
+                                Ouvrir le litige
                             </button>
                         </div>
                     </div>
@@ -1768,10 +1928,12 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
     );
 };
 
-const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCreatePOForSupplier }) => {
+const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurrentTab, openCreatePOForSupplier, openDisputeModal, onResolveDispute }) => {
     const [activeTab, setActiveTab] = useState('overview');
 
     const supOrders = purchases.filter(p => p.supplier === sup.name);
+    const supDisputes = disputes.filter(dispute => dispute.supplier === sup.name);
+    const openSupplierDisputes = supDisputes.filter(dispute => ['OPEN', 'IN_PROGRESS'].includes(dispute.status));
     const formatCurrency = (amount) => Number(amount || 0).toLocaleString('fr-FR', {style: 'currency', currency: sup.default_currency || 'EUR'});
     const orderedQty = (order) => Number(order.quantity_ordered ?? (order.lines || []).reduce((sum, line) => sum + Number(line.quantity || 0), 0));
     const remainingQty = (order) => Number(order.quantity_remaining ?? Math.max(orderedQty(order) - Number(order.quantity_received || 0), 0));
@@ -1806,7 +1968,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
             : supplierStatus === 'STRATEGIC'
                 ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
                 : 'bg-emerald-100 text-emerald-700 border-emerald-200';
-    const qualityAlerts = lateOrders.length + toInvoiceOrders.length + supOrders.filter(o => o.status === 'PARTIAL').length;
+    const qualityAlerts = lateOrders.length + toInvoiceOrders.length + supOrders.filter(o => o.status === 'PARTIAL').length + openSupplierDisputes.length;
     const qualityLabel = qualityAlerts === 0 ? 'Stable' : qualityAlerts <= 2 ? 'À surveiller' : 'Sous tension';
     const committedAmount = openOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
     const quantityToReceive = toReceiveOrders.reduce((sum, order) => sum + remainingQty(order), 0);
@@ -1829,7 +1991,8 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
         if (invoiceableQty(order) > 0) return 'Rapprocher facture';
         return order.next_action || 'Voir commande';
     };
-    const supplierTimeline = supOrders
+    const supplierTimeline = [
+        ...supOrders
         .flatMap(order => {
             const events = [{
                 key: `${order.id}-created`,
@@ -1857,7 +2020,15 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                 });
             }
             return events;
-        })
+        }),
+        ...supDisputes.map(dispute => ({
+            key: `dispute-${dispute.id}`,
+            date: dispute.created_at,
+            label: dispute.status === 'RESOLVED' ? 'Litige résolu' : 'Litige fournisseur',
+            detail: `${dispute.reference} · ${dispute.title}`,
+            tone: dispute.status === 'RESOLVED' ? 'emerald' : 'red',
+        })),
+    ]
         .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
         .slice(0, 6);
 
@@ -1865,8 +2036,8 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
     const avgOrderValue = totalOrders > 0 ? (totalSpent / totalOrders) : 0;
     const actionTiles = [
         {
-            label: 'Créer commande',
-            detail: canOrder ? 'Bon fournisseur prérempli' : 'Fournisseur bloqué',
+            label: 'Créer demande',
+            detail: canOrder ? 'Demande achat préremplie' : 'Fournisseur bloqué',
             value: '+',
             tone: 'slate',
             disabled: !canOrder,
@@ -1895,6 +2066,14 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
             tone: 'red',
             disabled: lateOrders.length === 0,
             onClick: () => openOrder(lateOrders[0]),
+        },
+        {
+            label: 'Litiges',
+            detail: 'Écarts fournisseur ouverts',
+            value: openSupplierDisputes.length,
+            tone: 'red',
+            disabled: false,
+            onClick: () => openDisputeModal?.({ supplier: sup.name, title: `Litige ${sup.name}` }),
         },
     ];
     const openWebsite = () => {
@@ -1947,7 +2126,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                         </div>
                         <div className="text-right mt-2 flex flex-col items-end">
                             <button onClick={() => canOrder && openCreatePOForSupplier(sup.name)} disabled={!canOrder} className="bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed border border-white/10 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-lg flex items-center gap-2">
-                                <FileText className="w-4 h-4" /> Créer commande
+                                <FileText className="w-4 h-4" /> Créer demande
                             </button>
                             <span className="text-xs text-slate-400 mt-3 font-medium">Créé le {new Date(sup.created_at || Date.now()).toLocaleDateString('fr-FR')}</span>
                         </div>
@@ -1988,7 +2167,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                                         </p>
                                     </div>
                                     <button onClick={() => canOrder && openCreatePOForSupplier(sup.name)} disabled={!canOrder} className="px-6 py-4 rounded-2xl bg-slate-900 disabled:bg-slate-300 text-white font-black shadow-lg flex items-center justify-center gap-2">
-                                        <Plus className="w-5 h-5" /> Créer commande fournisseur
+                                        <Plus className="w-5 h-5" /> Créer demande achat
                                     </button>
                                 </div>
                                 <div className="grid grid-cols-2 xl:grid-cols-5 gap-4 mt-6">
@@ -2282,7 +2461,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                                         {qualityLabel}
                                     </span>
                                 </div>
-                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-6">
+                                <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 p-6">
                                     <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Réceptions partielles</p>
                                         <p className="text-2xl font-black text-slate-900 mt-1">{supOrders.filter(o => o.status === 'PARTIAL').length}</p>
@@ -2299,7 +2478,32 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                                         <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Commandes reçues</p>
                                         <p className="text-2xl font-black text-emerald-700 mt-1">{receivedOrders}</p>
                                     </div>
+                                    <button
+                                        onClick={() => openDisputeModal?.({ supplier: sup.name, title: `Litige ${sup.name}` })}
+                                        className="rounded-2xl bg-red-50 border border-red-100 p-4 text-left hover:bg-red-100 transition-colors"
+                                    >
+                                        <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Litiges ouverts</p>
+                                        <p className="text-2xl font-black text-red-700 mt-1">{openSupplierDisputes.length}</p>
+                                        <p className="text-[10px] font-black text-red-500 uppercase tracking-widest mt-1">Déclarer</p>
+                                    </button>
                                 </div>
+                                {openSupplierDisputes.length > 0 && (
+                                    <div className="px-6 pb-6 space-y-3">
+                                        {openSupplierDisputes.slice(0, 4).map(dispute => (
+                                            <div key={dispute.id} className="rounded-2xl border border-red-100 bg-red-50 p-4 flex items-start justify-between gap-4">
+                                                <div>
+                                                    <p className="font-black text-red-950">{dispute.title}</p>
+                                                    <p className="text-[10px] font-black uppercase tracking-widest text-red-500 mt-1">
+                                                        {dispute.reference} · {dispute.category} · {dispute.severity}
+                                                    </p>
+                                                </div>
+                                                <button onClick={() => onResolveDispute?.(dispute.id)} className="px-3 py-2 rounded-xl bg-white border border-red-100 text-emerald-700 text-xs font-black hover:bg-emerald-50 shrink-0">
+                                                    Résoudre
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
 
                             <div className="mt-8 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
@@ -2310,7 +2514,7 @@ const SupplierProfile = ({ sup, purchases, openPODetails, setCurrentTab, openCre
                                 <div className="p-6 space-y-4">
                                     {supplierTimeline.map(event => (
                                         <div key={event.key} className="flex items-start gap-4">
-                                            <div className={`w-3 h-3 rounded-full mt-2 ${event.tone === 'emerald' ? 'bg-emerald-500' : event.tone === 'orange' ? 'bg-orange-500' : event.tone === 'blue' ? 'bg-blue-500' : 'bg-slate-400'}`}></div>
+                                            <div className={`w-3 h-3 rounded-full mt-2 ${event.tone === 'emerald' ? 'bg-emerald-500' : event.tone === 'orange' ? 'bg-orange-500' : event.tone === 'blue' ? 'bg-blue-500' : event.tone === 'red' ? 'bg-red-500' : 'bg-slate-400'}`}></div>
                                             <div className="flex-1 border-b border-slate-100 pb-4">
                                                 <div className="flex items-center justify-between gap-4">
                                                     <p className="font-black text-slate-900">{event.label}</p>

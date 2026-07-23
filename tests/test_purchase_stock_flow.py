@@ -841,6 +841,34 @@ def test_purchase_order_direct_creation_requires_order_permission(purchase_test_
     assert "purchases.order" in response.json()["detail"]
 
 
+def test_sensitive_purchase_order_requires_purchase_request_validation(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+
+    with TestingSessionLocal() as db:
+        _grant_role_permissions(db, "ACHATS", ["purchases.order"])
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="REQ-SENSITIVE-LOCK",
+            supplier="CORTIZO",
+            physical_quantity=0,
+            min_threshold=5,
+        )
+
+    headers = _auth_headers(TestingSessionLocal, "buyer-sensitive-lock", role="ACHATS")
+
+    response = client.post(
+        "/v2/purchases/",
+        headers=headers,
+        json={
+            "supplier": "CORTIZO",
+            "lines": [{"variant_id": variant_id, "quantity": 2, "unit_price": 600}],
+        },
+    )
+
+    assert response.status_code == 409
+    assert "Demande d'achat obligatoire" in response.json()["detail"]
+
+
 def test_purchase_request_can_be_approved_and_converted_to_order(purchase_test_client):
     client, TestingSessionLocal = purchase_test_client
 
@@ -891,6 +919,64 @@ def test_purchase_request_can_be_approved_and_converted_to_order(purchase_test_c
     [po] = [item for item in orders_response.json() if item["id"] == converted["purchase_order"]["id"]]
     assert po["supplier"] == "CORTIZO"
     assert po["total_amount"] == 50.0
+
+    second_convert_response = client.post(f"/v2/purchases/requests/{request_id}/convert", headers=approval_headers)
+    assert second_convert_response.status_code == 200, second_convert_response.text
+    assert second_convert_response.json()["purchase_order"]["id"] == converted["purchase_order"]["id"]
+
+
+def test_supplier_dispute_can_be_opened_and_resolved_on_purchase_order(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+
+    with TestingSessionLocal() as db:
+        _grant_role_permissions(db, "ACHATS", ["purchases.order", "purchases.receive", "purchases.approve"])
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="REQ-DISPUTE",
+            supplier="CORTIZO",
+            physical_quantity=0,
+            min_threshold=5,
+        )
+
+    headers = _auth_headers(TestingSessionLocal, "buyer-dispute", role="ACHATS")
+    po_response = client.post(
+        "/v2/purchases/",
+        headers=headers,
+        json={
+            "supplier": "CORTIZO",
+            "lines": [{"variant_id": variant_id, "quantity": 1, "unit_price": 10}],
+        },
+    )
+    assert po_response.status_code == 200, po_response.text
+    po_id = po_response.json()["id"]
+
+    dispute_response = client.post(
+        "/v2/purchases/disputes",
+        headers=headers,
+        json={
+            "supplier": "CORTIZO",
+            "purchase_order_id": po_id,
+            "title": "Écart quantité réception",
+            "category": "QUANTITY",
+            "severity": "HIGH",
+            "description": "La quantité reçue ne correspond pas au bon.",
+        },
+    )
+    assert dispute_response.status_code == 200, dispute_response.text
+    dispute = dispute_response.json()
+    assert dispute["reference"].startswith("LIT-")
+    assert dispute["status"] == "OPEN"
+
+    details = client.get(f"/v2/purchases/{po_id}", headers=headers).json()
+    assert details["disputes"][0]["reference"] == dispute["reference"]
+
+    resolve_response = client.post(
+        f"/v2/purchases/disputes/{dispute['id']}/resolve",
+        headers=headers,
+        json={"resolution_notes": "Avoir fournisseur obtenu."},
+    )
+    assert resolve_response.status_code == 200, resolve_response.text
+    assert resolve_response.json()["status"] == "RESOLVED"
 
 
 def test_purchase_request_rejection_requires_reason(purchase_test_client):

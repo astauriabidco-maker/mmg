@@ -690,6 +690,27 @@ class SupplierInvoiceLine(Base):
     purchase_order_line = relationship("PurchaseOrderLine")
     variant = relationship("ProductVariant")
 
+class SupplierDispute(Base):
+    __tablename__ = "supplier_disputes"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True)
+    supplier = Column(String, index=True)
+    purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=True, index=True)
+    supplier_invoice_id = Column(Integer, ForeignKey("supplier_invoices.id"), nullable=True, index=True)
+    title = Column(String)
+    description = Column(Text, nullable=True)
+    category = Column(String, default="OTHER")  # DELAY, QUANTITY, QUALITY, PRICE, DOCUMENT, OTHER
+    severity = Column(String, default="MEDIUM")  # LOW, MEDIUM, HIGH, BLOCKING
+    status = Column(String, default="OPEN", index=True)  # OPEN, IN_PROGRESS, RESOLVED, CANCELLED
+    created_by = Column(String, default="Système")
+    created_at = Column(DateTime, default=utcnow)
+    closed_by = Column(String, nullable=True)
+    closed_at = Column(DateTime, nullable=True)
+    resolution_notes = Column(Text, nullable=True)
+
+    purchase_order = relationship("PurchaseOrder")
+    supplier_invoice = relationship("SupplierInvoice")
+
 # --- FACTURATION (FRANCE NF525) ---
 
 class Invoice(Base):

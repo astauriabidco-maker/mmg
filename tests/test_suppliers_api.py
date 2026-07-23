@@ -228,7 +228,7 @@ def test_supplier_operations_exposes_actionable_purchase_situation(client):
         "purchase.receive": True,
         "purchase.match_invoice": True,
         "supplier.contact": True,
-        "supplier.dispute": False,
+        "supplier.dispute": True,
     }
     assert any(event["type"] == "late_receipt" for event in operations["timeline"])
     assert any(event["type"] == "stock_receipt" for event in operations["timeline"])

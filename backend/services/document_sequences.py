@@ -32,6 +32,7 @@ DOC_KIND_FORMATS = {
     "purchase_request": ("PR", 4), # Demandes d'achat :  PR-YYYY-XXXX
     "purchase_order": ("PO", 4),   # Commandes fourn.:   PO-YYYY-XXXX
     "supplier_invoice": ("FF", 4), # Factures fourn.:    FF-YYYY-XXXX
+    "supplier_dispute": ("LIT", 4), # Litiges fourn.:     LIT-YYYY-XXXX
     "delivery_note": ("BL", 4),    # Bons de livraison : BL-YYYY-XXXX
     "mmg": ("MMG", 5),             # Dossiers MMG :      MMG-YYYY-XXXXX
 }
@@ -44,6 +45,7 @@ DOC_KIND_MODELS = {
     "purchase_request": models.PurchaseRequest,
     "purchase_order": models.PurchaseOrder,
     "supplier_invoice": models.SupplierInvoice,
+    "supplier_dispute": models.SupplierDispute,
     "delivery_note": models.DeliveryNote,
     "mmg": models.MMG,
 }
