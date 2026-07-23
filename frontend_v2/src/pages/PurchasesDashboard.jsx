@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ShoppingCart, Plus, FileText, Search, ArrowRight, CheckCircle, PackageOpen, X, Truck, Users, Phone, Mail, MapPin, Sparkles, BrainCircuit, Building2, Globe2, AlertTriangle, Layers } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
@@ -459,9 +459,11 @@ export default function PurchasesDashboard() {
             queryClient.invalidateQueries(['purchases']);
             queryClient.invalidateQueries(['purchase-dashboard']);
             if (selectedPO?.id) await openPODetails(selectedPO.id);
+            return true;
         } catch (err) {
             console.error(err);
             alert(err.response?.data?.detail || "Erreur lors de la prise en charge du litige.");
+            return false;
         }
     };
 
@@ -474,9 +476,11 @@ export default function PurchasesDashboard() {
             queryClient.invalidateQueries(['purchases']);
             queryClient.invalidateQueries(['purchase-dashboard']);
             if (selectedPO?.id) await openPODetails(selectedPO.id);
+            return true;
         } catch (err) {
             console.error(err);
             alert(err.response?.data?.detail || "Erreur lors de la résolution du litige.");
+            return false;
         }
     };
 
@@ -2353,18 +2357,67 @@ const SupplierInvoiceDetailModal = ({ invoice, purchaseOrder, disputes = [], onC
 
 const SupplierDisputeDetailModal = ({ dispute, purchaseOrder, invoice, onClose, onOpenPO, onStart, onResolve }) => {
     const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
-    const isOpen = ['OPEN', 'IN_PROGRESS'].includes(dispute.status);
-    const quantityGap = dispute.expected_quantity != null && dispute.received_quantity != null
-        ? Number(dispute.expected_quantity || 0) - Number(dispute.received_quantity || 0)
+    const [localDispute, setLocalDispute] = useState(dispute);
+    const [attachmentFile, setAttachmentFile] = useState(null);
+    const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+    useEffect(() => {
+        setLocalDispute(dispute);
+        setAttachmentFile(null);
+    }, [dispute]);
+    const attachments = localDispute.attachments || [];
+    const events = localDispute.events || [];
+    const isOpen = ['OPEN', 'IN_PROGRESS'].includes(localDispute.status);
+    const quantityGap = localDispute.expected_quantity != null && localDispute.received_quantity != null
+        ? Number(localDispute.expected_quantity || 0) - Number(localDispute.received_quantity || 0)
         : null;
-    const priceGap = dispute.expected_unit_price != null && dispute.invoiced_unit_price != null
-        ? Number(dispute.invoiced_unit_price || 0) - Number(dispute.expected_unit_price || 0)
+    const priceGap = localDispute.expected_unit_price != null && localDispute.invoiced_unit_price != null
+        ? Number(localDispute.invoiced_unit_price || 0) - Number(localDispute.expected_unit_price || 0)
         : null;
-    const statusTone = dispute.status === 'RESOLVED'
+    const statusTone = localDispute.status === 'RESOLVED'
         ? 'bg-emerald-50 border-emerald-100 text-emerald-700'
-        : dispute.status === 'IN_PROGRESS'
+        : localDispute.status === 'IN_PROGRESS'
             ? 'bg-blue-50 border-blue-100 text-blue-700'
             : 'bg-red-50 border-red-100 text-red-700';
+    const proofRequired = ['QUALITY', 'QUANTITY'].includes(localDispute.category);
+    const canResolve = !proofRequired || attachments.length > 0;
+    const uploadAttachment = async () => {
+        if (!attachmentFile) return;
+        setIsUploadingAttachment(true);
+        try {
+            const form = new FormData();
+            form.append('file', attachmentFile);
+            const response = await api.post(`/v2/purchases/disputes/${localDispute.id}/attachments`, form, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            setLocalDispute(response.data);
+            setAttachmentFile(null);
+        } catch (err) {
+            alert(err.response?.data?.detail || "Erreur lors de l'ajout de la preuve.");
+        } finally {
+            setIsUploadingAttachment(false);
+        }
+    };
+    const deleteAttachment = async (attachmentId) => {
+        if (!window.confirm("Supprimer cette preuve du litige ?")) return;
+        try {
+            const response = await api.delete(`/v2/purchases/disputes/${localDispute.id}/attachments/${attachmentId}`);
+            setLocalDispute(response.data);
+        } catch (err) {
+            alert(err.response?.data?.detail || "Erreur lors de la suppression de la preuve.");
+        }
+    };
+    const resolveFromModal = async () => {
+        if (!canResolve) {
+            alert("Ajoutez au moins une preuve avant de résoudre un litige qualité ou quantité.");
+            return;
+        }
+        try {
+            const resolved = await onResolve?.(localDispute.id);
+            if (resolved) onClose();
+        } catch (err) {
+            alert(err.response?.data?.detail || "Erreur lors de la résolution du litige.");
+        }
+    };
 
     return (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -2372,9 +2425,9 @@ const SupplierDisputeDetailModal = ({ dispute, purchaseOrder, invoice, onClose, 
                 <div className="px-8 py-6 bg-red-950 text-white flex justify-between items-start gap-6">
                     <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-red-200 mb-2">Fiche litige fournisseur</p>
-                        <h3 className="font-black text-3xl">{dispute.title}</h3>
+                        <h3 className="font-black text-3xl">{localDispute.title}</h3>
                         <p className="text-sm font-bold text-red-100 mt-1">
-                            {dispute.supplier} · {dispute.reference}
+                            {localDispute.supplier} · {localDispute.reference}
                         </p>
                     </div>
                     <div className="flex items-start gap-3">
@@ -2391,19 +2444,19 @@ const SupplierDisputeDetailModal = ({ dispute, purchaseOrder, invoice, onClose, 
                     <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
                         <div className={`rounded-2xl border p-5 ${statusTone}`}>
                             <p className="text-[10px] font-black uppercase tracking-widest opacity-70">Statut</p>
-                            <p className="text-3xl font-black mt-2">{dispute.status}</p>
+                            <p className="text-3xl font-black mt-2">{localDispute.status}</p>
                         </div>
                         <div className="rounded-2xl bg-white border border-slate-200 p-5">
                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Catégorie</p>
-                            <p className="text-2xl font-black text-slate-950 mt-2">{dispute.category}</p>
+                            <p className="text-2xl font-black text-slate-950 mt-2">{localDispute.category}</p>
                         </div>
                         <div className="rounded-2xl bg-orange-50 border border-orange-100 p-5">
                             <p className="text-[10px] font-black uppercase tracking-widest text-orange-500">Sévérité</p>
-                            <p className="text-2xl font-black text-orange-700 mt-2">{dispute.severity}</p>
+                            <p className="text-2xl font-black text-orange-700 mt-2">{localDispute.severity}</p>
                         </div>
                         <div className="rounded-2xl bg-slate-900 text-white p-5">
                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Action attendue</p>
-                            <p className="text-xl font-black mt-2">{dispute.expected_action || 'À définir'}</p>
+                            <p className="text-xl font-black mt-2">{localDispute.expected_action || 'À définir'}</p>
                         </div>
                     </div>
 
@@ -2412,29 +2465,29 @@ const SupplierDisputeDetailModal = ({ dispute, purchaseOrder, invoice, onClose, 
                             <div className="rounded-2xl bg-white border border-slate-200 p-5">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Impact opérationnel</p>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                    <div className={`rounded-xl border p-4 ${dispute.blocks_receipt ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
-                                        <p className={`text-[10px] font-black uppercase tracking-widest ${dispute.blocks_receipt ? 'text-red-500' : 'text-slate-400'}`}>Réception</p>
-                                        <p className={`font-black mt-1 ${dispute.blocks_receipt ? 'text-red-700' : 'text-slate-700'}`}>
-                                            {dispute.blocks_receipt ? 'Bloquée' : 'Non bloquée'}
+                                    <div className={`rounded-xl border p-4 ${localDispute.blocks_receipt ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
+                                        <p className={`text-[10px] font-black uppercase tracking-widest ${localDispute.blocks_receipt ? 'text-red-500' : 'text-slate-400'}`}>Réception</p>
+                                        <p className={`font-black mt-1 ${localDispute.blocks_receipt ? 'text-red-700' : 'text-slate-700'}`}>
+                                            {localDispute.blocks_receipt ? 'Bloquée' : 'Non bloquée'}
                                         </p>
                                     </div>
-                                    <div className={`rounded-xl border p-4 ${dispute.blocks_payment ? 'bg-orange-50 border-orange-100' : 'bg-slate-50 border-slate-100'}`}>
-                                        <p className={`text-[10px] font-black uppercase tracking-widest ${dispute.blocks_payment ? 'text-orange-500' : 'text-slate-400'}`}>Paiement</p>
-                                        <p className={`font-black mt-1 ${dispute.blocks_payment ? 'text-orange-700' : 'text-slate-700'}`}>
-                                            {dispute.blocks_payment ? 'Bloqué' : 'Non bloqué'}
+                                    <div className={`rounded-xl border p-4 ${localDispute.blocks_payment ? 'bg-orange-50 border-orange-100' : 'bg-slate-50 border-slate-100'}`}>
+                                        <p className={`text-[10px] font-black uppercase tracking-widest ${localDispute.blocks_payment ? 'text-orange-500' : 'text-slate-400'}`}>Paiement</p>
+                                        <p className={`font-black mt-1 ${localDispute.blocks_payment ? 'text-orange-700' : 'text-slate-700'}`}>
+                                            {localDispute.blocks_payment ? 'Bloqué' : 'Non bloqué'}
                                         </p>
                                     </div>
                                 </div>
-                                {dispute.impact_summary && (
+                                {localDispute.impact_summary && (
                                     <div className="mt-4 rounded-xl bg-red-50 border border-red-100 p-4">
                                         <p className="text-[10px] font-black uppercase tracking-widest text-red-500 mb-1">Résumé impact</p>
-                                        <p className="font-bold text-red-950">{dispute.impact_summary}</p>
+                                        <p className="font-bold text-red-950">{localDispute.impact_summary}</p>
                                     </div>
                                 )}
-                                {dispute.description && (
+                                {localDispute.description && (
                                     <div className="mt-4 rounded-xl bg-slate-50 border border-slate-100 p-4">
                                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Description</p>
-                                        <p className="font-bold text-slate-700 whitespace-pre-line">{dispute.description}</p>
+                                        <p className="font-bold text-slate-700 whitespace-pre-line">{localDispute.description}</p>
                                     </div>
                                 )}
                             </div>
@@ -2447,19 +2500,19 @@ const SupplierDisputeDetailModal = ({ dispute, purchaseOrder, invoice, onClose, 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-5">
                                     <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
                                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Qté attendue</p>
-                                        <p className="font-black text-xl text-slate-900 mt-1">{dispute.expected_quantity ?? '-'}</p>
+                                        <p className="font-black text-xl text-slate-900 mt-1">{localDispute.expected_quantity ?? '-'}</p>
                                     </div>
                                     <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
                                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Qté reçue</p>
-                                        <p className="font-black text-xl text-slate-900 mt-1">{dispute.received_quantity ?? '-'}</p>
+                                        <p className="font-black text-xl text-slate-900 mt-1">{localDispute.received_quantity ?? '-'}</p>
                                     </div>
                                     <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
                                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Prix attendu</p>
-                                        <p className="font-black text-xl text-slate-900 mt-1">{dispute.expected_unit_price != null ? formatMoney(dispute.expected_unit_price) : '-'}</p>
+                                        <p className="font-black text-xl text-slate-900 mt-1">{localDispute.expected_unit_price != null ? formatMoney(localDispute.expected_unit_price) : '-'}</p>
                                     </div>
                                     <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
                                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Prix facturé</p>
-                                        <p className="font-black text-xl text-slate-900 mt-1">{dispute.invoiced_unit_price != null ? formatMoney(dispute.invoiced_unit_price) : '-'}</p>
+                                        <p className="font-black text-xl text-slate-900 mt-1">{localDispute.invoiced_unit_price != null ? formatMoney(localDispute.invoiced_unit_price) : '-'}</p>
                                     </div>
                                 </div>
                                 {(quantityGap !== null || priceGap !== null) && (
@@ -2487,31 +2540,108 @@ const SupplierDisputeDetailModal = ({ dispute, purchaseOrder, invoice, onClose, 
                                 <div className="space-y-3 text-sm font-bold text-slate-700">
                                     <div className="flex justify-between gap-4"><span>Bon fournisseur</span><span>{purchaseOrder?.reference || '-'}</span></div>
                                     <div className="flex justify-between gap-4"><span>Facture</span><span>{invoice?.supplier_reference || invoice?.reference || '-'}</span></div>
-                                    <div className="flex justify-between gap-4"><span>Créé le</span><span>{dispute.created_at ? new Date(dispute.created_at).toLocaleDateString('fr-FR') : '-'}</span></div>
-                                    <div className="flex justify-between gap-4"><span>Échéance</span><span>{dispute.due_date ? new Date(dispute.due_date).toLocaleDateString('fr-FR') : 'Non définie'}</span></div>
-                                    <div className="flex justify-between gap-4"><span>Créé par</span><span>{dispute.created_by || 'Système'}</span></div>
+                                    <div className="flex justify-between gap-4"><span>Créé le</span><span>{localDispute.created_at ? new Date(localDispute.created_at).toLocaleDateString('fr-FR') : '-'}</span></div>
+                                    <div className="flex justify-between gap-4"><span>Échéance</span><span>{localDispute.due_date ? new Date(localDispute.due_date).toLocaleDateString('fr-FR') : 'Non définie'}</span></div>
+                                    <div className="flex justify-between gap-4"><span>Créé par</span><span>{localDispute.created_by || 'Système'}</span></div>
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl bg-white border border-slate-200 p-5">
+                                <div className="flex items-start justify-between gap-4 mb-4">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Preuves & documents</p>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">Photos, PDF, BL, facture ou note d'écart.</p>
+                                    </div>
+                                    {proofRequired && (
+                                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md ${attachments.length ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                            preuve obligatoire
+                                        </span>
+                                    )}
+                                </div>
+                                {localDispute.status !== 'RESOLVED' && (
+                                    <div className="rounded-xl bg-slate-50 border border-dashed border-slate-300 p-4 mb-4">
+                                        <input
+                                            type="file"
+                                            accept=".pdf,.png,.jpg,.jpeg,.webp,.txt"
+                                            onChange={event => setAttachmentFile(event.target.files?.[0] || null)}
+                                            className="block w-full text-sm font-bold text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-red-100 file:px-4 file:py-2 file:text-sm file:font-black file:text-red-700"
+                                        />
+                                        <button
+                                            onClick={uploadAttachment}
+                                            disabled={!attachmentFile || isUploadingAttachment}
+                                            className="mt-3 w-full px-4 py-3 rounded-xl bg-red-600 disabled:bg-slate-300 text-white font-black hover:bg-red-500"
+                                        >
+                                            {isUploadingAttachment ? 'Ajout en cours...' : 'Ajouter la preuve'}
+                                        </button>
+                                    </div>
+                                )}
+                                <div className="space-y-2">
+                                    {attachments.map(attachment => (
+                                        <div key={attachment.id} className="rounded-xl bg-slate-50 border border-slate-100 p-3 flex items-center justify-between gap-3">
+                                            <div>
+                                                <p className="font-black text-slate-900">{attachment.original_filename}</p>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                                    {attachment.uploaded_by || 'Système'} · {attachment.uploaded_at ? new Date(attachment.uploaded_at).toLocaleDateString('fr-FR') : '-'} · {Math.ceil(Number(attachment.file_size || 0) / 1024)} Ko
+                                                </p>
+                                            </div>
+                                            <div className="flex gap-2 shrink-0">
+                                                <button onClick={() => downloadFileWithFeedback(`/v2/purchases/disputes/${localDispute.id}/attachments/${attachment.id}/download`, attachment.original_filename)} className="px-3 py-2 rounded-lg bg-white border border-slate-200 text-slate-700 text-xs font-black hover:bg-slate-100">
+                                                    Télécharger
+                                                </button>
+                                                {localDispute.status !== 'RESOLVED' && (
+                                                    <button onClick={() => deleteAttachment(attachment.id)} className="px-3 py-2 rounded-lg bg-red-50 border border-red-100 text-red-700 text-xs font-black hover:bg-red-100">
+                                                        Supprimer
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {attachments.length === 0 && (
+                                        <p className="rounded-xl bg-amber-50 border border-amber-100 p-3 text-sm font-bold text-amber-800">
+                                            Aucune preuve jointe. {proofRequired ? 'Une preuve est obligatoire avant résolution.' : 'Ajoutez une pièce si elle aide à comprendre le litige.'}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
 
                             <div className="rounded-2xl bg-white border border-slate-200 p-5">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Résolution</p>
-                                {dispute.status === 'RESOLVED' ? (
+                                {localDispute.status === 'RESOLVED' ? (
                                     <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
-                                        <p className="font-black text-emerald-800">Résolu le {dispute.closed_at ? new Date(dispute.closed_at).toLocaleDateString('fr-FR') : '-'}</p>
-                                        <p className="text-xs font-bold text-emerald-700 mt-2 whitespace-pre-line">{dispute.resolution_notes || 'Aucune note de résolution.'}</p>
+                                        <p className="font-black text-emerald-800">Résolu le {localDispute.closed_at ? new Date(localDispute.closed_at).toLocaleDateString('fr-FR') : '-'}</p>
+                                        <p className="text-xs font-bold text-emerald-700 mt-2 whitespace-pre-line">{localDispute.resolution_notes || 'Aucune note de résolution.'}</p>
                                     </div>
                                 ) : (
                                     <div className="space-y-3">
-                                        {dispute.status === 'OPEN' && (
-                                            <button onClick={async () => { await onStart?.(dispute.id); onClose(); }} className="w-full px-5 py-4 rounded-xl bg-blue-600 text-white font-black hover:bg-blue-500">
+                                        {localDispute.status === 'OPEN' && (
+                                            <button onClick={async () => { const started = await onStart?.(localDispute.id); if (started) onClose(); }} className="w-full px-5 py-4 rounded-xl bg-blue-600 text-white font-black hover:bg-blue-500">
                                                 Prendre en charge
                                             </button>
                                         )}
-                                        <button onClick={async () => { await onResolve?.(dispute.id); onClose(); }} className="w-full px-5 py-4 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500">
+                                        <button onClick={resolveFromModal} disabled={!canResolve} className="w-full px-5 py-4 rounded-xl bg-emerald-600 disabled:bg-slate-300 text-white font-black hover:bg-emerald-500">
                                             Résoudre le litige
                                         </button>
+                                        {!canResolve && (
+                                            <p className="text-xs font-bold text-red-600">Ajoutez au moins une preuve avant résolution.</p>
+                                        )}
                                     </div>
                                 )}
+                            </div>
+
+                            <div className="rounded-2xl bg-white border border-slate-200 p-5">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Historique du litige</p>
+                                <div className="space-y-3">
+                                    {events.map(event => (
+                                        <div key={event.id} className="pl-4 border-l-2 border-slate-200">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{event.event_type} · {event.created_at ? new Date(event.created_at).toLocaleString('fr-FR') : '-'}</p>
+                                            <p className="font-bold text-slate-800 mt-1">{event.message}</p>
+                                            <p className="text-xs font-bold text-slate-400">{event.actor || 'Système'}</p>
+                                        </div>
+                                    ))}
+                                    {events.length === 0 && (
+                                        <p className="text-sm font-bold text-slate-400">Aucun événement historisé.</p>
+                                    )}
+                                </div>
                             </div>
 
                             <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5">

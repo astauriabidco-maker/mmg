@@ -736,6 +736,33 @@ class SupplierDispute(Base):
 
     purchase_order = relationship("PurchaseOrder")
     supplier_invoice = relationship("SupplierInvoice")
+    attachments = relationship("SupplierDisputeAttachment", back_populates="dispute", cascade="all, delete-orphan")
+    events = relationship("SupplierDisputeEvent", back_populates="dispute", cascade="all, delete-orphan")
+
+class SupplierDisputeAttachment(Base):
+    __tablename__ = "supplier_dispute_attachments"
+    id = Column(Integer, primary_key=True, index=True)
+    dispute_id = Column(Integer, ForeignKey("supplier_disputes.id"), nullable=False, index=True)
+    original_filename = Column(String, nullable=False)
+    stored_filename = Column(String, nullable=False)
+    content_type = Column(String, nullable=True)
+    file_path = Column(String, nullable=False)
+    file_size = Column(Integer, default=0)
+    uploaded_by = Column(String, default="Système")
+    uploaded_at = Column(DateTime, default=utcnow)
+
+    dispute = relationship("SupplierDispute", back_populates="attachments")
+
+class SupplierDisputeEvent(Base):
+    __tablename__ = "supplier_dispute_events"
+    id = Column(Integer, primary_key=True, index=True)
+    dispute_id = Column(Integer, ForeignKey("supplier_disputes.id"), nullable=False, index=True)
+    event_type = Column(String, nullable=False, index=True)
+    message = Column(Text, nullable=True)
+    actor = Column(String, default="Système")
+    created_at = Column(DateTime, default=utcnow)
+
+    dispute = relationship("SupplierDispute", back_populates="events")
 
 class SupplierReminder(Base):
     __tablename__ = "supplier_reminders"

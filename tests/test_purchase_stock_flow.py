@@ -1190,6 +1190,31 @@ def test_supplier_dispute_can_be_opened_and_resolved_on_purchase_order(purchase_
     assert start_response.status_code == 200, start_response.text
     assert start_response.json()["status"] == "IN_PROGRESS"
 
+    blocked_resolution = client.post(
+        f"/v2/purchases/disputes/{dispute['id']}/resolve",
+        headers=headers,
+        json={"resolution_notes": "Avoir fournisseur obtenu."},
+    )
+    assert blocked_resolution.status_code == 400
+    assert "preuve est obligatoire" in blocked_resolution.json()["detail"]
+
+    upload_response = client.post(
+        f"/v2/purchases/disputes/{dispute['id']}/attachments",
+        headers=headers,
+        files={"file": ("preuve-litige.txt", b"Photo BL + commentaire reception", "text/plain")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+    dispute_with_attachment = upload_response.json()
+    assert dispute_with_attachment["attachments"][0]["original_filename"] == "preuve-litige.txt"
+    assert any(event["event_type"] == "ATTACHMENT_ADDED" for event in dispute_with_attachment["events"])
+
+    download_response = client.get(
+        f"/v2/purchases/disputes/{dispute['id']}/attachments/{dispute_with_attachment['attachments'][0]['id']}/download",
+        headers=headers,
+    )
+    assert download_response.status_code == 200, download_response.text
+    assert download_response.content == b"Photo BL + commentaire reception"
+
     resolve_response = client.post(
         f"/v2/purchases/disputes/{dispute['id']}/resolve",
         headers=headers,
@@ -1197,6 +1222,7 @@ def test_supplier_dispute_can_be_opened_and_resolved_on_purchase_order(purchase_
     )
     assert resolve_response.status_code == 200, resolve_response.text
     assert resolve_response.json()["status"] == "RESOLVED"
+    assert any(event["event_type"] == "RESOLVED" for event in resolve_response.json()["events"])
 
 
 def test_purchase_request_rejection_requires_reason(purchase_test_client):

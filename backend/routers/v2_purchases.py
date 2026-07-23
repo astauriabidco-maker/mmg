@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -14,7 +14,7 @@ from reportlab.pdfgen import canvas
 
 from backend.database import get_db
 from backend import models
-from backend.core import security
+from backend.core import security, uploads
 from backend.core.events import _send_smtp_email
 from backend.services.stock_service import InventoryService
 from backend.services.stock_reservations import active_reserved_quantity, physical_quantity_all_internal
@@ -115,6 +115,44 @@ def _purchase_request_reference(db: Session) -> str:
 
 def _supplier_dispute_reference(db: Session) -> str:
     return next_number(db, "supplier_dispute")
+
+def _serialize_supplier_dispute_attachment(attachment: models.SupplierDisputeAttachment) -> dict:
+    return {
+        "id": attachment.id,
+        "dispute_id": attachment.dispute_id,
+        "original_filename": attachment.original_filename,
+        "stored_filename": attachment.stored_filename,
+        "content_type": attachment.content_type,
+        "file_size": attachment.file_size or 0,
+        "uploaded_by": attachment.uploaded_by,
+        "uploaded_at": attachment.uploaded_at,
+    }
+
+def _serialize_supplier_dispute_event(event: models.SupplierDisputeEvent) -> dict:
+    return {
+        "id": event.id,
+        "dispute_id": event.dispute_id,
+        "event_type": event.event_type,
+        "message": event.message,
+        "actor": event.actor,
+        "created_at": event.created_at,
+    }
+
+def _record_supplier_dispute_event(
+    db: Session,
+    dispute_id: int,
+    event_type: str,
+    message: str,
+    actor: str,
+) -> models.SupplierDisputeEvent:
+    event = models.SupplierDisputeEvent(
+        dispute_id=dispute_id,
+        event_type=event_type,
+        message=message,
+        actor=actor,
+    )
+    db.add(event)
+    return event
 
 def _line_total(quantity: float, unit_price: float, discount_percent: float) -> float:
     return quantity * unit_price * (1 - discount_percent / 100)
@@ -317,6 +355,14 @@ def _serialize_supplier_dispute(dispute: models.SupplierDispute) -> dict:
         "closed_by": dispute.closed_by,
         "closed_at": dispute.closed_at,
         "resolution_notes": dispute.resolution_notes,
+        "attachments": [
+            _serialize_supplier_dispute_attachment(attachment)
+            for attachment in sorted(dispute.attachments or [], key=lambda item: (item.uploaded_at or datetime.min, item.id), reverse=True)
+        ],
+        "events": [
+            _serialize_supplier_dispute_event(event)
+            for event in sorted(dispute.events or [], key=lambda item: (item.created_at or datetime.min, item.id), reverse=True)
+        ],
     }
 
 def _serialize_supplier_reminder(reminder: models.SupplierReminder) -> dict:
@@ -1118,7 +1164,131 @@ def create_supplier_dispute(
         created_by=current_user.get("sub", "unknown"),
     )
     db.add(dispute)
+    db.flush()
+    _record_supplier_dispute_event(
+        db,
+        dispute.id,
+        "CREATED",
+        f"Litige ouvert: {title}",
+        current_user.get("sub", "unknown"),
+    )
     db.commit()
+    db.refresh(dispute)
+    return _serialize_supplier_dispute(dispute)
+
+@router.get("/disputes/{dispute_id}/attachments")
+def get_supplier_dispute_attachments(
+    dispute_id: int,
+    db: Session = Depends(get_db),
+):
+    dispute = db.query(models.SupplierDispute).filter(models.SupplierDispute.id == dispute_id).first()
+    if not dispute:
+        raise HTTPException(status_code=404, detail="Litige fournisseur introuvable.")
+    return [_serialize_supplier_dispute_attachment(attachment) for attachment in dispute.attachments]
+
+@router.post("/disputes/{dispute_id}/attachments")
+async def upload_supplier_dispute_attachment(
+    dispute_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.receive")
+    dispute = db.query(models.SupplierDispute).filter(models.SupplierDispute.id == dispute_id).first()
+    if not dispute:
+        raise HTTPException(status_code=404, detail="Litige fournisseur introuvable.")
+    if dispute.status == "RESOLVED":
+        raise HTTPException(status_code=400, detail="Impossible d'ajouter une preuve sur un litige résolu.")
+
+    file_path = await uploads.save_upload_file(
+        file,
+        os.path.join("uploads", "supplier_disputes", str(dispute.id)),
+        extra_extensions={".txt"},
+        prefix=f"litige_{dispute.id}_",
+    )
+    attachment = models.SupplierDisputeAttachment(
+        dispute_id=dispute.id,
+        original_filename=os.path.basename(file.filename or "preuve"),
+        stored_filename=os.path.basename(file_path),
+        content_type=file.content_type,
+        file_path=file_path.replace(os.sep, "/"),
+        file_size=os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+        uploaded_by=current_user.get("sub", "unknown"),
+    )
+    db.add(attachment)
+    db.flush()
+    _record_supplier_dispute_event(
+        db,
+        dispute.id,
+        "ATTACHMENT_ADDED",
+        f"Preuve ajoutée: {attachment.original_filename}",
+        current_user.get("sub", "unknown"),
+    )
+    db.commit()
+    db.refresh(dispute)
+    return _serialize_supplier_dispute(dispute)
+
+@router.get("/disputes/{dispute_id}/attachments/{attachment_id}/download")
+def download_supplier_dispute_attachment(
+    dispute_id: int,
+    attachment_id: int,
+    db: Session = Depends(get_db),
+):
+    attachment = (
+        db.query(models.SupplierDisputeAttachment)
+        .filter(
+            models.SupplierDisputeAttachment.id == attachment_id,
+            models.SupplierDisputeAttachment.dispute_id == dispute_id,
+        )
+        .first()
+    )
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Preuve de litige introuvable.")
+    if not os.path.exists(attachment.file_path):
+        raise HTTPException(status_code=404, detail="Fichier de preuve introuvable.")
+    filename = attachment.original_filename.replace('"', "")
+    return FileResponse(
+        attachment.file_path,
+        media_type=attachment.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@router.delete("/disputes/{dispute_id}/attachments/{attachment_id}")
+def delete_supplier_dispute_attachment(
+    dispute_id: int,
+    attachment_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.approve")
+    dispute = db.query(models.SupplierDispute).filter(models.SupplierDispute.id == dispute_id).first()
+    if not dispute:
+        raise HTTPException(status_code=404, detail="Litige fournisseur introuvable.")
+    if dispute.status == "RESOLVED":
+        raise HTTPException(status_code=400, detail="Impossible de supprimer une preuve sur un litige résolu.")
+    attachment = (
+        db.query(models.SupplierDisputeAttachment)
+        .filter(
+            models.SupplierDisputeAttachment.id == attachment_id,
+            models.SupplierDisputeAttachment.dispute_id == dispute_id,
+        )
+        .first()
+    )
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Preuve de litige introuvable.")
+    original_filename = attachment.original_filename
+    file_path = attachment.file_path
+    db.delete(attachment)
+    _record_supplier_dispute_event(
+        db,
+        dispute.id,
+        "ATTACHMENT_DELETED",
+        f"Preuve supprimée: {original_filename}",
+        current_user.get("sub", "unknown"),
+    )
+    db.commit()
+    if file_path and os.path.exists(file_path):
+        os.remove(file_path)
     db.refresh(dispute)
     return _serialize_supplier_dispute(dispute)
 
@@ -1138,10 +1308,19 @@ def resolve_supplier_dispute(
         raise HTTPException(status_code=404, detail="Litige fournisseur introuvable.")
     if dispute.status == "RESOLVED":
         return _serialize_supplier_dispute(dispute)
+    if dispute.category in {"QUALITY", "QUANTITY"} and not dispute.attachments:
+        raise HTTPException(status_code=400, detail="Une preuve est obligatoire pour résoudre un litige qualité ou quantité.")
     dispute.status = "RESOLVED"
     dispute.closed_by = current_user.get("sub", "unknown")
     dispute.closed_at = utcnow()
     dispute.resolution_notes = notes
+    _record_supplier_dispute_event(
+        db,
+        dispute.id,
+        "RESOLVED",
+        f"Litige résolu: {notes}",
+        current_user.get("sub", "unknown"),
+    )
     db.commit()
     db.refresh(dispute)
     return _serialize_supplier_dispute(dispute)
@@ -1159,6 +1338,13 @@ def start_supplier_dispute(
     if dispute.status == "RESOLVED":
         raise HTTPException(status_code=400, detail="Un litige résolu ne peut pas être repris.")
     dispute.status = "IN_PROGRESS"
+    _record_supplier_dispute_event(
+        db,
+        dispute.id,
+        "STARTED",
+        "Litige pris en charge.",
+        current_user.get("sub", "unknown"),
+    )
     db.commit()
     db.refresh(dispute)
     return _serialize_supplier_dispute(dispute)
