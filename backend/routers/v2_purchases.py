@@ -1,9 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+from io import BytesIO
 from pydantic import BaseModel
 from typing import List, Optional
 import uuid
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.pdfgen import canvas
 
 from backend.database import get_db
 from backend import models
@@ -70,6 +76,10 @@ class SupplierDisputeCreate(BaseModel):
 
 class SupplierDisputeResolveInput(BaseModel):
     resolution_notes: str
+
+class SupplierReminderCreate(BaseModel):
+    channel: str = "email"
+    message: Optional[str] = None
 
 PURCHASE_DIRECT_ORDER_LIMIT = 1000.0
 
@@ -322,6 +332,90 @@ def _purchase_order_metrics(po: models.PurchaseOrder, db: Session) -> dict:
         "late_days": late_days,
         "invoiced_quantities": invoiced_quantities,
     }
+
+def _draw_pdf_text(pdf: canvas.Canvas, x: float, y: float, text: str, size: int = 9, bold: bool = False) -> None:
+    pdf.setFont("Helvetica-Bold" if bold else "Helvetica", size)
+    pdf.drawString(x, y, str(text or ""))
+
+def _generate_purchase_order_pdf(po: models.PurchaseOrder, db: Session) -> bytes:
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    margin = 18 * mm
+    y = height - margin
+    metrics = _purchase_order_metrics(po, db)
+
+    def new_page():
+        nonlocal y
+        pdf.showPage()
+        y = height - margin
+
+    def ensure_space(required: float):
+        if y - required < margin:
+            new_page()
+
+    pdf.setFillColor(colors.HexColor("#0f172a"))
+    pdf.rect(0, height - 42 * mm, width, 42 * mm, fill=1, stroke=0)
+    pdf.setFillColor(colors.white)
+    _draw_pdf_text(pdf, margin, y, "MMG MENUISERIES", 16, True)
+    _draw_pdf_text(pdf, margin, y - 8 * mm, "Bon fournisseur", 11)
+    _draw_pdf_text(pdf, width - 76 * mm, y, po.reference, 16, True)
+    _draw_pdf_text(pdf, width - 76 * mm, y - 8 * mm, f"Statut: {po.status}", 9)
+    y -= 54 * mm
+
+    pdf.setFillColor(colors.HexColor("#0f172a"))
+    _draw_pdf_text(pdf, margin, y, "Fournisseur", 10, True)
+    _draw_pdf_text(pdf, margin, y - 7 * mm, po.supplier, 13, True)
+    _draw_pdf_text(pdf, margin, y - 15 * mm, f"Commande: {po.order_date.strftime('%d/%m/%Y') if po.order_date else '-'}", 9)
+    _draw_pdf_text(pdf, margin, y - 22 * mm, f"Livraison prévue: {po.expected_date.strftime('%d/%m/%Y') if po.expected_date else 'Non renseignée'}", 9)
+    _draw_pdf_text(pdf, width - 78 * mm, y, "Suivi réception", 10, True)
+    _draw_pdf_text(pdf, width - 78 * mm, y - 8 * mm, f"Commandé: {metrics['quantity_ordered']:.2f}", 9)
+    _draw_pdf_text(pdf, width - 78 * mm, y - 15 * mm, f"Reçu: {metrics['quantity_received']:.2f}", 9)
+    _draw_pdf_text(pdf, width - 78 * mm, y - 22 * mm, f"Reste: {metrics['quantity_remaining']:.2f}", 9)
+    y -= 36 * mm
+
+    pdf.setFillColor(colors.HexColor("#f8fafc"))
+    pdf.rect(margin, y - 8 * mm, width - 2 * margin, 10 * mm, fill=1, stroke=0)
+    pdf.setFillColor(colors.HexColor("#475569"))
+    headers = [("Référence", 0), ("Désignation", 35), ("Qté", 103), ("Reçu", 119), ("PU HT", 137), ("Remise", 156), ("Total HT", 176)]
+    for label, offset in headers:
+        _draw_pdf_text(pdf, margin + offset * mm, y - 4.5 * mm, label, 7, True)
+    y -= 12 * mm
+
+    pdf.setFillColor(colors.HexColor("#0f172a"))
+    for line in po.lines:
+        ensure_space(16 * mm)
+        variant_ref = line.variant.reference if line.variant else "-"
+        product_name = line.variant.product.name if line.variant and line.variant.product else "Article"
+        line_total = _line_total(float(line.quantity or 0), float(line.unit_price or 0), float(line.discount_percent or 0))
+        _draw_pdf_text(pdf, margin, y, variant_ref[:24], 8, True)
+        _draw_pdf_text(pdf, margin + 35 * mm, y, product_name[:54], 8)
+        _draw_pdf_text(pdf, margin + 103 * mm, y, f"{float(line.quantity or 0):.2f}", 8)
+        _draw_pdf_text(pdf, margin + 119 * mm, y, f"{float(line.quantity_received or 0):.2f}", 8)
+        _draw_pdf_text(pdf, margin + 137 * mm, y, f"{float(line.unit_price or 0):.2f}", 8)
+        _draw_pdf_text(pdf, margin + 156 * mm, y, f"{float(line.discount_percent or 0):.1f}%", 8)
+        _draw_pdf_text(pdf, margin + 176 * mm, y, f"{line_total:.2f}", 8, True)
+        pdf.setStrokeColor(colors.HexColor("#e2e8f0"))
+        pdf.line(margin, y - 3 * mm, width - margin, y - 3 * mm)
+        y -= 9 * mm
+
+    ensure_space(34 * mm)
+    y -= 6 * mm
+    pdf.setFillColor(colors.HexColor("#0f172a"))
+    _draw_pdf_text(pdf, width - 78 * mm, y, f"Total HT: {float(po.total_amount or 0):.2f} EUR", 13, True)
+    y -= 11 * mm
+    _draw_pdf_text(pdf, margin, y, "Conditions / notes", 10, True)
+    y -= 7 * mm
+    notes = po.notes or "Bon fournisseur généré depuis MMG."
+    for chunk in [notes[i:i + 95] for i in range(0, len(notes), 95)][:6]:
+        ensure_space(7 * mm)
+        _draw_pdf_text(pdf, margin, y, chunk, 8)
+        y -= 6 * mm
+
+    pdf.setFillColor(colors.HexColor("#64748b"))
+    _draw_pdf_text(pdf, margin, margin - 4 * mm, "Document achat généré par MMG - rapprocher les factures uniquement sur quantités reçues.", 7)
+    pdf.save()
+    return buffer.getvalue()
 
 def _line_match_status(quantity_received: float, quantity_invoiced: float) -> str:
     if quantity_received <= 0:
@@ -679,6 +773,80 @@ def get_purchase_orders(db: Session = Depends(get_db)):
         })
     return result
 
+@router.get("/dashboard")
+def get_purchase_dashboard(db: Session = Depends(get_db)):
+    pos = db.query(models.PurchaseOrder).order_by(models.PurchaseOrder.order_date.desc()).all()
+    requests = db.query(models.PurchaseRequest).all()
+    open_disputes = db.query(models.SupplierDispute).filter(
+        models.SupplierDispute.status.in_(["OPEN", "IN_PROGRESS"])
+    ).all()
+
+    summary = {
+        "open_orders": 0,
+        "to_receive": 0,
+        "late_orders": 0,
+        "to_invoice": 0,
+        "open_disputes": len(open_disputes),
+        "pending_requests": sum(1 for request in requests if request.status == models.PurchaseRequestStatus.PENDING_APPROVAL),
+        "approved_requests": sum(1 for request in requests if request.status == models.PurchaseRequestStatus.APPROVED),
+        "amount_committed": 0.0,
+    }
+    actions = []
+
+    for po in pos:
+        metrics = _purchase_order_metrics(po, db)
+        is_closed = po.status in [models.PurchaseOrderStatus.CANCELLED, models.PurchaseOrderStatus.RECEIVED]
+        if not is_closed:
+            summary["open_orders"] += 1
+            summary["amount_committed"] += float(po.total_amount or 0)
+        if metrics["quantity_remaining"] > 0:
+            summary["to_receive"] += 1
+        if metrics["is_late"]:
+            summary["late_orders"] += 1
+        if metrics["quantity_invoiceable"] > 0:
+            summary["to_invoice"] += 1
+
+        if metrics["is_late"] or metrics["quantity_invoiceable"] > 0 or metrics["quantity_remaining"] > 0:
+            actions.append({
+                "type": "LATE" if metrics["is_late"] else "INVOICE" if metrics["quantity_invoiceable"] > 0 else "RECEIPT",
+                "purchase_order_id": po.id,
+                "reference": po.reference,
+                "supplier": po.supplier,
+                "label": metrics["next_action"],
+                "late_days": metrics["late_days"],
+                "quantity_remaining": metrics["quantity_remaining"],
+                "quantity_invoiceable": metrics["quantity_invoiceable"],
+                "total_amount": po.total_amount,
+            })
+
+    for request in requests:
+        if request.status in [models.PurchaseRequestStatus.PENDING_APPROVAL, models.PurchaseRequestStatus.APPROVED]:
+            actions.append({
+                "type": "REQUEST",
+                "purchase_request_id": request.id,
+                "reference": request.reference,
+                "supplier": request.supplier,
+                "label": "Valider demande achat" if request.status == models.PurchaseRequestStatus.PENDING_APPROVAL else "Créer bon fournisseur",
+                "total_amount": request.total_amount,
+                "status": request.status,
+            })
+
+    for dispute in open_disputes:
+        actions.append({
+            "type": "DISPUTE",
+            "dispute_id": dispute.id,
+            "purchase_order_id": dispute.purchase_order_id,
+            "reference": dispute.reference,
+            "supplier": dispute.supplier,
+            "label": dispute.title,
+            "severity": dispute.severity,
+            "status": dispute.status,
+        })
+
+    priority = {"LATE": 0, "DISPUTE": 1, "INVOICE": 2, "REQUEST": 3, "RECEIPT": 4}
+    actions.sort(key=lambda item: (priority.get(item["type"], 9), -int(item.get("late_days") or 0), item.get("supplier") or ""))
+    return {"summary": summary, "actions": actions[:20]}
+
 @router.get("/disputes")
 def get_supplier_disputes(db: Session = Depends(get_db)):
     disputes = (
@@ -957,6 +1125,58 @@ def create_purchase_order(
     db.commit()
     db.refresh(po)
     return {"id": po.id, "reference": po.reference}
+
+@router.get("/{po_id}/pdf")
+def download_purchase_order_pdf(po_id: int, db: Session = Depends(get_db)):
+    po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po_id).first()
+    if not po:
+        raise HTTPException(status_code=404, detail="Bon fournisseur introuvable.")
+    pdf_bytes = _generate_purchase_order_pdf(po, db)
+    filename = f"bon-fournisseur-{po.reference}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@router.post("/{po_id}/remind")
+def remind_purchase_order_supplier(
+    po_id: int,
+    data: SupplierReminderCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.receive")
+    po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po_id).first()
+    if not po:
+        raise HTTPException(status_code=404, detail="Bon fournisseur introuvable.")
+    metrics = _purchase_order_metrics(po, db)
+    if metrics["quantity_remaining"] <= 0:
+        raise HTTPException(status_code=400, detail="Cette commande est déjà totalement réceptionnée.")
+    channel = (data.channel or "email").strip().lower()
+    if channel not in ["email", "phone", "portal", "other"]:
+        raise HTTPException(status_code=400, detail="Canal de relance invalide.")
+    timestamp = utcnow().strftime("%Y-%m-%d %H:%M")
+    message = (data.message or "").strip() or (
+        f"Relance {po.supplier}: {metrics['quantity_remaining']:.2f} unité(s) restent à réceptionner"
+        + (f", retard {metrics['late_days']} jour(s)." if metrics["is_late"] else ".")
+    )
+    reminder_note = f"[RELANCE FOURNISSEUR] {timestamp} par {current_user.get('sub', 'unknown')} via {channel}: {message}"
+    po.notes = f"{po.notes or ''}\n{reminder_note}".strip()
+    db.commit()
+    db.refresh(po)
+    return {
+        "status": "recorded",
+        "message": message,
+        "purchase_order": {
+            "id": po.id,
+            "reference": po.reference,
+            "supplier": po.supplier,
+            "notes": po.notes,
+            "quantity_remaining": metrics["quantity_remaining"],
+            "late_days": metrics["late_days"],
+        },
+    }
 
 @router.get("/{po_id}")
 def get_purchase_order_details(po_id: int, db: Session = Depends(get_db)):

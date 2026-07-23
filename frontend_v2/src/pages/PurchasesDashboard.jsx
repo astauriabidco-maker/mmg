@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ShoppingCart, Plus, FileText, Search, ArrowRight, CheckCircle, PackageOpen, X, Truck, Users, Phone, Mail, MapPin, Sparkles, BrainCircuit, Building2, Globe2, AlertTriangle, Layers } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
+import { downloadFileWithFeedback } from '../services/pdf';
 const getStatusColor = (status) => {
     switch (status) {
         case 'DRAFT': return 'bg-slate-100 text-slate-600';
@@ -127,7 +128,7 @@ const groupNeedsBySupplier = (needs) => Object.values(needs.reduce((acc, need) =
 }, {})).sort((a, b) => b.critical_count - a.critical_count || b.urgent_count - a.urgent_count || a.supplier.localeCompare(b.supplier));
 
 export default function PurchasesDashboard() {
-    const [currentTab, setCurrentTab] = useState('orders'); // orders, requests, suppliers, ai
+    const [currentTab, setCurrentTab] = useState('dashboard'); // dashboard, orders, requests, suppliers, ai
 
     // Orders state
     const [searchTerm, setSearchTerm] = useState("");
@@ -213,6 +214,14 @@ export default function PurchasesDashboard() {
         queryKey: ['supplier-disputes'],
         queryFn: async () => {
             const res = await api.get('/v2/purchases/disputes');
+            return res.data;
+        }
+    });
+
+    const { data: purchaseDashboard = { summary: {}, actions: [] } } = useQuery({
+        queryKey: ['purchase-dashboard'],
+        queryFn: async () => {
+            const res = await api.get('/v2/purchases/dashboard');
             return res.data;
         }
     });
@@ -376,6 +385,7 @@ export default function PurchasesDashboard() {
             setShowDisputeModal(false);
             queryClient.invalidateQueries(['supplier-disputes']);
             queryClient.invalidateQueries(['purchases']);
+            queryClient.invalidateQueries(['purchase-dashboard']);
             if (selectedPO?.id) await openPODetails(selectedPO.id);
         } catch (err) {
             console.error(err);
@@ -390,10 +400,33 @@ export default function PurchasesDashboard() {
             await api.post(`/v2/purchases/disputes/${disputeId}/resolve`, { resolution_notes: resolution.trim() });
             queryClient.invalidateQueries(['supplier-disputes']);
             queryClient.invalidateQueries(['purchases']);
+            queryClient.invalidateQueries(['purchase-dashboard']);
             if (selectedPO?.id) await openPODetails(selectedPO.id);
         } catch (err) {
             console.error(err);
             alert(err.response?.data?.detail || "Erreur lors de la résolution du litige.");
+        }
+    };
+
+    const handleDownloadPOPDF = async (po) => {
+        if (!po?.id) return;
+        await downloadFileWithFeedback(`/v2/purchases/${po.id}/pdf`, `bon-fournisseur-${po.reference}.pdf`);
+    };
+
+    const handleRemindSupplier = async (poId) => {
+        try {
+            const note = window.prompt("Message de relance fournisseur :", "");
+            await api.post(`/v2/purchases/${poId}/remind`, {
+                channel: 'email',
+                message: note && note.trim() ? note.trim() : null,
+            });
+            queryClient.invalidateQueries(['purchases']);
+            queryClient.invalidateQueries(['purchase-dashboard']);
+            if (selectedPO?.id === poId) await openPODetails(poId);
+            alert("Relance fournisseur enregistrée dans la commande.");
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de la relance fournisseur.");
         }
     };
 
@@ -435,6 +468,7 @@ export default function PurchasesDashboard() {
             setNewPO(emptyPOForm);
             queryClient.invalidateQueries(['purchases']);
             queryClient.invalidateQueries(['purchase-requests']);
+            queryClient.invalidateQueries(['purchase-dashboard']);
             if (createMode === 'request') {
                 setCurrentTab('requests');
             }
@@ -448,6 +482,7 @@ export default function PurchasesDashboard() {
         try {
             await api.post(`/v2/purchases/requests/${requestId}/approve`);
             queryClient.invalidateQueries(['purchase-requests']);
+            queryClient.invalidateQueries(['purchase-dashboard']);
             await refetchPurchaseRequests();
         } catch (err) {
             console.error(err);
@@ -461,6 +496,7 @@ export default function PurchasesDashboard() {
         try {
             await api.post(`/v2/purchases/requests/${requestId}/reject`, { reason: reason.trim() });
             queryClient.invalidateQueries(['purchase-requests']);
+            queryClient.invalidateQueries(['purchase-dashboard']);
             await refetchPurchaseRequests();
         } catch (err) {
             console.error(err);
@@ -473,6 +509,7 @@ export default function PurchasesDashboard() {
             const res = await api.post(`/v2/purchases/requests/${requestId}/convert`);
             queryClient.invalidateQueries(['purchase-requests']);
             queryClient.invalidateQueries(['purchases']);
+            queryClient.invalidateQueries(['purchase-dashboard']);
             await refetchPurchaseRequests();
             if (res.data?.purchase_order?.id) {
                 await openPODetails(res.data.purchase_order.id);
@@ -500,6 +537,7 @@ export default function PurchasesDashboard() {
             await api.post(`/v2/purchases/${selectedPO.id}/receive`, { target_location_id: parseInt(receiveTargetLoc), lines });
             setShowReceiveModal(false);
             queryClient.invalidateQueries(['purchases']);
+            queryClient.invalidateQueries(['purchase-dashboard']);
             await openPODetails(selectedPO.id);
             alert("Réception effectuée avec succès et stock mis à jour !");
         } catch (err) {
@@ -615,6 +653,7 @@ export default function PurchasesDashboard() {
             });
             setShowSupplierInvoiceModal(false);
             queryClient.invalidateQueries(['purchases']);
+            queryClient.invalidateQueries(['purchase-dashboard']);
             await openPODetails(selectedPO.id);
             alert("Facture fournisseur rapprochée avec les réceptions.");
         } catch (err) {
@@ -640,28 +679,34 @@ export default function PurchasesDashboard() {
                     </h3>
 
                     {/* TABS */}
-                    <div className="flex bg-slate-100 p-1 rounded-xl">
+                    <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl">
+                        <button
+                            onClick={() => setCurrentTab('dashboard')}
+                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'dashboard' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Pilotage
+                        </button>
                         <button
                             onClick={() => setCurrentTab('orders')}
-                            className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'orders' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'orders' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                             Commandes
                         </button>
                         <button
                             onClick={() => setCurrentTab('requests')}
-                            className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'requests' ? 'bg-white shadow text-amber-600' : 'text-slate-500 hover:text-slate-700'}`}
+                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'requests' ? 'bg-white shadow text-amber-600' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                             Demandes
                         </button>
                         <button
                             onClick={() => setCurrentTab('suppliers')}
-                            className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'suppliers' ? 'bg-white shadow text-emerald-600' : 'text-slate-500 hover:text-slate-700'}`}
+                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'suppliers' ? 'bg-white shadow text-emerald-600' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                             Fournisseurs
                         </button>
                         <button
                             onClick={() => setCurrentTab('ai')}
-                            className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'ai' ? 'bg-white shadow text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'ai' ? 'bg-white shadow text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
                             title="Besoins d'achat nets"
                         >
                             À commander
@@ -672,7 +717,7 @@ export default function PurchasesDashboard() {
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
                             type="text"
-                            placeholder={currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'requests' ? "Rechercher demande achat..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : "Rechercher une recommandation..."}
+                            placeholder={currentTab === 'dashboard' ? "Rechercher action achat..." : currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'requests' ? "Rechercher demande achat..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : "Rechercher une recommandation..."}
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
@@ -701,6 +746,41 @@ export default function PurchasesDashboard() {
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {currentTab === 'dashboard' && (
+                        <>
+                            {(purchaseDashboard.actions || [])
+                                .filter(action => {
+                                    const term = searchTerm.toLowerCase();
+                                    return !term
+                                        || String(action.reference || '').toLowerCase().includes(term)
+                                        || String(action.supplier || '').toLowerCase().includes(term)
+                                        || String(action.label || '').toLowerCase().includes(term);
+                                })
+                                .slice(0, 12)
+                                .map(action => (
+                                    <button
+                                        key={`${action.type}-${action.reference}-${action.purchase_order_id || action.purchase_request_id || action.dispute_id}`}
+                                        onClick={() => {
+                                            if (action.purchase_order_id) openPODetails(action.purchase_order_id);
+                                            if (action.type === 'REQUEST') setCurrentTab('requests');
+                                        }}
+                                        className="w-full text-left p-4 rounded-xl border-2 bg-white border-slate-100 hover:border-slate-300 shadow-sm"
+                                    >
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{action.type}</p>
+                                                <h4 className="font-black text-slate-900">{action.label}</h4>
+                                                <p className="text-xs font-bold text-slate-500">{action.supplier || 'Achat'} · {action.reference}</p>
+                                            </div>
+                                            {action.late_days > 0 && <span className="text-[10px] font-black text-red-700 bg-red-100 px-2 py-1 rounded-lg">{action.late_days}j</span>}
+                                        </div>
+                                    </button>
+                                ))}
+                            {(purchaseDashboard.actions || []).length === 0 && (
+                                <div className="text-center py-10 text-slate-400 font-bold">Aucune action achat urgente.</div>
+                            )}
+                        </>
+                    )}
                     {currentTab === 'orders' && (
                         <>
                             {filteredPurchases.map(po => (
@@ -845,7 +925,14 @@ export default function PurchasesDashboard() {
 
             {/* MAIN AREA : PO DETAILS */}
             <div className="flex-1 flex flex-col bg-slate-50 relative overflow-y-auto">
-                {currentTab === 'requests' ? (
+                {currentTab === 'dashboard' ? (
+                    <PurchaseDashboardOverview
+                        dashboard={purchaseDashboard}
+                        setCurrentTab={setCurrentTab}
+                        openPODetails={openPODetails}
+                        handleRemindSupplier={handleRemindSupplier}
+                    />
+                ) : currentTab === 'requests' ? (
                     <PurchaseRequestsView
                         requests={purchaseRequests}
                         canApprove={canApprovePurchaseRequest}
@@ -904,6 +991,22 @@ export default function PurchasesDashboard() {
                                     <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-md bg-blue-100 text-blue-700">
                                         {selectedPO.next_action || 'Contrôle achat'}
                                     </span>
+                                    <div className="mt-2 flex flex-wrap justify-end gap-2">
+                                        <button
+                                            onClick={() => handleDownloadPOPDF(selectedPO)}
+                                            className="px-3 py-2 rounded-xl bg-white/10 border border-white/15 text-white hover:bg-white/20 text-xs font-black flex items-center gap-2"
+                                        >
+                                            <FileText className="w-4 h-4" /> PDF bon
+                                        </button>
+                                        {Number(selectedPO.quantity_remaining || 0) > 0 && (
+                                            <button
+                                                onClick={() => handleRemindSupplier(selectedPO.id)}
+                                                className="px-3 py-2 rounded-xl bg-amber-400/15 border border-amber-200/20 text-amber-100 hover:bg-amber-400/25 text-xs font-black"
+                                            >
+                                                Relancer
+                                            </button>
+                                        )}
+                                    </div>
                                     <button
                                         onClick={() => openDisputeModal({ supplier: selectedPO.supplier, purchaseOrderId: selectedPO.id, title: `Litige ${selectedPO.reference}` })}
                                         className="mt-2 px-3 py-2 rounded-xl bg-red-500/15 border border-red-300/20 text-red-100 hover:bg-red-500/25 text-xs font-black"
@@ -1645,6 +1748,118 @@ export default function PurchasesDashboard() {
         </div>
     );
 }
+
+const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, handleRemindSupplier }) => {
+    const summary = dashboard?.summary || {};
+    const actions = dashboard?.actions || [];
+    const cards = [
+        { label: 'Commandes ouvertes', value: summary.open_orders || 0, tone: 'bg-blue-50 border-blue-100 text-blue-700', tab: 'orders' },
+        { label: 'À réceptionner', value: summary.to_receive || 0, tone: 'bg-emerald-50 border-emerald-100 text-emerald-700', tab: 'orders' },
+        { label: 'Retards fournisseur', value: summary.late_orders || 0, tone: 'bg-red-50 border-red-100 text-red-700', tab: 'orders' },
+        { label: 'Factures à rapprocher', value: summary.to_invoice || 0, tone: 'bg-orange-50 border-orange-100 text-orange-700', tab: 'orders' },
+        { label: 'Demandes à valider', value: summary.pending_requests || 0, tone: 'bg-amber-50 border-amber-100 text-amber-700', tab: 'requests' },
+        { label: 'Litiges ouverts', value: summary.open_disputes || 0, tone: 'bg-rose-50 border-rose-100 text-rose-700', tab: 'suppliers' },
+    ];
+
+    return (
+        <div className="p-8 w-full space-y-6">
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
+                <div className="px-8 py-7 bg-slate-900 text-white flex items-start justify-between gap-6">
+                    <div>
+                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-300/20 text-blue-200 text-[10px] font-black uppercase tracking-widest mb-3">
+                            <ShoppingCart className="w-3.5 h-3.5" /> Pilotage achats
+                        </div>
+                        <h2 className="text-3xl font-black tracking-tight">Achats à piloter maintenant</h2>
+                        <p className="text-sm font-bold text-slate-300 mt-1">Retards, réceptions, factures fournisseur et litiges au même endroit.</p>
+                    </div>
+                    <div className="text-right">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Engagé HT</p>
+                        <p className="text-3xl font-black text-emerald-300">{Number(summary.amount_committed || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</p>
+                    </div>
+                </div>
+
+                <div className="p-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {cards.map(card => (
+                            <button key={card.label} onClick={() => setCurrentTab(card.tab)} className={`text-left rounded-2xl border p-5 ${card.tone} hover:-translate-y-0.5 transition-transform`}>
+                                <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{card.label}</p>
+                                <p className="text-4xl font-black mt-2">{card.value}</p>
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="mt-8 grid grid-cols-1 xl:grid-cols-[1.4fr_0.8fr] gap-6">
+                        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                                <div>
+                                    <h3 className="font-black text-slate-900">Actions prioritaires</h3>
+                                    <p className="text-xs font-bold text-slate-500">Les lignes viennent des commandes, demandes, litiges et factures à rapprocher.</p>
+                                </div>
+                                <span className="text-xs font-black text-slate-400">{actions.length} action(s)</span>
+                            </div>
+                            <div className="divide-y divide-slate-100">
+                                {actions.slice(0, 10).map(action => (
+                                    <div key={`${action.type}-${action.reference}-${action.purchase_order_id || action.purchase_request_id || action.dispute_id}`} className="p-5 flex items-center justify-between gap-4">
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
+                                                    action.type === 'LATE' ? 'bg-red-100 text-red-700'
+                                                        : action.type === 'INVOICE' ? 'bg-orange-100 text-orange-700'
+                                                            : action.type === 'DISPUTE' ? 'bg-rose-100 text-rose-700'
+                                                                : 'bg-slate-100 text-slate-600'
+                                                }`}>
+                                                    {action.type}
+                                                </span>
+                                                {action.late_days > 0 && <span className="text-[10px] font-black text-red-600">{action.late_days} jour(s) retard</span>}
+                                            </div>
+                                            <h4 className="font-black text-slate-900 mt-2">{action.label}</h4>
+                                            <p className="text-xs font-bold text-slate-500">{action.supplier || 'Achats'} · {action.reference}</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            {action.type === 'LATE' && action.purchase_order_id && (
+                                                <button onClick={() => handleRemindSupplier(action.purchase_order_id)} className="px-3 py-2 rounded-xl bg-amber-100 text-amber-800 font-black text-xs hover:bg-amber-200">
+                                                    Relancer
+                                                </button>
+                                            )}
+                                            {action.purchase_order_id ? (
+                                                <button onClick={() => openPODetails(action.purchase_order_id)} className="px-3 py-2 rounded-xl bg-slate-900 text-white font-black text-xs hover:bg-slate-800">
+                                                    Ouvrir
+                                                </button>
+                                            ) : (
+                                                <button onClick={() => setCurrentTab(action.type === 'REQUEST' ? 'requests' : 'suppliers')} className="px-3 py-2 rounded-xl bg-slate-900 text-white font-black text-xs hover:bg-slate-800">
+                                                    Traiter
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                                {actions.length === 0 && (
+                                    <div className="p-8 text-center text-slate-400 font-bold">Aucune action fournisseur urgente.</div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Règle métier</p>
+                                <h3 className="font-black text-slate-900">On ne paie que ce qui est reçu.</h3>
+                                <p className="text-sm font-bold text-slate-600 mt-2">Le rapprochement facture fournisseur reste bloqué par les quantités réceptionnées. Les retards et litiges doivent être visibles avant paiement.</p>
+                            </div>
+                            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500 mb-2">Raccourcis</p>
+                                <div className="grid grid-cols-1 gap-2">
+                                    <button onClick={() => setCurrentTab('requests')} className="rounded-xl bg-white border border-emerald-100 px-4 py-3 text-left font-black text-emerald-800">Voir les demandes d'achat</button>
+                                    <button onClick={() => setCurrentTab('orders')} className="rounded-xl bg-white border border-emerald-100 px-4 py-3 text-left font-black text-emerald-800">Voir les bons fournisseur</button>
+                                    <button onClick={() => setCurrentTab('suppliers')} className="rounded-xl bg-white border border-emerald-100 px-4 py-3 text-left font-black text-emerald-800">Voir les fournisseurs</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 const PurchaseRequestsView = ({ requests, canApprove, canOrder, onApprove, onReject, onConvert }) => {
     const pending = requests.filter(request => request.status === 'PENDING_APPROVAL');

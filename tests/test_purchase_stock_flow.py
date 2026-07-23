@@ -622,6 +622,55 @@ def test_supplier_operational_purchase_list_exposes_late_purchase_orders():
         models.Base.metadata.drop_all(bind=engine)
 
 
+def test_purchase_dashboard_pdf_and_supplier_reminder(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "purchase-dashboard-tester")
+    with TestingSessionLocal() as db:
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="ACH-DASH-001",
+            supplier="Dashboard Supplier",
+            physical_quantity=0,
+            min_threshold=0,
+        )
+
+    purchase_response = client.post(
+        "/v2/purchases/",
+        headers=headers,
+        json={
+            "supplier": "Dashboard Supplier",
+            "expected_date": (utcnow() - timedelta(days=3)).isoformat(),
+            "lines": [{"variant_id": variant_id, "quantity": 4, "unit_price": 12}],
+        },
+    )
+    assert purchase_response.status_code == 200, purchase_response.text
+    po_id = purchase_response.json()["id"]
+
+    dashboard_response = client.get("/v2/purchases/dashboard", headers=headers)
+    assert dashboard_response.status_code == 200, dashboard_response.text
+    dashboard = dashboard_response.json()
+    assert dashboard["summary"]["to_receive"] >= 1
+    assert dashboard["summary"]["late_orders"] >= 1
+    assert any(action["purchase_order_id"] == po_id and action["type"] == "LATE" for action in dashboard["actions"])
+
+    pdf_response = client.get(f"/v2/purchases/{po_id}/pdf", headers=headers)
+    assert pdf_response.status_code == 200, pdf_response.text
+    assert pdf_response.headers["content-type"].startswith("application/pdf")
+    assert pdf_response.content.startswith(b"%PDF")
+
+    reminder_response = client.post(
+        f"/v2/purchases/{po_id}/remind",
+        headers=headers,
+        json={"channel": "email", "message": "Merci de confirmer la date de livraison."},
+    )
+    assert reminder_response.status_code == 200, reminder_response.text
+    assert reminder_response.json()["status"] == "recorded"
+
+    details = client.get(f"/v2/purchases/{po_id}", headers=headers).json()
+    assert "[RELANCE FOURNISSEUR]" in details["notes"]
+    assert "Merci de confirmer" in details["notes"]
+
+
 def test_purchase_recommendations_use_real_stock_thresholds_without_fake_fallback():
     engine = create_engine(
         "sqlite:///:memory:",
