@@ -415,6 +415,42 @@ def _open_blocking_disputes(db: Session, po_id: int, block_field: str) -> List[m
         .all()
     )
 
+def _supplier_invoice_remaining_amount(invoice: models.SupplierInvoice) -> float:
+    total_amount = float(invoice.total_amount or 0)
+    paid_amount = sum(float(payment.amount or 0) for payment in invoice.payments)
+    return max(total_amount - paid_amount, 0.0)
+
+def _invoice_payment_blockers(db: Session, invoice: models.SupplierInvoice) -> List[models.SupplierDispute]:
+    filters = [
+        models.SupplierDispute.status.in_(["OPEN", "IN_PROGRESS"]),
+        models.SupplierDispute.blocks_payment == True,  # noqa: E712
+    ]
+    if invoice.purchase_order_id:
+        filters.append(models.SupplierDispute.purchase_order_id == invoice.purchase_order_id)
+    else:
+        filters.append(models.SupplierDispute.supplier_invoice_id == invoice.id)
+    return (
+        db.query(models.SupplierDispute)
+        .filter(*filters)
+        .order_by(models.SupplierDispute.created_at.desc(), models.SupplierDispute.id.desc())
+        .all()
+    )
+
+def _supplier_invoice_payment_status(db: Session, invoice: models.SupplierInvoice) -> dict:
+    remaining_amount = _supplier_invoice_remaining_amount(invoice)
+    blockers = _invoice_payment_blockers(db, invoice)
+    today = utcnow().date()
+    due_date = invoice.due_date.date() if invoice.due_date else None
+    overdue_days = max((today - due_date).days, 0) if due_date else 0
+    return {
+        "remaining_amount": remaining_amount,
+        "is_payable": remaining_amount > 0 and not blockers and invoice.status != "CANCELLED",
+        "is_blocked": bool(blockers),
+        "blocker_references": [dispute.reference for dispute in blockers],
+        "is_overdue": overdue_days > 0 and remaining_amount > 0,
+        "overdue_days": overdue_days,
+    }
+
 def _draw_pdf_text(pdf: canvas.Canvas, x: float, y: float, text: str, size: int = 9, bold: bool = False) -> None:
     pdf.setFont("Helvetica-Bold" if bold else "Helvetica", size)
     pdf.drawString(x, y, str(text or ""))
@@ -859,21 +895,38 @@ def get_purchase_orders(db: Session = Depends(get_db)):
 def get_purchase_dashboard(db: Session = Depends(get_db)):
     pos = db.query(models.PurchaseOrder).order_by(models.PurchaseOrder.order_date.desc()).all()
     requests = db.query(models.PurchaseRequest).all()
+    supplier_invoices = (
+        db.query(models.SupplierInvoice)
+        .filter(models.SupplierInvoice.status != "CANCELLED")
+        .order_by(models.SupplierInvoice.due_date.asc().nullslast(), models.SupplierInvoice.issue_date.desc())
+        .all()
+    )
     open_disputes = db.query(models.SupplierDispute).filter(
         models.SupplierDispute.status.in_(["OPEN", "IN_PROGRESS"])
     ).all()
+    today = utcnow().date()
 
     summary = {
         "open_orders": 0,
         "to_receive": 0,
         "late_orders": 0,
         "to_invoice": 0,
+        "supplier_invoices_to_pay": 0,
+        "supplier_invoices_overdue": 0,
+        "supplier_invoices_blocked": 0,
         "open_disputes": len(open_disputes),
         "pending_requests": sum(1 for request in requests if request.status == models.PurchaseRequestStatus.PENDING_APPROVAL),
         "approved_requests": sum(1 for request in requests if request.status == models.PurchaseRequestStatus.APPROVED),
         "amount_committed": 0.0,
+        "amount_to_pay": 0.0,
+        "amount_overdue": 0.0,
+        "amount_blocked": 0.0,
+        "cash_out_7_days": 0.0,
+        "cash_out_30_days": 0.0,
+        "cash_out_60_days": 0.0,
     }
     actions = []
+    payment_schedule = []
 
     for po in pos:
         metrics = _purchase_order_metrics(po, db)
@@ -925,9 +978,77 @@ def get_purchase_dashboard(db: Session = Depends(get_db)):
             "status": dispute.status,
         })
 
-    priority = {"LATE": 0, "DISPUTE": 1, "INVOICE": 2, "REQUEST": 3, "RECEIPT": 4}
+    for invoice in supplier_invoices:
+        payment_status = _supplier_invoice_payment_status(db, invoice)
+        remaining_amount = payment_status["remaining_amount"]
+        if remaining_amount <= 0:
+            continue
+
+        summary["supplier_invoices_to_pay"] += 1
+        summary["amount_to_pay"] += remaining_amount
+
+        due_date = invoice.due_date.date() if invoice.due_date else None
+        days_until_due = (due_date - today).days if due_date else None
+        if payment_status["is_overdue"]:
+            summary["supplier_invoices_overdue"] += 1
+            summary["amount_overdue"] += remaining_amount
+        if payment_status["is_blocked"]:
+            summary["supplier_invoices_blocked"] += 1
+            summary["amount_blocked"] += remaining_amount
+        if days_until_due is not None and days_until_due <= 7:
+            summary["cash_out_7_days"] += remaining_amount
+        if days_until_due is not None and days_until_due <= 30:
+            summary["cash_out_30_days"] += remaining_amount
+        if days_until_due is not None and days_until_due <= 60:
+            summary["cash_out_60_days"] += remaining_amount
+
+        item = {
+            "invoice_id": invoice.id,
+            "purchase_order_id": invoice.purchase_order_id,
+            "reference": invoice.reference,
+            "supplier_reference": invoice.supplier_reference,
+            "supplier": invoice.supplier,
+            "due_date": invoice.due_date,
+            "remaining_amount": remaining_amount,
+            "total_amount": float(invoice.total_amount or 0),
+            "status": invoice.status,
+            "is_overdue": payment_status["is_overdue"],
+            "overdue_days": payment_status["overdue_days"],
+            "is_blocked": payment_status["is_blocked"],
+            "blocker_references": payment_status["blocker_references"],
+            "days_until_due": days_until_due,
+        }
+        payment_schedule.append(item)
+        if payment_status["is_overdue"] or payment_status["is_blocked"]:
+            actions.append({
+                "type": "PAYMENT_BLOCKED" if payment_status["is_blocked"] else "PAYMENT_DUE",
+                "invoice_id": invoice.id,
+                "purchase_order_id": invoice.purchase_order_id,
+                "reference": invoice.reference,
+                "supplier": invoice.supplier,
+                "label": "Paiement bloqué par litige" if payment_status["is_blocked"] else "Facture fournisseur en retard de paiement",
+                "remaining_amount": remaining_amount,
+                "overdue_days": payment_status["overdue_days"],
+                "blocker_references": payment_status["blocker_references"],
+            })
+
+    payment_schedule.sort(key=lambda item: (
+        item["is_blocked"] is False,
+        item["days_until_due"] if item["days_until_due"] is not None else 9999,
+        item["supplier"] or "",
+    ))
+    priority = {"LATE": 0, "PAYMENT_BLOCKED": 1, "PAYMENT_DUE": 2, "DISPUTE": 3, "INVOICE": 4, "REQUEST": 5, "RECEIPT": 6}
     actions.sort(key=lambda item: (priority.get(item["type"], 9), -int(item.get("late_days") or 0), item.get("supplier") or ""))
-    return {"summary": summary, "actions": actions[:20]}
+    return {
+        "summary": summary,
+        "actions": actions[:20],
+        "payment_schedule": payment_schedule[:20],
+        "cash_out_forecast": [
+            {"label": "7 jours", "days": 7, "amount": summary["cash_out_7_days"]},
+            {"label": "30 jours", "days": 30, "amount": summary["cash_out_30_days"]},
+            {"label": "60 jours", "days": 60, "amount": summary["cash_out_60_days"]},
+        ],
+    }
 
 @router.get("/disputes")
 def get_supplier_disputes(db: Session = Depends(get_db)):

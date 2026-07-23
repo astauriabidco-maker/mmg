@@ -2020,11 +2020,16 @@ export default function PurchasesDashboard() {
 const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, handleRemindSupplier }) => {
     const summary = dashboard?.summary || {};
     const actions = dashboard?.actions || [];
+    const paymentSchedule = dashboard?.payment_schedule || [];
+    const cashOutForecast = dashboard?.cash_out_forecast || [];
+    const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
     const cards = [
         { label: 'Commandes ouvertes', value: summary.open_orders || 0, tone: 'bg-blue-50 border-blue-100 text-blue-700', tab: 'orders' },
         { label: 'À réceptionner', value: summary.to_receive || 0, tone: 'bg-emerald-50 border-emerald-100 text-emerald-700', tab: 'orders' },
         { label: 'Retards fournisseur', value: summary.late_orders || 0, tone: 'bg-red-50 border-red-100 text-red-700', tab: 'orders' },
         { label: 'Factures à rapprocher', value: summary.to_invoice || 0, tone: 'bg-orange-50 border-orange-100 text-orange-700', tab: 'orders' },
+        { label: 'Factures à payer', value: summary.supplier_invoices_to_pay || 0, tone: 'bg-indigo-50 border-indigo-100 text-indigo-700', tab: 'orders' },
+        { label: 'Paiements bloqués', value: summary.supplier_invoices_blocked || 0, tone: 'bg-rose-50 border-rose-100 text-rose-700', tab: 'suppliers' },
         { label: 'Demandes à valider', value: summary.pending_requests || 0, tone: 'bg-amber-50 border-amber-100 text-amber-700', tab: 'requests' },
         { label: 'Litiges ouverts', value: summary.open_disputes || 0, tone: 'bg-rose-50 border-rose-100 text-rose-700', tab: 'suppliers' },
     ];
@@ -2042,7 +2047,9 @@ const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, ha
                     </div>
                     <div className="text-right">
                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Engagé HT</p>
-                        <p className="text-3xl font-black text-emerald-300">{Number(summary.amount_committed || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</p>
+                        <p className="text-3xl font-black text-emerald-300">{formatMoney(summary.amount_committed)}</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-2">À payer fournisseur</p>
+                        <p className="text-xl font-black text-orange-200">{formatMoney(summary.amount_to_pay)}</p>
                     </div>
                 </div>
 
@@ -2054,6 +2061,82 @@ const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, ha
                                 <p className="text-4xl font-black mt-2">{card.value}</p>
                             </button>
                         ))}
+                    </div>
+
+                    <div className="mt-6 grid grid-cols-1 xl:grid-cols-[0.9fr_1.4fr] gap-6">
+                        <div className="rounded-2xl bg-slate-900 text-white p-5 shadow-lg">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Cash-out prévisionnel</p>
+                            <h3 className="font-black text-2xl mt-1">Décaissements fournisseur</h3>
+                            <div className="mt-5 grid grid-cols-3 gap-3">
+                                {cashOutForecast.map(item => (
+                                    <div key={item.days} className="rounded-xl bg-white/10 border border-white/10 p-3">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{item.label}</p>
+                                        <p className="font-black text-lg mt-1">{formatMoney(item.amount)}</p>
+                                    </div>
+                                ))}
+                                {cashOutForecast.length === 0 && (
+                                    <div className="col-span-3 rounded-xl bg-white/10 border border-white/10 p-4 text-sm font-bold text-slate-300">
+                                        Aucun décaissement fournisseur prévisible.
+                                    </div>
+                                )}
+                            </div>
+                            <div className="mt-4 grid grid-cols-2 gap-3 text-sm font-black">
+                                <div className="rounded-xl bg-red-500/10 border border-red-300/20 p-3 text-red-100">
+                                    <p className="text-[10px] uppercase tracking-widest opacity-70">En retard</p>
+                                    <p>{formatMoney(summary.amount_overdue)} · {summary.supplier_invoices_overdue || 0} facture(s)</p>
+                                </div>
+                                <div className="rounded-xl bg-rose-500/10 border border-rose-300/20 p-3 text-rose-100">
+                                    <p className="text-[10px] uppercase tracking-widest opacity-70">Bloqué litige</p>
+                                    <p>{formatMoney(summary.amount_blocked)} · {summary.supplier_invoices_blocked || 0} facture(s)</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                                <div>
+                                    <h3 className="font-black text-slate-900">Factures fournisseur à payer</h3>
+                                    <p className="text-xs font-bold text-slate-500">Échéances, retards et blocages avant paiement.</p>
+                                </div>
+                                <span className="text-xs font-black text-slate-400">{paymentSchedule.length} ligne(s)</span>
+                            </div>
+                            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+                                {paymentSchedule.slice(0, 8).map(invoice => (
+                                    <div key={invoice.invoice_id} className="p-4 flex items-center justify-between gap-4">
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
+                                                    invoice.is_blocked ? 'bg-rose-100 text-rose-700'
+                                                        : invoice.is_overdue ? 'bg-red-100 text-red-700'
+                                                            : 'bg-indigo-100 text-indigo-700'
+                                                }`}>
+                                                    {invoice.is_blocked ? 'Bloqué' : invoice.is_overdue ? 'En retard' : 'À payer'}
+                                                </span>
+                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                                    {invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('fr-FR') : 'Sans échéance'}
+                                                </span>
+                                            </div>
+                                            <h4 className="font-black text-slate-900 mt-2">{invoice.supplier}</h4>
+                                            <p className="text-xs font-bold text-slate-500">
+                                                {invoice.supplier_reference || invoice.reference}
+                                                {invoice.blocker_references?.length ? ` · litige ${invoice.blocker_references.join(', ')}` : ''}
+                                            </p>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <p className="font-black text-slate-900">{formatMoney(invoice.remaining_amount)}</p>
+                                            {invoice.purchase_order_id && (
+                                                <button onClick={() => openPODetails(invoice.purchase_order_id)} className="mt-2 px-3 py-2 rounded-xl bg-slate-900 text-white font-black text-xs hover:bg-slate-800">
+                                                    Ouvrir bon
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                                {paymentSchedule.length === 0 && (
+                                    <div className="p-8 text-center text-slate-400 font-bold">Aucune facture fournisseur à payer.</div>
+                                )}
+                            </div>
+                        </div>
                     </div>
 
                     <div className="mt-8 grid grid-cols-1 xl:grid-cols-[1.4fr_0.8fr] gap-6">
@@ -2078,10 +2161,13 @@ const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, ha
                                                 }`}>
                                                     {action.type}
                                                 </span>
-                                                {action.late_days > 0 && <span className="text-[10px] font-black text-red-600">{action.late_days} jour(s) retard</span>}
+                                                {(action.late_days > 0 || action.overdue_days > 0) && <span className="text-[10px] font-black text-red-600">{action.late_days || action.overdue_days} jour(s) retard</span>}
                                             </div>
                                             <h4 className="font-black text-slate-900 mt-2">{action.label}</h4>
-                                            <p className="text-xs font-bold text-slate-500">{action.supplier || 'Achats'} · {action.reference}</p>
+                                            <p className="text-xs font-bold text-slate-500">
+                                                {action.supplier || 'Achats'} · {action.reference}
+                                                {action.remaining_amount ? ` · ${formatMoney(action.remaining_amount)}` : ''}
+                                            </p>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             {action.type === 'LATE' && action.purchase_order_id && (

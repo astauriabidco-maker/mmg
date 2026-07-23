@@ -741,6 +741,70 @@ def test_purchase_dashboard_pdf_and_supplier_reminder(purchase_test_client, monk
     assert "[RELANCE FOURNISSEUR]" in details["notes"]
     assert details["supplier_reminders"][0]["message"] == "Merci de confirmer la date de livraison."
 
+    with TestingSessionLocal() as db:
+        stock_location = db.query(models.StockLocation).filter(models.StockLocation.name == "WH/ACH-DASH-001").first()
+        assert stock_location is not None
+        stock_location_id = stock_location.id
+
+    details = client.get(f"/v2/purchases/{po_id}", headers=headers).json()
+    receive_response = client.post(
+        f"/v2/purchases/{po_id}/receive",
+        headers=headers,
+        json={
+            "target_location_id": stock_location_id,
+            "lines": [{"line_id": details["lines"][0]["id"], "quantity": 4}],
+        },
+    )
+    assert receive_response.status_code == 200, receive_response.text
+
+    invoice_response = client.post(
+        f"/v2/purchases/{po_id}/supplier-invoices",
+        headers=headers,
+        json={
+            "supplier_reference": "FAC-DASH-001",
+            "due_date": (utcnow() - timedelta(days=1)).isoformat(),
+            "lines": [{"purchase_order_line_id": details["lines"][0]["id"], "quantity": 4}],
+        },
+    )
+    assert invoice_response.status_code == 200, invoice_response.text
+    supplier_invoice = invoice_response.json()
+
+    payment_dashboard_response = client.get("/v2/purchases/dashboard", headers=headers)
+    assert payment_dashboard_response.status_code == 200, payment_dashboard_response.text
+    payment_dashboard = payment_dashboard_response.json()
+    assert payment_dashboard["summary"]["supplier_invoices_to_pay"] >= 1
+    assert payment_dashboard["summary"]["supplier_invoices_overdue"] >= 1
+    assert payment_dashboard["summary"]["amount_to_pay"] >= 48.0
+    assert payment_dashboard["summary"]["cash_out_7_days"] >= 48.0
+    assert any(item["invoice_id"] == supplier_invoice["id"] and item["is_overdue"] for item in payment_dashboard["payment_schedule"])
+
+    dispute_response = client.post(
+        "/v2/purchases/disputes",
+        headers=headers,
+        json={
+            "supplier": "Dashboard Supplier",
+            "purchase_order_id": po_id,
+            "supplier_invoice_id": supplier_invoice["id"],
+            "title": "Blocage paiement test",
+            "category": "PRICE",
+            "severity": "HIGH",
+            "expected_action": "PRICE_CORRECTION",
+            "blocks_payment": True,
+        },
+    )
+    assert dispute_response.status_code == 200, dispute_response.text
+
+    blocked_dashboard = client.get("/v2/purchases/dashboard", headers=headers).json()
+    assert blocked_dashboard["summary"]["supplier_invoices_blocked"] >= 1
+    assert any(
+        item["invoice_id"] == supplier_invoice["id"] and item["is_blocked"]
+        for item in blocked_dashboard["payment_schedule"]
+    )
+    assert any(
+        action["type"] == "PAYMENT_BLOCKED" and action["purchase_order_id"] == po_id
+        for action in blocked_dashboard["actions"]
+    )
+
 
 def test_purchase_recommendations_use_real_stock_thresholds_without_fake_fallback():
     engine = create_engine(
