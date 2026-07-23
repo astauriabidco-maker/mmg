@@ -3841,7 +3841,7 @@ function StockRiskView({
     });
 
     return (
-        <div className="mx-auto w-full max-w-7xl space-y-6">
+        <div className="w-full space-y-6">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                 <div>
                     <p className="text-[10px] font-black uppercase tracking-[0.24em] text-red-500">Pilotage intelligent stock</p>
@@ -3870,7 +3870,7 @@ function StockRiskView({
                 <RiskMetric title="Délai long" value={longLeadTimeNeeds.length} tone="blue" detail="Fournisseur >= 14 jours" />
             </div>
 
-            <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[1fr_360px]">
+            <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[1fr_420px]">
                 <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
                         <div>
