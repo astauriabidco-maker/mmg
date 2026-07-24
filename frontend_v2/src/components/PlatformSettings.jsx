@@ -4,7 +4,6 @@ import {
     Building2, Database, Save, CheckCircle2
 } from 'lucide-react';
 import StationManager from './StationManager';
-import OperatorManager from './OperatorManager';
 import RBACMatrix from './RBACMatrix';
 import BusinessRulesManager from './BusinessRulesManager';
 import ConfigDashboard from '../pages/ConfigDashboard';
@@ -324,35 +323,8 @@ export default function PlatformSettings() {
 
                         {/* 5. USERS & RBAC */}
                         {activeTab === 'users' && (
-                            <div className="space-y-12 animate-fade-in">
-                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                                    <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5">
-                                        <p className="text-[11px] font-black uppercase tracking-widest text-blue-500 mb-2">1. Comptes</p>
-                                        <h3 className="font-black text-slate-900">Créer un utilisateur</h3>
-                                        <p className="text-sm font-semibold text-slate-600 mt-1">Identifiant, PIN ou mot de passe, coordonnées.</p>
-                                    </div>
-                                    <div className="rounded-2xl border border-amber-100 bg-amber-50 p-5">
-                                        <p className="text-[11px] font-black uppercase tracking-widest text-amber-600 mb-2">2. Profil</p>
-                                        <h3 className="font-black text-slate-900">Choisir un rôle métier</h3>
-                                        <p className="text-sm font-semibold text-slate-600 mt-1">Opérateur, Débit, Qualité, Chef d'atelier, Manager.</p>
-                                    </div>
-                                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
-                                        <p className="text-[11px] font-black uppercase tracking-widest text-emerald-600 mb-2">3. Stations</p>
-                                        <h3 className="font-black text-slate-900">Affecter les postes</h3>
-                                        <p className="text-sm font-semibold text-slate-600 mt-1">Le technicien ne voit que ses stations sur tablette atelier.</p>
-                                    </div>
-                                </div>
-                                <OperatorManager />
-                                <div className="border-t border-slate-100 pt-12">
-                                    <div className="mb-6">
-                                        <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">Droits avancés</p>
-                                        <h3 className="text-xl font-black text-slate-900">Matrice des profils et permissions</h3>
-                                        <p className="text-sm font-semibold text-slate-500 mt-1">
-                                            À modifier seulement si un profil métier doit voir ou exécuter une action spécifique.
-                                        </p>
-                                    </div>
-                                    <RBACMatrix />
-                                </div>
+                            <div className="animate-fade-in">
+                                <RBACMatrix />
                             </div>
                         )}
 

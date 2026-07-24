@@ -10,12 +10,13 @@ import {
 import ChatterWidget from '../components/ChatterWidget';
 import StockValuationView from '../components/StockValuationView';
 import { useAuth } from '../context/AuthContext';
+import { userHasAnyRole } from '../utils/roleNavigation';
 
 export default function StockDashboard() {
     const queryClient = useQueryClient();
     const { user } = useAuth();
-    const isManager = user?.role === 'ADMIN' || user?.role === 'MANAGER';
-    const isAdmin = user?.role === 'ADMIN';
+    const isManager = userHasAnyRole(user, ['ADMIN', 'MANAGER']);
+    const isAdmin = userHasAnyRole(user, ['ADMIN']);
     const can = (permission) => user?.permissions?.includes('*') || user?.permissions?.includes(permission);
     // Aligné strictement sur les permissions fines du backend (v2_stock.py /
     // seed_permissions.py) : pas de fallback STOCK_EDIT legacy, sinon un rôle
@@ -1898,7 +1899,7 @@ export default function StockDashboard() {
                                                 Fiche technique
                                             </a>
                                         )}
-                                        {isManager && (
+                                        {stockPermissions.qualifyCatalog && (
                                             <>
                                                 <button
                                                     type="button"
@@ -1968,7 +1969,7 @@ export default function StockDashboard() {
                                                         <Layers className="w-4 h-4" />
                                                         Voir mouvements
                                                     </button>
-                                                    {isManager && (
+                                                    {stockPermissions.qualifyCatalog && (
                                                         <button
                                                             type="button"
                                                             onClick={(event) => openEditProduct(event, selectedProduct)}
@@ -2096,7 +2097,7 @@ export default function StockDashboard() {
                                                                     <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-600">Stock {formatQty(stock)}</span>
                                                                     <span className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">Rés. {formatQty(reservedQuantity)}</span>
                                                                     <span className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">Disp. {formatQty(availableQuantity)}</span>
-                                                                    {isManager && (
+                                                                    {stockPermissions.qualifyCatalog && (
                                                                         <button
                                                                             type="button"
                                                                             onClick={(event) => openEditVariant(event, variant)}
@@ -2567,12 +2568,12 @@ export default function StockDashboard() {
                                 Tous
                             </button>
                         )}
-                        {currentMenu === 'catalog' && isManager && (
+                        {currentMenu === 'catalog' && stockPermissions.qualifyCatalog && (
                             <button onClick={() => openNewProductModal('stockable')} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black shadow-sm">
                                 <Plus className="w-4 h-4"/> Nouvel article
                             </button>
                         )}
-                        {currentMenu === 'services' && isManager && (
+                        {currentMenu === 'services' && stockPermissions.qualifyCatalog && (
                             <button onClick={() => openNewProductModal('service')} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-sm">
                                 <FileEdit className="w-4 h-4"/> Nouvelle prestation
                             </button>
@@ -2605,7 +2606,7 @@ export default function StockDashboard() {
                         )}
                         {currentMenu === 'drafts' && (
                             <>
-                                {isManager && (
+                                {stockPermissions.qualifyCatalog && (
                                     <button onClick={() => setShowImportModal(true)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-white text-sm font-black shadow-sm">
                                         <FileText className="w-4 h-4"/> Importer brouillons
                                     </button>
@@ -2697,7 +2698,7 @@ export default function StockDashboard() {
                                                             >
                                                                 <Box className="w-3.5 h-3.5"/> Fiche
                                                             </button>
-                                                            {isManager && (
+                                                            {stockPermissions.qualifyCatalog && (
                                                                 <>
                                                                     <button
                                                                         onClick={(e) => { e.stopPropagation(); openAddVariant(e, product); }}
@@ -2765,9 +2766,9 @@ export default function StockDashboard() {
                                                                                     />
                                                                                 ) : (
                                                                                     <div
-                                                                                        className={`inline-block px-3 py-1 min-w-[3.5rem] text-center border-2 border-transparent hover:border-blue-200 hover:bg-blue-50 transition-colors font-black text-lg rounded-lg mx-1 ${inventoryFocus === 'services' ? 'text-emerald-600' : v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${inventoryFocus === 'services' || !canEditInline || !isManager ? 'cursor-not-allowed opacity-50' : 'cursor-text'}`}
-                                                                                        onClick={() => (canEditInline && isManager) && startEditingQuant(v.variantId, v.locId, v.stockToDisplay)}
-                                                                                        title={inventoryFocus === 'services' ? "Le tarif se modifie depuis la fiche variante" : (canEditInline && isManager) ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible (Vue globale ou permissions insuffisantes)"}
+                                                                                        className={`inline-block px-3 py-1 min-w-[3.5rem] text-center border-2 border-transparent hover:border-blue-200 hover:bg-blue-50 transition-colors font-black text-lg rounded-lg mx-1 ${inventoryFocus === 'services' ? 'text-emerald-600' : v.stockToDisplay > 0 ? 'text-emerald-600' : 'text-slate-400'} ${inventoryFocus === 'services' || !canEditInline || !stockPermissions.adjust ? 'cursor-not-allowed opacity-50' : 'cursor-text'}`}
+                                                                                        onClick={() => (canEditInline && stockPermissions.adjust) && startEditingQuant(v.variantId, v.locId, v.stockToDisplay)}
+                                                                                        title={inventoryFocus === 'services' ? "Le tarif se modifie depuis la fiche variante" : (canEditInline && stockPermissions.adjust) ? "1-Clic : Double-tapez pour modifier le stock direct" : "Impossible (Vue globale ou permissions insuffisantes)"}
                                                                                     >
                                                                                         {inventoryFocus === 'services' ? (v.fullVariant.cost_price || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }) : formatQty(v.stockToDisplay)}
                                                                                     </div>
@@ -2776,10 +2777,12 @@ export default function StockDashboard() {
                                                                             {/* ROW ACTIONS */}
                                                                             <div className="w-auto flex items-center gap-2 justify-end opacity-0 group-hover/var:opacity-100 transition-opacity">
                                                                                 <button onClick={(e) => { e.stopPropagation(); handlePrintBarcode(v.variantId); }} className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 hover:border-slate-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Imprimer Code-barre"><Hash className="w-3.5 h-3.5"/></button>
-                                                                                {isManager && (
+                                                                                {(stockPermissions.qualifyCatalog || stockPermissions.transfer) && (
                                                                                     <>
-                                                                                        <button onClick={(e) => openEditVariant(e, v.fullVariant)} className="text-slate-400 hover:text-blue-600 bg-white border border-slate-200 hover:border-blue-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Modifier Variante"><FileEdit className="w-3.5 h-3.5"/></button>
-                                                                                        {activeLocationId !== 'global' && (
+                                                                                        {stockPermissions.qualifyCatalog && (
+                                                                                            <button onClick={(e) => openEditVariant(e, v.fullVariant)} className="text-slate-400 hover:text-blue-600 bg-white border border-slate-200 hover:border-blue-300 px-2 py-1.5 rounded-lg flex items-center shadow-sm" title="Modifier Variante"><FileEdit className="w-3.5 h-3.5"/></button>
+                                                                                        )}
+                                                                                        {stockPermissions.transfer && activeLocationId !== 'global' && (
                                                                                             <button onClick={() => openTransferModal(v.fullVariant, activeLocationId)} className="bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 shadow-md">
                                                                                                 Trsf <ArrowRight className="w-3.5 h-3.5"/>
                                                                                             </button>

@@ -1,8 +1,28 @@
 const STOCK_HOME_ROLES = new Set(['MAGASINIER', 'CHEF_STOCK']);
 const ATELIER_HOME_ROLES = new Set(['OPERATOR', 'DEBIT_OPERATOR', 'QUALITY_CONTROLLER', 'WORKSHOP_LEAD']);
 
+export function getUserRoles(user) {
+    return Array.from(new Set([
+        user?.role,
+        ...(Array.isArray(user?.roles) ? user.roles : []),
+    ].filter(Boolean)));
+}
+
+export function userHasRole(user, role) {
+    return getUserRoles(user).includes(role);
+}
+
+export function userHasAnyRole(user, allowedRoles) {
+    const roles = new Set(getUserRoles(user));
+    return allowedRoles.some(role => roles.has(role));
+}
+
 export function isAtelierRole(role) {
     return ATELIER_HOME_ROLES.has(role);
+}
+
+export function isAtelierUser(user) {
+    return getUserRoles(user).some(role => ATELIER_HOME_ROLES.has(role));
 }
 
 export function getDefaultPathForUser(user) {

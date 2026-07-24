@@ -2,7 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { getDefaultPathForUser } from './utils/roleNavigation';
+import { getDefaultPathForUser, userHasAnyRole } from './utils/roleNavigation';
 
 const Login = lazy(() => import('./pages/Login'));
 const OperatorDashboard = lazy(() => import('./pages/OperatorDashboard'));
@@ -30,7 +30,7 @@ const ProtectedRoute = ({ children }) => {
 const RoleRoute = ({ children, allowedRoles }) => {
     const { user } = useAuth();
     if (!user) return <Navigate to="/login" replace />;
-    if (!allowedRoles.includes(user.role)) return <Navigate to="/dashboard" replace />;
+    if (!userHasAnyRole(user, allowedRoles)) return <Navigate to="/dashboard" replace />;
     return children;
 };
 

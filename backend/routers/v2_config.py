@@ -330,7 +330,7 @@ def get_permissions(db: Session = Depends(get_db)):
     return db.query(models.Permission).all()
 
 @router.post("/roles/{role_id}/permissions")
-def update_role_permissions(role_id: int, permission_ids: List[int], db: Session = Depends(get_db), role_name: str = Depends(security.require_roles("ADMIN"))):
+def update_role_permissions(role_id: int, permission_ids: List[int], db: Session = Depends(get_db), role_name: str = Depends(security.require_roles("ADMIN", "SUPER_ADMIN"))):
     db_role = db.query(models.Role).filter(models.Role.id == role_id).first()
     if not db_role:
         raise HTTPException(404, "Role not found")
@@ -341,7 +341,7 @@ def update_role_permissions(role_id: int, permission_ids: List[int], db: Session
     return {"status": "success"}
 
 @router.post("/roles", response_model=schemas.RoleSchema)
-def create_role(role: schemas.RoleCreate, db: Session = Depends(get_db), role_name: str = Depends(security.require_roles("ADMIN"))):
+def create_role(role: schemas.RoleCreate, db: Session = Depends(get_db), role_name: str = Depends(security.require_roles("ADMIN", "SUPER_ADMIN"))):
     existing = db.query(models.Role).filter(models.Role.name == role.name.upper()).first()
     if existing:
         raise HTTPException(400, "Ce rôle existe déjà")
@@ -353,7 +353,7 @@ def create_role(role: schemas.RoleCreate, db: Session = Depends(get_db), role_na
     return db_role
 
 @router.delete("/roles/{role_id}")
-def delete_role(role_id: int, db: Session = Depends(get_db), role_name: str = Depends(security.require_roles("ADMIN"))):
+def delete_role(role_id: int, db: Session = Depends(get_db), role_name: str = Depends(security.require_roles("ADMIN", "SUPER_ADMIN"))):
     db_role = db.query(models.Role).filter(models.Role.id == role_id).first()
     if not db_role:
         raise HTTPException(404, "Role not found")

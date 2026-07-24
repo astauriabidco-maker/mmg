@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { ShieldCheck, ShieldAlert, Check, Plus, Trash2, X, Users, Eye, Settings2, Mail, KeyRound } from 'lucide-react';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { userHasAnyRole } from '../utils/roleNavigation';
 
 const ROLE_PRESETS = [
     {
@@ -72,6 +74,8 @@ const MODULE_PURPOSES = {
 };
 
 export default function RBACMatrix() {
+    const { user } = useAuth();
+    const canManagePermissions = userHasAnyRole(user, ['ADMIN', 'SUPER_ADMIN']);
     const [roles, setRoles] = useState([]);
     const [permissions, setPermissions] = useState([]);
     const [users, setUsers] = useState([]);
@@ -317,7 +321,7 @@ export default function RBACMatrix() {
         { id: 'overview', label: "Vue d'ensemble", helper: 'Modèles et état global', icon: Eye },
         { id: 'users', label: 'Utilisateurs', helper: 'Comptes, PIN, invitations', icon: Users },
         { id: 'profiles', label: 'Profils métier', helper: 'Qui peut faire quoi', icon: ShieldCheck },
-        { id: 'matrix', label: 'Permissions avancées', helper: 'Exceptions et droits fins', icon: Settings2 },
+        { id: 'matrix', label: 'Matrice avancée des droits', helper: 'Voir et modifier les permissions fines', icon: Settings2 },
     ];
 
     return (
@@ -393,7 +397,7 @@ export default function RBACMatrix() {
                                 key={preset.name}
                                 type="button"
                                 onClick={() => applyPreset(preset)}
-                                disabled={applyingPreset === preset.name}
+                                disabled={!canManagePermissions || applyingPreset === preset.name}
                                 className="text-left rounded-2xl border border-slate-200 bg-slate-50 hover:bg-white hover:border-blue-200 hover:shadow-md transition-all p-5 disabled:opacity-60 disabled:cursor-wait"
                             >
                                 <div className="flex items-start justify-between gap-3">
@@ -627,7 +631,7 @@ export default function RBACMatrix() {
                                     </p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
-                                    {selectedPreset && !['ADMIN', 'SUPER_ADMIN'].includes(selectedRole.name) && (
+                                    {canManagePermissions && selectedPreset && !['ADMIN', 'SUPER_ADMIN'].includes(selectedRole.name) && (
                                         <button
                                             type="button"
                                             onClick={() => applyPreset(selectedPreset)}
@@ -638,7 +642,7 @@ export default function RBACMatrix() {
                                             Remettre à niveau
                                         </button>
                                     )}
-                                    {!['ADMIN', 'SUPER_ADMIN'].includes(selectedRole.name) && (
+                                    {canManagePermissions && !['ADMIN', 'SUPER_ADMIN'].includes(selectedRole.name) && (
                                         <button
                                             type="button"
                                             onClick={() => deleteRole(selectedRole.id)}
@@ -787,6 +791,12 @@ export default function RBACMatrix() {
 
             {rbacView === 'matrix' && (
             <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
+            {!canManagePermissions && (
+                <div className="px-6 py-4 border-b border-amber-200 bg-amber-50 text-amber-800 text-sm font-bold flex items-center gap-3">
+                    <ShieldAlert className="w-5 h-5 shrink-0" />
+                    Lecture seule : seul un administrateur peut modifier les profils et les permissions.
+                </div>
+            )}
             <div className="p-8 bg-slate-900 text-white flex items-center justify-between">
                 <div>
                     <h2 className="text-2xl font-black flex items-center gap-3">
@@ -800,7 +810,7 @@ export default function RBACMatrix() {
                             {r.name.substring(0, 2)}
                         </div>
                     ))}
-                    <button onClick={() => setShowRoleModal(true)} className="w-12 h-12 rounded-full border-4 border-slate-900 bg-emerald-600 hover:bg-emerald-500 transition-colors flex items-center justify-center text-white" style={{zIndex: 0}}>
+                    <button disabled={!canManagePermissions} onClick={() => setShowRoleModal(true)} className="w-12 h-12 rounded-full border-4 border-slate-900 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors flex items-center justify-center text-white" style={{zIndex: 0}}>
                         <Plus className="w-5 h-5" />
                     </button>
                 </div>
@@ -814,7 +824,7 @@ export default function RBACMatrix() {
                             {roles.map(role => (
                                 <th key={role.id} className="p-4 text-center font-black text-sm text-slate-700 min-w-[120px] relative group">
                                     {role.name}
-                                    {!['ADMIN', 'SUPER_ADMIN'].includes(role.name) && (
+                                    {canManagePermissions && !['ADMIN', 'SUPER_ADMIN'].includes(role.name) && (
                                         <button onClick={() => deleteRole(role.id)} className="absolute top-2 right-2 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <Trash2 className="w-4 h-4" />
                                         </button>
@@ -822,7 +832,7 @@ export default function RBACMatrix() {
                                 </th>
                             ))}
                             <th className="p-4 text-center w-[120px]">
-                                <button onClick={() => setShowRoleModal(true)} className="text-xs font-bold bg-slate-800 text-white px-3 py-1.5 rounded-lg flex items-center gap-1 mx-auto hover:bg-emerald-600 transition-colors">
+                                <button disabled={!canManagePermissions} onClick={() => setShowRoleModal(true)} className="text-xs font-bold bg-slate-800 text-white px-3 py-1.5 rounded-lg flex items-center gap-1 mx-auto hover:bg-emerald-600 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors">
                                     <Plus className="w-3 h-3"/> Profil
                                 </button>
                             </th>
@@ -848,13 +858,13 @@ export default function RBACMatrix() {
                                             return (
                                                 <td key={role.id} className="p-4 text-center border-r border-slate-100">
                                                     <button 
-                                                        disabled={isAdmin}
+                                                        disabled={isAdmin || !canManagePermissions}
                                                         onClick={() => togglePermission(role.id, perm.id, hasPerm)}
                                                         className={`w-8 h-8 rounded-lg flex items-center justify-center mx-auto transition-all ${
                                                             hasPerm 
                                                                 ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/20' 
                                                                 : 'bg-slate-100 text-slate-300 hover:bg-slate-200'
-                                                        } ${isAdmin ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
+                                                        } ${isAdmin || !canManagePermissions ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
                                                     >
                                                         {hasPerm && <Check className="w-5 h-5" />}
                                                     </button>

@@ -178,3 +178,119 @@ def test_invitation_link_prefill_and_login_activation():
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)
+
+
+def test_additional_role_permissions_are_merged_at_login_and_authorize_catalog_creation():
+    client, TestingSessionLocal, engine = _client()
+    try:
+        headers = _auth_headers(TestingSessionLocal)
+        with TestingSessionLocal() as db:
+            catalog_permission = models.Permission(
+                code="catalog.qualify",
+                module="Stock - Catalogue",
+                description="Créer et modifier le catalogue",
+            )
+            workshop_role = models.Role(name="WORKSHOP_LEAD", description="Chef atelier")
+            stock_role = models.Role(
+                name="CHEF_STOCK",
+                description="Chef stock",
+                permissions=[catalog_permission],
+            )
+            db.add_all([workshop_role, stock_role])
+            db.commit()
+
+        create_response = client.post(
+            "/v2/config/users",
+            headers=headers,
+            json={
+                "username": "chef-atelier-stock",
+                "role": "WORKSHOP_LEAD",
+                "additional_roles": ["CHEF_STOCK"],
+                "access_mode": "PIN",
+                "pin": "2468",
+            },
+        )
+        assert create_response.status_code == 200, create_response.text
+        assert create_response.json()["user"]["additional_roles"] == ["CHEF_STOCK"]
+
+        login_response = client.post(
+            "/token",
+            data={"username": "chef-atelier-stock", "password": "2468"},
+        )
+        assert login_response.status_code == 200, login_response.text
+        login_payload = login_response.json()
+        assert login_payload["role"] == "WORKSHOP_LEAD"
+        assert login_payload["roles"] == ["WORKSHOP_LEAD", "CHEF_STOCK"]
+        assert "catalog.qualify" in login_payload["permissions"]
+
+        catalog_response = client.post(
+            "/v2/stock/products",
+            headers={"Authorization": f"Bearer {login_payload['access_token']}"},
+            json={
+                "reference_base": "MULTI-ROLE-001",
+                "name": "Article test multi-rôle",
+                "material_type": "ACCESSOIRE",
+                "unit": "pce",
+                "variants": [{"reference": "MULTI-ROLE-001"}],
+            },
+        )
+        assert catalog_response.status_code == 200, catalog_response.text
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_stock_lead_primary_role_can_create_catalog_products():
+    client, TestingSessionLocal, engine = _client()
+    try:
+        headers = _auth_headers(TestingSessionLocal)
+        with TestingSessionLocal() as db:
+            catalog_permission = models.Permission(
+                code="catalog.qualify",
+                module="Stock - Catalogue",
+                description="Créer et modifier le catalogue",
+            )
+            stock_role = models.Role(
+                name="CHEF_STOCK",
+                description="Chef stock",
+                permissions=[catalog_permission],
+            )
+            db.add(stock_role)
+            db.commit()
+
+        create_response = client.post(
+            "/v2/config/users",
+            headers=headers,
+            json={
+                "username": "chef-stock",
+                "role": "CHEF_STOCK",
+                "access_mode": "PIN",
+                "pin": "1357",
+            },
+        )
+        assert create_response.status_code == 200, create_response.text
+
+        login_response = client.post(
+            "/token",
+            data={"username": "chef-stock", "password": "1357"},
+        )
+        assert login_response.status_code == 200, login_response.text
+        login_payload = login_response.json()
+        assert login_payload["roles"] == ["CHEF_STOCK"]
+        assert "catalog.qualify" in login_payload["permissions"]
+
+        catalog_response = client.post(
+            "/v2/stock/products",
+            headers={"Authorization": f"Bearer {login_payload['access_token']}"},
+            json={
+                "reference_base": "CHEF-STOCK-001",
+                "name": "Article créé par le chef stock",
+                "material_type": "ACCESSOIRE",
+                "unit": "pce",
+                "variants": [{"reference": "CHEF-STOCK-001"}],
+            },
+        )
+        assert catalog_response.status_code == 200, catalog_response.text
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
