@@ -1132,8 +1132,8 @@ function CRMQuoteComposer({ client, onClose, onCreated }) {
     };
 
     const addCatalogLine = (item) => {
-        if (item.status === 'DRAFT') {
-            return alert('Article brouillon: qualifiez-le dans le catalogue avant de le vendre.');
+        if (item.status !== 'ACTIVE') {
+            return alert("Article non actif: qualifiez-le dans le catalogue avant de le vendre.");
         }
         setQuote(prev => ({
             ...prev,
@@ -1282,8 +1282,8 @@ function CRMQuoteComposer({ client, onClose, onCreated }) {
                                 <button
                                     key={item.variant_id}
                                     onClick={() => addCatalogLine(item)}
-                                    disabled={item.status === 'DRAFT'}
-                                    className={`w-full rounded-xl border p-3 text-left transition-all ${item.status === 'DRAFT' ? 'cursor-not-allowed border-amber-200 bg-amber-50 opacity-70' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/50'}`}
+                                    disabled={item.status !== 'ACTIVE'}
+                                    className={`w-full rounded-xl border p-3 text-left transition-all ${item.status !== 'ACTIVE' ? 'cursor-not-allowed border-amber-200 bg-amber-50 opacity-70' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/50'}`}
                                 >
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">

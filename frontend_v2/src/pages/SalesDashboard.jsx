@@ -506,12 +506,16 @@ export default function SalesDashboard() {
 
     const getProductStatusLabel = (status) => {
         if (status === 'DRAFT') return 'Brouillon';
+        if (status === 'TO_QUALIFY') return 'À qualifier';
+        if (status === 'BLOCKED') return 'Bloqué';
         if (status === 'ARCHIVED') return 'Archivé';
         return 'Actif';
     };
 
     const getProductStatusClass = (status) => {
         if (status === 'DRAFT') return 'bg-amber-100 text-amber-700 border-amber-200';
+        if (status === 'TO_QUALIFY') return 'bg-orange-100 text-orange-700 border-orange-200';
+        if (status === 'BLOCKED') return 'bg-red-100 text-red-700 border-red-200';
         if (status === 'ARCHIVED') return 'bg-slate-100 text-slate-500 border-slate-200';
         return 'bg-emerald-100 text-emerald-700 border-emerald-200';
     };
@@ -695,7 +699,7 @@ export default function SalesDashboard() {
             availableStock,
             status,
             productType,
-            isDraft: status === 'DRAFT',
+            isDraft: status !== 'ACTIVE',
             searchable: `${product.name} ${product.reference_base || ''} ${reference || ''} ${variant.supplier_reference || ''} ${product.supplier || ''}`.toLowerCase()
         };
     }));

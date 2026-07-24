@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime
 import openpyxl
 from openpyxl.styles import Font, PatternFill
-from sqlalchemy import or_, update
+from sqlalchemy import func, or_, update
 from ..services.bom_parser import parse_bom_file
 from ..services.stock_reservations import (
     InsufficientStockAtConsumptionError,
@@ -32,6 +32,136 @@ router = APIRouter(
     tags=["stock"],
     dependencies=[Depends(get_current_user)],
 )
+
+CATALOG_STATUSES = {"DRAFT", "TO_QUALIFY", "ACTIVE", "BLOCKED", "ARCHIVED"}
+CATALOG_TRANSITIONS = {
+    "DRAFT": {"TO_QUALIFY", "ARCHIVED"},
+    "TO_QUALIFY": {"DRAFT", "ACTIVE", "ARCHIVED"},
+    "ACTIVE": {"BLOCKED", "ARCHIVED"},
+    "BLOCKED": {"ACTIVE", "ARCHIVED"},
+    "ARCHIVED": {"DRAFT"},
+}
+
+
+def _actor(user: dict) -> str:
+    return str(user.get("sub") or user.get("username") or "system")
+
+
+def _clean(value: Optional[str]) -> Optional[str]:
+    cleaned = str(value or "").strip()
+    return cleaned or None
+
+
+def _record_product_audit(
+    db: Session,
+    *,
+    product_id: int,
+    user: dict,
+    action: str,
+    changes: Optional[dict] = None,
+    variant_id: Optional[int] = None,
+    reason: Optional[str] = None,
+) -> None:
+    db.add(
+        models.ProductAuditLog(
+            product_id=product_id,
+            variant_id=variant_id,
+            action=action,
+            changes=changes or None,
+            reason=_clean(reason),
+            author=_actor(user),
+            created_at=utcnow(),
+        )
+    )
+
+
+def _json_value(value):
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _changes(instance, values: dict) -> dict:
+    result = {}
+    for key, new_value in values.items():
+        old_value = getattr(instance, key, None)
+        if old_value != new_value:
+            result[key] = {"before": _json_value(old_value), "after": _json_value(new_value)}
+    return result
+
+
+def _ensure_variant_uniqueness(
+    db: Session,
+    *,
+    reference: str,
+    barcode: Optional[str],
+    supplier_reference: Optional[str],
+    supplier: Optional[str],
+    exclude_variant_id: Optional[int] = None,
+) -> None:
+    reference_query = db.query(models.ProductVariant).filter(
+        func.upper(models.ProductVariant.reference) == reference.upper()
+    )
+    if exclude_variant_id:
+        reference_query = reference_query.filter(models.ProductVariant.id != exclude_variant_id)
+    if reference_query.first():
+        raise HTTPException(409, f"La référence interne {reference} existe déjà.")
+
+    if barcode:
+        barcode_query = db.query(models.ProductVariant).filter(models.ProductVariant.barcode == barcode)
+        if exclude_variant_id:
+            barcode_query = barcode_query.filter(models.ProductVariant.id != exclude_variant_id)
+        if barcode_query.first():
+            raise HTTPException(409, f"Le code-barres {barcode} est déjà utilisé.")
+
+    if supplier and supplier_reference:
+        supplier_query = (
+            db.query(models.ProductVariant)
+            .join(models.Product, models.ProductVariant.product_id == models.Product.id)
+            .filter(
+                func.upper(models.Product.supplier) == supplier.upper(),
+                func.upper(models.ProductVariant.supplier_reference) == supplier_reference.upper(),
+            )
+        )
+        if exclude_variant_id:
+            supplier_query = supplier_query.filter(models.ProductVariant.id != exclude_variant_id)
+        if supplier_query.first():
+            raise HTTPException(
+                409,
+                f"La référence fournisseur {supplier_reference} existe déjà pour {supplier}.",
+            )
+
+
+def _activation_issues(product: models.Product) -> list[str]:
+    issues = []
+    for label, value in (
+        ("désignation", product.name),
+        ("référence famille", product.reference_base),
+        ("catégorie", product.category),
+        ("unité de gestion", product.unit),
+    ):
+        if not _clean(value):
+            issues.append(label)
+
+    if product.product_type != "service":
+        if not _clean(product.material_type):
+            issues.append("matière")
+        if not _clean(product.supplier):
+            issues.append("fournisseur principal")
+        if not product.variants:
+            issues.append("au moins une variante")
+        for variant in product.variants:
+            if not _clean(variant.reference):
+                issues.append("référence interne de variante")
+            if not _clean(variant.supplier_reference):
+                issues.append(f"référence fournisseur de {variant.reference or 'la variante'}")
+            if product.unit == "barre" and not (variant.length_per_unit and variant.length_per_unit > 0):
+                issues.append(f"longueur de {variant.reference or 'la variante'}")
+    elif not product.variants:
+        issues.append("au moins une tarification de prestation")
+    return list(dict.fromkeys(issues))
 
 
 async def _parse_workshop_uploads(files: List[UploadFile]):
@@ -614,21 +744,51 @@ def get_products(db: Session = Depends(get_db), user: dict = Depends(get_current
 @router.post("/products", response_model=schemas.ProductResponse)
 def create_product(product_data: schemas.ProductCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     _require_permission(db, user, "catalog.qualify")
-    
-    existing = db.query(models.Product).filter(models.Product.reference_base == product_data.reference_base).first()
-    if existing: raise HTTPException(400, "Base reference already exists")
-    
+
+    reference_base = product_data.reference_base.strip().upper()
+    existing = db.query(models.Product).filter(
+        func.upper(models.Product.reference_base) == reference_base
+    ).first()
+    if existing:
+        raise HTTPException(409, f"La référence famille {reference_base} existe déjà.")
+
     product_values = product_data.model_dump(exclude={'variants'})
+    product_values["reference_base"] = reference_base
+    product_values["name"] = product_data.name.strip()
+    product_values["supplier"] = _clean(product_data.supplier)
     if not product_values.get("category"):
         product_values["category"] = "SERVICE" if product_data.product_type == "service" else product_data.material_type
+    product_values["catalog_status"] = (product_data.catalog_status or "DRAFT").upper()
+    if product_values["catalog_status"] not in CATALOG_STATUSES:
+        raise HTTPException(400, "Statut catalogue inconnu.")
+
     new_product = models.Product(**product_values)
     db.add(new_product)
-    db.commit()
-    db.refresh(new_product)
-    
+    db.flush()
+
     for v_data in product_data.variants:
-        new_variant = models.ProductVariant(product_id=new_product.id, **v_data.model_dump())
+        variant_values = v_data.model_dump()
+        variant_values["reference"] = v_data.reference.strip().upper()
+        variant_values["barcode"] = _clean(v_data.barcode)
+        variant_values["supplier_reference"] = _clean(v_data.supplier_reference)
+        _ensure_variant_uniqueness(
+            db,
+            reference=variant_values["reference"],
+            barcode=variant_values["barcode"],
+            supplier_reference=variant_values["supplier_reference"],
+            supplier=new_product.supplier,
+        )
+        new_variant = models.ProductVariant(product_id=new_product.id, **variant_values)
         db.add(new_variant)
+        db.flush()
+
+    _record_product_audit(
+        db,
+        product_id=new_product.id,
+        user=user,
+        action="PRODUCT_CREATED",
+        changes={"catalog_status": {"before": None, "after": new_product.catalog_status}},
+    )
     db.commit()
     db.refresh(new_product)
     return new_product
@@ -640,15 +800,105 @@ def update_product(product_id: int, product_data: schemas.ProductBase, db: Sessi
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product: raise HTTPException(404, "Product not found")
     product_values = product_data.model_dump()
+    requested_status = (product_values.pop("catalog_status", None) or product.catalog_status).upper()
+    if requested_status != product.catalog_status:
+        raise HTTPException(400, "Utilisez l'action de changement de statut catalogue.")
     if "category" not in product_data.model_fields_set:
         product_values.pop("category", None)
     elif not product_values.get("category"):
         product_values["category"] = "SERVICE" if product_data.product_type == "service" else product_data.material_type
+    product_values["reference_base"] = product_data.reference_base.strip().upper()
+    product_values["name"] = product_data.name.strip()
+    product_values["supplier"] = _clean(product_data.supplier)
+
+    duplicate = db.query(models.Product).filter(
+        func.upper(models.Product.reference_base) == product_values["reference_base"],
+        models.Product.id != product_id,
+    ).first()
+    if duplicate:
+        raise HTTPException(409, f"La référence famille {product_values['reference_base']} existe déjà.")
+
+    changes = _changes(product, product_values)
     for key, value in product_values.items():
         setattr(product, key, value)
+    if changes:
+        _record_product_audit(
+            db,
+            product_id=product.id,
+            user=user,
+            action="PRODUCT_UPDATED",
+            changes=changes,
+        )
     db.commit()
     db.refresh(product)
     return product
+
+
+@router.post("/products/{product_id}/status", response_model=schemas.ProductResponse)
+def transition_product_status(
+    product_id: int,
+    payload: schemas.ProductStatusUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "catalog.qualify")
+    product = (
+        db.query(models.Product)
+        .options(joinedload(models.Product.variants))
+        .filter(models.Product.id == product_id)
+        .first()
+    )
+    if not product:
+        raise HTTPException(404, "Product not found")
+
+    current_status = (product.catalog_status or "DRAFT").upper()
+    next_status = payload.status.upper()
+    if next_status not in CATALOG_STATUSES:
+        raise HTTPException(400, "Statut catalogue inconnu.")
+    if next_status == current_status:
+        return product
+    if next_status not in CATALOG_TRANSITIONS.get(current_status, set()):
+        raise HTTPException(409, f"Transition {current_status} vers {next_status} interdite.")
+    if next_status == "ACTIVE":
+        issues = _activation_issues(product)
+        if issues:
+            raise HTTPException(
+                422,
+                "Activation impossible. À compléter : " + ", ".join(issues) + ".",
+            )
+    if next_status in {"BLOCKED", "ARCHIVED"} and not _clean(payload.reason):
+        raise HTTPException(422, "Une raison est obligatoire pour bloquer ou archiver un article.")
+
+    product.catalog_status = next_status
+    _record_product_audit(
+        db,
+        product_id=product.id,
+        user=user,
+        action="STATUS_CHANGED",
+        changes={"catalog_status": {"before": current_status, "after": next_status}},
+        reason=payload.reason,
+    )
+    db.commit()
+    db.refresh(product)
+    return product
+
+
+@router.get("/products/{product_id}/history", response_model=List[schemas.ProductAuditLogResponse])
+def get_product_history(
+    product_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    product = db.query(models.Product.id).filter(models.Product.id == product_id).first()
+    if not product:
+        raise HTTPException(404, "Product not found")
+    return (
+        db.query(models.ProductAuditLog)
+        .filter(models.ProductAuditLog.product_id == product_id)
+        .order_by(models.ProductAuditLog.created_at.desc(), models.ProductAuditLog.id.desc())
+        .limit(100)
+        .all()
+    )
 
 import os
 import uuid
@@ -669,8 +919,31 @@ def update_variant(variant_id: int, variant_data: schemas.ProductVariantBase, db
         
     variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == variant_id).first()
     if not variant: raise HTTPException(404, "Variant not found")
-    for key, value in variant_data.model_dump().items():
-        if key != "quantity_in_stock": setattr(variant, key, value)
+    variant_values = variant_data.model_dump()
+    variant_values["reference"] = variant_data.reference.strip().upper()
+    variant_values["barcode"] = _clean(variant_data.barcode)
+    variant_values["supplier_reference"] = _clean(variant_data.supplier_reference)
+    _ensure_variant_uniqueness(
+        db,
+        reference=variant_values["reference"],
+        barcode=variant_values["barcode"],
+        supplier_reference=variant_values["supplier_reference"],
+        supplier=variant.product.supplier if variant.product else None,
+        exclude_variant_id=variant.id,
+    )
+    variant_values.pop("quantity_in_stock", None)
+    changes = _changes(variant, variant_values)
+    for key, value in variant_values.items():
+        setattr(variant, key, value)
+    if changes:
+        _record_product_audit(
+            db,
+            product_id=variant.product_id,
+            variant_id=variant.id,
+            user=user,
+            action="VARIANT_UPDATED",
+            changes=changes,
+        )
     db.commit()
     db.refresh(variant)
     annotate_variant_availability(db, variant)
@@ -681,8 +954,28 @@ def add_variant(product_id: int, variant_data: schemas.ProductVariantCreate, db:
     _require_permission(db, user, "catalog.qualify")
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product: raise HTTPException(404, "Product not found")
-    new_variant = models.ProductVariant(product_id=product.id, **variant_data.model_dump())
+    variant_values = variant_data.model_dump()
+    variant_values["reference"] = variant_data.reference.strip().upper()
+    variant_values["barcode"] = _clean(variant_data.barcode)
+    variant_values["supplier_reference"] = _clean(variant_data.supplier_reference)
+    _ensure_variant_uniqueness(
+        db,
+        reference=variant_values["reference"],
+        barcode=variant_values["barcode"],
+        supplier_reference=variant_values["supplier_reference"],
+        supplier=product.supplier,
+    )
+    new_variant = models.ProductVariant(product_id=product.id, **variant_values)
     db.add(new_variant)
+    db.flush()
+    _record_product_audit(
+        db,
+        product_id=product.id,
+        variant_id=new_variant.id,
+        user=user,
+        action="VARIANT_CREATED",
+        changes={"reference": {"before": None, "after": new_variant.reference}},
+    )
     db.commit()
     db.refresh(new_variant)
     annotate_variant_availability(db, new_variant)
@@ -971,6 +1264,7 @@ async def create_draft_products_from_workshop_debits(
         product = models.Product(
             reference_base=variant_ref,
             name=f"[BROUILLON] {supplier} {reference} - à compléter",
+            category="PROFIL" if unit == "barre" else "ACCESSOIRE",
             material_type=material_type,
             unit=unit,
             supplier=supplier,
@@ -990,6 +1284,14 @@ async def create_draft_products_from_workshop_debits(
             location=source_location,
         )
         db.add(variant)
+        _record_product_audit(
+            db,
+            product_id=product.id,
+            user=user,
+            action="PRODUCT_CREATED_FROM_WORKSHOP",
+            changes={"catalog_status": {"before": None, "after": "DRAFT"}},
+            reason="Référence inconnue détectée dans un fichier de débit atelier.",
+        )
         db.flush()
         db.add(models.StockQuant(variant_id=variant.id, location_id=location.id, quantity=0))
         created += 1
@@ -1568,10 +1870,15 @@ def export_draft_catalog_xlsx(db: Session = Depends(get_db), user: dict = Depend
         "Reference_Variante",
         "Fournisseur",
         "Nom_Famille",
+        "Categorie",
         "Matiere",
         "Unite",
         "Ref_Fournisseur",
+        "Couleur",
+        "Finition",
         "Longueur_Unite",
+        "Conditionnement",
+        "Unites_Conditionnement",
         "Emplacement",
         "Gammes_Compatibles",
         "Statut_Catalogue",
@@ -1591,10 +1898,15 @@ def export_draft_catalog_xlsx(db: Session = Depends(get_db), user: dict = Depend
                     variant.reference if variant else "",
                     product.supplier or "",
                     product.name,
+                    product.category or "",
                     product.material_type,
                     product.unit,
                     variant.supplier_reference if variant else "",
+                    variant.color if variant else "",
+                    variant.finish if variant else "",
                     variant.length_per_unit if variant else "",
+                    variant.conditioning if variant else "",
+                    variant.units_per_package if variant else "",
                     variant.location if variant else "",
                     product.compatible_series or "",
                     product.catalog_status or "DRAFT",
@@ -1656,6 +1968,7 @@ async def import_draft_catalog_updates(file: UploadFile = File(...), db: Session
         if not product:
             skipped += 1
             continue
+        previous_status = product.catalog_status or "DRAFT"
 
         def text_value(key: str):
             value = row.get(key)
@@ -1663,6 +1976,7 @@ async def import_draft_catalog_updates(file: UploadFile = File(...), db: Session
 
         for key, attr in [
             ("Nom_Famille", "name"),
+            ("Categorie", "category"),
             ("Matiere", "material_type"),
             ("Unite", "unit"),
             ("Fournisseur", "supplier"),
@@ -1672,25 +1986,62 @@ async def import_draft_catalog_updates(file: UploadFile = File(...), db: Session
             if value:
                 setattr(product, attr, value)
 
-        status = text_value("Statut_Catalogue")
-        if status:
-            product.catalog_status = "ACTIVE" if status.upper() in active_values else "DRAFT"
+        status = (text_value("Statut_Catalogue") or "").upper()
         updated_products += 1
 
         if variant:
             supplier_ref = text_value("Ref_Fournisseur")
             location = text_value("Emplacement")
+            color = text_value("Couleur")
+            finish = text_value("Finition")
+            conditioning = text_value("Conditionnement")
             if supplier_ref:
                 variant.supplier_reference = supplier_ref
             if location:
                 variant.location = location
+            if color:
+                variant.color = color
+            if finish:
+                variant.finish = finish
+            if conditioning:
+                variant.conditioning = conditioning
             length = row.get("Longueur_Unite")
             if length not in (None, ""):
                 try:
                     variant.length_per_unit = float(length)
                 except (TypeError, ValueError):
                     pass
+            units_per_package = row.get("Unites_Conditionnement")
+            if units_per_package not in (None, ""):
+                try:
+                    variant.units_per_package = float(units_per_package)
+                except (TypeError, ValueError):
+                    pass
             updated_variants += 1
+
+        if status:
+            requested_status = "ACTIVE" if status in active_values else (
+                status if status in CATALOG_STATUSES else "DRAFT"
+            )
+            if requested_status == "ACTIVE":
+                issues = _activation_issues(product)
+                product.catalog_status = "TO_QUALIFY" if issues else "ACTIVE"
+            elif requested_status in {"DRAFT", "TO_QUALIFY"}:
+                product.catalog_status = requested_status
+        _record_product_audit(
+            db,
+            product_id=product.id,
+            variant_id=variant.id if variant else None,
+            user=user,
+            action="BULK_CATALOG_UPDATE",
+            changes={
+                "catalog_status": {
+                    "before": previous_status,
+                    "after": product.catalog_status or previous_status,
+                }
+            },
+            reason=f"Mise à jour depuis {file.filename or 'fichier Excel'}",
+        )
 
     db.commit()
     return {

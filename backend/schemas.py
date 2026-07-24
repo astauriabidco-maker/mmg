@@ -509,7 +509,10 @@ class ProductVariantBase(BaseModel):
     reference: str
     barcode: Optional[str] = None
     color: Optional[str] = None
+    finish: Optional[str] = None
     length_per_unit: Optional[float] = None
+    conditioning: Optional[str] = None
+    units_per_package: Optional[float] = None
     supplier_reference: Optional[str] = None
     cost_price: Optional[float] = None
     quantity_in_stock: float = 0.0
@@ -539,6 +542,9 @@ class ProductBase(BaseModel):
     image_url: Optional[str] = None
     technical_doc_url: Optional[str] = None
     compatible_series: Optional[str] = None
+    # Compatibilité API historique : les intégrations existantes créent un
+    # article actif si elles ne transmettent pas de statut. L'UI gouvernée
+    # transmet explicitement DRAFT pour toute nouvelle fiche.
     catalog_status: str = "ACTIVE"
 
 class ProductCreate(ProductBase):
@@ -547,6 +553,23 @@ class ProductCreate(ProductBase):
 class ProductResponse(ProductBase):
     id: int
     variants: List[ProductVariantResponse] = []
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProductStatusUpdate(BaseModel):
+    status: str
+    reason: Optional[str] = None
+
+
+class ProductAuditLogResponse(BaseModel):
+    id: int
+    product_id: int
+    variant_id: Optional[int] = None
+    action: str
+    changes: Optional[dict] = None
+    reason: Optional[str] = None
+    author: str
+    created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
 class StockLocationBase(BaseModel):

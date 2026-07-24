@@ -47,6 +47,31 @@ const DEFAULT_STOCK_UNITS = [
     'lot',
 ];
 
+const CATALOG_STATUS_META = {
+    DRAFT: { label: 'Brouillon', className: 'bg-slate-100 text-slate-700 border-slate-200' },
+    TO_QUALIFY: { label: 'À qualifier', className: 'bg-amber-50 text-amber-700 border-amber-200' },
+    ACTIVE: { label: 'Actif', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+    BLOCKED: { label: 'Bloqué', className: 'bg-red-50 text-red-700 border-red-200' },
+    ARCHIVED: { label: 'Archivé', className: 'bg-slate-200 text-slate-600 border-slate-300' },
+};
+
+const CATALOG_STATUS_ACTIONS = {
+    DRAFT: [{ status: 'TO_QUALIFY', label: 'Envoyer à qualifier' }],
+    TO_QUALIFY: [
+        { status: 'DRAFT', label: 'Repasser en brouillon' },
+        { status: 'ACTIVE', label: 'Activer', primary: true },
+    ],
+    ACTIVE: [
+        { status: 'BLOCKED', label: 'Bloquer', danger: true, requiresReason: true },
+        { status: 'ARCHIVED', label: 'Archiver', requiresReason: true },
+    ],
+    BLOCKED: [
+        { status: 'ACTIVE', label: 'Réactiver', primary: true },
+        { status: 'ARCHIVED', label: 'Archiver', requiresReason: true },
+    ],
+    ARCHIVED: [{ status: 'DRAFT', label: 'Restaurer en brouillon' }],
+};
+
 const normalizedOptions = (values) => Array.from(
     new Set(values.map(value => String(value || '').trim()).filter(Boolean))
 ).sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' }));
@@ -159,7 +184,7 @@ export default function StockDashboard() {
     const [editingLocationName, setEditingLocationName] = useState('');
     const [newProductForm, setNewProductForm] = useState({
         reference_base: '', name: '', category: '', material_type: '', unit: '', supplier: '', product_type: 'stockable', available_in_pos: false, image_url: '', technical_doc_url: '', compatible_series: '',
-        variant_ref: '', barcode: '', color: '', length_per_unit: '', supplier_reference: '', cost_price: '', min_threshold: 10, location: ''
+        variant_ref: '', barcode: '', color: '', finish: '', length_per_unit: '', conditioning: '', units_per_package: '', supplier_reference: '', cost_price: '', min_threshold: 10, location: ''
     });
 
     const [showEditProductModal, setShowEditProductModal] = useState(false);
@@ -178,6 +203,15 @@ export default function StockDashboard() {
     const [customerIssueData, setCustomerIssueData] = useState({ variant: null, sourceLocId: '', qty: '', reason: '' });
     const [customerIssueSearch, setCustomerIssueSearch] = useState('');
     const [riskActionVariantId, setRiskActionVariantId] = useState(null);
+
+    const { data: productHistory = [] } = useQuery({
+        queryKey: ['product-history', selectedProductId],
+        enabled: Boolean(selectedProductId),
+        queryFn: async () => {
+            const res = await api.get(`/v2/stock/products/${selectedProductId}/history`);
+            return res.data;
+        },
+    });
 
     const handleFileUpload = async (file, setForm, currentForm, field = 'image_url') => {
         const formData = new FormData();
@@ -226,7 +260,10 @@ export default function StockDashboard() {
         variant_ref: '',
         barcode: '',
         color: '',
+        finish: '',
         length_per_unit: '',
+        conditioning: '',
+        units_per_package: '',
         supplier_reference: '',
         cost_price: '',
         min_threshold: type === 'service' ? 0 : 10,
@@ -572,7 +609,10 @@ export default function StockDashboard() {
             reference: variant.reference,
             barcode: variant.barcode || '',
             color: variant.color || '',
+            finish: variant.finish || '',
             length_per_unit: variant.length_per_unit ?? '',
+            conditioning: variant.conditioning || '',
+            units_per_package: variant.units_per_package ?? '',
             supplier_reference: variant.supplier_reference || '',
             cost_price: variant.cost_price ?? '',
             min_threshold: variant.min_threshold ?? 10,
@@ -587,8 +627,11 @@ export default function StockDashboard() {
             await api.put(`/v2/stock/variants/${editVariantForm.id}`, {
                 reference: editVariantForm.reference,
                 barcode: editVariantForm.barcode || null,
-                color: editVariantForm.color,
+                color: editVariantForm.color || null,
+                finish: editVariantForm.finish || null,
                 length_per_unit: editVariantForm.length_per_unit ? parseFloat(editVariantForm.length_per_unit) : null,
+                conditioning: editVariantForm.conditioning || null,
+                units_per_package: editVariantForm.units_per_package ? parseFloat(editVariantForm.units_per_package) : null,
                 supplier_reference: editVariantForm.supplier_reference || null,
                 cost_price: editVariantForm.cost_price === '' ? 0 : parseFloat(editVariantForm.cost_price),
                 min_threshold: editVariantForm.min_threshold === '' ? 0 : parseFloat(editVariantForm.min_threshold),
@@ -809,6 +852,11 @@ export default function StockDashboard() {
             reference: `${product.reference_base}-`,
             barcode: '',
             color: '',
+            finish: '',
+            length_per_unit: '',
+            conditioning: '',
+            units_per_package: '',
+            supplier_reference: '',
             cost_price: '',
             min_threshold: 10,
             image_url: '',
@@ -822,7 +870,12 @@ export default function StockDashboard() {
             await api.post(`/v2/stock/products/${addVariantForm.productId}/variants`, {
                 reference: addVariantForm.reference,
                 barcode: addVariantForm.barcode || null,
-                color: addVariantForm.color,
+                color: addVariantForm.color || null,
+                finish: addVariantForm.finish || null,
+                length_per_unit: addVariantForm.length_per_unit ? parseFloat(addVariantForm.length_per_unit) : null,
+                conditioning: addVariantForm.conditioning || null,
+                units_per_package: addVariantForm.units_per_package ? parseFloat(addVariantForm.units_per_package) : null,
+                supplier_reference: addVariantForm.supplier_reference || null,
                 cost_price: parseFloat(addVariantForm.cost_price) || 0,
                 min_threshold: parseFloat(addVariantForm.min_threshold) || 10,
                 image_url: addVariantForm.image_url || null,
@@ -851,11 +904,15 @@ export default function StockDashboard() {
                 image_url: newProductForm.image_url || null,
                 technical_doc_url: newProductForm.technical_doc_url || null,
                 compatible_series: newProductForm.compatible_series || null,
+                catalog_status: 'DRAFT',
                 variants: [{
                     reference: newProductForm.variant_ref.trim().toUpperCase(),
                     barcode: newProductForm.barcode || null,
                     color: newProductForm.color || null,
+                    finish: newProductForm.finish || null,
                     length_per_unit: newProductForm.length_per_unit ? parseFloat(newProductForm.length_per_unit) : null,
+                    conditioning: newProductForm.conditioning || null,
+                    units_per_package: newProductForm.units_per_package ? parseFloat(newProductForm.units_per_package) : null,
                     supplier_reference: newProductForm.supplier_reference || null,
                     cost_price: newProductForm.cost_price ? parseFloat(newProductForm.cost_price) : null,
                     min_threshold: Number.isFinite(parseFloat(newProductForm.min_threshold)) ? parseFloat(newProductForm.min_threshold) : 0,
@@ -865,6 +922,28 @@ export default function StockDashboard() {
             queryClient.invalidateQueries();
         } catch (e) {
             alert(e.response?.data?.detail || "Erreur lors de la création.");
+        }
+    };
+
+    const changeCatalogStatus = async (product, action) => {
+        let reason = null;
+        if (action.requiresReason) {
+            reason = window.prompt(`Motif obligatoire pour "${action.label}" :`);
+            if (!reason?.trim()) return;
+        }
+        try {
+            await api.post(`/v2/stock/products/${product.id}/status`, {
+                status: action.status,
+                reason: reason?.trim() || null,
+            });
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ['products'] }),
+                queryClient.invalidateQueries({ queryKey: ['product-history', product.id] }),
+            ]);
+        } catch (error) {
+            const detail = error.response?.data?.detail;
+            const message = Array.isArray(detail) ? detail.join('\n') : detail;
+            alert(message || "Le changement de statut est impossible.");
         }
     };
 
@@ -1050,7 +1129,9 @@ export default function StockDashboard() {
 
     const isDraftProduct = (product) => {
         const text = `${product.name || ''} ${product.compatible_series || ''}`.toLowerCase();
-        return product.catalog_status === 'DRAFT' || text.includes('[brouillon]') || text.includes('créé depuis prévisualisation débit atelier');
+        return ['DRAFT', 'TO_QUALIFY'].includes(product.catalog_status)
+            || text.includes('[brouillon]')
+            || text.includes('créé depuis prévisualisation débit atelier');
     };
 
     const selectInventoryFocus = (focus) => {
@@ -1251,11 +1332,14 @@ export default function StockDashboard() {
 
     products.forEach(p => {
         const draftProduct = isDraftProduct(p);
+        const catalogStatus = p.catalog_status || 'ACTIVE';
+        const isOperationalProduct = catalogStatus === 'ACTIVE';
         const productType = (p.product_type || 'stockable').toLowerCase();
         const isServiceProduct = productType === 'service';
         if (showDraftOnly && !draftProduct) return;
         if (!showDraftOnly && inventoryFocus === 'services' && !isServiceProduct) return;
         if (!showDraftOnly && inventoryFocus !== 'services' && isServiceProduct) return;
+        if (!showDraftOnly && ['stock', 'services'].includes(inventoryFocus) && !isOperationalProduct) return;
         let hasVisibleVariant = false;
         const variantsData = [];
 
@@ -1413,6 +1497,10 @@ export default function StockDashboard() {
     const selectedProductLocationRows = selectedProduct ? getProductLocationRows(selectedProduct) : [];
     const selectedProductMovements = selectedProduct ? getProductMovements(selectedProduct) : [];
     const selectedProductReservations = selectedProduct ? getProductReservations(selectedProduct) : [];
+    const selectedProductVariantIds = new Set((selectedProduct?.variants || []).map(variant => variant.id));
+    const selectedProductPurchases = selectedProduct ? purchases.filter(purchase =>
+        (purchase.lines || []).some(line => selectedProductVariantIds.has(line.variant_id))
+    ) : [];
     const selectedLocation = locations.find(location => location.id === selectedLocationId);
     const selectedLocationStockRows = selectedLocation ? getLocationStockRows(selectedLocation) : [];
     const selectedLocationMovements = selectedLocation ? getLocationMovements(selectedLocation) : [];
@@ -1953,11 +2041,9 @@ export default function StockDashboard() {
                                             <span className="rounded-lg bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-blue-100">
                                                 {selectedProduct.product_type === 'service' ? 'Prestation' : 'Article stock'}
                                             </span>
-                                            {isDraftProduct(selectedProduct) && (
-                                                <span className="rounded-lg bg-amber-400/20 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-100">
-                                                    Brouillon catalogue
-                                                </span>
-                                            )}
+                                            <span className={`rounded-lg border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${CATALOG_STATUS_META[selectedProduct.catalog_status]?.className || CATALOG_STATUS_META.DRAFT.className}`}>
+                                                {CATALOG_STATUS_META[selectedProduct.catalog_status]?.label || 'Brouillon'}
+                                            </span>
                                         </div>
                                         <h2 className="text-3xl font-black leading-tight truncate">{selectedProduct.name}</h2>
                                         <p className="mt-2 text-sm font-bold text-slate-300">
@@ -1965,6 +2051,22 @@ export default function StockDashboard() {
                                         </p>
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2">
+                                        {stockPermissions.qualifyCatalog && (CATALOG_STATUS_ACTIONS[selectedProduct.catalog_status || 'DRAFT'] || []).map(action => (
+                                            <button
+                                                key={action.status}
+                                                type="button"
+                                                onClick={() => changeCatalogStatus(selectedProduct, action)}
+                                                className={`px-4 py-3 rounded-xl text-sm font-black ${
+                                                    action.primary
+                                                        ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                                                        : action.danger
+                                                            ? 'bg-red-50 hover:bg-red-100 text-red-700'
+                                                            : 'bg-white/10 hover:bg-white/15 text-white'
+                                                }`}
+                                            >
+                                                {action.label}
+                                            </button>
+                                        ))}
                                         {selectedProduct.technical_doc_url && (
                                             <a
                                                 href={selectedProduct.technical_doc_url}
@@ -2169,6 +2271,12 @@ export default function StockDashboard() {
                                                                     <p className="font-black text-slate-900">{variant.color || 'Standard'}</p>
                                                                     <p className="text-xs font-mono font-bold text-slate-400">{variant.reference}</p>
                                                                     {variant.supplier_reference && <p className="text-[11px] font-bold text-slate-400">Fournisseur : {variant.supplier_reference}</p>}
+                                                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                                                        {variant.finish && <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-600">Finition {variant.finish}</span>}
+                                                                        {variant.length_per_unit && <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-600">{variant.length_per_unit} m</span>}
+                                                                        {variant.conditioning && <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-600">{variant.conditioning}</span>}
+                                                                        {variant.units_per_package && <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-600">{variant.units_per_package} / conditionnement</span>}
+                                                                    </div>
                                                                 </div>
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-600">Stock {formatQty(stock)}</span>
@@ -2254,6 +2362,84 @@ export default function StockDashboard() {
                                                 <div className="px-5 py-8 text-center text-sm font-bold text-slate-400">
                                                     Aucun mouvement enregistré pour cet article.
                                                 </div>
+                                            )}
+                                        </div>
+
+                                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                                <div className="px-5 py-4 border-b border-slate-100">
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Achats & fournisseur</p>
+                                                    <h3 className="text-lg font-black text-slate-950">{selectedProduct.supplier || 'Fournisseur à renseigner'}</h3>
+                                                </div>
+                                                <div className="p-5 space-y-3">
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <span className="text-sm font-bold text-slate-500">Commandes liées</span>
+                                                        <span className="text-xl font-black text-slate-950">{selectedProductPurchases.length}</span>
+                                                    </div>
+                                                    {selectedProductPurchases.slice(0, 4).map(purchase => (
+                                                        <div key={purchase.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 flex items-center justify-between gap-3">
+                                                            <div>
+                                                                <p className="text-sm font-black text-slate-900">{purchase.reference || `Commande #${purchase.id}`}</p>
+                                                                <p className="text-xs font-bold text-slate-400">{purchase.supplier_name || selectedProduct.supplier}</p>
+                                                            </div>
+                                                            <span className="rounded-lg bg-white border border-slate-200 px-2 py-1 text-[10px] font-black uppercase text-slate-600">{purchase.status || 'ouverte'}</span>
+                                                        </div>
+                                                    ))}
+                                                    {selectedProductPurchases.length === 0 && (
+                                                        <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm font-bold text-slate-400 text-center">Aucune commande fournisseur liée.</p>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                                <div className="px-5 py-4 border-b border-slate-100">
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Documents</p>
+                                                    <h3 className="text-lg font-black text-slate-950">Dossier technique</h3>
+                                                </div>
+                                                <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                    {selectedProduct.technical_doc_url ? (
+                                                        <a href={selectedProduct.technical_doc_url} target="_blank" rel="noreferrer" className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm font-black text-blue-700 inline-flex items-center gap-2">
+                                                            <FileText className="w-4 h-4" /> Fiche technique
+                                                        </a>
+                                                    ) : (
+                                                        <div className="rounded-xl border border-dashed border-slate-200 p-4 text-sm font-bold text-slate-400">Fiche technique absente</div>
+                                                    )}
+                                                    {selectedProduct.image_url ? (
+                                                        <a href={selectedProduct.image_url} target="_blank" rel="noreferrer" className="rounded-xl border border-violet-100 bg-violet-50 p-4 text-sm font-black text-violet-700 inline-flex items-center gap-2">
+                                                            <Image className="w-4 h-4" /> Image produit
+                                                        </a>
+                                                    ) : (
+                                                        <div className="rounded-xl border border-dashed border-slate-200 p-4 text-sm font-bold text-slate-400">Image produit absente</div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                            <div className="px-5 py-4 border-b border-slate-100">
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Gouvernance catalogue</p>
+                                                <h3 className="text-lg font-black text-slate-950">Historique des modifications</h3>
+                                            </div>
+                                            {productHistory.length > 0 ? (
+                                                <div className="divide-y divide-slate-100">
+                                                    {productHistory.map(entry => (
+                                                        <div key={entry.id} className="grid grid-cols-1 md:grid-cols-[160px_1fr_180px] gap-3 px-5 py-4">
+                                                            <div>
+                                                                <p className="text-xs font-black text-slate-700">{new Date(entry.created_at).toLocaleDateString('fr-FR')}</p>
+                                                                <p className="text-[10px] font-mono text-slate-400">{new Date(entry.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-sm font-black text-slate-900">{entry.action?.replaceAll('_', ' ')}</p>
+                                                                <p className="mt-1 text-xs font-bold text-slate-500">
+                                                                    {entry.reason || Object.keys(entry.changes || {}).join(', ') || 'Modification enregistrée'}
+                                                                </p>
+                                                            </div>
+                                                            <p className="text-xs font-black text-slate-500 md:text-right">{entry.author || 'Système'}</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="px-5 py-8 text-center text-sm font-bold text-slate-400">Aucune modification auditée pour le moment.</div>
                                             )}
                                         </div>
                                     </div>
@@ -3385,12 +3571,13 @@ export default function StockDashboard() {
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Gammes Compatibles (Séparées par virgule)</label>
                                 <input value={editProductForm.compatible_series} onChange={e=>setEditProductForm({...editProductForm, compatible_series: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
                             </div>
-                            <div>
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Statut catalogue</label>
-                                <select value={editProductForm.catalog_status} onChange={e=>setEditProductForm({...editProductForm, catalog_status: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700">
-                                    <option value="DRAFT">Brouillon à qualifier</option>
-                                    <option value="ACTIVE">Actif</option>
-                                </select>
+                            <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+                                <p className="text-xs font-black text-blue-800">
+                                    Statut : {CATALOG_STATUS_META[editProductForm.catalog_status]?.label || 'Brouillon'}
+                                </p>
+                                <p className="mt-1 text-xs font-bold text-blue-600">
+                                    Le statut se pilote depuis la fiche article afin de conserver les contrôles et l’historique.
+                                </p>
                             </div>
                             <div className="col-span-2 border-t border-slate-100 my-2 pt-4 flex gap-4">
                                 <div className="flex-1">
@@ -3452,9 +3639,23 @@ export default function StockDashboard() {
                                     <input type="number" value={editVariantForm.length_per_unit} onChange={e=>setEditVariantForm({...editVariantForm, length_per_unit: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" placeholder="6500" />
                                 </div>
                             </div>
-                            <div>
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Spécificités (Couleur, Sens, Finition...)</label>
-                                <input list="specs-list" value={editVariantForm.color} onChange={e=>setEditVariantForm({...editVariantForm, color: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" />
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Couleur</label>
+                                    <input list="specs-list" value={editVariantForm.color} onChange={e=>setEditVariantForm({...editVariantForm, color: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Finition</label>
+                                    <input value={editVariantForm.finish} onChange={e=>setEditVariantForm({...editVariantForm, finish: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" placeholder="Anodisé, laqué..." />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Conditionnement</label>
+                                    <input value={editVariantForm.conditioning} onChange={e=>setEditVariantForm({...editVariantForm, conditioning: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" placeholder="Carton, palette, lot..." />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Unités / conditionnement</label>
+                                    <input type="number" min="0" value={editVariantForm.units_per_package} onChange={e=>setEditVariantForm({...editVariantForm, units_per_package: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
+                                </div>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
@@ -3505,9 +3706,31 @@ export default function StockDashboard() {
                                 <label className="text-xs font-black text-blue-500 mb-1 block">Code Barre / EAN13</label>
                                 <input value={addVariantForm.barcode} onChange={e=>setAddVariantForm({...addVariantForm, barcode: e.target.value})} className="w-full p-3 bg-blue-50 text-blue-700 font-mono border border-blue-200 rounded-xl" placeholder="Scanner..." />
                             </div>
-                            <div>
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Spécificités (Couleur, Sens, Finition...)</label>
-                                <input list="specs-list" value={addVariantForm.color} onChange={e=>setAddVariantForm({...addVariantForm, color: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="Ex: RAL 9016 - GAUCHE" />
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Couleur</label>
+                                    <input list="specs-list" value={addVariantForm.color} onChange={e=>setAddVariantForm({...addVariantForm, color: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="RAL 9016" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Finition</label>
+                                    <input value={addVariantForm.finish} onChange={e=>setAddVariantForm({...addVariantForm, finish: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" placeholder="Anodisé" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Réf fournisseur</label>
+                                    <input value={addVariantForm.supplier_reference} onChange={e=>setAddVariantForm({...addVariantForm, supplier_reference: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Longueur / unité</label>
+                                    <input type="number" min="0" step="0.001" value={addVariantForm.length_per_unit} onChange={e=>setAddVariantForm({...addVariantForm, length_per_unit: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Conditionnement</label>
+                                    <input value={addVariantForm.conditioning} onChange={e=>setAddVariantForm({...addVariantForm, conditioning: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Unités / conditionnement</label>
+                                    <input type="number" min="0" value={addVariantForm.units_per_package} onChange={e=>setAddVariantForm({...addVariantForm, units_per_package: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
+                                </div>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
@@ -3737,20 +3960,29 @@ export default function StockDashboard() {
                                                 placeholder="Scanner ou saisir"
                                             />
                                         </div>
-                                        <div className="xl:col-span-2">
-                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Spécificités</label>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Couleur</label>
                                             <input
                                                 list="specs-list"
                                                 value={newProductForm.color}
                                                 onChange={e => setNewProductForm({...newProductForm, color: e.target.value})}
                                                 className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-bold uppercase text-slate-700 outline-none focus:border-blue-500"
-                                                placeholder="RAL 9016, gauche, anodisé..."
+                                                placeholder="RAL 9016"
                                             />
                                             <datalist id="specs-list">
                                                 {appConfigs.filter(config => config.category === 'specs').map(config => (
                                                     <option key={config.id} value={config.value} />
                                                 ))}
                                             </datalist>
+                                        </div>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Finition</label>
+                                            <input
+                                                value={newProductForm.finish}
+                                                onChange={e => setNewProductForm({...newProductForm, finish: e.target.value})}
+                                                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-bold text-slate-700 outline-none focus:border-blue-500"
+                                                placeholder="Anodisé, laqué..."
+                                            />
                                         </div>
                                         <div>
                                             <label className="mb-1.5 block text-xs font-black text-slate-500">
@@ -3777,6 +4009,31 @@ export default function StockDashboard() {
                                                     onChange={e => setNewProductForm({...newProductForm, length_per_unit: e.target.value})}
                                                     className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono font-bold text-slate-800 outline-none focus:border-blue-500"
                                                     placeholder="6,50"
+                                                />
+                                            </div>
+                                        )}
+                                        {newProductForm.product_type !== 'service' && (
+                                            <div>
+                                                <label className="mb-1.5 block text-xs font-black text-slate-500">Conditionnement</label>
+                                                <input
+                                                    value={newProductForm.conditioning}
+                                                    onChange={e => setNewProductForm({...newProductForm, conditioning: e.target.value})}
+                                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-bold text-slate-800 outline-none focus:border-blue-500"
+                                                    placeholder="Carton, palette, lot..."
+                                                />
+                                            </div>
+                                        )}
+                                        {newProductForm.product_type !== 'service' && (
+                                            <div>
+                                                <label className="mb-1.5 block text-xs font-black text-slate-500">Unités / conditionnement</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="1"
+                                                    value={newProductForm.units_per_package}
+                                                    onChange={e => setNewProductForm({...newProductForm, units_per_package: e.target.value})}
+                                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono font-bold text-slate-800 outline-none focus:border-blue-500"
+                                                    placeholder="1"
                                                 />
                                             </div>
                                         )}

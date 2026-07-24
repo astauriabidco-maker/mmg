@@ -161,7 +161,7 @@ class Product(Base):
     image_url = Column(String, nullable=True)
     technical_doc_url = Column(String, nullable=True) # Fiche technique PDF
     compatible_series = Column(String, nullable=True) # Ex: "COR 60, COR 70"
-    catalog_status = Column(String, default="ACTIVE", index=True) # ACTIVE, DRAFT
+    catalog_status = Column(String, default="DRAFT", index=True) # DRAFT, TO_QUALIFY, ACTIVE, BLOCKED, ARCHIVED
     
     variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")
 
@@ -173,7 +173,10 @@ class ProductVariant(Base):
     reference = Column(String, unique=True, index=True) # Ex: VEK-70-BLANC
     barcode = Column(String, unique=True, index=True, nullable=True) # Code-barres / EAN13
     color = Column(String, nullable=True)
+    finish = Column(String, nullable=True)
     length_per_unit = Column(Float, nullable=True) # Ex: 6m pour barre ALU
+    conditioning = Column(String, nullable=True) # unité, boîte, palette, rouleau...
+    units_per_package = Column(Float, nullable=True)
     supplier_reference = Column(String, nullable=True)
     cost_price = Column(Numeric(14, 2), nullable=True)
     quantity_in_stock = Column(Float, default=0.0)
@@ -187,6 +190,19 @@ class ProductVariant(Base):
 
     reserved_quantity = 0.0
     available_quantity = 0.0
+
+
+class ProductAuditLog(Base):
+    __tablename__ = "product_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    variant_id = Column(Integer, ForeignKey("product_variants.id", ondelete="SET NULL"), nullable=True, index=True)
+    action = Column(String, nullable=False, index=True)
+    changes = Column(JSON, nullable=True)
+    reason = Column(Text, nullable=True)
+    author = Column(String, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False, index=True)
 
 # --- ODOO INVENTORY ENGINE ---
 class StockLocation(Base):
