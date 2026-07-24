@@ -5,6 +5,7 @@ import { ArrowRight, BellRing, Building2, CalendarClock, CheckCircle2, Clipboard
 import api from '../services/api';
 import MMGDossiers from './MMGDossiers';
 import BusinessTimeline from '../components/BusinessTimeline';
+import CRMClientActionWorkspace from '../components/CRMClientActionWorkspace';
 
 const saleAmount = (sale) => (sale.lines || []).reduce(
     (sum, line) => sum + (Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100)),
@@ -235,6 +236,22 @@ export default function CRMClientsDashboard() {
             clientId: String(selectedClient.id),
             siteId: String(site.id),
         });
+        navigate(`/measure-missions/new?${params.toString()}`);
+    };
+
+    const startMeasureForOpportunity = opportunity => {
+        const linkedSiteId = opportunity.site_address_id
+            || opportunity.site_id
+            || opportunity.client_site_id
+            || clientSites.find(site => site.is_default)?.id
+            || (clientSites.length === 1 ? clientSites[0].id : null);
+        const params = new URLSearchParams({
+            source: 'SITE_VISIT',
+            scope: 'SUPPLY_AND_INSTALL',
+            clientId: String(selectedClient.id),
+            opportunityId: String(opportunity.id),
+        });
+        if (linkedSiteId) params.set('siteId', String(linkedSiteId));
         navigate(`/measure-missions/new?${params.toString()}`);
     };
 
@@ -722,6 +739,84 @@ export default function CRMClientsDashboard() {
             )}
 
             {crmView === 'clients' && (
+                <div className="grid flex-1 min-h-0 grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)]">
+                    <aside className="flex max-h-56 min-h-0 flex-col border-b border-slate-200 bg-white xl:max-h-none xl:border-b-0 xl:border-r">
+                        <div className="border-b border-slate-200 p-4">
+                            <div className="relative">
+                                <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                                <input
+                                    value={searchTerm}
+                                    onChange={event => setSearchTerm(event.target.value)}
+                                    placeholder="Client, téléphone..."
+                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                            <button
+                                onClick={() => setShowClientModal(true)}
+                                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-black text-white hover:bg-slate-800"
+                            >
+                                <Plus className="h-4 w-4" />
+                                Nouveau client
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-auto p-3">
+                            {filteredClients.length ? (
+                                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-1">
+                                    {filteredClients.map(client => {
+                                        const isSelected = selectedClient?.id === client.id;
+                                        return (
+                                            <button
+                                                key={client.id}
+                                                onClick={() => setSelectedClientId(client.id)}
+                                                className={`min-w-0 border-l-4 px-3 py-3 text-left transition-colors ${isSelected ? 'border-blue-600 bg-blue-50' : 'border-transparent hover:bg-slate-50'}`}
+                                            >
+                                                <p className="truncate text-sm font-black text-slate-900">{client.name}</p>
+                                                <p className="mt-1 truncate text-xs font-semibold text-slate-500">{client.phone || client.email || 'Coordonnées à compléter'}</p>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="py-8 text-center text-xs font-bold text-slate-400">Aucun client trouvé.</div>
+                            )}
+                        </div>
+                    </aside>
+                    <main className="min-h-0 overflow-y-auto bg-slate-50/40 p-4 lg:p-5">
+                        {!selectedClient ? (
+                            <div className="flex h-full min-h-80 flex-col items-center justify-center border border-dashed border-slate-300 bg-white p-8 text-center">
+                                <Users className="h-12 w-12 text-slate-200" />
+                                <p className="mt-3 text-lg font-black text-slate-700">Aucun client sélectionné</p>
+                                <p className="mt-1 text-sm font-semibold text-slate-400">Sélectionnez un client ou créez une nouvelle fiche.</p>
+                            </div>
+                        ) : (
+                            <CRMClientActionWorkspace
+                                client={selectedClient}
+                                sites={clientSites}
+                                presalesQuotes={presalesQuotes}
+                                executionOrders={executionOrders}
+                                dossiers={clientDossiers}
+                                totals={totals}
+                                timeline={clientTimeline}
+                                formatDate={formatDate}
+                                formatMoney={formatMoney}
+                                statusLabel={statusLabel}
+                                statusClassName={statusClassName}
+                                onCreateProposal={createQuoteForClient}
+                                onPlanMeasure={planMeasureForClient}
+                                onCreateSite={openSiteCreation}
+                                onPlanMeasureForSite={startMeasureForSite}
+                                onPlanMeasureForOpportunity={startMeasureForOpportunity}
+                                onOpenSale={openSale}
+                                onOpenMeasures={(dossier) => dossier?.measure_mission_id
+                                    ? navigate(`/measure-missions/${dossier.measure_mission_id}`)
+                                    : setCrmView('measures')}
+                            />
+                        )}
+                    </main>
+                </div>
+            )}
+
+            {false && crmView === 'clients' && (
             <div className="grid grid-cols-[360px_1fr] flex-1 min-h-0">
                 <aside className="bg-white border-r border-slate-200 flex flex-col min-h-0">
                     <div className="p-5 border-b border-slate-200">

@@ -635,6 +635,16 @@ class Client(Base):
         cascade="all, delete-orphan",
     )
     measure_missions = relationship("MeasureMission", back_populates="client")
+    opportunities = relationship(
+        "CRMOpportunity",
+        back_populates="client",
+        cascade="all, delete-orphan",
+    )
+    crm_activities = relationship(
+        "CRMActivity",
+        back_populates="client",
+        cascade="all, delete-orphan",
+    )
 
 
 class ClientSiteAddress(Base):
@@ -660,6 +670,7 @@ class ClientSiteAddress(Base):
 
     client = relationship("Client", back_populates="site_addresses")
     measure_missions = relationship("MeasureMission", back_populates="site")
+    opportunities = relationship("CRMOpportunity", back_populates="site")
 
     @property
     def formatted_address(self):
@@ -671,6 +682,170 @@ class ClientSiteAddress(Base):
         )
 
 
+class CRMOpportunityStage(str, enum.Enum):
+    NEW = "nouveau"
+    QUALIFIED = "qualifie"
+    MEASURE_TO_SCHEDULE = "metre_a_planifier"
+    MEASURE_IN_PROGRESS = "metre_en_cours"
+    PROPOSAL_TO_PREPARE = "proposition_a_preparer"
+    PROPOSAL_SENT = "proposition_envoyee"
+    NEGOTIATION = "negociation"
+    WON = "gagne"
+    LOST = "perdu"
+
+
+class CRMNeedType(str, enum.Enum):
+    SUPPLY_AND_INSTALL = "fourniture_pose"
+    SUPPLY_ONLY = "fourniture_seule"
+    AFTER_SALES = "sav"
+    OTHER = "autre"
+
+
+class CRMActivityType(str, enum.Enum):
+    CALL = "appel"
+    EMAIL = "email"
+    MEETING = "rendez_vous"
+    NOTE = "note"
+    TASK = "tache"
+
+
+class CRMActivityStatus(str, enum.Enum):
+    TODO = "a_faire"
+    COMPLETED = "termine"
+    CANCELLED = "annule"
+
+
+class CRMOpportunity(Base):
+    __tablename__ = "crm_opportunities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, nullable=False, index=True)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    site_address_id = Column(
+        Integer,
+        ForeignKey("client_site_addresses.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    owner_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    sale_order_id = Column(
+        Integer,
+        ForeignKey("sale_orders.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    title = Column(String, nullable=False)
+    origin = Column(String, nullable=True, index=True)
+    need_type = Column(
+        String,
+        default=CRMNeedType.OTHER.value,
+        nullable=False,
+        index=True,
+    )
+    stage = Column(
+        String,
+        default=CRMOpportunityStage.NEW.value,
+        nullable=False,
+        index=True,
+    )
+    estimated_amount = Column(Numeric(14, 2), nullable=True)
+    probability = Column(Integer, default=10, nullable=False)
+    next_milestone = Column(String, nullable=True)
+    next_milestone_at = Column(DateTime, nullable=True, index=True)
+    expected_close_date = Column(DateTime, nullable=True)
+    loss_reason = Column(Text, nullable=True)
+    won_at = Column(DateTime, nullable=True)
+    lost_at = Column(DateTime, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    client = relationship("Client", back_populates="opportunities")
+    site = relationship("ClientSiteAddress", back_populates="opportunities")
+    owner = relationship("User")
+    sale_order = relationship("SaleOrder")
+    measure_missions = relationship(
+        "MeasureMission",
+        back_populates="opportunity",
+        passive_deletes=True,
+    )
+    activities = relationship(
+        "CRMActivity",
+        back_populates="opportunity",
+        passive_deletes=True,
+    )
+
+    @property
+    def client_name(self):
+        return self.client.name if self.client else None
+
+    @property
+    def site_reference(self):
+        return self.site.reference if self.site else None
+
+    @property
+    def owner_name(self):
+        if not self.owner:
+            return None
+        full_name = " ".join(
+            part for part in [self.owner.first_name, self.owner.last_name] if part
+        )
+        return full_name or self.owner.username
+
+
+class CRMActivity(Base):
+    __tablename__ = "crm_activities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    opportunity_id = Column(
+        Integer,
+        ForeignKey("crm_opportunities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    activity_type = Column(String, nullable=False, index=True)
+    subject = Column(String, nullable=False)
+    note = Column(Text, nullable=True)
+    due_at = Column(DateTime, nullable=True, index=True)
+    status = Column(
+        String,
+        default=CRMActivityStatus.TODO.value,
+        nullable=False,
+        index=True,
+    )
+    author = Column(String, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    client = relationship("Client", back_populates="crm_activities")
+    opportunity = relationship("CRMOpportunity", back_populates="activities")
+
+    @property
+    def client_name(self):
+        return self.client.name if self.client else None
+
+    @property
+    def opportunity_reference(self):
+        return self.opportunity.reference if self.opportunity else None
+
+
 class MeasureMission(Base):
     __tablename__ = "measure_missions"
 
@@ -678,6 +853,12 @@ class MeasureMission(Base):
     reference = Column(String, unique=True, nullable=False, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
     site_address_id = Column(Integer, ForeignKey("client_site_addresses.id"), nullable=True, index=True)
+    opportunity_id = Column(
+        Integer,
+        ForeignKey("crm_opportunities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     sale_order_id = Column(Integer, ForeignKey("sale_orders.id"), nullable=True, index=True)
     assigned_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     status = Column(String, default=MeasureMissionStatus.DRAFT.value, nullable=False, index=True)
@@ -698,6 +879,7 @@ class MeasureMission(Base):
 
     client = relationship("Client", back_populates="measure_missions")
     site = relationship("ClientSiteAddress", back_populates="measure_missions")
+    opportunity = relationship("CRMOpportunity", back_populates="measure_missions")
     sale_order = relationship("SaleOrder")
     assigned_user = relationship("User")
     dossiers = relationship(

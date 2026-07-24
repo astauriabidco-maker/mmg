@@ -284,6 +284,138 @@ class ClientSiteAddressResponse(ClientSiteAddressBase):
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
+
+class CRMOpportunityStage(str, enum.Enum):
+    NEW = "nouveau"
+    QUALIFIED = "qualifie"
+    MEASURE_TO_SCHEDULE = "metre_a_planifier"
+    MEASURE_IN_PROGRESS = "metre_en_cours"
+    PROPOSAL_TO_PREPARE = "proposition_a_preparer"
+    PROPOSAL_SENT = "proposition_envoyee"
+    NEGOTIATION = "negociation"
+    WON = "gagne"
+    LOST = "perdu"
+
+
+class CRMNeedType(str, enum.Enum):
+    SUPPLY_AND_INSTALL = "fourniture_pose"
+    SUPPLY_ONLY = "fourniture_seule"
+    AFTER_SALES = "sav"
+    OTHER = "autre"
+
+
+class CRMActivityType(str, enum.Enum):
+    CALL = "appel"
+    EMAIL = "email"
+    MEETING = "rendez_vous"
+    NOTE = "note"
+    TASK = "tache"
+
+
+class CRMActivityStatus(str, enum.Enum):
+    TODO = "a_faire"
+    COMPLETED = "termine"
+    CANCELLED = "annule"
+
+
+class CRMOpportunityCreate(BaseModel):
+    client_id: int
+    site_address_id: Optional[int] = None
+    owner_user_id: Optional[int] = None
+    sale_order_id: Optional[int] = None
+    title: str = Field(min_length=1, max_length=255)
+    origin: Optional[str] = Field(default=None, max_length=100)
+    need_type: CRMNeedType = CRMNeedType.OTHER
+    stage: CRMOpportunityStage = CRMOpportunityStage.NEW
+    estimated_amount: Optional[float] = Field(default=None, ge=0)
+    probability: int = Field(default=10, ge=0, le=100)
+    next_milestone: Optional[str] = Field(default=None, max_length=255)
+    next_milestone_at: Optional[datetime] = None
+    expected_close_date: Optional[datetime] = None
+    loss_reason: Optional[str] = None
+
+
+class CRMOpportunityUpdate(BaseModel):
+    site_address_id: Optional[int] = None
+    owner_user_id: Optional[int] = None
+    sale_order_id: Optional[int] = None
+    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    origin: Optional[str] = Field(default=None, max_length=100)
+    need_type: Optional[CRMNeedType] = None
+    stage: Optional[CRMOpportunityStage] = None
+    estimated_amount: Optional[float] = Field(default=None, ge=0)
+    probability: Optional[int] = Field(default=None, ge=0, le=100)
+    next_milestone: Optional[str] = Field(default=None, max_length=255)
+    next_milestone_at: Optional[datetime] = None
+    expected_close_date: Optional[datetime] = None
+    loss_reason: Optional[str] = None
+
+
+class CRMOpportunityResponse(BaseModel):
+    id: int
+    reference: str
+    client_id: int
+    client_name: Optional[str] = None
+    site_address_id: Optional[int] = None
+    site_reference: Optional[str] = None
+    owner_user_id: Optional[int] = None
+    owner_name: Optional[str] = None
+    sale_order_id: Optional[int] = None
+    title: str
+    origin: Optional[str] = None
+    need_type: CRMNeedType
+    stage: CRMOpportunityStage
+    estimated_amount: Optional[float] = None
+    probability: int
+    next_milestone: Optional[str] = None
+    next_milestone_at: Optional[datetime] = None
+    expected_close_date: Optional[datetime] = None
+    loss_reason: Optional[str] = None
+    won_at: Optional[datetime] = None
+    lost_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CRMActivityCreate(BaseModel):
+    client_id: int
+    opportunity_id: Optional[int] = None
+    activity_type: CRMActivityType
+    subject: str = Field(min_length=1, max_length=255)
+    note: Optional[str] = None
+    due_at: Optional[datetime] = None
+    status: CRMActivityStatus = CRMActivityStatus.TODO
+
+
+class CRMActivityUpdate(BaseModel):
+    opportunity_id: Optional[int] = None
+    activity_type: Optional[CRMActivityType] = None
+    subject: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    note: Optional[str] = None
+    due_at: Optional[datetime] = None
+    status: Optional[CRMActivityStatus] = None
+
+
+class CRMActivityResponse(BaseModel):
+    id: int
+    client_id: int
+    client_name: Optional[str] = None
+    opportunity_id: Optional[int] = None
+    opportunity_reference: Optional[str] = None
+    activity_type: CRMActivityType
+    subject: str
+    note: Optional[str] = None
+    due_at: Optional[datetime] = None
+    status: CRMActivityStatus
+    author: str
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
 class MeasureMissionStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     TO_SCHEDULE = "TO_SCHEDULE"
@@ -316,6 +448,7 @@ class MeasureMissionCreate(BaseModel):
     client_id: int
     site_address_id: Optional[int] = None
     site: Optional[ClientSiteAddressCreate] = None
+    opportunity_id: Optional[int] = None
     sale_order_id: Optional[int] = None
     assigned_user_id: Optional[int] = None
     source_type: MeasureSourceType = MeasureSourceType.SITE_VISIT
@@ -329,6 +462,7 @@ class MeasureMissionCreate(BaseModel):
 class MeasureMissionUpdate(BaseModel):
     site_address_id: Optional[int] = None
     site: Optional[ClientSiteAddressCreate] = None
+    opportunity_id: Optional[int] = None
     assigned_user_id: Optional[int] = None
     project_scope: Optional[MeasureProjectScope] = None
     purpose: Optional[str] = None
@@ -414,6 +548,7 @@ class MeasureMissionResponse(BaseModel):
     client_name: str
     site_address_id: Optional[int] = None
     site: Optional[ClientSiteAddressResponse] = None
+    opportunity_id: Optional[int] = None
     sale_order_id: Optional[int] = None
     assigned_user_id: Optional[int] = None
     assigned_user_name: Optional[str] = None

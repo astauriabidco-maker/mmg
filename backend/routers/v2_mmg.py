@@ -105,6 +105,7 @@ def _serialize_mission(mission: models.MeasureMission) -> schemas.MeasureMission
         client_name=mission.client.name,
         site_address_id=mission.site_address_id,
         site=mission.site,
+        opportunity_id=mission.opportunity_id,
         sale_order_id=mission.sale_order_id,
         assigned_user_id=mission.assigned_user_id,
         assigned_user_name=assigned_user_name,
@@ -259,6 +260,382 @@ def _current_roles(current_user: dict) -> set[str]:
     return roles
 
 
+OPPORTUNITY_TRANSITIONS = {
+    models.CRMOpportunityStage.NEW.value: {
+        models.CRMOpportunityStage.QUALIFIED.value,
+        models.CRMOpportunityStage.LOST.value,
+    },
+    models.CRMOpportunityStage.QUALIFIED.value: {
+        models.CRMOpportunityStage.MEASURE_TO_SCHEDULE.value,
+        models.CRMOpportunityStage.PROPOSAL_TO_PREPARE.value,
+        models.CRMOpportunityStage.LOST.value,
+    },
+    models.CRMOpportunityStage.MEASURE_TO_SCHEDULE.value: {
+        models.CRMOpportunityStage.MEASURE_IN_PROGRESS.value,
+        models.CRMOpportunityStage.PROPOSAL_TO_PREPARE.value,
+        models.CRMOpportunityStage.LOST.value,
+    },
+    models.CRMOpportunityStage.MEASURE_IN_PROGRESS.value: {
+        models.CRMOpportunityStage.PROPOSAL_TO_PREPARE.value,
+        models.CRMOpportunityStage.LOST.value,
+    },
+    models.CRMOpportunityStage.PROPOSAL_TO_PREPARE.value: {
+        models.CRMOpportunityStage.PROPOSAL_SENT.value,
+        models.CRMOpportunityStage.LOST.value,
+    },
+    models.CRMOpportunityStage.PROPOSAL_SENT.value: {
+        models.CRMOpportunityStage.NEGOTIATION.value,
+        models.CRMOpportunityStage.WON.value,
+        models.CRMOpportunityStage.LOST.value,
+    },
+    models.CRMOpportunityStage.NEGOTIATION.value: {
+        models.CRMOpportunityStage.PROPOSAL_SENT.value,
+        models.CRMOpportunityStage.WON.value,
+        models.CRMOpportunityStage.LOST.value,
+    },
+    models.CRMOpportunityStage.LOST.value: {
+        models.CRMOpportunityStage.QUALIFIED.value,
+    },
+    models.CRMOpportunityStage.WON.value: set(),
+}
+
+ACTIVITY_TRANSITIONS = {
+    models.CRMActivityStatus.TODO.value: {
+        models.CRMActivityStatus.COMPLETED.value,
+        models.CRMActivityStatus.CANCELLED.value,
+    },
+    models.CRMActivityStatus.COMPLETED.value: set(),
+    models.CRMActivityStatus.CANCELLED.value: set(),
+}
+
+
+def _get_opportunity_or_404(db: Session, opportunity_id: int) -> models.CRMOpportunity:
+    opportunity = (
+        db.query(models.CRMOpportunity)
+        .filter(models.CRMOpportunity.id == opportunity_id)
+        .first()
+    )
+    if not opportunity:
+        raise HTTPException(404, "Opportunité introuvable")
+    return opportunity
+
+
+def _get_activity_or_404(db: Session, activity_id: int) -> models.CRMActivity:
+    activity = (
+        db.query(models.CRMActivity)
+        .filter(models.CRMActivity.id == activity_id)
+        .first()
+    )
+    if not activity:
+        raise HTTPException(404, "Activité CRM introuvable")
+    return activity
+
+
+def _validate_opportunity_links(
+    db: Session,
+    client_id: int,
+    site_address_id: Optional[int] = None,
+    owner_user_id: Optional[int] = None,
+    sale_order_id: Optional[int] = None,
+) -> None:
+    if not db.query(models.Client).filter(models.Client.id == client_id).first():
+        raise HTTPException(404, "Client introuvable")
+    if site_address_id is not None:
+        site = (
+            db.query(models.ClientSiteAddress)
+            .filter(models.ClientSiteAddress.id == site_address_id)
+            .first()
+        )
+        if not site:
+            raise HTTPException(404, "Adresse chantier introuvable")
+        if site.client_id != client_id:
+            raise HTTPException(400, "Le chantier et l'opportunité doivent appartenir au même client")
+    if owner_user_id is not None:
+        owner = (
+            db.query(models.User)
+            .filter(models.User.id == owner_user_id, models.User.is_active.is_(True))
+            .first()
+        )
+        if not owner:
+            raise HTTPException(400, "Responsable introuvable ou inactif")
+    if sale_order_id is not None:
+        if not db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_order_id).first():
+            raise HTTPException(404, "Devis converti introuvable")
+
+
+def _validate_activity_links(
+    db: Session,
+    client_id: int,
+    opportunity_id: Optional[int],
+) -> Optional[models.CRMOpportunity]:
+    if not db.query(models.Client).filter(models.Client.id == client_id).first():
+        raise HTTPException(404, "Client introuvable")
+    if opportunity_id is None:
+        return None
+    opportunity = _get_opportunity_or_404(db, opportunity_id)
+    if opportunity.client_id != client_id:
+        raise HTTPException(400, "L'activité et l'opportunité doivent appartenir au même client")
+    return opportunity
+
+
+@router.get("/opportunities", response_model=List[schemas.CRMOpportunityResponse])
+def list_crm_opportunities(
+    client_id: Optional[int] = None,
+    site_address_id: Optional[int] = None,
+    owner_user_id: Optional[int] = None,
+    sale_order_id: Optional[int] = None,
+    stage: Optional[schemas.CRMOpportunityStage] = None,
+    need_type: Optional[schemas.CRMNeedType] = None,
+    origin: Optional[str] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(models.CRMOpportunity)
+    if client_id is not None:
+        query = query.filter(models.CRMOpportunity.client_id == client_id)
+    if site_address_id is not None:
+        query = query.filter(models.CRMOpportunity.site_address_id == site_address_id)
+    if owner_user_id is not None:
+        query = query.filter(models.CRMOpportunity.owner_user_id == owner_user_id)
+    if sale_order_id is not None:
+        query = query.filter(models.CRMOpportunity.sale_order_id == sale_order_id)
+    if stage is not None:
+        query = query.filter(models.CRMOpportunity.stage == stage.value)
+    if need_type is not None:
+        query = query.filter(models.CRMOpportunity.need_type == need_type.value)
+    if origin:
+        query = query.filter(func.lower(models.CRMOpportunity.origin) == origin.strip().lower())
+    if search:
+        pattern = f"%{search.strip().lower()}%"
+        query = query.filter(
+            or_(
+                func.lower(models.CRMOpportunity.reference).like(pattern),
+                func.lower(models.CRMOpportunity.title).like(pattern),
+            )
+        )
+    return query.order_by(models.CRMOpportunity.created_at.desc()).all()
+
+
+@router.post(
+    "/opportunities",
+    response_model=schemas.CRMOpportunityResponse,
+    status_code=201,
+)
+def create_crm_opportunity(
+    item: schemas.CRMOpportunityCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    _validate_opportunity_links(
+        db,
+        item.client_id,
+        item.site_address_id,
+        item.owner_user_id,
+        item.sale_order_id,
+    )
+    if item.stage == schemas.CRMOpportunityStage.LOST and not (item.loss_reason or "").strip():
+        raise HTTPException(422, "Un motif de perte est obligatoire")
+    if item.sale_order_id and item.stage != schemas.CRMOpportunityStage.WON:
+        raise HTTPException(422, "Le devis converti ne peut être lié qu'à une opportunité gagnée")
+    now = utcnow()
+    opportunity = models.CRMOpportunity(
+        reference=f"OPP-TMP-{uuid.uuid4().hex}",
+        client_id=item.client_id,
+        site_address_id=item.site_address_id,
+        owner_user_id=item.owner_user_id,
+        sale_order_id=item.sale_order_id,
+        title=item.title.strip(),
+        origin=item.origin.strip() if item.origin else None,
+        need_type=item.need_type.value,
+        stage=item.stage.value,
+        estimated_amount=item.estimated_amount,
+        probability=item.probability,
+        next_milestone=item.next_milestone,
+        next_milestone_at=item.next_milestone_at,
+        expected_close_date=item.expected_close_date,
+        loss_reason=item.loss_reason,
+        won_at=now if item.stage == schemas.CRMOpportunityStage.WON else None,
+        lost_at=now if item.stage == schemas.CRMOpportunityStage.LOST else None,
+        created_by=current_user.get("sub", "Système"),
+    )
+    db.add(opportunity)
+    db.flush()
+    opportunity.reference = f"OPP-{now.year}-{opportunity.id:05d}"
+    db.commit()
+    db.refresh(opportunity)
+    return opportunity
+
+
+@router.get(
+    "/opportunities/{opportunity_id}",
+    response_model=schemas.CRMOpportunityResponse,
+)
+def get_crm_opportunity(opportunity_id: int, db: Session = Depends(get_db)):
+    return _get_opportunity_or_404(db, opportunity_id)
+
+
+@router.patch(
+    "/opportunities/{opportunity_id}",
+    response_model=schemas.CRMOpportunityResponse,
+)
+def update_crm_opportunity(
+    opportunity_id: int,
+    item: schemas.CRMOpportunityUpdate,
+    db: Session = Depends(get_db),
+):
+    opportunity = _get_opportunity_or_404(db, opportunity_id)
+    payload = item.model_dump(exclude_unset=True)
+    target_stage = payload.get("stage")
+    target_stage = target_stage.value if target_stage is not None else opportunity.stage
+    if target_stage != opportunity.stage:
+        if target_stage not in OPPORTUNITY_TRANSITIONS.get(opportunity.stage, set()):
+            raise HTTPException(
+                409,
+                f"Transition d'opportunité interdite: {opportunity.stage} → {target_stage}",
+            )
+    final_site_id = payload.get("site_address_id", opportunity.site_address_id)
+    final_owner_id = payload.get("owner_user_id", opportunity.owner_user_id)
+    final_sale_order_id = payload.get("sale_order_id", opportunity.sale_order_id)
+    _validate_opportunity_links(
+        db,
+        opportunity.client_id,
+        final_site_id,
+        final_owner_id,
+        final_sale_order_id,
+    )
+    final_loss_reason = payload.get("loss_reason", opportunity.loss_reason)
+    if target_stage == models.CRMOpportunityStage.LOST.value and not (final_loss_reason or "").strip():
+        raise HTTPException(422, "Un motif de perte est obligatoire")
+    if final_sale_order_id and target_stage != models.CRMOpportunityStage.WON.value:
+        raise HTTPException(422, "Le devis converti ne peut être lié qu'à une opportunité gagnée")
+    for field, value in payload.items():
+        if hasattr(value, "value"):
+            value = value.value
+        setattr(opportunity, field, value)
+    if target_stage == models.CRMOpportunityStage.WON.value and opportunity.won_at is None:
+        opportunity.won_at = utcnow()
+    if target_stage == models.CRMOpportunityStage.LOST.value and opportunity.lost_at is None:
+        opportunity.lost_at = utcnow()
+    if target_stage != models.CRMOpportunityStage.LOST.value:
+        opportunity.lost_at = None
+        opportunity.loss_reason = None
+    db.commit()
+    db.refresh(opportunity)
+    return opportunity
+
+
+@router.delete("/opportunities/{opportunity_id}", status_code=204)
+def delete_crm_opportunity(opportunity_id: int, db: Session = Depends(get_db)):
+    opportunity = _get_opportunity_or_404(db, opportunity_id)
+    db.delete(opportunity)
+    db.commit()
+
+
+@router.get("/activities", response_model=List[schemas.CRMActivityResponse])
+def list_crm_activities(
+    client_id: Optional[int] = None,
+    opportunity_id: Optional[int] = None,
+    activity_type: Optional[schemas.CRMActivityType] = None,
+    status: Optional[schemas.CRMActivityStatus] = None,
+    author: Optional[str] = None,
+    due_from: Optional[datetime] = None,
+    due_to: Optional[datetime] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(models.CRMActivity)
+    if client_id is not None:
+        query = query.filter(models.CRMActivity.client_id == client_id)
+    if opportunity_id is not None:
+        query = query.filter(models.CRMActivity.opportunity_id == opportunity_id)
+    if activity_type is not None:
+        query = query.filter(models.CRMActivity.activity_type == activity_type.value)
+    if status is not None:
+        query = query.filter(models.CRMActivity.status == status.value)
+    if author:
+        query = query.filter(func.lower(models.CRMActivity.author) == author.strip().lower())
+    if due_from is not None:
+        query = query.filter(models.CRMActivity.due_at >= due_from)
+    if due_to is not None:
+        query = query.filter(models.CRMActivity.due_at <= due_to)
+    if search:
+        pattern = f"%{search.strip().lower()}%"
+        query = query.filter(
+            or_(
+                func.lower(models.CRMActivity.subject).like(pattern),
+                func.lower(func.coalesce(models.CRMActivity.note, "")).like(pattern),
+            )
+        )
+    return query.order_by(models.CRMActivity.created_at.desc()).all()
+
+
+@router.post("/activities", response_model=schemas.CRMActivityResponse, status_code=201)
+def create_crm_activity(
+    item: schemas.CRMActivityCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    _validate_activity_links(db, item.client_id, item.opportunity_id)
+    activity = models.CRMActivity(
+        client_id=item.client_id,
+        opportunity_id=item.opportunity_id,
+        activity_type=item.activity_type.value,
+        subject=item.subject.strip(),
+        note=item.note,
+        due_at=item.due_at,
+        status=item.status.value,
+        author=current_user.get("sub", "Système"),
+        completed_at=utcnow() if item.status == schemas.CRMActivityStatus.COMPLETED else None,
+    )
+    db.add(activity)
+    db.commit()
+    db.refresh(activity)
+    return activity
+
+
+@router.get("/activities/{activity_id}", response_model=schemas.CRMActivityResponse)
+def get_crm_activity(activity_id: int, db: Session = Depends(get_db)):
+    return _get_activity_or_404(db, activity_id)
+
+
+@router.patch("/activities/{activity_id}", response_model=schemas.CRMActivityResponse)
+def update_crm_activity(
+    activity_id: int,
+    item: schemas.CRMActivityUpdate,
+    db: Session = Depends(get_db),
+):
+    activity = _get_activity_or_404(db, activity_id)
+    payload = item.model_dump(exclude_unset=True)
+    target_status = payload.get("status")
+    target_status = target_status.value if target_status is not None else activity.status
+    if target_status != activity.status:
+        if target_status not in ACTIVITY_TRANSITIONS.get(activity.status, set()):
+            raise HTTPException(
+                409,
+                f"Transition d'activité interdite: {activity.status} → {target_status}",
+            )
+    final_opportunity_id = payload.get("opportunity_id", activity.opportunity_id)
+    _validate_activity_links(db, activity.client_id, final_opportunity_id)
+    for field, value in payload.items():
+        if hasattr(value, "value"):
+            value = value.value
+        setattr(activity, field, value)
+    if target_status == models.CRMActivityStatus.COMPLETED.value and activity.completed_at is None:
+        activity.completed_at = utcnow()
+    if target_status != models.CRMActivityStatus.COMPLETED.value:
+        activity.completed_at = None
+    db.commit()
+    db.refresh(activity)
+    return activity
+
+
+@router.delete("/activities/{activity_id}", status_code=204)
+def delete_crm_activity(activity_id: int, db: Session = Depends(get_db)):
+    activity = _get_activity_or_404(db, activity_id)
+    db.delete(activity)
+    db.commit()
+
+
 @router.get("/sites", response_model=List[schemas.ClientSiteAddressResponse])
 def list_client_sites(client_id: int, db: Session = Depends(get_db)):
     client = db.query(models.Client).filter(models.Client.id == client_id).first()
@@ -311,12 +688,15 @@ def update_client_site(
 @router.get("/missions", response_model=List[schemas.MeasureMissionResponse])
 def list_measure_missions(
     client_id: Optional[int] = None,
+    opportunity_id: Optional[int] = None,
     status: Optional[schemas.MeasureMissionStatus] = None,
     db: Session = Depends(get_db),
 ):
     query = db.query(models.MeasureMission)
     if client_id:
         query = query.filter(models.MeasureMission.client_id == client_id)
+    if opportunity_id:
+        query = query.filter(models.MeasureMission.opportunity_id == opportunity_id)
     if status:
         query = query.filter(models.MeasureMission.status == status.value)
     missions = query.order_by(models.MeasureMission.created_at.desc()).all()
@@ -333,8 +713,20 @@ def create_measure_mission(
     if not client:
         raise HTTPException(404, "Client introuvable")
     site = _resolve_site(db, item.client_id, item.site_address_id, item.site)
+    opportunity = None
+    if item.opportunity_id:
+        opportunity = _get_opportunity_or_404(db, item.opportunity_id)
+        if opportunity.client_id != item.client_id:
+            raise HTTPException(400, "La mission et l'opportunité doivent appartenir au même client")
     if item.sale_order_id and not db.query(models.SaleOrder).filter(models.SaleOrder.id == item.sale_order_id).first():
         raise HTTPException(404, "Devis introuvable")
+    if (
+        opportunity
+        and opportunity.sale_order_id
+        and item.sale_order_id
+        and opportunity.sale_order_id != item.sale_order_id
+    ):
+        raise HTTPException(400, "Le devis de la mission diffère de celui de l'opportunité")
     if item.assigned_user_id:
         assigned_user = db.query(models.User).filter(models.User.id == item.assigned_user_id).first()
         if not assigned_user or not assigned_user.is_active:
@@ -359,6 +751,7 @@ def create_measure_mission(
         reference=next_number(db, "measure_mission"),
         client_id=item.client_id,
         site_address_id=site.id if site else None,
+        opportunity_id=item.opportunity_id,
         sale_order_id=item.sale_order_id,
         assigned_user_id=item.assigned_user_id,
         status=item.status.value,
@@ -394,10 +787,29 @@ def update_measure_mission(
     payload = item.model_dump(exclude_unset=True)
     site_data = payload.pop("site", None)
     site_address_id = payload.pop("site_address_id", None)
+    opportunity_marker = object()
+    opportunity_id = payload.pop("opportunity_id", opportunity_marker)
     if site_data is not None or site_address_id is not None:
         site_schema = schemas.ClientSiteAddressCreate(**site_data) if site_data else None
         site = _resolve_site(db, mission.client_id, site_address_id, site_schema)
         mission.site_address_id = site.id if site else None
+    if opportunity_id is not opportunity_marker:
+        if opportunity_id is None:
+            mission.opportunity_id = None
+        else:
+            opportunity = _get_opportunity_or_404(db, opportunity_id)
+            if opportunity.client_id != mission.client_id:
+                raise HTTPException(
+                    400,
+                    "La mission et l'opportunité doivent appartenir au même client",
+                )
+            if (
+                opportunity.sale_order_id
+                and mission.sale_order_id
+                and opportunity.sale_order_id != mission.sale_order_id
+            ):
+                raise HTTPException(400, "Le devis de la mission diffère de celui de l'opportunité")
+            mission.opportunity_id = opportunity.id
     if "assigned_user_id" in payload and payload["assigned_user_id"] is not None:
         assigned_user = (
             db.query(models.User)

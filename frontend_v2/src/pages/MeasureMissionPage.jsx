@@ -145,6 +145,7 @@ export default function MeasureMissionPage() {
     const [openingForm, setOpeningForm] = useState(emptyOpening);
     const [planForm, setPlanForm] = useState({
         client_id: searchParams.get('clientId') || '',
+        opportunity_id: searchParams.get('opportunityId') || '',
         source_type: searchParams.get('source') || 'SITE_VISIT',
         project_scope: searchParams.get('scope') || 'SUPPLY_AND_INSTALL',
         site_address_id: searchParams.get('siteId') || '',
@@ -196,6 +197,7 @@ export default function MeasureMissionPage() {
                     setPlanForm(current => ({
                         ...current,
                         client_id: response.data.client_id,
+                        opportunity_id: response.data.opportunity_id || '',
                         site_address_id: response.data.site_address_id || '',
                         assigned_user_id: response.data.assigned_user_id || '',
                         source_type: response.data.source_type,
@@ -274,6 +276,7 @@ export default function MeasureMissionPage() {
         try {
             const payload = {
                 client_id: Number(planForm.client_id),
+                opportunity_id: planForm.opportunity_id ? Number(planForm.opportunity_id) : null,
                 source_type: planForm.source_type,
                 project_scope: planForm.project_scope,
                 assigned_user_id: planForm.assigned_user_id ? Number(planForm.assigned_user_id) : null,
