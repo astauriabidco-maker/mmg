@@ -1,9 +1,9 @@
 {
-  "name": "MMG Atelier Connecte",
-  "short_name": "MMG Atelier",
-  "description": "Postes atelier, CRM, stock et suivi de production MMG.",
+  "name": "MMG Operations",
+  "short_name": "MMG",
+  "description": "Stock mobile, postes atelier et suivi des opérations MMG.",
   "id": "/",
-  "start_url": "/login",
+  "start_url": "/login?source=pwa",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
@@ -38,20 +38,21 @@
   ],
   "shortcuts": [
     {
+      "name": "Stock mobile",
+      "short_name": "Stock",
+      "description": "Scanner, réceptionner, déplacer et compter le stock.",
+      "url": "/stock-mobile",
+      "icons": [{ "src": "/icons/mmg-icon-192.png", "sizes": "192x192" }]
+    },
+    {
       "name": "Atelier",
       "short_name": "Atelier",
       "url": "/dashboard",
       "icons": [{ "src": "/icons/mmg-icon-192.png", "sizes": "192x192" }]
     },
     {
-      "name": "Manager",
-      "short_name": "Manager",
-      "url": "/manager",
-      "icons": [{ "src": "/icons/mmg-icon-192.png", "sizes": "192x192" }]
-    },
-    {
-      "name": "Stock",
-      "short_name": "Stock",
+      "name": "Stock bureau",
+      "short_name": "Stock bureau",
       "url": "/stock",
       "icons": [{ "src": "/icons/mmg-icon-192.png", "sizes": "192x192" }]
     }

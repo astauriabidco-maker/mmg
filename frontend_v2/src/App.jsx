@@ -12,6 +12,7 @@ const MMGDossiers = lazy(() => import('./pages/MMGDossiers'));
 const MeasureMissionPage = lazy(() => import('./pages/MeasureMissionPage'));
 const POSDashboard = lazy(() => import('./pages/POSDashboard'));
 const StockDashboard = lazy(() => import('./pages/StockDashboard'));
+const StockMobileDashboard = lazy(() => import('./pages/StockMobileDashboard'));
 const ClientPortal = lazy(() => import('./pages/ClientPortal'));
 const DriverDashboard = lazy(() => import('./pages/DriverDashboard'));
 
@@ -131,6 +132,14 @@ export default function App() {
                                 element={
                                     <ProtectedRoute>
                                         <StockDashboard />
+                                    </ProtectedRoute>
+                                }
+                            />
+                            <Route
+                                path="/stock-mobile"
+                                element={
+                                    <ProtectedRoute>
+                                        <StockMobileDashboard />
                                     </ProtectedRoute>
                                 }
                             />
