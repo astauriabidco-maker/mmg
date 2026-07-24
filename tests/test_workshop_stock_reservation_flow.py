@@ -22,6 +22,30 @@ def _auth_headers(session_factory, username: str, role: str = "ADMIN") -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _prepare_and_handover(client: TestClient, headers: dict, reservation: dict) -> dict:
+    create_response = client.post(
+        "/v2/stock/workshop-preparations",
+        headers=headers,
+        json={"reservation_id": reservation["id"]},
+    )
+    assert create_response.status_code == 200, create_response.text
+    preparation = create_response.json()
+    for line in preparation["lines"]:
+        update_response = client.patch(
+            f"/v2/stock/workshop-preparations/{preparation['id']}/lines/{line['id']}",
+            headers=headers,
+            json={"prepared_quantity": line["planned_quantity"]},
+        )
+        assert update_response.status_code == 200, update_response.text
+        preparation = update_response.json()
+    handover_response = client.post(
+        f"/v2/stock/workshop-preparations/{preparation['id']}/handover",
+        headers=headers,
+    )
+    assert handover_response.status_code == 200, handover_response.text
+    return preparation
+
+
 def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
     engine = create_engine(
         "sqlite:///:memory:",
@@ -114,6 +138,24 @@ def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
             assert quant.quantity == 5
             assert variant.quantity_in_stock == 5
 
+        _prepare_and_handover(client, headers, reservation)
+
+        with TestingSessionLocal() as db:
+            source_quant = (
+                db.query(models.StockQuant)
+                .join(models.StockLocation)
+                .filter(models.StockLocation.name == "WH/Stock")
+                .one()
+            )
+            staging_quant = (
+                db.query(models.StockQuant)
+                .join(models.StockLocation)
+                .filter(models.StockLocation.name == "ATELIER/Préparation")
+                .one()
+            )
+            assert source_quant.quantity == 2
+            assert staging_quant.quantity == 3
+
         consume_response = client.post(
             f"/v2/stock/workshop-debits/reservations/{reservation['id']}/consume",
             headers=headers,
@@ -129,18 +171,28 @@ def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
                 .filter(models.StockLocation.name == "Production Ateliers")
                 .one()
             )
+            staging_quant = (
+                db.query(models.StockQuant)
+                .join(models.StockLocation)
+                .filter(models.StockLocation.name == "ATELIER/Préparation")
+                .one()
+            )
             variant = db.query(models.ProductVariant).one()
-            move = db.query(models.StockMove).one()
+            moves = db.query(models.StockMove).order_by(models.StockMove.id).all()
             reservation_db = db.query(models.StockReservation).one()
+            preparation_db = db.query(models.WorkshopPreparation).one()
 
         assert source_quant.quantity == 2
+        assert staging_quant.quantity == 0
         assert dest_quant.quantity == 3
         assert variant.quantity_in_stock == 2
-        assert move.quantity == 3
-        assert move.reference.startswith("DEBIT-ATELIER-")
-        assert "Débit atelier réel" in move.notes
-        assert "DEV-ATELIER-1" in move.notes
+        assert len(moves) == 2
+        assert moves[0].reference.startswith("BPA-")
+        assert moves[1].reference.startswith("DEBIT-ATELIER-")
+        assert "Débit atelier réel" in moves[1].notes
+        assert "DEV-ATELIER-1" in moves[1].notes
         assert reservation_db.status == "consumed"
+        assert preparation_db.status == "consumed"
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)

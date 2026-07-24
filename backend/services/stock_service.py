@@ -155,10 +155,10 @@ class InventoryService:
         """
         if not source_location or source_location.usage != "internal":
             return
-        if document_type == "stock_reservation":
+        if document_type in {"stock_reservation", "workshop_preparation"}:
             # Consommation/retour de réservation : le réservé de cette
-            # réservation est légitimement prélevé, le re-contrôle amont a
-            # déjà arbitré.
+            # réservation est légitimement prélevé. La préparation atelier
+            # déplace ce réservé vers une zone interne dédiée.
             return
         from .stock_reservations import active_reserved_quantity
 

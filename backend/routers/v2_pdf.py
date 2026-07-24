@@ -62,6 +62,138 @@ def _variant_reference(line: models.SaleOrderLine) -> str:
     return product.reference_base if product else ""
 
 
+@router.get("/workshop-preparation/{preparation_id}")
+def generate_workshop_preparation_pdf(preparation_id: int, db: Session = Depends(get_db)):
+    preparation = (
+        db.query(models.WorkshopPreparation)
+        .options(
+            joinedload(models.WorkshopPreparation.lines)
+            .joinedload(models.WorkshopPreparationLine.variant)
+            .joinedload(models.ProductVariant.product),
+            joinedload(models.WorkshopPreparation.reservation),
+            joinedload(models.WorkshopPreparation.source_location),
+            joinedload(models.WorkshopPreparation.destination_location),
+        )
+        .filter(models.WorkshopPreparation.id == preparation_id)
+        .first()
+    )
+    if not preparation:
+        raise HTTPException(status_code=404, detail="Bon de préparation introuvable")
+
+    styles = getSampleStyleSheet()
+    normal = styles["Normal"]
+    muted = ParagraphStyle(
+        name="WorkshopPreparationMuted",
+        parent=normal,
+        fontSize=9,
+        textColor=colors.HexColor("#64748b"),
+    )
+    title = ParagraphStyle(
+        name="WorkshopPreparationTitle",
+        parent=styles["Heading1"],
+        fontSize=22,
+        textColor=colors.HexColor("#0f172a"),
+        spaceAfter=10,
+    )
+    status_labels = {
+        "draft": "En préparation",
+        "ready": "Prêt à remettre",
+        "handed_over": "Remis à l'atelier",
+        "consumed": "Consommé au débit réel",
+        "returned": "Retourné au magasin",
+        "cancelled": "Annulé",
+    }
+    context_reference = (
+        preparation.reservation.order_reference
+        or preparation.reservation.project_reference
+        or preparation.reservation.reference
+    )
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+    elements = [
+        Table(
+            [[
+                Paragraph("<b>MMG MENUISERIES</b><br/>Magasin & production", normal),
+                Paragraph(
+                    f"<b>BON DE PRÉPARATION ATELIER</b><br/>"
+                    f"Réf: {escape(preparation.reference)}<br/>"
+                    f"Statut: {escape(status_labels.get(preparation.status, preparation.status))}",
+                    normal,
+                ),
+            ]],
+            colWidths=[300, 200],
+            style=[("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT")],
+        ),
+        Spacer(1, 24),
+        Paragraph(f"BON N° {escape(preparation.reference)}", title),
+        Paragraph("Mise à disposition interne. Ce document ne constitue pas encore un débit réel de matière.", muted),
+        Spacer(1, 18),
+        Table(
+            [[
+                Paragraph(
+                    f"<b>Commande / ordre</b><br/>{escape(context_reference or '-')}<br/>"
+                    f"Réservation: {escape(preparation.reservation.reference)}",
+                    normal,
+                ),
+                Paragraph(
+                    f"<b>Parcours physique</b><br/>{escape(preparation.source_location.name)}"
+                    f" → {escape(preparation.destination_location.name)}<br/>"
+                    f"Créé par: {escape(preparation.created_by or '-')}",
+                    normal,
+                ),
+            ]],
+            colWidths=[250, 250],
+            style=[
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                ("PADDING", (0, 0), (-1, -1), 10),
+            ],
+        ),
+        Spacer(1, 20),
+    ]
+    rows = [["Référence", "Désignation", "Prévu", "Préparé", "Statut"]]
+    for line in preparation.lines:
+        variant = line.variant
+        product = variant.product if variant else None
+        rows.append([
+            escape((variant.reference if variant else "") or "-"),
+            Paragraph(escape((product.name if product else "") or "Article stock"), normal),
+            f"{float(line.planned_quantity or 0):g}",
+            f"{float(line.prepared_quantity or 0):g}",
+            escape(line.status or ""),
+        ])
+    lines_table = Table(rows, colWidths=[105, 205, 60, 60, 80], repeatRows=1)
+    lines_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.extend([
+        lines_table,
+        Spacer(1, 24),
+        Paragraph(
+            f"<b>Remis par :</b> {escape(preparation.handed_over_by or '________________')} &nbsp;&nbsp;&nbsp; "
+            f"<b>Reçu à l'atelier par :</b> ______________________________",
+            normal,
+        ),
+    ])
+    doc.build(elements)
+    pdf_value = buffer.getvalue()
+    buffer.close()
+    return Response(
+        content=pdf_value,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={preparation.reference}.pdf"},
+    )
+
+
 @router.get("/quote/{sale_id}")
 def generate_quote_pdf(sale_id: int, db: Session = Depends(get_db)):
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_id).first()

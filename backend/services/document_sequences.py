@@ -34,6 +34,7 @@ DOC_KIND_FORMATS = {
     "supplier_invoice": ("FF", 4), # Factures fourn.:    FF-YYYY-XXXX
     "supplier_dispute": ("LIT", 4), # Litiges fourn.:     LIT-YYYY-XXXX
     "delivery_note": ("BL", 4),    # Bons de livraison : BL-YYYY-XXXX
+    "workshop_preparation": ("BPA", 4), # Préparations atelier : BPA-YYYY-XXXX
     "mmg": ("MMG", 5),             # Dossiers MMG :      MMG-YYYY-XXXXX
     "measure_mission": ("MET", 5), # Missions de métré : MET-YYYY-XXXXX
 }
@@ -48,6 +49,7 @@ DOC_KIND_MODELS = {
     "supplier_invoice": models.SupplierInvoice,
     "supplier_dispute": models.SupplierDispute,
     "delivery_note": models.DeliveryNote,
+    "workshop_preparation": models.WorkshopPreparation,
     "mmg": models.MMG,
     "measure_mission": models.MeasureMission,
 }

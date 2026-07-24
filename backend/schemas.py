@@ -666,6 +666,52 @@ class StockReservationResponse(BaseModel):
     lines: List[StockReservationLineResponse] = []
     model_config = ConfigDict(from_attributes=True)
 
+
+class WorkshopPreparationCreate(BaseModel):
+    reservation_id: int
+    destination_location_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class WorkshopPreparationLineUpdate(BaseModel):
+    prepared_quantity: float
+
+
+class WorkshopPreparationLineResponse(BaseModel):
+    id: int
+    reservation_line_id: int
+    variant_id: int
+    planned_quantity: float
+    prepared_quantity: float
+    transferred_quantity: float
+    returned_quantity: float
+    status: str
+    variant: Optional[ProductVariantResponse] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WorkshopPreparationResponse(BaseModel):
+    id: int
+    reference: str
+    reservation_id: int
+    sale_order_id: Optional[int] = None
+    production_order_id: Optional[int] = None
+    source_location_id: int
+    destination_location_id: int
+    status: str
+    notes: Optional[str] = None
+    created_by: str
+    created_at: datetime
+    handed_over_by: Optional[str] = None
+    handed_over_at: Optional[datetime] = None
+    returned_by: Optional[str] = None
+    returned_at: Optional[datetime] = None
+    source_location: Optional[StockLocationResponse] = None
+    destination_location: Optional[StockLocationResponse] = None
+    lines: List[WorkshopPreparationLineResponse] = []
+    model_config = ConfigDict(from_attributes=True)
+
+
 class WorkshopDebitPreviewResponse(BaseModel):
     summary: dict
     issues: list

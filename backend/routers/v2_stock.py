@@ -24,6 +24,14 @@ from ..services.stock_reservations import (
     create_reservation,
 )
 from ..services.stock_service import InventoryService
+from ..services.workshop_preparations import (
+    cancel_preparation,
+    create_preparation,
+    hand_over_preparation,
+    load_preparation,
+    return_preparation,
+    update_prepared_quantity,
+)
 from scripts.import_workshop_debits import parse_file
 from ..core.time import utcnow
 
@@ -1426,6 +1434,148 @@ def list_workshop_reservations(
         query = query.filter(models.StockReservation.status == status)
     return query.limit(50).all()
 
+
+@router.get("/workshop-preparations", response_model=List[schemas.WorkshopPreparationResponse])
+def list_workshop_preparations(
+    status: Optional[str] = None,
+    reservation_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    query = (
+        db.query(models.WorkshopPreparation)
+        .options(
+            joinedload(models.WorkshopPreparation.lines)
+            .joinedload(models.WorkshopPreparationLine.variant)
+            .joinedload(models.ProductVariant.product),
+            joinedload(models.WorkshopPreparation.source_location),
+            joinedload(models.WorkshopPreparation.destination_location),
+        )
+        .order_by(models.WorkshopPreparation.created_at.desc())
+    )
+    if status:
+        query = query.filter(models.WorkshopPreparation.status == status)
+    if reservation_id:
+        query = query.filter(models.WorkshopPreparation.reservation_id == reservation_id)
+    return query.limit(100).all()
+
+
+@router.post("/workshop-preparations", response_model=schemas.WorkshopPreparationResponse)
+def create_workshop_preparation(
+    payload: schemas.WorkshopPreparationCreate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "stock.transfer")
+    reservation = (
+        db.query(models.StockReservation)
+        .options(joinedload(models.StockReservation.lines))
+        .filter(models.StockReservation.id == payload.reservation_id)
+        .first()
+    )
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Réservation introuvable.")
+    try:
+        preparation = create_preparation(
+            db,
+            reservation=reservation,
+            destination_location_id=payload.destination_location_id,
+            notes=payload.notes,
+            author=_actor(user),
+        )
+        db.commit()
+        return load_preparation(db, preparation.id) or preparation
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch(
+    "/workshop-preparations/{preparation_id}/lines/{line_id}",
+    response_model=schemas.WorkshopPreparationResponse,
+)
+def update_workshop_preparation_line(
+    preparation_id: int,
+    line_id: int,
+    payload: schemas.WorkshopPreparationLineUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "stock.transfer")
+    preparation = load_preparation(db, preparation_id, for_update=True)
+    if not preparation:
+        raise HTTPException(status_code=404, detail="Bon de préparation introuvable.")
+    try:
+        update_prepared_quantity(db, preparation, line_id, payload.prepared_quantity)
+        db.commit()
+        return load_preparation(db, preparation.id) or preparation
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/workshop-preparations/{preparation_id}/handover")
+def hand_over_workshop_preparation(
+    preparation_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "stock.transfer")
+    preparation = load_preparation(db, preparation_id, for_update=True)
+    if not preparation:
+        raise HTTPException(status_code=404, detail="Bon de préparation introuvable.")
+    try:
+        stats = hand_over_preparation(db, preparation, author=_actor(user))
+        db.commit()
+        return {"status": "success", "reference": preparation.reference, **stats}
+    except InsufficientStockAtConsumptionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        db.rollback()
+        status_code = 423 if "Zone gelée" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
+@router.post("/workshop-preparations/{preparation_id}/return")
+def return_workshop_preparation(
+    preparation_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "stock.transfer")
+    preparation = load_preparation(db, preparation_id, for_update=True)
+    if not preparation:
+        raise HTTPException(status_code=404, detail="Bon de préparation introuvable.")
+    try:
+        stats = return_preparation(db, preparation, author=_actor(user))
+        db.commit()
+        return {"status": "success", "reference": preparation.reference, **stats}
+    except ValueError as exc:
+        db.rollback()
+        status_code = 423 if "Zone gelée" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
+@router.post("/workshop-preparations/{preparation_id}/cancel")
+def cancel_workshop_preparation(
+    preparation_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "stock.transfer")
+    preparation = load_preparation(db, preparation_id, for_update=True)
+    if not preparation:
+        raise HTTPException(status_code=404, detail="Bon de préparation introuvable.")
+    try:
+        cancel_preparation(db, preparation)
+        db.commit()
+        return {"status": "success", "reference": preparation.reference}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/workshop-debits/reservations/{reservation_id}/consume")
 def consume_workshop_reservation(
     reservation_id: int,
@@ -1467,9 +1617,13 @@ def cancel_workshop_reservation(
     )
     if not reservation:
         raise HTTPException(status_code=404, detail="Réservation introuvable.")
-    stats = cancel_reservation(db, reservation)
-    db.commit()
-    return {"status": "success", **stats}
+    try:
+        stats = cancel_reservation(db, reservation)
+        db.commit()
+        return {"status": "success", **stats}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @router.get("/locations", response_model=List[schemas.StockLocationResponse])
 def get_locations(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):

@@ -108,6 +108,7 @@ export default function StockDashboard() {
     const { data: quants = [], isLoading: loadingQuants } = useQuery({ queryKey: ['quants'], queryFn: async () => { const res = await api.get('/v2/stock/quants'); return res.data; }});
     const { data: transactions = [], isLoading: loadingTransactions } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const res = await api.get('/v2/stock/transactions'); return res.data; }});
     const { data: reservations = [] } = useQuery({ queryKey: ['workshop-reservations'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/reservations?status=reserved'); return res.data; }});
+    const { data: workshopPreparations = [] } = useQuery({ queryKey: ['workshop-preparations'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-preparations'); return res.data; }});
     const { data: workshopContexts = { sales: [], production_orders: [] } } = useQuery({ queryKey: ['workshop-debit-contexts'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/contexts'); return res.data; }});
     const { data: inventorySessions = [] } = useQuery({ queryKey: ['inventory-sessions'], queryFn: async () => { const res = await api.get('/v2/stock/inventory-sessions'); return res.data; }});
     const { data: purchases = [] } = useQuery({ queryKey: ['purchases'], queryFn: async () => { const res = await api.get('/v2/purchases/'); return res.data; }});
@@ -811,9 +812,68 @@ export default function StockDashboard() {
 
     const refreshWorkshopReservationState = async () => {
         await queryClient.invalidateQueries({ queryKey: ['workshop-reservations'] });
+        await queryClient.invalidateQueries({ queryKey: ['workshop-preparations'] });
         await queryClient.invalidateQueries({ queryKey: ['products'] });
         await queryClient.invalidateQueries({ queryKey: ['quants'] });
         await queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    };
+
+    const createWorkshopPreparation = async (reservation) => {
+        setReservationActionId(reservation.id);
+        try {
+            const res = await api.post('/v2/stock/workshop-preparations', {
+                reservation_id: reservation.id,
+            });
+            alert(`Bon ${res.data.reference} créé. Préparez ou scannez toutes les lignes avant la remise.`);
+            await refreshWorkshopReservationState();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Création du bon impossible.");
+        } finally {
+            setReservationActionId(null);
+        }
+    };
+
+    const prepareAllWorkshopLines = async (reservation, preparation) => {
+        if (!window.confirm(`Marquer toutes les lignes du bon ${preparation.reference} comme préparées ?`)) return;
+        setReservationActionId(reservation.id);
+        try {
+            for (const line of preparation.lines || []) {
+                await api.patch(`/v2/stock/workshop-preparations/${preparation.id}/lines/${line.id}`, {
+                    prepared_quantity: line.planned_quantity,
+                });
+            }
+            await refreshWorkshopReservationState();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Préparation des lignes impossible.");
+        } finally {
+            setReservationActionId(null);
+        }
+    };
+
+    const handOverWorkshopPreparation = async (reservation, preparation) => {
+        if (!window.confirm(`Remettre le bon ${preparation.reference} à l'atelier ? Le stock sera transféré vers la zone de préparation, sans être consommé.`)) return;
+        setReservationActionId(reservation.id);
+        try {
+            await api.post(`/v2/stock/workshop-preparations/${preparation.id}/handover`);
+            await refreshWorkshopReservationState();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Remise atelier impossible.");
+        } finally {
+            setReservationActionId(null);
+        }
+    };
+
+    const returnWorkshopPreparation = async (reservation, preparation) => {
+        if (!window.confirm(`Retourner intégralement le bon ${preparation.reference} au magasin avant débit ?`)) return;
+        setReservationActionId(reservation.id);
+        try {
+            await api.post(`/v2/stock/workshop-preparations/${preparation.id}/return`);
+            await refreshWorkshopReservationState();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Retour magasin impossible.");
+        } finally {
+            setReservationActionId(null);
+        }
     };
 
     const consumeWorkshopReservation = async (reservation) => {
@@ -2499,7 +2559,7 @@ export default function StockDashboard() {
                                             Débit atelier
                                         </h2>
                                         <p className="text-sm font-bold text-slate-600 mt-1 max-w-3xl">
-                                            Prévisualisez les fichiers Progers / Orgadata, réservez virtuellement le stock, puis transformez la réservation en débit réel au poste atelier.
+                                            Réservez les matières, préparez le bon magasin, remettez-les à l’atelier, puis consommez-les seulement au débit réel.
                                         </p>
                                     </div>
                                     {stockPermissions.reserveWorkshop && (
@@ -2517,12 +2577,12 @@ export default function StockDashboard() {
                                     <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
                                         <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">Réservations ouvertes</p>
                                         <p className="text-3xl font-black text-amber-800 mt-2">{reservations.length}</p>
-                                        <p className="text-xs font-bold text-amber-700 mt-1">À consommer ou à annuler.</p>
+                                        <p className="text-xs font-bold text-amber-700 mt-1">À préparer, remettre, consommer ou annuler.</p>
                                     </div>
                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                                         <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Règle</p>
-                                        <p className="text-lg font-black text-slate-950 mt-2">Réserver avant débit réel</p>
-                                        <p className="text-xs font-bold text-slate-500 mt-1">Le stock physique ne baisse qu’au débit réel atelier.</p>
+                                        <p className="text-lg font-black text-slate-950 mt-2">Remise interne avant débit</p>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">La remise déplace le stock en zone atelier. Le débit réel le consomme.</p>
                                     </div>
                                     <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
                                         <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Contrôle</p>
@@ -2542,16 +2602,69 @@ export default function StockDashboard() {
                                             <div className="divide-y divide-slate-200">
                                                 {reservations.map(reservation => {
                                                     const totalReserved = reservation.lines?.reduce((sum, line) => sum + (line.reserved_quantity || 0), 0) || 0;
+                                                    const preparation = workshopPreparations.find(item => item.reservation_id === reservation.id);
+                                                    const preparedQuantity = preparation?.lines?.reduce((sum, line) => sum + Number(line.prepared_quantity || 0), 0) || 0;
+                                                    const preparationStatus = {
+                                                        draft: 'En préparation',
+                                                        ready: 'Prêt à remettre',
+                                                        handed_over: 'Remis à l’atelier',
+                                                        consumed: 'Consommé',
+                                                        returned: 'Retourné au magasin',
+                                                        cancelled: 'Annulé',
+                                                    }[preparation?.status] || 'Bon à créer';
                                                     return (
                                                         <div key={reservation.id} className="p-5 flex flex-wrap items-center justify-between gap-4 bg-white">
                                                             <div>
                                                                 <p className="font-black text-slate-950">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
                                                                 <p className="text-sm font-bold text-slate-500 mt-1">{reservation.lines?.length || 0} ligne(s) - {totalReserved.toLocaleString('fr-FR')} réservé</p>
+                                                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                                                    <span className={`rounded-lg px-2 py-1 text-[10px] font-black uppercase ${
+                                                                        preparation?.status === 'handed_over'
+                                                                            ? 'bg-blue-50 text-blue-700'
+                                                                            : preparation?.status === 'ready'
+                                                                                ? 'bg-emerald-50 text-emerald-700'
+                                                                                : 'bg-amber-50 text-amber-700'
+                                                                    }`}>
+                                                                        {preparation?.reference ? `${preparation.reference} · ${preparationStatus}` : preparationStatus}
+                                                                    </span>
+                                                                    {preparation && (
+                                                                        <span className="text-xs font-bold text-slate-500">
+                                                                            {preparedQuantity.toLocaleString('fr-FR')} / {totalReserved.toLocaleString('fr-FR')} préparé
+                                                                        </span>
+                                                                    )}
+                                                                </div>
                                                             </div>
                                                             <div className="flex gap-2">
-                                                                <button onClick={() => consumeWorkshopReservation(reservation)} disabled={!stockPermissions.consumeWorkshop || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white text-sm font-black">
-                                                                    Débit réel
-                                                                </button>
+                                                                {!preparation && (
+                                                                    <button onClick={() => createWorkshopPreparation(reservation)} disabled={!stockPermissions.transfer || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white text-sm font-black">
+                                                                        Créer bon atelier
+                                                                    </button>
+                                                                )}
+                                                                {preparation?.status === 'draft' && (
+                                                                    <button onClick={() => prepareAllWorkshopLines(reservation, preparation)} disabled={!stockPermissions.transfer || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:bg-slate-300 text-white text-sm font-black">
+                                                                        Préparer toutes les lignes
+                                                                    </button>
+                                                                )}
+                                                                {preparation?.status === 'ready' && (
+                                                                    <button onClick={() => handOverWorkshopPreparation(reservation, preparation)} disabled={!stockPermissions.transfer || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white text-sm font-black">
+                                                                        Remettre à l’atelier
+                                                                    </button>
+                                                                )}
+                                                                {preparation?.status === 'handed_over' && (
+                                                                    <>
+                                                                        <button onClick={() => consumeWorkshopReservation(reservation)} disabled={!stockPermissions.consumeWorkshop || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white text-sm font-black">
+                                                                            Débit réel
+                                                                        </button>
+                                                                        <button onClick={() => returnWorkshopPreparation(reservation, preparation)} disabled={!stockPermissions.transfer || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 disabled:bg-slate-100 text-slate-700 text-sm font-black border border-slate-200">
+                                                                            Retour magasin
+                                                                        </button>
+                                                                    </>
+                                                                )}
+                                                                {preparation && (
+                                                                    <button onClick={() => downloadFileWithFeedback(`/v2/pdf/workshop-preparation/${preparation.id}`, `${preparation.reference}.pdf`)} className="px-3 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-sm font-black border border-slate-200" title="Télécharger le bon PDF">
+                                                                        <Download className="w-4 h-4" />
+                                                                    </button>
+                                                                )}
                                                                 <button onClick={() => cancelWorkshopReservation(reservation)} disabled={!stockPermissions.reserveWorkshop || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 disabled:bg-slate-100 text-slate-700 text-sm font-black border border-slate-200">
                                                                     Annuler
                                                                 </button>

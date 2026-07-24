@@ -125,6 +125,32 @@ def _reserve(client: TestClient, headers: dict, sale_id: int, source_location: s
     )
 
 
+def _prepare(client: TestClient, headers: dict, reservation: dict) -> dict:
+    response = client.post(
+        "/v2/stock/workshop-preparations",
+        headers=headers,
+        json={"reservation_id": reservation["id"]},
+    )
+    assert response.status_code == 200, response.text
+    preparation = response.json()
+    for line in preparation["lines"]:
+        response = client.patch(
+            f"/v2/stock/workshop-preparations/{preparation['id']}/lines/{line['id']}",
+            headers=headers,
+            json={"prepared_quantity": line["planned_quantity"]},
+        )
+        assert response.status_code == 200, response.text
+        preparation = response.json()
+    return preparation
+
+
+def _handover(client: TestClient, headers: dict, preparation: dict):
+    return client.post(
+        f"/v2/stock/workshop-preparations/{preparation['id']}/handover",
+        headers=headers,
+    )
+
+
 def test_reservation_is_anchored_to_source_location(stock_client):
     client, TestingSessionLocal = stock_client
     headers = _admin_headers(TestingSessionLocal)
@@ -159,6 +185,10 @@ def test_reservation_is_anchored_to_source_location(stock_client):
     assert reservation["location_id"] == rack_id
     assert reservation["location_id"] != wh_id
     assert reservation["lines"][0]["reserved_quantity"] == 3
+
+    preparation = _prepare(client, headers, reservation)
+    handover_response = _handover(client, headers, preparation)
+    assert handover_response.status_code == 200, handover_response.text
 
     consume_response = client.post(
         f"/v2/stock/workshop-debits/reservations/{reservation['id']}/consume",
@@ -220,9 +250,11 @@ def test_consume_returns_409_when_stock_taken_in_between(stock_client):
     reserve_response = _reserve(client, headers, sale_id, source_location="WH/Stock")
     assert reserve_response.status_code == 200, reserve_response.text
     reservation = reserve_response.json()
+    preparation = _prepare(client, headers, reservation)
 
     # Un autre flux (vente comptoir, ajustement…) prélève 4 barres entre la
-    # réservation et le débit : il ne reste qu'1 barre physique pour 3 réservées.
+    # réservation et la remise atelier : il ne reste qu'1 barre physique pour
+    # les 3 préparées.
     with TestingSessionLocal() as db:
         customer = db.query(models.StockLocation).filter_by(name="Partner/Customer").first()
         if not customer:
@@ -242,12 +274,9 @@ def test_consume_returns_409_when_stock_taken_in_between(stock_client):
         )
         db.commit()
 
-    consume_response = client.post(
-        f"/v2/stock/workshop-debits/reservations/{reservation['id']}/consume",
-        headers=headers,
-    )
-    assert consume_response.status_code == 409, consume_response.text
-    detail = consume_response.json()["detail"]
+    handover_response = _handover(client, headers, preparation)
+    assert handover_response.status_code == 409, handover_response.text
+    detail = handover_response.json()["detail"]
     assert "Stock insuffisant" in detail
     assert "WH/Stock" in detail
     assert "manquant 2" in detail
@@ -255,12 +284,54 @@ def test_consume_returns_409_when_stock_taken_in_between(stock_client):
     # Rien n'a bougé : la réservation reste active et le stock intact.
     with TestingSessionLocal() as db:
         reservation_db = db.query(models.StockReservation).one()
+        preparation_db = db.query(models.WorkshopPreparation).one()
         wh_quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=wh_id).one()
         moves = db.query(models.StockMove).filter(models.StockMove.reference.like("DEBIT-ATELIER-%")).count()
 
     assert reservation_db.status == "reserved"
+    assert preparation_db.status == "ready"
     assert wh_quant.quantity == 1
     assert moves == 0
+
+
+def test_handed_over_preparation_can_return_to_anchored_location(stock_client):
+    client, TestingSessionLocal = stock_client
+    headers = _admin_headers(TestingSessionLocal)
+
+    with TestingSessionLocal() as db:
+        variant_id, wh_id, _rack_id = _seed_variant_with_two_locations(db, stock_wh=5, stock_rack=0)
+        sale_id = _seed_sale(db, "DEV-ANCRE-RETOUR")
+
+    reservation = _reserve(client, headers, sale_id, source_location="WH/Stock").json()
+    preparation = _prepare(client, headers, reservation)
+    handover_response = _handover(client, headers, preparation)
+    assert handover_response.status_code == 200, handover_response.text
+
+    return_response = client.post(
+        f"/v2/stock/workshop-preparations/{preparation['id']}/return",
+        headers=headers,
+    )
+    assert return_response.status_code == 200, return_response.text
+    assert return_response.json()["returned_lines"] == 1
+
+    with TestingSessionLocal() as db:
+        reservation_db = db.query(models.StockReservation).one()
+        preparation_db = db.query(models.WorkshopPreparation).one()
+        wh_quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=wh_id).one()
+        staging_quant = (
+            db.query(models.StockQuant)
+            .join(models.StockLocation)
+            .filter(models.StockLocation.name == "ATELIER/Préparation")
+            .one()
+        )
+        transfer_moves = db.query(models.StockMove).count()
+
+    assert reservation_db.status == "reserved"
+    assert reservation_db.location_id == wh_id
+    assert preparation_db.status == "returned"
+    assert wh_quant.quantity == 5
+    assert staging_quant.quantity == 0
+    assert transfer_moves == 2
 
 
 def test_commercial_return_reintegrates_anchored_location(stock_client):

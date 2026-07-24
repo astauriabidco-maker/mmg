@@ -572,6 +572,20 @@ def consume_reservation(
     if reservation.status != ACTIVE_RESERVATION_STATUS:
         return {"created_moves": 0, "consumed_lines": 0}
 
+    preparation = (
+        db.query(models.WorkshopPreparation)
+        .filter(models.WorkshopPreparation.reservation_id == reservation.id)
+        .first()
+    )
+    if not preparation:
+        raise ValueError(
+            "Créez et remettez d'abord le bon de préparation atelier avant le débit réel."
+        )
+    if preparation.status != "handed_over":
+        raise ValueError(
+            f"Le bon {preparation.reference} doit être entièrement préparé et remis à l'atelier avant le débit réel."
+        )
+
     # Consommation depuis l'emplacement ANCRÉ à la réservation (plus depuis
     # « WH/Stock » en dur). Le paramètre source_location ne sert que de repli
     # explicite pour les réservations historiques sans ancre.
@@ -617,6 +631,10 @@ def consume_reservation(
     if stats["consumed_lines"]:
         reservation.status = "consumed"
         reservation.consumed_at = utcnow()
+        preparation.status = "consumed"
+        for line in preparation.lines:
+            if line.status == "handed_over":
+                line.status = "consumed"
     return stats
 
 
@@ -766,6 +784,16 @@ def cancel_reservation(
 ) -> dict[str, int]:
     if reservation.status != ACTIVE_RESERVATION_STATUS:
         return {"cancelled_lines": 0, "released_quantity": 0}
+
+    preparation = (
+        db.query(models.WorkshopPreparation)
+        .filter(models.WorkshopPreparation.reservation_id == reservation.id)
+        .first()
+    )
+    if preparation and preparation.status == "handed_over":
+        raise ValueError(
+            f"Le bon {preparation.reference} a été remis à l'atelier. Retournez-le au magasin avant d'annuler la réservation."
+        )
 
     stats = {"cancelled_lines": 0, "released_quantity": 0}
     for line in reservation.lines:

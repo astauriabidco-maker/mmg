@@ -294,6 +294,50 @@ class StockReservationLine(Base):
     reservation = relationship("StockReservation", back_populates="lines")
     variant = relationship("ProductVariant")
 
+
+class WorkshopPreparation(Base):
+    __tablename__ = "workshop_preparations"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, index=True, nullable=False)
+    reservation_id = Column(Integer, ForeignKey("stock_reservations.id"), unique=True, index=True, nullable=False)
+    sale_order_id = Column(Integer, ForeignKey("sale_orders.id"), nullable=True, index=True)
+    production_order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
+    source_location_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=False, index=True)
+    destination_location_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=False, index=True)
+    status = Column(String, default="draft", index=True)  # draft, ready, handed_over, consumed, returned, cancelled
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, default="Système")
+    created_at = Column(DateTime, default=utcnow)
+    handed_over_by = Column(String, nullable=True)
+    handed_over_at = Column(DateTime, nullable=True)
+    returned_by = Column(String, nullable=True)
+    returned_at = Column(DateTime, nullable=True)
+
+    reservation = relationship("StockReservation")
+    sale_order = relationship("SaleOrder")
+    production_order = relationship("Order")
+    source_location = relationship("StockLocation", foreign_keys=[source_location_id])
+    destination_location = relationship("StockLocation", foreign_keys=[destination_location_id])
+    lines = relationship("WorkshopPreparationLine", back_populates="preparation", cascade="all, delete-orphan")
+
+
+class WorkshopPreparationLine(Base):
+    __tablename__ = "workshop_preparation_lines"
+    id = Column(Integer, primary_key=True, index=True)
+    preparation_id = Column(Integer, ForeignKey("workshop_preparations.id"), index=True, nullable=False)
+    reservation_line_id = Column(Integer, ForeignKey("stock_reservation_lines.id"), nullable=False, index=True)
+    variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=False, index=True)
+    planned_quantity = Column(Float, default=0.0)
+    prepared_quantity = Column(Float, default=0.0)
+    transferred_quantity = Column(Float, default=0.0)
+    returned_quantity = Column(Float, default=0.0)
+    status = Column(String, default="pending", index=True)  # pending, prepared, handed_over, consumed, returned
+
+    preparation = relationship("WorkshopPreparation", back_populates="lines")
+    reservation_line = relationship("StockReservationLine")
+    variant = relationship("ProductVariant")
+
+
 class InventorySession(Base):
     __tablename__ = "inventory_sessions"
 

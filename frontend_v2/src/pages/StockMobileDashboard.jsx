@@ -19,6 +19,7 @@ import {
     MapPin,
     Menu,
     PackageCheck,
+    PackageOpen,
     RefreshCw,
     ScanLine,
     Search,
@@ -28,6 +29,7 @@ import {
     X,
 } from 'lucide-react';
 import api from '../services/api';
+import { downloadFileWithFeedback } from '../services/pdf';
 import { useAuth } from '../context/AuthContext';
 
 const ACTION_META = {
@@ -103,10 +105,11 @@ function MobileHeader({ title, subtitle, online, onLogout, onDesktop }) {
     );
 }
 
-function BottomNavigation({ view, setView, canCount }) {
+function BottomNavigation({ view, setView, canCount, canPrepareWorkshop }) {
     const items = [
         { id: 'home', label: 'Accueil', Icon: Home },
         { id: 'scan', label: 'Scanner', Icon: ScanLine },
+        ...(canPrepareWorkshop ? [{ id: 'workshop', label: 'Atelier', Icon: PackageOpen }] : []),
         { id: 'moves', label: 'Mouvements', Icon: History },
         ...(canCount ? [{ id: 'count', label: 'Inventaire', Icon: ClipboardCheck }] : []),
     ];
@@ -485,6 +488,7 @@ export default function StockMobileDashboard() {
     const [countItem, setCountItem] = useState(null);
     const [countLocationId, setCountLocationId] = useState('');
     const [countQuantity, setCountQuantity] = useState('');
+    const [selectedPreparationId, setSelectedPreparationId] = useState(null);
     const scanBuffer = useRef('');
     const scanTimer = useRef(null);
 
@@ -527,12 +531,26 @@ export default function StockMobileDashboard() {
         enabled: permissions.count,
         staleTime: 15_000,
     });
+    const reservationsQuery = useQuery({
+        queryKey: ['mobile-workshop-reservations'],
+        queryFn: async () => (await api.get('/v2/stock/workshop-debits/reservations?status=reserved')).data,
+        enabled: permissions.transfer,
+        staleTime: 10_000,
+    });
+    const preparationsQuery = useQuery({
+        queryKey: ['mobile-workshop-preparations'],
+        queryFn: async () => (await api.get('/v2/stock/workshop-preparations')).data,
+        enabled: permissions.transfer,
+        staleTime: 10_000,
+    });
 
     const products = productsQuery.data || [];
     const locations = locationsQuery.data || [];
     const quants = quantsQuery.data || [];
     const moves = movesQuery.data || [];
     const sessions = sessionsQuery.data || [];
+    const reservations = reservationsQuery.data || [];
+    const preparations = preparationsQuery.data || [];
     const internalLocations = locations.filter((location) => location.usage === 'internal');
     const supplierLocation = locations.find((location) => location.usage === 'supplier');
     const customerLocation = locations.find((location) => location.usage === 'customer');
@@ -568,6 +586,7 @@ export default function StockMobileDashboard() {
 
     const openSessions = sessions.filter((session) => ['draft', 'counting'].includes(session.status));
     const selectedSession = openSessions.find((session) => session.id === selectedSessionId) || null;
+    const selectedPreparation = preparations.find((preparation) => preparation.id === selectedPreparationId) || null;
     const lowStock = variants.filter((item) => item.available <= Number(item.min_threshold || 0));
     const totalPhysical = variants.reduce((sum, item) => sum + item.physical, 0);
     const loading = productsQuery.isLoading || locationsQuery.isLoading || quantsQuery.isLoading;
@@ -579,6 +598,8 @@ export default function StockMobileDashboard() {
             quantsQuery.refetch(),
             movesQuery.refetch(),
             permissions.count ? sessionsQuery.refetch() : Promise.resolve(),
+            permissions.transfer ? reservationsQuery.refetch() : Promise.resolve(),
+            permissions.transfer ? preparationsQuery.refetch() : Promise.resolve(),
         ]);
         setNotice({ type: 'success', text: 'Données actualisées.' });
     };
@@ -653,6 +674,89 @@ export default function StockMobileDashboard() {
         onError: (error) => setNotice({ type: 'error', text: errorMessage(error, "Le comptage n'a pas été enregistré.") }),
     });
 
+    const refreshWorkshop = async () => {
+        await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['mobile-workshop-reservations'] }),
+            queryClient.invalidateQueries({ queryKey: ['mobile-workshop-preparations'] }),
+            queryClient.invalidateQueries({ queryKey: ['mobile-stock-products'] }),
+            queryClient.invalidateQueries({ queryKey: ['mobile-stock-quants'] }),
+            queryClient.invalidateQueries({ queryKey: ['mobile-stock-moves'] }),
+        ]);
+    };
+
+    const createPreparationMutation = useMutation({
+        mutationFn: async (reservationId) => {
+            if (!online) throw new Error('Connexion requise pour créer un bon.');
+            return api.post('/v2/stock/workshop-preparations', { reservation_id: reservationId });
+        },
+        onSuccess: async (response) => {
+            setSelectedPreparationId(response.data.id);
+            setNotice({ type: 'success', text: `Bon ${response.data.reference} créé. Scannez les articles à remettre.` });
+            await refreshWorkshop();
+        },
+        onError: (error) => setNotice({ type: 'error', text: errorMessage(error, 'Création du bon impossible.') }),
+    });
+
+    const workshopLineMutation = useMutation({
+        mutationFn: async ({ preparationId, lineId, quantity }) => {
+            if (!online) throw new Error('Connexion requise pour préparer une ligne.');
+            return api.patch(`/v2/stock/workshop-preparations/${preparationId}/lines/${lineId}`, {
+                prepared_quantity: quantity,
+            });
+        },
+        onSuccess: async (response) => {
+            setSelectedPreparationId(response.data.id);
+            await refreshWorkshop();
+        },
+        onError: (error) => setNotice({ type: 'error', text: errorMessage(error, 'Mise à jour de la ligne impossible.') }),
+    });
+
+    const handoverMutation = useMutation({
+        mutationFn: async (preparationId) => {
+            if (!online) throw new Error('Connexion requise pour remettre le bon.');
+            return api.post(`/v2/stock/workshop-preparations/${preparationId}/handover`);
+        },
+        onSuccess: async (response) => {
+            setNotice({ type: 'success', text: `${response.data.reference} remis à l'atelier. Le stock est déplacé, pas encore consommé.` });
+            await refreshWorkshop();
+        },
+        onError: (error) => setNotice({ type: 'error', text: errorMessage(error, 'Remise à l’atelier impossible.') }),
+    });
+
+    const returnPreparationMutation = useMutation({
+        mutationFn: async (preparationId) => {
+            if (!online) throw new Error('Connexion requise pour retourner le bon.');
+            return api.post(`/v2/stock/workshop-preparations/${preparationId}/return`);
+        },
+        onSuccess: async (response) => {
+            setNotice({ type: 'success', text: `${response.data.reference} retourné au magasin.` });
+            await refreshWorkshop();
+        },
+        onError: (error) => setNotice({ type: 'error', text: errorMessage(error, 'Retour magasin impossible.') }),
+    });
+
+    const scanPreparationItem = (match) => {
+        if (!selectedPreparation || !match) return false;
+        const line = selectedPreparation.lines?.find((item) => item.variant_id === match.id);
+        if (!line) {
+            setNotice({ type: 'error', text: `${match.reference} n'appartient pas au bon ${selectedPreparation.reference}.` });
+            return true;
+        }
+        const current = Number(line.prepared_quantity || 0);
+        const planned = Number(line.planned_quantity || 0);
+        if (current >= planned) {
+            setNotice({ type: 'info', text: `${match.reference} est déjà entièrement préparé.` });
+            return true;
+        }
+        workshopLineMutation.mutate({
+            preparationId: selectedPreparation.id,
+            lineId: line.id,
+            quantity: Math.min(current + 1, planned),
+        });
+        setNotice({ type: 'success', text: `${match.reference} scanné : ${Math.min(current + 1, planned)} / ${planned}.` });
+        return true;
+    };
+
     useEffect(() => {
         const handleOnline = () => setOnline(true);
         const handleOffline = () => setOnline(false);
@@ -678,6 +782,10 @@ export default function StockMobileDashboard() {
                 const code = scanBuffer.current;
                 scanBuffer.current = '';
                 const match = variants.find((item) => [item.barcode, item.reference, item.supplier_reference].filter(Boolean).some((value) => String(value).toLowerCase() === code.toLowerCase()));
+                if (view === 'workshop' && selectedPreparation && match) {
+                    scanPreparationItem(match);
+                    return;
+                }
                 setView('scan');
                 setSearch(code);
                 if (match) setSelectedItem(match);
@@ -694,7 +802,7 @@ export default function StockMobileDashboard() {
             window.removeEventListener('keydown', handleHardwareScan);
             clearTimeout(scanTimer.current);
         };
-    }, [variants]);
+    }, [variants, view, selectedPreparation]);
 
     useEffect(() => {
         if (selectedSession?.location_id) setCountLocationId(String(selectedSession.location_id));
@@ -704,7 +812,9 @@ export default function StockMobileDashboard() {
         setScannerOpen(false);
         const match = variants.find((item) => [item.barcode, item.reference, item.supplier_reference].filter(Boolean).some((value) => String(value).toLowerCase() === code.toLowerCase()));
         if (match) {
-            if (view === 'count' && selectedSession) {
+            if (view === 'workshop' && selectedPreparation) {
+                scanPreparationItem(match);
+            } else if (view === 'count' && selectedSession) {
                 setCountSearch(code);
                 setCountItem(match);
             } else if (action && !action.item) {
@@ -769,7 +879,7 @@ export default function StockMobileDashboard() {
     return (
         <div className="min-h-[100dvh] bg-slate-100 pb-24 font-sans text-slate-950">
             <MobileHeader
-                title={view === 'home' ? 'Stock mobile' : view === 'scan' ? 'Scanner & rechercher' : view === 'moves' ? 'Mouvements' : 'Inventaire physique'}
+                title={view === 'home' ? 'Stock mobile' : view === 'scan' ? 'Scanner & rechercher' : view === 'workshop' ? 'Préparation atelier' : view === 'moves' ? 'Mouvements' : 'Inventaire physique'}
                 subtitle={`${user?.username || 'Utilisateur'} · MMG`}
                 online={online}
                 onLogout={logout}
@@ -864,6 +974,24 @@ export default function StockMobileDashboard() {
                             </div>
                         </section>
 
+                        {permissions.transfer && (
+                            <button
+                                onClick={() => setView('workshop')}
+                                className="flex w-full items-center gap-4 rounded-2xl bg-amber-500 p-5 text-left text-white shadow-sm"
+                            >
+                                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/20">
+                                    <PackageOpen className="h-7 w-7" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <p className="font-black">Préparations atelier</p>
+                                    <p className="mt-1 text-xs font-semibold text-amber-50">
+                                        {reservations.length} réservation(s) à préparer ou remettre
+                                    </p>
+                                </div>
+                                <ChevronRight className="h-6 w-6" />
+                            </button>
+                        )}
+
                         <section className="rounded-2xl border border-slate-200 bg-white p-4">
                             <div className="flex items-center justify-between">
                                 <div>
@@ -892,6 +1020,25 @@ export default function StockMobileDashboard() {
                         <p className="text-center text-xs font-semibold text-slate-500">Les lecteurs Bluetooth/USB fonctionnent aussi directement.</p>
                         <ProductSearch variants={variants} value={search} onChange={setSearch} onSelect={selectForCurrentContext} autoFocus />
                     </div>
+                ) : view === 'workshop' ? (
+                    <WorkshopPreparationMobile
+                        reservations={reservations}
+                        preparations={preparations}
+                        selectedPreparation={selectedPreparation}
+                        setSelectedPreparationId={setSelectedPreparationId}
+                        onCreate={(reservationId) => createPreparationMutation.mutate(reservationId)}
+                        onScan={() => setScannerOpen(true)}
+                        onSetQuantity={(line, quantity) => workshopLineMutation.mutate({
+                            preparationId: selectedPreparation.id,
+                            lineId: line.id,
+                            quantity,
+                        })}
+                        onHandover={(preparationId) => handoverMutation.mutate(preparationId)}
+                        onReturn={(preparationId) => returnPreparationMutation.mutate(preparationId)}
+                        onPdf={(preparation) => downloadFileWithFeedback(`/v2/pdf/workshop-preparation/${preparation.id}`, `${preparation.reference}.pdf`)}
+                        pending={createPreparationMutation.isPending || workshopLineMutation.isPending || handoverMutation.isPending || returnPreparationMutation.isPending}
+                        online={online}
+                    />
                 ) : view === 'moves' ? (
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
@@ -928,7 +1075,7 @@ export default function StockMobileDashboard() {
                 )}
             </main>
 
-            <BottomNavigation view={view} setView={setView} canCount={permissions.count} />
+            <BottomNavigation view={view} setView={setView} canCount={permissions.count} canPrepareWorkshop={permissions.transfer} />
 
             {scannerOpen && <ScannerOverlay onClose={() => setScannerOpen(false)} onDetected={handleDetected} />}
             {selectedItem && !action && (
@@ -950,6 +1097,192 @@ export default function StockMobileDashboard() {
                     onClose={() => setAction(null)}
                     onSubmit={(form) => movementMutation.mutate({ type: action.type, item: action.item, form })}
                 />
+            )}
+        </div>
+    );
+}
+
+function WorkshopPreparationMobile({
+    reservations,
+    preparations,
+    selectedPreparation,
+    setSelectedPreparationId,
+    onCreate,
+    onScan,
+    onSetQuantity,
+    onHandover,
+    onReturn,
+    onPdf,
+    pending,
+    online,
+}) {
+    const statusMeta = {
+        draft: { label: 'En préparation', className: 'bg-amber-50 text-amber-700' },
+        ready: { label: 'Prêt à remettre', className: 'bg-emerald-50 text-emerald-700' },
+        handed_over: { label: 'Remis à l’atelier', className: 'bg-blue-50 text-blue-700' },
+        consumed: { label: 'Consommé', className: 'bg-slate-100 text-slate-600' },
+        returned: { label: 'Retourné', className: 'bg-violet-50 text-violet-700' },
+        cancelled: { label: 'Annulé', className: 'bg-rose-50 text-rose-700' },
+    };
+
+    if (!selectedPreparation) {
+        return (
+            <div className="space-y-4">
+                <div>
+                    <h2 className="text-xl font-black">Bons à préparer</h2>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">Une réservation ne peut être débitée qu’après remise physique à l’atelier.</p>
+                </div>
+                <div className="space-y-3">
+                    {reservations.map((reservation) => {
+                        const preparation = preparations.find((item) => item.reservation_id === reservation.id);
+                        const total = reservation.lines?.reduce((sum, line) => sum + Number(line.reserved_quantity || 0), 0) || 0;
+                        const meta = preparation ? statusMeta[preparation.status] : null;
+                        return (
+                            <div key={reservation.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <p className="truncate font-black">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
+                                        <p className="mt-1 text-xs font-semibold text-slate-500">{reservation.lines?.length || 0} ligne(s) · {formatQty(total)} réservé</p>
+                                    </div>
+                                    {meta && <span className={`shrink-0 rounded-lg px-2 py-1 text-[10px] font-black uppercase ${meta.className}`}>{meta.label}</span>}
+                                </div>
+                                {preparation ? (
+                                    <button
+                                        onClick={() => setSelectedPreparationId(preparation.id)}
+                                        className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white"
+                                    >
+                                        Ouvrir {preparation.reference} <ChevronRight className="h-4 w-4" />
+                                    </button>
+                                ) : (
+                                    <button
+                                        disabled={!online || pending}
+                                        onClick={() => onCreate(reservation.id)}
+                                        className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-amber-500 text-sm font-black text-white disabled:bg-slate-200"
+                                    >
+                                        <PackageOpen className="h-5 w-5" /> Créer le bon de préparation
+                                    </button>
+                                )}
+                            </div>
+                        );
+                    })}
+                    {!reservations.length && (
+                        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
+                            <Check className="mx-auto h-10 w-10 text-emerald-400" />
+                            <p className="mt-3 font-black">Aucune réservation à préparer</p>
+                            <p className="mt-1 text-sm text-slate-500">Les besoins apparaîtront après préparation atelier d’une commande.</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    const meta = statusMeta[selectedPreparation.status] || statusMeta.draft;
+    const planned = selectedPreparation.lines?.reduce((sum, line) => sum + Number(line.planned_quantity || 0), 0) || 0;
+    const prepared = selectedPreparation.lines?.reduce((sum, line) => sum + Number(line.prepared_quantity || 0), 0) || 0;
+    const editable = ['draft', 'ready'].includes(selectedPreparation.status);
+    return (
+        <div className="space-y-4">
+            <button onClick={() => setSelectedPreparationId(null)} className="flex items-center gap-2 text-sm font-black text-slate-600">
+                <ChevronLeft className="h-5 w-5" /> Bons atelier
+            </button>
+            <section className="rounded-2xl bg-slate-950 p-5 text-white">
+                <div className="flex items-start justify-between gap-3">
+                    <div>
+                        <p className="text-xs font-black uppercase text-slate-400">Bon de préparation atelier</p>
+                        <h2 className="mt-1 text-xl font-black">{selectedPreparation.reference}</h2>
+                        <p className="mt-1 text-xs font-semibold text-slate-300">
+                            {selectedPreparation.source_location?.name} → {selectedPreparation.destination_location?.name}
+                        </p>
+                    </div>
+                    <span className={`rounded-lg px-2 py-1 text-[10px] font-black uppercase ${meta.className}`}>{meta.label}</span>
+                </div>
+                <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/15">
+                    <div className="h-full bg-amber-400" style={{ width: `${planned ? Math.min((prepared / planned) * 100, 100) : 0}%` }} />
+                </div>
+                <p className="mt-2 text-xs font-bold text-slate-300">{formatQty(prepared)} / {formatQty(planned)} préparé</p>
+            </section>
+
+            {editable && (
+                <button onClick={onScan} className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 font-black text-white">
+                    <Camera className="h-5 w-5" /> Scanner un article
+                </button>
+            )}
+
+            <section className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                {selectedPreparation.lines?.map((line) => {
+                    const current = Number(line.prepared_quantity || 0);
+                    const target = Number(line.planned_quantity || 0);
+                    const complete = current >= target;
+                    return (
+                        <div key={line.id} className="p-4">
+                            <div className="flex items-start gap-3">
+                                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${complete ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                                    {complete ? <Check className="h-5 w-5" /> : <PackageOpen className="h-5 w-5" />}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <p className="truncate font-mono text-xs font-bold text-blue-700">{line.variant?.reference || `Variante #${line.variant_id}`}</p>
+                                    <p className="mt-1 font-black">{line.variant?.product?.name || 'Article stock'}</p>
+                                </div>
+                                <p className="shrink-0 text-lg font-black">{formatQty(current)} / {formatQty(target)}</p>
+                            </div>
+                            {editable && (
+                                <div className="mt-3 grid grid-cols-3 gap-2">
+                                    <button
+                                        disabled={!online || pending || current <= 0}
+                                        onClick={() => onSetQuantity(line, Math.max(current - 1, 0))}
+                                        className="h-11 rounded-lg border border-slate-200 font-black disabled:text-slate-300"
+                                    >
+                                        −
+                                    </button>
+                                    <button
+                                        disabled={!online || pending || complete}
+                                        onClick={() => onSetQuantity(line, Math.min(current + 1, target))}
+                                        className="h-11 rounded-lg bg-blue-50 font-black text-blue-700 disabled:bg-slate-100 disabled:text-slate-300"
+                                    >
+                                        +1
+                                    </button>
+                                    <button
+                                        disabled={!online || pending || complete}
+                                        onClick={() => onSetQuantity(line, target)}
+                                        className="h-11 rounded-lg bg-slate-950 text-xs font-black text-white disabled:bg-slate-200"
+                                    >
+                                        Compléter
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </section>
+
+            <div className="grid grid-cols-2 gap-3">
+                <button onClick={() => onPdf(selectedPreparation)} className="h-12 rounded-xl border border-slate-200 bg-white text-sm font-black">
+                    Télécharger PDF
+                </button>
+                {selectedPreparation.status === 'ready' && (
+                    <button
+                        disabled={!online || pending}
+                        onClick={() => onHandover(selectedPreparation.id)}
+                        className="h-12 rounded-xl bg-blue-600 text-sm font-black text-white disabled:bg-slate-200"
+                    >
+                        Remettre à l’atelier
+                    </button>
+                )}
+                {selectedPreparation.status === 'handed_over' && (
+                    <button
+                        disabled={!online || pending}
+                        onClick={() => onReturn(selectedPreparation.id)}
+                        className="h-12 rounded-xl bg-violet-600 text-sm font-black text-white disabled:bg-slate-200"
+                    >
+                        Retour magasin
+                    </button>
+                )}
+            </div>
+            {selectedPreparation.status === 'handed_over' && (
+                <p className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-800">
+                    Les matières sont disponibles dans la zone atelier. Le technicien déclenchera séparément le débit réel au poste de coupe.
+                </p>
             )}
         </div>
     );
