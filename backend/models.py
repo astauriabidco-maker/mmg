@@ -928,6 +928,12 @@ class MeasureOpening(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     mission = relationship("MeasureMission", back_populates="openings")
+    documents = relationship(
+        "MeasureMissionDocument",
+        back_populates="opening",
+        passive_deletes=True,
+        order_by="MeasureMissionDocument.uploaded_at",
+    )
 
 
 class MeasureMissionDocument(Base):
@@ -940,6 +946,12 @@ class MeasureMissionDocument(Base):
         nullable=False,
         index=True,
     )
+    opening_id = Column(
+        Integer,
+        ForeignKey("measure_openings.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     original_filename = Column(String, nullable=False)
     stored_filename = Column(String, nullable=False)
     content_type = Column(String, nullable=True)
@@ -950,6 +962,7 @@ class MeasureMissionDocument(Base):
     uploaded_at = Column(DateTime, default=utcnow)
 
     mission = relationship("MeasureMission", back_populates="source_documents")
+    opening = relationship("MeasureOpening", back_populates="documents")
 
 # --- FOURNISSEURS (SUPPLIERS) ---
 class Supplier(Base):

@@ -689,7 +689,10 @@ def update_client_site(
 def list_measure_missions(
     client_id: Optional[int] = None,
     opportunity_id: Optional[int] = None,
+    assigned_user_id: Optional[int] = None,
     status: Optional[schemas.MeasureMissionStatus] = None,
+    scheduled_from: Optional[datetime] = None,
+    scheduled_to: Optional[datetime] = None,
     db: Session = Depends(get_db),
 ):
     query = db.query(models.MeasureMission)
@@ -697,9 +700,18 @@ def list_measure_missions(
         query = query.filter(models.MeasureMission.client_id == client_id)
     if opportunity_id:
         query = query.filter(models.MeasureMission.opportunity_id == opportunity_id)
+    if assigned_user_id:
+        query = query.filter(models.MeasureMission.assigned_user_id == assigned_user_id)
     if status:
         query = query.filter(models.MeasureMission.status == status.value)
-    missions = query.order_by(models.MeasureMission.created_at.desc()).all()
+    if scheduled_from:
+        query = query.filter(models.MeasureMission.scheduled_start >= scheduled_from)
+    if scheduled_to:
+        query = query.filter(models.MeasureMission.scheduled_start < scheduled_to)
+    missions = query.order_by(
+        models.MeasureMission.scheduled_start.asc().nullslast(),
+        models.MeasureMission.created_at.desc(),
+    ).all()
     return [_serialize_mission(mission) for mission in missions]
 
 
@@ -1049,17 +1061,176 @@ def update_measure_mission_verification(
 
 
 @router.post(
+    "/missions/{mission_id}/generate-quote",
+    response_model=schemas.MeasureMissionQuoteResponse,
+)
+def generate_measure_mission_quote(
+    mission_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    if mission.status not in {
+        models.MeasureMissionStatus.VALIDATED.value,
+        models.MeasureMissionStatus.QUOTED.value,
+    }:
+        raise HTTPException(409, "Le contrôle BE doit être validé avant le chiffrage")
+    if (
+        mission.verification_status
+        != schemas.MeasureVerificationStatus.READY_FOR_FABRICATION.value
+    ):
+        raise HTTPException(
+            409,
+            "La responsabilité des cotes doit être confirmée avant de générer le devis",
+        )
+    if not mission.openings:
+        raise HTTPException(422, "Aucun ouvrage validé à chiffrer")
+    invalid_openings = [
+        opening
+        for opening in mission.openings
+        if opening.status != schemas.MeasureOpeningStatus.VALIDATED.value
+    ]
+    if invalid_openings:
+        raise HTTPException(422, "Tous les ouvrages doivent être validés par le BE")
+
+    if mission.sale_order_id:
+        sale = (
+            db.query(models.SaleOrder)
+            .filter(models.SaleOrder.id == mission.sale_order_id)
+            .first()
+        )
+        if sale:
+            return schemas.MeasureMissionQuoteResponse(
+                mission_id=mission.id,
+                sale_order_id=sale.id,
+                sale_reference=sale.reference,
+                created=False,
+                line_count=len(sale.lines),
+            )
+
+    site_label = (
+        f"{mission.site.reference} - {mission.site.formatted_address}"
+        if mission.site
+        else "chantier à préciser"
+    )
+    sale = models.SaleOrder(
+        reference=next_number(db, "quote"),
+        client_name=mission.client.name,
+        client_contact=mission.client.phone or mission.client.contact_name,
+        client_email=mission.client.email,
+        client_address=mission.client.address,
+        status="DRAFT",
+        workflow_type="FABRICATION_FROM_MEASURE",
+        notes=(
+            f"Brouillon de chiffrage généré depuis {mission.reference}, {site_label}. "
+            "Les prix doivent être complétés et validés avant envoi au client."
+        ),
+        author=current_user.get("sub", "Système"),
+    )
+    db.add(sale)
+    db.flush()
+
+    for opening in mission.openings:
+        dimensions = f"{opening.width_mm:g} x {opening.height_mm:g} mm"
+        description = " - ".join(
+            part
+            for part in [
+                f"{opening.sequence}. {opening.label}",
+                opening.room,
+                opening.product_type,
+                opening.material,
+                dimensions,
+            ]
+            if part
+        )
+        db.add(
+            models.SaleOrderLine(
+                order_id=sale.id,
+                line_type="SERVICE",
+                description=description,
+                quantity=1.0,
+                unit_price=0,
+                visual_config=None,
+            )
+        )
+        configuration = dict(opening.configuration or {})
+        configuration["measure_opening_id"] = opening.id
+        dossier = models.MMG(
+            reference=generate_reference(db),
+            client_id=mission.client_id,
+            site_address_id=mission.site_address_id,
+            measure_mission_id=mission.id,
+            client_name=mission.client.name,
+            client_contact=mission.client.phone or mission.client.contact_name,
+            client_address=mission.client.address,
+            site_address=_site_address_text(mission.site) if mission.site else None,
+            client_email=mission.client.email,
+            client_type=mission.client.customer_type,
+            width=opening.width_mm,
+            height=opening.height_mm,
+            passage_height=opening.passage_height_mm or 0,
+            opening_type=opening.opening_type or "À définir",
+            opening_side=opening.opening_side or "À définir",
+            sash_count=opening.sash_count or 1,
+            view_type="interior",
+            material=opening.material,
+            installation_type=opening.installation_type,
+            product_series=configuration.get("product_series"),
+            configuration=configuration,
+            photos=",".join(
+                document.file_path
+                for document in opening.documents
+                if (document.content_type or "").startswith("image/")
+            ),
+            status=models.MMGStatus.IN_STUDY,
+            sale_order_id=sale.id,
+        )
+        db.add(dossier)
+
+    mission.sale_order_id = sale.id
+    mission.status = models.MeasureMissionStatus.QUOTED.value
+    if mission.opportunity:
+        mission.opportunity.sale_order_id = sale.id
+        mission.opportunity.stage = models.CRMOpportunityStage.PROPOSAL_TO_PREPARE.value
+        mission.opportunity.next_milestone = "Compléter et envoyer le devis fabrication"
+        mission.opportunity.next_milestone_at = None
+    db.commit()
+    db.refresh(sale)
+    return schemas.MeasureMissionQuoteResponse(
+        mission_id=mission.id,
+        sale_order_id=sale.id,
+        sale_reference=sale.reference,
+        created=True,
+        line_count=len(sale.lines),
+    )
+
+
+@router.post(
     "/missions/{mission_id}/documents",
     response_model=schemas.MeasureMissionResponse,
 )
 async def upload_measure_mission_document(
     mission_id: int,
     file: UploadFile = File(...),
+    opening_id: Optional[int] = None,
+    document_type: str = "SOURCE_MEASURE",
     db: Session = Depends(get_db),
     current_user: dict = Depends(security.get_current_user),
 ):
     mission = _get_mission_or_404(db, mission_id)
     _ensure_mission_editable(mission)
+    opening = None
+    if opening_id is not None:
+        opening = (
+            db.query(models.MeasureOpening)
+            .filter(
+                models.MeasureOpening.id == opening_id,
+                models.MeasureOpening.mission_id == mission.id,
+            )
+            .first()
+        )
+        if not opening:
+            raise HTTPException(404, "Ouvrage introuvable pour cette mission")
     file_path = await uploads.save_upload_file(
         file,
         os.path.join("uploads", "measure_missions", str(mission.id)),
@@ -1068,11 +1239,13 @@ async def upload_measure_mission_document(
     )
     document = models.MeasureMissionDocument(
         mission_id=mission.id,
+        opening_id=opening.id if opening else None,
         original_filename=os.path.basename(file.filename or "document"),
         stored_filename=os.path.basename(file_path),
         content_type=file.content_type,
         file_path=file_path.replace(os.sep, "/"),
         file_size=os.path.getsize(file_path),
+        document_type=document_type[:50] or "SOURCE_MEASURE",
         uploaded_by=current_user.get("sub", "Système"),
     )
     db.add(document)

@@ -405,6 +405,133 @@ def test_measure_mission_multi_openings_and_be_review(client):
     assert all(opening["status"] == "VALIDATED" for opening in validated.json()["openings"])
 
 
+def test_validated_measure_mission_generates_idempotent_multi_opening_quote(client):
+    headers = _login(client)
+    crm_client = client.post(
+        "/v2/partners/clients",
+        json={
+            "name": "Client Devis Multi",
+            "email": "devis-multi@example.fr",
+            "phone": "0600007788",
+            "address": "1 rue Facturation",
+            "country": "FR",
+            "customer_type": "B2B",
+            "is_active": True,
+        },
+        headers=headers,
+    ).json()
+    mission = client.post(
+        "/v2/mmg/missions",
+        json={
+            "client_id": crm_client["id"],
+            "site": {
+                "label": "Résidence",
+                "address_line1": "12 rue du Chantier",
+                "postal_code": "75012",
+                "city": "Paris",
+                "country": "FR",
+            },
+            "assigned_user_id": 1,
+            "scheduled_start": "2026-09-02T08:00:00",
+            "scheduled_end": "2026-09-02T10:00:00",
+            "purpose": "Deux menuiseries à chiffrer",
+            "status": "SCHEDULED",
+        },
+        headers=headers,
+    ).json()
+    client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "ON_SITE"},
+        headers=headers,
+    )
+    opening_ids = []
+    for label, width, height in (("F01", 1200, 1400), ("PF01", 1800, 2150)):
+        response = client.post(
+            f"/v2/mmg/missions/{mission['id']}/openings",
+            json={
+                "label": label,
+                "room": "Séjour",
+                "product_type": "WINDOW",
+                "width_mm": width,
+                "height_mm": height,
+                "material": "ALU",
+                "opening_type": "Battant",
+                "sash_count": 2,
+                "status": "COMPLETE",
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        opening_ids.append(response.json()["id"])
+
+    proof = client.post(
+        f"/v2/mmg/missions/{mission['id']}/documents",
+        params={"opening_id": opening_ids[0], "document_type": "OPENING_PHOTO"},
+        files={"file": ("tableau.jpg", b"photo-test", "image/jpeg")},
+        headers=headers,
+    )
+    assert proof.status_code == 200, proof.text
+    linked_document = proof.json()["source_documents"][0]
+    assert linked_document["opening_id"] == opening_ids[0]
+    assert linked_document["document_type"] == "OPENING_PHOTO"
+
+    premature = client.post(
+        f"/v2/mmg/missions/{mission['id']}/generate-quote",
+        headers=headers,
+    )
+    assert premature.status_code == 409
+
+    assert client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "TO_REVIEW"},
+        headers=headers,
+    ).status_code == 200
+    validated = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "VALIDATED"},
+        headers=headers,
+    )
+    assert validated.status_code == 200, validated.text
+    assert validated.json()["verification_status"] == "READY_FOR_FABRICATION"
+
+    generated = client.post(
+        f"/v2/mmg/missions/{mission['id']}/generate-quote",
+        headers=headers,
+    )
+    assert generated.status_code == 200, generated.text
+    result = generated.json()
+    assert result["created"] is True
+    assert result["line_count"] == 2
+
+    repeated = client.post(
+        f"/v2/mmg/missions/{mission['id']}/generate-quote",
+        headers=headers,
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created"] is False
+    assert repeated.json()["sale_order_id"] == result["sale_order_id"]
+
+    sale = client.get(f"/v2/sales/{result['sale_order_id']}", headers=headers)
+    assert sale.status_code == 200, sale.text
+    assert sale.json()["workflow_type"] == "FABRICATION_FROM_MEASURE"
+    assert sale.json()["status"] == "DRAFT"
+    assert len(sale.json()["lines"]) == 2
+    assert all(line["unit_price"] == 0 for line in sale.json()["lines"])
+
+    mission_detail = client.get(
+        f"/v2/mmg/missions/{mission['id']}",
+        headers=headers,
+    ).json()
+    assert mission_detail["status"] == "QUOTED"
+    assert mission_detail["sale_order_id"] == result["sale_order_id"]
+    linked_dossiers = [
+        dossier
+        for dossier in client.get("/v2/mmg/", headers=headers).json()
+        if dossier["measure_mission_id"] == mission["id"]
+    ]
+    assert len(linked_dossiers) == 2
+
+
 def test_measure_mission_rejects_incomplete_opening_for_review(client):
     headers = _login(client)
     crm_client = client.post(

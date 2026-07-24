@@ -483,6 +483,7 @@ class MeasureVerificationUpdate(BaseModel):
 class MeasureMissionDocumentResponse(BaseModel):
     id: int
     mission_id: int
+    opening_id: Optional[int] = None
     original_filename: str
     content_type: Optional[str] = None
     file_size: int = 0
@@ -570,6 +571,13 @@ class MeasureMissionResponse(BaseModel):
     created_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+class MeasureMissionQuoteResponse(BaseModel):
+    mission_id: int
+    sale_order_id: int
+    sale_reference: str
+    created: bool
+    line_count: int
 
 class MMGCreate(BaseModel):
     client: MMGClient

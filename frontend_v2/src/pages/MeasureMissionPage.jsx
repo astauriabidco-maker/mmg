@@ -14,6 +14,8 @@ import {
     DoorOpen,
     Download,
     FileText,
+    FilePlus2,
+    ImagePlus,
     Loader2,
     MapPin,
     Menu,
@@ -171,6 +173,12 @@ export default function MeasureMissionPage() {
     const roles = new Set([user?.role, ...(user?.roles || [])].filter(Boolean));
     const canReview = [...roles].some(role => ['ADMIN', 'MANAGER', 'QUALITY_CONTROLLER', 'WORKSHOP_LEAD'].includes(role));
     const selectedOpening = mission?.openings?.find(item => item.id === selectedOpeningId);
+    const selectedOpeningDocuments = mission?.source_documents?.filter(
+        document => document.opening_id === selectedOpeningId,
+    ) || [];
+    const missionDocuments = mission?.source_documents?.filter(
+        document => !document.opening_id,
+    ) || [];
     const openingCount = mission?.openings?.length || 0;
     const completedCount = mission?.openings?.filter(item => ['COMPLETE', 'TO_REVIEW', 'VALIDATED'].includes(item.status)).length || 0;
 
@@ -247,6 +255,12 @@ export default function MeasureMissionPage() {
         setOpeningForm({
             ...emptyOpening,
             ...opening,
+            label: opening.label || '',
+            room: opening.room || '',
+            opening_type: opening.opening_type || '',
+            opening_side: opening.opening_side || '',
+            installation_type: opening.installation_type || '',
+            notes: opening.notes || '',
             width_mm: opening.width_mm ?? '',
             height_mm: opening.height_mm ?? '',
             passage_height_mm: opening.passage_height_mm ?? '',
@@ -430,6 +444,37 @@ export default function MeasureMissionPage() {
         }
     };
 
+    const uploadOpeningDocuments = async event => {
+        const files = Array.from(event.target.files || []);
+        if (!files.length || !selectedOpeningId) return;
+        setSaving(true);
+        setError('');
+        try {
+            let latest;
+            for (const file of files) {
+                const data = new FormData();
+                data.append('file', file);
+                latest = await api.post(
+                    `/v2/mmg/missions/${missionId}/documents`,
+                    data,
+                    {
+                        params: {
+                            opening_id: selectedOpeningId,
+                            document_type: file.type.startsWith('image/') ? 'OPENING_PHOTO' : 'OPENING_DOCUMENT',
+                        },
+                        headers: { 'Content-Type': 'multipart/form-data' },
+                    },
+                );
+            }
+            setMission(latest.data);
+        } catch (requestError) {
+            setError(apiError(requestError));
+        } finally {
+            event.target.value = '';
+            setSaving(false);
+        }
+    };
+
     const downloadDocument = async document => {
         try {
             const response = await api.get(
@@ -463,6 +508,20 @@ export default function MeasureMissionPage() {
         try {
             const response = await api.patch(`/v2/mmg/missions/${missionId}/verification`, { action });
             setMission(response.data);
+        } catch (requestError) {
+            setError(apiError(requestError));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const generateQuote = async () => {
+        if (!window.confirm('Créer le brouillon de devis fabrication avec tous les ouvrages validés ?')) return;
+        setSaving(true);
+        setError('');
+        try {
+            const response = await api.post(`/v2/mmg/missions/${missionId}/generate-quote`);
+            navigate(`/sales/${response.data.sale_order_id}`);
         } catch (requestError) {
             setError(apiError(requestError));
         } finally {
@@ -691,10 +750,22 @@ export default function MeasureMissionPage() {
                                     {mission.status === 'VALIDATED' && mission.verification_status === 'SITE_VERIFICATION_REQUIRED' && canReview && (
                                         <button onClick={() => confirmVerification('SITE_VERIFIED')} className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-black text-white">Confirmer vérification chantier MMG</button>
                                     )}
+                                    {mission.status === 'VALIDATED' && mission.verification_status === 'READY_FOR_FABRICATION' && (
+                                        <button onClick={generateQuote} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-black text-white disabled:opacity-50">
+                                            <FilePlus2 className="h-4 w-4" />
+                                            Générer le brouillon de devis
+                                        </button>
+                                    )}
+                                    {mission.status === 'QUOTED' && mission.sale_order_id && (
+                                        <button onClick={() => navigate(`/sales/${mission.sale_order_id}`)} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-black text-white">
+                                            <FileText className="h-4 w-4" />
+                                            Ouvrir le devis
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                             <div className="mt-6 grid gap-4 border-t border-slate-100 pt-5 sm:grid-cols-2 xl:grid-cols-4">
-                                <div className="flex gap-3"><MapPin className="h-5 w-5 text-blue-600" /><div><p className="text-[10px] font-black uppercase text-slate-400">Chantier</p><p className="text-sm font-black text-slate-800">{mission.site ? `${mission.site.reference} · ${mission.site.label}` : 'Adresse à préciser'}</p>{mission.site && <p className="mt-0.5 text-xs font-bold text-slate-500">{`${mission.site.address_line1}, ${mission.site.postal_code || ''} ${mission.site.city || ''}`}</p>}</div></div>
+                                <div className="flex gap-3"><MapPin className="h-5 w-5 text-blue-600" /><div><p className="text-[10px] font-black uppercase text-slate-400">Chantier</p><p className="text-sm font-black text-slate-800">{mission.site ? [mission.site.reference, mission.site.label].filter(Boolean).join(' · ') : 'Adresse à préciser'}</p>{mission.site && <p className="mt-0.5 text-xs font-bold text-slate-500">{`${mission.site.address_line1}, ${mission.site.postal_code || ''} ${mission.site.city || ''}`}</p>}</div></div>
                                 <div className="flex gap-3"><UserRound className="h-5 w-5 text-indigo-600" /><div><p className="text-[10px] font-black uppercase text-slate-400">{isSiteVisit ? 'Métreur' : 'Origine'}</p><p className="text-sm font-black text-slate-800">{isSiteVisit ? (mission.assigned_user_name || 'Non affecté') : sourceMeta.label}</p></div></div>
                                 <div className="flex gap-3"><Clock3 className="h-5 w-5 text-amber-600" /><div><p className="text-[10px] font-black uppercase text-slate-400">{isSiteVisit ? 'Rendez-vous' : 'Périmètre'}</p><p className="text-sm font-black text-slate-800">{isSiteVisit ? formatDate(mission.scheduled_start) : (mission.project_scope === 'SUPPLY_ONLY' ? 'Fourniture seule' : 'Fourniture avec pose')}</p></div></div>
                                 <div className="flex gap-3"><ClipboardCheck className="h-5 w-5 text-emerald-600" /><div><p className="text-[10px] font-black uppercase text-slate-400">Avancement</p><p className="text-sm font-black text-slate-800">{completedCount}/{openingCount} ouvrage(s) terminé(s)</p></div></div>
@@ -735,7 +806,7 @@ export default function MeasureMissionPage() {
                                 )}
                             </div>
                             <div className="mt-4 flex flex-wrap gap-2">
-                                {mission.source_documents?.map(document => (
+                                {missionDocuments.map(document => (
                                     <div key={document.id} className="flex max-w-full items-center gap-2 border border-slate-200 bg-slate-50 px-3 py-2">
                                         <FileText className="h-4 w-4 shrink-0 text-slate-500" />
                                         <button onClick={() => downloadDocument(document)} className="max-w-64 truncate text-left text-xs font-black text-slate-700 hover:text-blue-700">{document.original_filename}</button>
@@ -743,7 +814,7 @@ export default function MeasureMissionPage() {
                                         {!missionLocked && <button onClick={() => deleteDocument(document.id)} title="Supprimer" className="p-1 text-slate-400 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>}
                                     </div>
                                 ))}
-                                {!mission.source_documents?.length && <p className="text-xs font-bold text-slate-400">Aucun document joint.</p>}
+                                {!missionDocuments.length && <p className="text-xs font-bold text-slate-400">Aucun document joint.</p>}
                             </div>
                         </section>
 
@@ -816,6 +887,36 @@ export default function MeasureMissionPage() {
                                                 <Field label="Type de pose"><input disabled={missionLocked} value={openingForm.installation_type} onChange={event => setOpeningForm(current => ({ ...current, installation_type: event.target.value }))} className={inputClass} placeholder="Neuf, rénovation..." /></Field>
                                                 <Field label="Observations"><input disabled={missionLocked} value={openingForm.notes} onChange={event => setOpeningForm(current => ({ ...current, notes: event.target.value }))} className={inputClass} placeholder="Jeux, aplomb, accès..." /></Field>
                                             </div>
+
+                                            {selectedOpeningId && (
+                                                <div className="mt-6 border-t border-slate-200 pt-6">
+                                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                                        <div>
+                                                            <h3 className="font-black text-slate-900">Photos et documents de l’ouvrage</h3>
+                                                            <p className="mt-1 text-xs font-semibold text-slate-500">Photos du tableau, détails de pose, croquis et anomalies constatées.</p>
+                                                        </div>
+                                                        {!missionLocked && (
+                                                            <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-black text-blue-700 hover:bg-blue-100">
+                                                                <ImagePlus className="h-4 w-4" />
+                                                                Ajouter
+                                                                <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp" capture="environment" onChange={uploadOpeningDocuments} className="hidden" />
+                                                            </label>
+                                                        )}
+                                                    </div>
+                                                    <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                                                        {selectedOpeningDocuments.map(document => (
+                                                            <div key={document.id} className="flex min-w-0 items-center gap-2 border border-slate-200 bg-slate-50 px-3 py-2">
+                                                                {(document.content_type || '').startsWith('image/')
+                                                                    ? <ImagePlus className="h-4 w-4 shrink-0 text-blue-600" />
+                                                                    : <FileText className="h-4 w-4 shrink-0 text-slate-500" />}
+                                                                <button onClick={() => downloadDocument(document)} className="min-w-0 flex-1 truncate text-left text-xs font-black text-slate-700 hover:text-blue-700">{document.original_filename}</button>
+                                                                {!missionLocked && <button onClick={() => deleteDocument(document.id)} title="Supprimer" className="p-1 text-slate-400 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>}
+                                                            </div>
+                                                        ))}
+                                                        {!selectedOpeningDocuments.length && <p className="text-xs font-bold text-slate-400">Aucune pièce liée à cet ouvrage.</p>}
+                                                    </div>
+                                                </div>
+                                            )}
 
                                             {!missionLocked && (
                                                 <div className="mt-7 flex flex-col-reverse gap-2 border-t border-slate-200 pt-5 sm:flex-row sm:justify-end">
