@@ -278,6 +278,7 @@ class ClientSiteAddressCreate(ClientSiteAddressBase):
 
 class ClientSiteAddressResponse(ClientSiteAddressBase):
     id: int
+    reference: str
     client_id: int
     created_at: datetime
     updated_at: datetime
@@ -318,7 +319,7 @@ class MeasureMissionCreate(BaseModel):
     sale_order_id: Optional[int] = None
     assigned_user_id: Optional[int] = None
     source_type: MeasureSourceType = MeasureSourceType.SITE_VISIT
-    project_scope: MeasureProjectScope = MeasureProjectScope.SUPPLY_AND_INSTALL
+    project_scope: Optional[MeasureProjectScope] = None
     purpose: Optional[str] = None
     scheduled_start: Optional[datetime] = None
     scheduled_end: Optional[datetime] = None

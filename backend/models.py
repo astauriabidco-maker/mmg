@@ -641,6 +641,7 @@ class ClientSiteAddress(Base):
     __tablename__ = "client_site_addresses"
 
     id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, nullable=False, index=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
     label = Column(String, default="Chantier")
     address_line1 = Column(String, nullable=False)

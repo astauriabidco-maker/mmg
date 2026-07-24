@@ -37,6 +37,7 @@ DOC_KIND_FORMATS = {
     "workshop_preparation": ("BPA", 4), # Préparations atelier : BPA-YYYY-XXXX
     "mmg": ("MMG", 5),             # Dossiers MMG :      MMG-YYYY-XXXXX
     "measure_mission": ("MET", 5), # Missions de métré : MET-YYYY-XXXXX
+    "client_site": ("CH", 4),      # Chantiers clients : CH-YYYY-XXXX
 }
 
 # doc_kind -> modèle portant la colonne `reference` (auto-amorçage du compteur)
@@ -52,6 +53,7 @@ DOC_KIND_MODELS = {
     "workshop_preparation": models.WorkshopPreparation,
     "mmg": models.MMG,
     "measure_mission": models.MeasureMission,
+    "client_site": models.ClientSiteAddress,
 }
 
 

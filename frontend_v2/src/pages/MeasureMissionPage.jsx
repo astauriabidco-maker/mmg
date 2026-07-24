@@ -147,7 +147,7 @@ export default function MeasureMissionPage() {
         client_id: searchParams.get('clientId') || '',
         source_type: searchParams.get('source') || 'SITE_VISIT',
         project_scope: searchParams.get('scope') || 'SUPPLY_AND_INSTALL',
-        site_address_id: '',
+        site_address_id: searchParams.get('siteId') || '',
         assigned_user_id: '',
         scheduled_start: '',
         scheduled_end: '',
@@ -526,6 +526,7 @@ export default function MeasureMissionPage() {
                                                     onClick={() => setPlanForm(current => ({
                                                         ...current,
                                                         source_type: source,
+                                                        project_scope: source === 'SITE_VISIT' ? 'SUPPLY_AND_INSTALL' : 'SUPPLY_ONLY',
                                                         assigned_user_id: source === 'SITE_VISIT' ? current.assigned_user_id : '',
                                                         scheduled_start: source === 'SITE_VISIT' ? current.scheduled_start : '',
                                                         scheduled_end: source === 'SITE_VISIT' ? current.scheduled_end : '',
@@ -577,7 +578,7 @@ export default function MeasureMissionPage() {
                                                 className={inputClass}
                                             >
                                                 <option value="">Choisir une adresse</option>
-                                                {sites.map(site => <option key={site.id} value={site.id}>{site.label} · {site.address_line1}, {site.postal_code} {site.city}</option>)}
+                                                {sites.map(site => <option key={site.id} value={site.id}>{site.reference} · {site.label} · {site.address_line1}, {site.postal_code} {site.city}</option>)}
                                             </select>
                                         </Field>
                                     </div>
@@ -595,11 +596,14 @@ export default function MeasureMissionPage() {
                                             onChange={event => setPlanForm(current => ({ ...current, create_site: event.target.checked }))}
                                             className="h-4 w-4"
                                         />
-                                        Créer une nouvelle adresse chantier
+                                        Créer un nouveau chantier
                                     </label>
                                     {planForm.create_site && (
                                         <div className="mt-4 grid gap-4 border-t border-slate-200 pt-4 md:grid-cols-6">
-                                            <Field label="Libellé" className="md:col-span-2"><input value={planForm.site.label} onChange={event => setPlanForm(current => ({ ...current, site: { ...current.site, label: event.target.value } }))} className={inputClass} /></Field>
+                                            <div className="md:col-span-6 border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-900">
+                                                Le numéro chantier sera attribué automatiquement à l'enregistrement.
+                                            </div>
+                                            <Field label="Nom du chantier" className="md:col-span-2"><input value={planForm.site.label} onChange={event => setPlanForm(current => ({ ...current, site: { ...current.site, label: event.target.value } }))} className={inputClass} /></Field>
                                             <Field label="Adresse" className="md:col-span-4"><input required value={planForm.site.address_line1} onChange={event => setPlanForm(current => ({ ...current, site: { ...current.site, address_line1: event.target.value } }))} className={inputClass} /></Field>
                                             <Field label="Code postal" className="md:col-span-2"><input value={planForm.site.postal_code} onChange={event => setPlanForm(current => ({ ...current, site: { ...current.site, postal_code: event.target.value } }))} className={inputClass} /></Field>
                                             <Field label="Ville" className="md:col-span-3"><input value={planForm.site.city} onChange={event => setPlanForm(current => ({ ...current, site: { ...current.site, city: event.target.value } }))} className={inputClass} /></Field>
@@ -687,7 +691,7 @@ export default function MeasureMissionPage() {
                                 </div>
                             </div>
                             <div className="mt-6 grid gap-4 border-t border-slate-100 pt-5 sm:grid-cols-2 xl:grid-cols-4">
-                                <div className="flex gap-3"><MapPin className="h-5 w-5 text-blue-600" /><div><p className="text-[10px] font-black uppercase text-slate-400">Chantier</p><p className="text-sm font-black text-slate-800">{mission.site ? `${mission.site.address_line1}, ${mission.site.postal_code || ''} ${mission.site.city || ''}` : 'Adresse à préciser'}</p></div></div>
+                                <div className="flex gap-3"><MapPin className="h-5 w-5 text-blue-600" /><div><p className="text-[10px] font-black uppercase text-slate-400">Chantier</p><p className="text-sm font-black text-slate-800">{mission.site ? `${mission.site.reference} · ${mission.site.label}` : 'Adresse à préciser'}</p>{mission.site && <p className="mt-0.5 text-xs font-bold text-slate-500">{`${mission.site.address_line1}, ${mission.site.postal_code || ''} ${mission.site.city || ''}`}</p>}</div></div>
                                 <div className="flex gap-3"><UserRound className="h-5 w-5 text-indigo-600" /><div><p className="text-[10px] font-black uppercase text-slate-400">{isSiteVisit ? 'Métreur' : 'Origine'}</p><p className="text-sm font-black text-slate-800">{isSiteVisit ? (mission.assigned_user_name || 'Non affecté') : sourceMeta.label}</p></div></div>
                                 <div className="flex gap-3"><Clock3 className="h-5 w-5 text-amber-600" /><div><p className="text-[10px] font-black uppercase text-slate-400">{isSiteVisit ? 'Rendez-vous' : 'Périmètre'}</p><p className="text-sm font-black text-slate-800">{isSiteVisit ? formatDate(mission.scheduled_start) : (mission.project_scope === 'SUPPLY_ONLY' ? 'Fourniture seule' : 'Fourniture avec pose')}</p></div></div>
                                 <div className="flex gap-3"><ClipboardCheck className="h-5 w-5 text-emerald-600" /><div><p className="text-[10px] font-black uppercase text-slate-400">Avancement</p><p className="text-sm font-black text-slate-800">{completedCount}/{openingCount} ouvrage(s) terminé(s)</p></div></div>

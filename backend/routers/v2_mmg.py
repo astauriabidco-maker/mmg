@@ -169,7 +169,11 @@ def _resolve_site(
 
     payload = site_data.model_dump(exclude={"client_id"})
     payload["address_line1"] = normalized_line1
-    site = models.ClientSiteAddress(client_id=client_id, **payload)
+    site = models.ClientSiteAddress(
+        reference=next_number(db, "client_site"),
+        client_id=client_id,
+        **payload,
+    )
     db.add(site)
     db.flush()
     return site
@@ -344,6 +348,13 @@ def create_measure_mission(
             raise HTTPException(422, "Affectez un métreur et une date avant de planifier")
     if item.scheduled_start and item.scheduled_end and item.scheduled_end <= item.scheduled_start:
         raise HTTPException(422, "La fin planifiée doit être postérieure au début")
+    project_scope = item.project_scope
+    if project_scope is None:
+        project_scope = (
+            schemas.MeasureProjectScope.SUPPLY_AND_INSTALL
+            if item.source_type == schemas.MeasureSourceType.SITE_VISIT
+            else schemas.MeasureProjectScope.SUPPLY_ONLY
+        )
     mission = models.MeasureMission(
         reference=next_number(db, "measure_mission"),
         client_id=item.client_id,
@@ -352,7 +363,7 @@ def create_measure_mission(
         assigned_user_id=item.assigned_user_id,
         status=item.status.value,
         source_type=item.source_type.value,
-        project_scope=item.project_scope.value,
+        project_scope=project_scope.value,
         verification_status=schemas.MeasureVerificationStatus.UNVERIFIED.value,
         purpose=item.purpose,
         scheduled_start=item.scheduled_start,

@@ -183,6 +183,7 @@ def test_mmg_links_crm_client_structured_site_and_implicit_mission(client):
         headers=headers,
     ).json()
     assert len(sites) == 1
+    assert sites[0]["reference"].startswith("CH-")
     assert sites[0]["city"] == "Paris"
     assert sites[0]["access_instructions"] == "Portail bleu, appeler avant."
 
@@ -193,6 +194,74 @@ def test_mmg_links_crm_client_structured_site_and_implicit_mission(client):
     assert mission["status"] == "TO_REVIEW"
     assert mission["dossier_ids"] == [dossier["id"]]
     assert mission["site"]["postal_code"] == "75012"
+    assert mission["site"]["reference"] == sites[0]["reference"]
+
+
+def test_client_can_have_multiple_numbered_sites_and_smart_measure_defaults(client):
+    headers = _login(client)
+    crm_client = client.post(
+        "/v2/partners/clients",
+        json={
+            "name": "Client Multi Chantiers",
+            "phone": "0600001111",
+            "address": "1 rue Facturation",
+            "country": "FR",
+            "customer_type": "B2B",
+            "is_active": True,
+        },
+        headers=headers,
+    ).json()
+
+    created_sites = []
+    for label, address in (
+        ("Agence Centre", "10 rue du Premier Chantier"),
+        ("Dépôt Nord", "20 avenue du Second Chantier"),
+    ):
+        response = client.post(
+            "/v2/mmg/sites",
+            json={
+                "client_id": crm_client["id"],
+                "label": label,
+                "address_line1": address,
+                "postal_code": "75001",
+                "city": "Paris",
+                "country": "FR",
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        created_sites.append(response.json())
+
+    assert created_sites[0]["reference"].startswith("CH-")
+    assert created_sites[1]["reference"].startswith("CH-")
+    assert created_sites[0]["reference"] != created_sites[1]["reference"]
+
+    site_visit = client.post(
+        "/v2/mmg/missions",
+        json={
+            "client_id": crm_client["id"],
+            "site_address_id": created_sites[1]["id"],
+            "source_type": "SITE_VISIT",
+            "status": "TO_SCHEDULE",
+        },
+        headers=headers,
+    )
+    assert site_visit.status_code == 200, site_visit.text
+    assert site_visit.json()["project_scope"] == "SUPPLY_AND_INSTALL"
+    assert site_visit.json()["site"]["reference"] == created_sites[1]["reference"]
+
+    client_documents = client.post(
+        "/v2/mmg/missions",
+        json={
+            "client_id": crm_client["id"],
+            "site_address_id": created_sites[0]["id"],
+            "source_type": "CLIENT_DOCUMENTS",
+            "status": "IN_CAPTURE",
+        },
+        headers=headers,
+    )
+    assert client_documents.status_code == 200, client_documents.text
+    assert client_documents.json()["project_scope"] == "SUPPLY_ONLY"
 
 
 def test_measure_mission_status_machine_rejects_skipped_review(client):

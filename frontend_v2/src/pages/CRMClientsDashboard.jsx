@@ -22,7 +22,9 @@ export default function CRMClientsDashboard() {
     const [showProposalStarter, setShowProposalStarter] = useState(false);
     const [showClientModal, setShowClientModal] = useState(false);
     const [showMeasureStarter, setShowMeasureStarter] = useState(false);
+    const [showSiteModal, setShowSiteModal] = useState(false);
     const [isCreatingClient, setIsCreatingClient] = useState(false);
+    const [isCreatingSite, setIsCreatingSite] = useState(false);
     const [clientDraft, setClientDraft] = useState({
         name: '',
         contact_name: '',
@@ -31,6 +33,18 @@ export default function CRMClientsDashboard() {
         address: '',
         tax_id: '',
         customer_type: 'B2B',
+    });
+    const [siteDraft, setSiteDraft] = useState({
+        label: 'Chantier',
+        address_line1: '',
+        address_line2: '',
+        postal_code: '',
+        city: '',
+        country: 'FR',
+        contact_name: '',
+        contact_phone: '',
+        access_instructions: '',
+        is_default: false,
     });
 
     const planMeasureForClient = () => {
@@ -160,6 +174,69 @@ export default function CRMClientsDashboard() {
     const selectedClient = useMemo(() => (
         clients.find(client => client.id === selectedClientId) || filteredClients[0] || null
     ), [clients, filteredClients, selectedClientId]);
+
+    const { data: clientSites = [], refetch: refetchClientSites } = useQuery({
+        queryKey: ['client-sites', selectedClient?.id],
+        enabled: Boolean(selectedClient?.id),
+        queryFn: async () => {
+            const response = await api.get('/v2/mmg/sites', { params: { client_id: selectedClient.id } });
+            return response.data;
+        },
+    });
+
+    const openSiteCreation = () => {
+        setSiteDraft({
+            label: clientSites.length ? `Chantier ${clientSites.length + 1}` : 'Chantier principal',
+            address_line1: '',
+            address_line2: '',
+            postal_code: '',
+            city: '',
+            country: selectedClient?.country || 'FR',
+            contact_name: selectedClient?.contact_name || '',
+            contact_phone: selectedClient?.phone || '',
+            access_instructions: '',
+            is_default: clientSites.length === 0,
+        });
+        setShowSiteModal(true);
+    };
+
+    const createClientSite = async () => {
+        if (!selectedClient?.id || !siteDraft.address_line1.trim()) {
+            return alert("Renseignez l'adresse du chantier.");
+        }
+        setIsCreatingSite(true);
+        try {
+            await api.post('/v2/mmg/sites', {
+                ...siteDraft,
+                client_id: selectedClient.id,
+                label: siteDraft.label.trim() || 'Chantier',
+                address_line1: siteDraft.address_line1.trim(),
+                address_line2: siteDraft.address_line2.trim() || null,
+                postal_code: siteDraft.postal_code.trim() || null,
+                city: siteDraft.city.trim() || null,
+                contact_name: siteDraft.contact_name.trim() || null,
+                contact_phone: siteDraft.contact_phone.trim() || null,
+                access_instructions: siteDraft.access_instructions.trim() || null,
+            });
+            await refetchClientSites();
+            setShowSiteModal(false);
+        } catch (requestError) {
+            alert(requestError?.response?.data?.detail || 'Impossible de créer le chantier.');
+        } finally {
+            setIsCreatingSite(false);
+        }
+    };
+
+    const startMeasureForSite = site => {
+        const params = new URLSearchParams({
+            source: 'SITE_VISIT',
+            scope: 'SUPPLY_AND_INSTALL',
+            scopeLabel: 'Par défaut : fourniture + pose',
+            clientId: String(selectedClient.id),
+            siteId: String(site.id),
+        });
+        navigate(`/measure-missions/new?${params.toString()}`);
+    };
 
     const allPresalesQuotes = useMemo(() => (
         sales
@@ -787,8 +864,64 @@ export default function CRMClientsDashboard() {
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 px-6 pb-6">
                                     <InfoLine icon={Phone} label="Téléphone" value={selectedClient.phone} />
                                     <InfoLine icon={Mail} label="Email" value={selectedClient.email} />
-                                    <InfoLine icon={MapPin} label="Adresse" value={selectedClient.address} />
+                                    <InfoLine icon={MapPin} label="Adresse de facturation" value={selectedClient.address} />
                                 </div>
+                            </section>
+
+                            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                                <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/70 px-6 py-4 md:flex-row md:items-center md:justify-between">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Chantiers du client</p>
+                                        <p className="mt-1 text-sm font-bold text-slate-600">
+                                            Chaque adresse possède son propre numéro et peut lancer directement un métré.
+                                        </p>
+                                    </div>
+                                    <button
+                                        onClick={openSiteCreation}
+                                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-black text-white hover:bg-slate-800"
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        Nouveau chantier
+                                    </button>
+                                </div>
+                                {clientSites.length ? (
+                                    <div className="divide-y divide-slate-100">
+                                        {clientSites.map(site => (
+                                            <div key={site.id} className="flex flex-col gap-4 px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
+                                                <div className="min-w-0">
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <span className="font-mono text-xs font-black text-emerald-700">{site.reference}</span>
+                                                        <span className="text-sm font-black text-slate-900">{site.label}</span>
+                                                        {site.is_default && (
+                                                            <span className="rounded-md bg-blue-50 px-2 py-1 text-[9px] font-black uppercase text-blue-700">Principal</span>
+                                                        )}
+                                                    </div>
+                                                    <p className="mt-1 text-sm font-bold text-slate-600">
+                                                        {[site.address_line1, site.address_line2, [site.postal_code, site.city].filter(Boolean).join(' '), site.country].filter(Boolean).join(', ')}
+                                                    </p>
+                                                    {(site.contact_name || site.access_instructions) && (
+                                                        <p className="mt-1 text-xs font-semibold text-slate-400">
+                                                            {[site.contact_name, site.contact_phone, site.access_instructions].filter(Boolean).join(' · ')}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    onClick={() => startMeasureForSite(site)}
+                                                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-black text-emerald-800 hover:bg-emerald-100"
+                                                >
+                                                    <ClipboardList className="h-4 w-4" />
+                                                    Planifier un métré
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="px-6 py-8 text-center">
+                                        <MapPin className="mx-auto h-8 w-8 text-slate-300" />
+                                        <p className="mt-2 text-sm font-black text-slate-600">Aucun chantier enregistré pour ce client.</p>
+                                        <p className="mt-1 text-xs font-bold text-slate-400">Créez l’adresse une seule fois, puis réutilisez-la dans tous les métrés et devis.</p>
+                                    </div>
+                                )}
                             </section>
 
                             <section className="grid grid-cols-1 gap-6 xl:grid-cols-[420px_1fr] items-start">
@@ -943,6 +1076,82 @@ export default function CRMClientsDashboard() {
                     )}
                 </main>
             </div>
+            )}
+
+            {showSiteModal && selectedClient && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+                    <div className="w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                        <div className="flex items-start justify-between bg-slate-900 px-6 py-5 text-white">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Nouveau chantier client</p>
+                                <h3 className="mt-2 text-2xl font-black">{selectedClient.name}</h3>
+                                <p className="mt-1 text-sm font-bold text-slate-300">Le numéro de chantier sera généré automatiquement.</p>
+                            </div>
+                            <button onClick={() => setShowSiteModal(false)} className="rounded-full p-2 text-slate-300 hover:bg-white/10 hover:text-white">
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+                        <div className="grid gap-4 p-6 md:grid-cols-6">
+                            <label className="md:col-span-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Nom du chantier</span>
+                                <input value={siteDraft.label} onChange={event => setSiteDraft(current => ({ ...current, label: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500" />
+                            </label>
+                            <label className="md:col-span-4">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Adresse *</span>
+                                <div className="mt-2 flex gap-2">
+                                    <input value={siteDraft.address_line1} onChange={event => setSiteDraft(current => ({ ...current, address_line1: event.target.value }))} placeholder="Numéro et voie" className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500" />
+                                    {selectedClient.address && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setSiteDraft(current => ({ ...current, address_line1: selectedClient.address }))}
+                                            className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-600 hover:bg-slate-50"
+                                        >
+                                            Adresse client
+                                        </button>
+                                    )}
+                                </div>
+                            </label>
+                            <label className="md:col-span-3">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Complément</span>
+                                <input value={siteDraft.address_line2} onChange={event => setSiteDraft(current => ({ ...current, address_line2: event.target.value }))} placeholder="Bâtiment, étage, porte..." className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500" />
+                            </label>
+                            <label className="md:col-span-1">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Code postal</span>
+                                <input value={siteDraft.postal_code} onChange={event => setSiteDraft(current => ({ ...current, postal_code: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500" />
+                            </label>
+                            <label className="md:col-span-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Ville</span>
+                                <input value={siteDraft.city} onChange={event => setSiteDraft(current => ({ ...current, city: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500" />
+                            </label>
+                            <label className="md:col-span-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contact sur place</span>
+                                <input value={siteDraft.contact_name} onChange={event => setSiteDraft(current => ({ ...current, contact_name: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500" />
+                            </label>
+                            <label className="md:col-span-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Téléphone chantier</span>
+                                <input value={siteDraft.contact_phone} onChange={event => setSiteDraft(current => ({ ...current, contact_phone: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500" />
+                            </label>
+                            <label className="md:col-span-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pays</span>
+                                <input value={siteDraft.country} onChange={event => setSiteDraft(current => ({ ...current, country: event.target.value.toUpperCase() }))} maxLength={2} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-emerald-500" />
+                            </label>
+                            <label className="md:col-span-6">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Accès et contraintes</span>
+                                <textarea value={siteDraft.access_instructions} onChange={event => setSiteDraft(current => ({ ...current, access_instructions: event.target.value }))} placeholder="Accès, stationnement, étage, horaires, personne à prévenir..." className="mt-2 min-h-24 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500" />
+                            </label>
+                            <label className="md:col-span-6 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-700">
+                                <input type="checkbox" checked={siteDraft.is_default} onChange={event => setSiteDraft(current => ({ ...current, is_default: event.target.checked }))} className="h-4 w-4" />
+                                Utiliser ce chantier par défaut pour ce client
+                            </label>
+                        </div>
+                        <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
+                            <button onClick={() => setShowSiteModal(false)} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-600 hover:bg-slate-100">Annuler</button>
+                            <button onClick={createClientSite} disabled={isCreatingSite} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-500 disabled:bg-slate-300">
+                                {isCreatingSite ? 'Création...' : 'Créer le chantier'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
 
             {showProposalStarter && selectedClient && (
@@ -1413,6 +1622,7 @@ function MeasureFlowStarter({ client, onClose, onStart }) {
     const options = [
         {
             source: 'SITE_VISIT',
+            scope: 'SUPPLY_AND_INSTALL',
             icon: MapPin,
             title: 'Planifier un métré sur chantier',
             description: 'MMG affecte un métreur, planifie le rendez-vous et relève les cotes sur place.',
@@ -1420,6 +1630,8 @@ function MeasureFlowStarter({ client, onClose, onStart }) {
         },
         {
             source: 'CLIENT_DOCUMENTS',
+            scope: 'SUPPLY_ONLY',
+            scopeLabel: 'Par défaut : fourniture seule',
             icon: FileText,
             title: 'Importer les cotes du client',
             description: 'Le client apporte plans, croquis ou relevés. Le BE les contrôle avant fabrication.',
@@ -1427,6 +1639,8 @@ function MeasureFlowStarter({ client, onClose, onStart }) {
         },
         {
             source: 'AGENCY_ASSISTED',
+            scope: 'SUPPLY_ONLY',
+            scopeLabel: 'Par défaut : fourniture seule',
             icon: Building2,
             title: 'Saisir les cotes en agence',
             description: 'Un commercial ou technicien structure les ouvrages avec le client au comptoir.',
@@ -1453,12 +1667,15 @@ function MeasureFlowStarter({ client, onClose, onStart }) {
                         return (
                             <button
                                 key={option.source}
-                                onClick={() => onStart(option.source)}
+                                onClick={() => onStart(option.source, option.scope)}
                                 className={`min-h-52 border p-5 text-left transition-transform hover:-translate-y-0.5 hover:shadow-md ${option.tone}`}
                             >
                                 <Icon className="h-7 w-7" />
                                 <p className="mt-5 text-lg font-black">{option.title}</p>
                                 <p className="mt-2 text-sm font-semibold leading-6 opacity-80">{option.description}</p>
+                                <span className="mt-4 inline-flex rounded-md border border-current/20 px-2 py-1 text-[10px] font-black uppercase tracking-widest">
+                                    {option.scopeLabel}
+                                </span>
                                 <span className="mt-5 inline-flex items-center gap-2 text-xs font-black uppercase tracking-widest">Continuer <ArrowRight className="h-4 w-4" /></span>
                             </button>
                         );
