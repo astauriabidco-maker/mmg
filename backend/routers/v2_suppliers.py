@@ -137,6 +137,110 @@ def _supplier_order_payload(po: models.PurchaseOrder, metrics: dict) -> dict:
     }
 
 
+def _supplier_quality_score(
+    supplier: models.Supplier,
+    orders: list[dict],
+    disputes: list[models.SupplierDispute],
+    invoices: list[models.SupplierInvoice],
+) -> dict:
+    open_disputes = [dispute for dispute in disputes if dispute.status in {"OPEN", "IN_PROGRESS"}]
+    resolved_disputes = [dispute for dispute in disputes if dispute.status == "RESOLVED"]
+    quality_disputes = [dispute for dispute in disputes if dispute.category == "QUALITY"]
+    quantity_disputes = [dispute for dispute in disputes if dispute.category == "QUANTITY"]
+    open_blocking_disputes = [
+        dispute
+        for dispute in open_disputes
+        if dispute.severity in {"HIGH", "BLOCKING", "CRITICAL"} or dispute.blocks_receipt or dispute.blocks_payment
+    ]
+    payment_blockers = [dispute for dispute in open_disputes if dispute.blocks_payment]
+    late_orders = [order for order in orders if order["is_late"]]
+    partial_orders = [order for order in orders if order["status"] == models.PurchaseOrderStatus.PARTIAL]
+    received_orders = [order for order in orders if order["status"] == models.PurchaseOrderStatus.RECEIVED]
+    active_orders = [order for order in orders if order["status"] != models.PurchaseOrderStatus.CANCELLED]
+    overdue_invoices = [
+        invoice for invoice in invoices
+        if invoice.status in {"TO_PAY", "PARTIAL"}
+        and invoice.due_date
+        and invoice.due_date.date() < utcnow().date()
+    ]
+
+    disputed_po_ids = {
+        dispute.purchase_order_id
+        for dispute in disputes
+        if dispute.purchase_order_id and dispute.category in {"QUALITY", "QUANTITY"}
+    }
+    conforming_received_orders = [
+        order for order in received_orders
+        if order["id"] not in disputed_po_ids
+    ]
+    conformity_rate = (
+        round((len(conforming_received_orders) / len(received_orders)) * 100, 1)
+        if received_orders else None
+    )
+    delivery_rate = (
+        round((len(received_orders) / len(active_orders)) * 100, 1)
+        if active_orders else None
+    )
+
+    penalties = []
+
+    def add_penalty(code: str, label: str, points: int, count: int = 1):
+        if count <= 0:
+            return
+        penalties.append({
+            "code": code,
+            "label": label,
+            "points": points * count,
+            "count": count,
+        })
+
+    add_penalty("supplier.blocked", "Fournisseur bloqué", 40, 1 if supplier.supplier_status == "BLOCKED" else 0)
+    add_penalty("late_orders", "Commandes en retard", 8, len(late_orders))
+    add_penalty("open_disputes", "Litiges ouverts", 10, len(open_disputes))
+    add_penalty("blocking_disputes", "Litiges bloquants", 12, len(open_blocking_disputes))
+    add_penalty("quality_disputes", "Non-conformités qualité", 8, len(quality_disputes))
+    add_penalty("quantity_disputes", "Écarts de quantité", 6, len(quantity_disputes))
+    add_penalty("partial_orders", "Réceptions partielles", 4, len(partial_orders))
+    add_penalty("payment_blockers", "Paiements bloqués", 8, len(payment_blockers))
+    add_penalty("overdue_invoices", "Factures échues non payées", 3, len(overdue_invoices))
+
+    score = max(0, 100 - sum(penalty["points"] for penalty in penalties))
+    if score >= 85:
+        label = "Fiable"
+        recommendation = "Commander normalement, surveillance standard."
+        tone = "emerald"
+    elif score >= 70:
+        label = "À surveiller"
+        recommendation = "Commander possible, contrôler délais et factures ouvertes."
+        tone = "orange"
+    elif score >= 50:
+        label = "Risque fournisseur"
+        recommendation = "Commander avec validation achats et suivi rapproché."
+        tone = "red"
+    else:
+        label = "Critique"
+        recommendation = "Éviter tout nouvel engagement avant résolution des points bloquants."
+        tone = "red"
+
+    return {
+        "score": score,
+        "label": label,
+        "tone": tone,
+        "recommendation": recommendation,
+        "conformity_rate": conformity_rate,
+        "delivery_rate": delivery_rate,
+        "late_orders": len(late_orders),
+        "open_disputes": len(open_disputes),
+        "resolved_disputes": len(resolved_disputes),
+        "quality_disputes": len(quality_disputes),
+        "quantity_disputes": len(quantity_disputes),
+        "payment_blockers": len(payment_blockers),
+        "overdue_invoices": len(overdue_invoices),
+        "partial_orders": len(partial_orders),
+        "penalties": penalties,
+    }
+
+
 @router.get("/{supplier_id}/operations")
 def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
     supplier = (
@@ -205,6 +309,7 @@ def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
         .all()
     )
     open_disputes = [dispute for dispute in disputes if dispute.status in {"OPEN", "IN_PROGRESS"}]
+    quality_score = _supplier_quality_score(supplier, orders, disputes, invoices)
 
     timeline = []
     for po in purchase_orders[:30]:
@@ -295,6 +400,7 @@ def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
             "disputes": len(open_disputes),
             "amount_committed": amount_committed,
         },
+        "quality_score": quality_score,
         "actions": [
             {"code": "purchase.create", "label": "Créer commande fournisseur", "enabled": supplier.supplier_status != "BLOCKED"},
             {"code": "purchase.receive", "label": "Réceptionner", "enabled": len(to_receive) > 0},

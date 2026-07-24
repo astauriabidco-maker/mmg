@@ -208,6 +208,20 @@ def test_supplier_operations_exposes_actionable_purchase_situation(client):
         },
     )
     assert invoice_response.status_code == 200, invoice_response.text
+    dispute_response = client.post(
+        "/v2/purchases/disputes",
+        headers=headers,
+        json={
+            "supplier": "OPS FOURNISSEUR",
+            "purchase_order_id": po_id,
+            "title": "Pièces non conformes",
+            "category": "QUALITY",
+            "severity": "HIGH",
+            "blocks_payment": True,
+            "impact_summary": "Paiement bloqué jusqu'à remplacement.",
+        },
+    )
+    assert dispute_response.status_code == 200, dispute_response.text
 
     operations_response = client.get(f"/v2/suppliers/{supplier_id}/operations", headers=headers)
     assert operations_response.status_code == 200, operations_response.text
@@ -223,6 +237,13 @@ def test_supplier_operations_exposes_actionable_purchase_situation(client):
     assert operations["to_receive"][0]["is_late"] is True
     assert operations["to_receive"][0]["late_days"] >= 4
     assert operations["to_invoice"][0]["quantity_invoiceable"] == 1.0
+    assert operations["quality_score"]["score"] < 75
+    assert operations["quality_score"]["label"] in {"À surveiller", "Risque fournisseur", "Critique"}
+    assert operations["quality_score"]["late_orders"] == 1
+    assert operations["quality_score"]["open_disputes"] == 1
+    assert operations["quality_score"]["quality_disputes"] == 1
+    assert operations["quality_score"]["payment_blockers"] == 1
+    assert any(penalty["code"] == "quality_disputes" for penalty in operations["quality_score"]["penalties"])
     assert {action["code"]: action["enabled"] for action in operations["actions"]} == {
         "purchase.create": True,
         "purchase.receive": True,

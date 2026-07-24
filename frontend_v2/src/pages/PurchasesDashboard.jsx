@@ -45,6 +45,118 @@ const isSupplierDisputeOverdue = (dispute) => (
     && new Date(dispute.due_date) < new Date()
 );
 
+const computeSupplierQualityScore = ({ supplier, orders = [], disputes = [], lateOrders = [], toInvoiceOrders = [] }) => {
+    const openDisputes = disputes.filter(isSupplierDisputeOpen);
+    const resolvedDisputes = disputes.filter(dispute => dispute.status === 'RESOLVED');
+    const qualityDisputes = disputes.filter(dispute => dispute.category === 'QUALITY');
+    const quantityDisputes = disputes.filter(dispute => dispute.category === 'QUANTITY');
+    const partialOrders = orders.filter(order => order.status === 'PARTIAL');
+    const receivedOrders = orders.filter(order => order.status === 'RECEIVED');
+    const activeOrders = orders.filter(order => !['CANCELLED'].includes(order.status));
+    const blockingDisputes = openDisputes.filter(dispute =>
+        ['HIGH', 'BLOCKING', 'CRITICAL'].includes(dispute.severity)
+        || dispute.blocks_receipt
+        || dispute.blocks_payment
+    );
+    const paymentBlockers = openDisputes.filter(dispute => dispute.blocks_payment);
+    const disputedOrderIds = new Set(
+        disputes
+            .filter(dispute => ['QUALITY', 'QUANTITY'].includes(dispute.category) && dispute.purchase_order_id)
+            .map(dispute => dispute.purchase_order_id)
+    );
+    const conformingReceivedOrders = receivedOrders.filter(order => !disputedOrderIds.has(order.id));
+    const conformityRate = receivedOrders.length > 0
+        ? Math.round((conformingReceivedOrders.length / receivedOrders.length) * 1000) / 10
+        : null;
+    const deliveryRate = activeOrders.length > 0
+        ? Math.round((receivedOrders.length / activeOrders.length) * 1000) / 10
+        : null;
+    const penalties = [
+        { code: 'supplier.blocked', label: 'Fournisseur bloqué', count: supplier?.supplier_status === 'BLOCKED' ? 1 : 0, weight: 40 },
+        { code: 'late_orders', label: 'Commandes en retard', count: lateOrders.length, weight: 8 },
+        { code: 'open_disputes', label: 'Litiges ouverts', count: openDisputes.length, weight: 10 },
+        { code: 'blocking_disputes', label: 'Litiges bloquants', count: blockingDisputes.length, weight: 12 },
+        { code: 'quality_disputes', label: 'Non-conformités qualité', count: qualityDisputes.length, weight: 8 },
+        { code: 'quantity_disputes', label: 'Écarts de quantité', count: quantityDisputes.length, weight: 6 },
+        { code: 'partial_orders', label: 'Réceptions partielles', count: partialOrders.length, weight: 4 },
+        { code: 'payment_blockers', label: 'Paiements bloqués', count: paymentBlockers.length, weight: 8 },
+        { code: 'invoice_to_match', label: 'Factures à rapprocher', count: toInvoiceOrders.length, weight: 3 },
+    ]
+        .filter(item => item.count > 0)
+        .map(item => ({ ...item, points: item.count * item.weight }));
+    const score = Math.max(0, 100 - penalties.reduce((sum, item) => sum + item.points, 0));
+    if (score >= 85) {
+        return {
+            score,
+            label: 'Fiable',
+            tone: 'emerald',
+            recommendation: 'Commander normalement, surveillance standard.',
+            conformityRate,
+            deliveryRate,
+            openDisputes,
+            resolvedDisputes,
+            qualityDisputes,
+            quantityDisputes,
+            blockingDisputes,
+            paymentBlockers,
+            partialOrders,
+            penalties,
+        };
+    }
+    if (score >= 70) {
+        return {
+            score,
+            label: 'À surveiller',
+            tone: 'orange',
+            recommendation: 'Commander possible, contrôler délais et factures ouvertes.',
+            conformityRate,
+            deliveryRate,
+            openDisputes,
+            resolvedDisputes,
+            qualityDisputes,
+            quantityDisputes,
+            blockingDisputes,
+            paymentBlockers,
+            partialOrders,
+            penalties,
+        };
+    }
+    if (score >= 50) {
+        return {
+            score,
+            label: 'Risque fournisseur',
+            tone: 'red',
+            recommendation: 'Commander avec validation achats et suivi rapproché.',
+            conformityRate,
+            deliveryRate,
+            openDisputes,
+            resolvedDisputes,
+            qualityDisputes,
+            quantityDisputes,
+            blockingDisputes,
+            paymentBlockers,
+            partialOrders,
+            penalties,
+        };
+    }
+    return {
+        score,
+        label: 'Critique',
+        tone: 'red',
+        recommendation: 'Éviter tout nouvel engagement avant résolution des points bloquants.',
+        conformityRate,
+        deliveryRate,
+        openDisputes,
+        resolvedDisputes,
+        qualityDisputes,
+        quantityDisputes,
+        blockingDisputes,
+        paymentBlockers,
+        partialOrders,
+        penalties,
+    };
+};
+
 const priorityLabel = (priority) => ({
     CRITICAL: 'Critique',
     URGENT: 'Urgent',
@@ -3358,8 +3470,23 @@ const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurr
             : supplierStatus === 'STRATEGIC'
                 ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
                 : 'bg-emerald-100 text-emerald-700 border-emerald-200';
-    const qualityAlerts = lateOrders.length + toInvoiceOrders.length + supOrders.filter(o => o.status === 'PARTIAL').length + openSupplierDisputes.length;
-    const qualityLabel = qualityAlerts === 0 ? 'Stable' : qualityAlerts <= 2 ? 'À surveiller' : 'Sous tension';
+    const qualityScore = computeSupplierQualityScore({
+        supplier: sup,
+        orders: supOrders,
+        disputes: supDisputes,
+        lateOrders,
+        toInvoiceOrders,
+    });
+    const qualityTone = qualityScore.tone === 'emerald'
+        ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+        : qualityScore.score >= 70
+            ? 'bg-orange-100 text-orange-700 border-orange-200'
+            : 'bg-red-100 text-red-700 border-red-200';
+    const qualityHeroTone = qualityScore.tone === 'emerald'
+        ? 'bg-emerald-950 text-white border-emerald-900'
+        : qualityScore.score >= 70
+            ? 'bg-orange-50 text-orange-950 border-orange-200'
+            : 'bg-red-50 text-red-950 border-red-200';
     const committedAmount = openOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
     const quantityToReceive = toReceiveOrders.reduce((sum, order) => sum + remainingQty(order), 0);
     const quantityToInvoice = toInvoiceOrders.reduce((sum, order) => sum + invoiceableQty(order), 0);
@@ -3845,20 +3972,88 @@ const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurr
                                 <div className="p-6 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
                                     <div>
                                         <h3 className="font-black text-slate-800 flex items-center gap-2"><CheckCircle className="w-5 h-5 text-slate-400"/> Qualité fournisseur</h3>
-                                        <p className="text-xs font-bold text-slate-500 mt-1">Lecture opérationnelle des risques visibles dans MMG.</p>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">Score de confiance calculé depuis les retards, litiges, blocages et réceptions.</p>
                                     </div>
-                                    <span className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest ${qualityAlerts === 0 ? 'bg-emerald-100 text-emerald-700' : qualityAlerts <= 2 ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
-                                        {qualityLabel}
+                                    <span className={`px-3 py-1 rounded-full border text-xs font-black uppercase tracking-widest ${qualityTone}`}>
+                                        {qualityScore.label}
                                     </span>
                                 </div>
-                                <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 p-6">
+                                <div className="p-6 grid grid-cols-1 xl:grid-cols-[0.8fr_1.2fr] gap-5">
+                                    <div className={`rounded-3xl border p-6 ${qualityHeroTone}`}>
+                                        <p className="text-[10px] font-black uppercase tracking-widest opacity-70">Score fournisseur</p>
+                                        <div className="mt-3 flex items-end gap-2">
+                                            <span className="text-6xl font-black leading-none">{qualityScore.score}</span>
+                                            <span className="text-xl font-black opacity-70 mb-2">/100</span>
+                                        </div>
+                                        <p className="mt-4 font-black">{qualityScore.recommendation}</p>
+                                        {qualityScore.penalties.length > 0 ? (
+                                            <div className="mt-5 space-y-2">
+                                                {qualityScore.penalties.slice(0, 4).map(penalty => (
+                                                    <div key={penalty.code} className="flex items-center justify-between gap-3 rounded-2xl bg-white/70 border border-white/60 px-3 py-2 text-slate-800">
+                                                        <span className="text-xs font-black">{penalty.label}</span>
+                                                        <span className="text-xs font-black text-red-600">-{penalty.points}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="mt-5 rounded-2xl bg-white/70 border border-white/60 px-3 py-3 text-xs font-black text-slate-700">
+                                                Aucun signal négatif visible.
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                        <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4">
+                                            <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Conformité livraison</p>
+                                            <p className="text-2xl font-black text-emerald-700 mt-1">
+                                                {qualityScore.conformityRate === null ? '-' : `${qualityScore.conformityRate}%`}
+                                            </p>
+                                            <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mt-1">réceptions sans litige qualité/quantité</p>
+                                        </div>
+                                        <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4">
+                                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Commandes reçues</p>
+                                            <p className="text-2xl font-black text-blue-700 mt-1">
+                                                {qualityScore.deliveryRate === null ? '-' : `${qualityScore.deliveryRate}%`}
+                                            </p>
+                                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mt-1">{receivedOrders}/{supOrders.filter(o => o.status !== 'CANCELLED').length}</p>
+                                        </div>
+                                        <div className="rounded-2xl bg-red-50 border border-red-100 p-4">
+                                            <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Retards ouverts</p>
+                                            <p className="text-2xl font-black text-red-700 mt-1">{lateOrders.length}</p>
+                                        </div>
+                                        <div className="rounded-2xl bg-orange-50 border border-orange-100 p-4">
+                                            <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Paiements bloqués</p>
+                                            <p className="text-2xl font-black text-orange-700 mt-1">{qualityScore.paymentBlockers.length}</p>
+                                        </div>
+                                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Réceptions partielles</p>
+                                            <p className="text-2xl font-black text-slate-900 mt-1">{qualityScore.partialOrders.length}</p>
+                                        </div>
+                                        <div className="rounded-2xl bg-red-50 border border-red-100 p-4">
+                                            <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Non-conformités</p>
+                                            <p className="text-2xl font-black text-red-700 mt-1">{qualityScore.qualityDisputes.length}</p>
+                                        </div>
+                                        <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4">
+                                            <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest">Écarts quantité</p>
+                                            <p className="text-2xl font-black text-amber-700 mt-1">{qualityScore.quantityDisputes.length}</p>
+                                        </div>
+                                        <button
+                                            onClick={() => openDisputeModal?.({ supplier: sup.name, title: `Litige ${sup.name}` })}
+                                            className="rounded-2xl bg-red-50 border border-red-100 p-4 text-left hover:bg-red-100 transition-colors"
+                                        >
+                                            <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Litiges ouverts</p>
+                                            <p className="text-2xl font-black text-red-700 mt-1">{qualityScore.openDisputes.length}</p>
+                                            <p className="text-[10px] font-black text-red-500 uppercase tracking-widest mt-1">Déclarer</p>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 px-6 pb-6">
                                     <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Réceptions partielles</p>
-                                        <p className="text-2xl font-black text-slate-900 mt-1">{supOrders.filter(o => o.status === 'PARTIAL').length}</p>
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Litiges résolus</p>
+                                        <p className="text-2xl font-black text-slate-900 mt-1">{qualityScore.resolvedDisputes.length}</p>
                                     </div>
                                     <div className="rounded-2xl bg-red-50 border border-red-100 p-4">
-                                        <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Retards ouverts</p>
-                                        <p className="text-2xl font-black text-red-700 mt-1">{lateOrders.length}</p>
+                                        <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Litiges bloquants</p>
+                                        <p className="text-2xl font-black text-red-700 mt-1">{qualityScore.blockingDisputes.length}</p>
                                     </div>
                                     <div className="rounded-2xl bg-orange-50 border border-orange-100 p-4">
                                         <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Factures à rapprocher</p>
@@ -3868,14 +4063,10 @@ const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurr
                                         <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Commandes reçues</p>
                                         <p className="text-2xl font-black text-emerald-700 mt-1">{receivedOrders}</p>
                                     </div>
-                                    <button
-                                        onClick={() => openDisputeModal?.({ supplier: sup.name, title: `Litige ${sup.name}` })}
-                                        className="rounded-2xl bg-red-50 border border-red-100 p-4 text-left hover:bg-red-100 transition-colors"
-                                    >
-                                        <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Litiges ouverts</p>
-                                        <p className="text-2xl font-black text-red-700 mt-1">{openSupplierDisputes.length}</p>
-                                        <p className="text-[10px] font-black text-red-500 uppercase tracking-widest mt-1">Déclarer</p>
-                                    </button>
+                                    <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Commandes actives</p>
+                                        <p className="text-2xl font-black text-slate-900 mt-1">{supOrders.filter(o => o.status !== 'CANCELLED').length}</p>
+                                    </div>
                                 </div>
                                 {openSupplierDisputes.length > 0 && (
                                     <div className="px-6 pb-6 space-y-3">
