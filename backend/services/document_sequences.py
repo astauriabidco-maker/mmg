@@ -35,6 +35,7 @@ DOC_KIND_FORMATS = {
     "supplier_dispute": ("LIT", 4), # Litiges fourn.:     LIT-YYYY-XXXX
     "delivery_note": ("BL", 4),    # Bons de livraison : BL-YYYY-XXXX
     "mmg": ("MMG", 5),             # Dossiers MMG :      MMG-YYYY-XXXXX
+    "measure_mission": ("MET", 5), # Missions de métré : MET-YYYY-XXXXX
 }
 
 # doc_kind -> modèle portant la colonne `reference` (auto-amorçage du compteur)
@@ -48,6 +49,7 @@ DOC_KIND_MODELS = {
     "supplier_dispute": models.SupplierDispute,
     "delivery_note": models.DeliveryNote,
     "mmg": models.MMG,
+    "measure_mission": models.MeasureMission,
 }
 
 

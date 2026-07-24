@@ -329,11 +329,25 @@ class MMGStatus(str, enum.Enum):
     VALIDATED = "VALIDATED"
     IN_PRODUCTION = "IN_PRODUCTION"
 
+class MeasureMissionStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    TO_SCHEDULE = "TO_SCHEDULE"
+    SCHEDULED = "SCHEDULED"
+    ON_SITE = "ON_SITE"
+    TO_REVIEW = "TO_REVIEW"
+    CORRECTION_REQUIRED = "CORRECTION_REQUIRED"
+    VALIDATED = "VALIDATED"
+    QUOTED = "QUOTED"
+    CANCELLED = "CANCELLED"
+
 class MMG(Base):
     __tablename__ = "mmg_dossiers"
 
     id = Column(Integer, primary_key=True, index=True)
     reference = Column(String, unique=True, index=True) # MMG-2026-XXXXX
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
+    site_address_id = Column(Integer, ForeignKey("client_site_addresses.id"), nullable=True, index=True)
+    measure_mission_id = Column(Integer, ForeignKey("measure_missions.id"), nullable=True, index=True)
     client_name = Column(String)
     client_contact = Column(String)
     client_address = Column(String) # Billing address
@@ -388,6 +402,13 @@ class MMG(Base):
     status = Column(SAEnum(MMGStatus), default=MMGStatus.SENT)
     
     sale_order = relationship("SaleOrder", back_populates="mmg_dossiers")
+    client = relationship("Client", foreign_keys=[client_id])
+    site_location = relationship("ClientSiteAddress", foreign_keys=[site_address_id])
+    measure_mission = relationship(
+        "MeasureMission",
+        back_populates="dossiers",
+        foreign_keys=[measure_mission_id],
+    )
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     
@@ -541,10 +562,114 @@ class Client(Base):
     email = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
+    country = Column(String, default="FR")
     tax_id = Column(String, nullable=True) # NIU
     customer_type = Column(String, default="B2B") # B2B, B2C
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=utcnow)
+    site_addresses = relationship(
+        "ClientSiteAddress",
+        back_populates="client",
+        cascade="all, delete-orphan",
+    )
+    measure_missions = relationship("MeasureMission", back_populates="client")
+
+
+class ClientSiteAddress(Base):
+    __tablename__ = "client_site_addresses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    label = Column(String, default="Chantier")
+    address_line1 = Column(String, nullable=False)
+    address_line2 = Column(String, nullable=True)
+    postal_code = Column(String, nullable=True)
+    city = Column(String, nullable=True)
+    country = Column(String, default="FR")
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    contact_name = Column(String, nullable=True)
+    contact_phone = Column(String, nullable=True)
+    access_instructions = Column(Text, nullable=True)
+    is_default = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    client = relationship("Client", back_populates="site_addresses")
+    measure_missions = relationship("MeasureMission", back_populates="site")
+
+    @property
+    def formatted_address(self):
+        locality = " ".join(part for part in [self.postal_code, self.city] if part)
+        return ", ".join(
+            part
+            for part in [self.address_line1, self.address_line2, locality, self.country]
+            if part
+        )
+
+
+class MeasureMission(Base):
+    __tablename__ = "measure_missions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, nullable=False, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    site_address_id = Column(Integer, ForeignKey("client_site_addresses.id"), nullable=True, index=True)
+    sale_order_id = Column(Integer, ForeignKey("sale_orders.id"), nullable=True, index=True)
+    assigned_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    status = Column(String, default=MeasureMissionStatus.DRAFT.value, nullable=False, index=True)
+    purpose = Column(String, nullable=True)
+    scheduled_start = Column(DateTime, nullable=True)
+    scheduled_end = Column(DateTime, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    client = relationship("Client", back_populates="measure_missions")
+    site = relationship("ClientSiteAddress", back_populates="measure_missions")
+    sale_order = relationship("SaleOrder")
+    assigned_user = relationship("User")
+    dossiers = relationship(
+        "MMG",
+        back_populates="measure_mission",
+        foreign_keys="MMG.measure_mission_id",
+    )
+    openings = relationship(
+        "MeasureOpening",
+        back_populates="mission",
+        cascade="all, delete-orphan",
+        order_by="MeasureOpening.sequence",
+    )
+
+
+class MeasureOpening(Base):
+    __tablename__ = "measure_openings"
+    __table_args__ = (
+        UniqueConstraint("mission_id", "sequence", name="uq_measure_openings_mission_sequence"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    mission_id = Column(Integer, ForeignKey("measure_missions.id", ondelete="CASCADE"), nullable=False, index=True)
+    sequence = Column(Integer, nullable=False, default=1)
+    label = Column(String, nullable=False)
+    room = Column(String, nullable=True)
+    product_type = Column(String, default="WINDOW")
+    width_mm = Column(Float, nullable=True)
+    height_mm = Column(Float, nullable=True)
+    passage_height_mm = Column(Float, nullable=True)
+    material = Column(String, default="ALU")
+    opening_type = Column(String, nullable=True)
+    opening_side = Column(String, nullable=True)
+    sash_count = Column(Integer, default=1)
+    installation_type = Column(String, nullable=True)
+    status = Column(String, default="DRAFT", nullable=False, index=True)
+    configuration = Column(JSON, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    mission = relationship("MeasureMission", back_populates="openings")
 
 # --- FOURNISSEURS (SUPPLIERS) ---
 class Supplier(Base):

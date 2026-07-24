@@ -132,6 +132,258 @@ def test_mmg_creation_photo_upload_and_static_serving(client):
     assert listed["client_address"] == "1 rue du Test"
 
 
+def test_mmg_links_crm_client_structured_site_and_implicit_mission(client):
+    headers = _login(client)
+    crm_response = client.post(
+        "/v2/partners/clients",
+        json={
+            "name": "Client CRM Métré",
+            "contact_name": "Mme Chantier",
+            "email": "chantier@example.fr",
+            "phone": "0611223344",
+            "address": "10 rue de Facturation",
+            "country": "FR",
+            "customer_type": "B2C",
+            "is_active": True,
+        },
+        headers=headers,
+    )
+    assert crm_response.status_code == 200, crm_response.text
+    crm_client = crm_response.json()
+
+    payload = _mmg_payload()
+    payload["client_id"] = crm_client["id"]
+    payload["site"] = {
+        "client_id": crm_client["id"],
+        "label": "Maison principale",
+        "address_line1": "25 avenue du Chantier",
+        "postal_code": "75012",
+        "city": "Paris",
+        "country": "FR",
+        "contact_name": "M. Accès",
+        "contact_phone": "0699887766",
+        "access_instructions": "Portail bleu, appeler avant.",
+        "is_default": True,
+    }
+    response = client.post("/v2/mmg/", json=payload, headers=headers)
+    assert response.status_code == 200, response.text
+    dossier = response.json()
+    assert dossier["client_id"] == crm_client["id"]
+    assert dossier["site_address_id"] is not None
+    assert dossier["measure_mission_id"] is not None
+
+    detail = client.get(f"/v2/mmg/{dossier['id']}", headers=headers).json()
+    assert detail["client_name"] == "Client CRM Métré"
+    assert detail["site_address"] == "25 avenue du Chantier, 75012 Paris, FR"
+
+    sites = client.get(
+        "/v2/mmg/sites",
+        params={"client_id": crm_client["id"]},
+        headers=headers,
+    ).json()
+    assert len(sites) == 1
+    assert sites[0]["city"] == "Paris"
+    assert sites[0]["access_instructions"] == "Portail bleu, appeler avant."
+
+    mission = client.get(
+        f"/v2/mmg/missions/{dossier['measure_mission_id']}",
+        headers=headers,
+    ).json()
+    assert mission["status"] == "TO_REVIEW"
+    assert mission["dossier_ids"] == [dossier["id"]]
+    assert mission["site"]["postal_code"] == "75012"
+
+
+def test_measure_mission_status_machine_rejects_skipped_review(client):
+    headers = _login(client)
+    crm_client = client.post(
+        "/v2/partners/clients",
+        json={
+            "name": "Client Mission",
+            "email": "mission@example.fr",
+            "phone": "0601020304",
+            "address": "1 rue Mission",
+            "country": "FR",
+            "customer_type": "B2B",
+            "is_active": True,
+        },
+        headers=headers,
+    ).json()
+    response = client.post(
+        "/v2/mmg/missions",
+        json={
+            "client_id": crm_client["id"],
+            "site": {
+                "address_line1": "2 rue du Site",
+                "postal_code": "69001",
+                "city": "Lyon",
+                "country": "FR",
+            },
+            "purpose": "Remplacement de trois fenêtres",
+            "assigned_user_id": 1,
+            "scheduled_start": "2026-08-03T08:00:00",
+            "scheduled_end": "2026-08-03T10:00:00",
+            "status": "DRAFT",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    mission = response.json()
+    assert mission["reference"].startswith("MET-")
+
+    to_schedule = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "TO_SCHEDULE"},
+        headers=headers,
+    )
+    assert to_schedule.status_code == 200
+    scheduled = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "SCHEDULED"},
+        headers=headers,
+    )
+    assert scheduled.status_code == 200
+
+    invalid = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "VALIDATED"},
+        headers=headers,
+    )
+    assert invalid.status_code == 409
+    assert "Transition de mission interdite" in invalid.text
+
+
+def test_measure_mission_multi_openings_and_be_review(client):
+    headers = _login(client)
+    crm_client = client.post(
+        "/v2/partners/clients",
+        json={
+            "name": "Client Multi Ouvrages",
+            "email": "multi@example.fr",
+            "phone": "0600001122",
+            "address": "1 rue des Ouvrages",
+            "country": "FR",
+            "customer_type": "B2C",
+            "is_active": True,
+        },
+        headers=headers,
+    ).json()
+    mission_response = client.post(
+        "/v2/mmg/missions",
+        json={
+            "client_id": crm_client["id"],
+            "site": {
+                "address_line1": "8 rue du Chantier",
+                "postal_code": "33000",
+                "city": "Bordeaux",
+                "country": "FR",
+            },
+            "assigned_user_id": 1,
+            "scheduled_start": "2026-08-10T09:00:00",
+            "scheduled_end": "2026-08-10T11:00:00",
+            "purpose": "Relevé de deux menuiseries",
+            "status": "SCHEDULED",
+        },
+        headers=headers,
+    )
+    assert mission_response.status_code == 200, mission_response.text
+    mission = mission_response.json()
+
+    started = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "ON_SITE"},
+        headers=headers,
+    )
+    assert started.status_code == 200, started.text
+
+    for label, room, width, height in (
+        ("F01", "Séjour", 1200, 1400),
+        ("PF01", "Cuisine", 1800, 2150),
+    ):
+        opening = client.post(
+            f"/v2/mmg/missions/{mission['id']}/openings",
+            json={
+                "label": label,
+                "room": room,
+                "product_type": "WINDOW",
+                "width_mm": width,
+                "height_mm": height,
+                "material": "ALU",
+                "sash_count": 2,
+                "status": "COMPLETE",
+            },
+            headers=headers,
+        )
+        assert opening.status_code == 200, opening.text
+
+    review = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "TO_REVIEW"},
+        headers=headers,
+    )
+    assert review.status_code == 200, review.text
+    assert review.json()["status"] == "TO_REVIEW"
+    assert len(review.json()["openings"]) == 2
+    assert all(opening["status"] == "TO_REVIEW" for opening in review.json()["openings"])
+
+    validated = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "VALIDATED"},
+        headers=headers,
+    )
+    assert validated.status_code == 200, validated.text
+    assert all(opening["status"] == "VALIDATED" for opening in validated.json()["openings"])
+
+
+def test_measure_mission_rejects_incomplete_opening_for_review(client):
+    headers = _login(client)
+    crm_client = client.post(
+        "/v2/partners/clients",
+        json={
+            "name": "Client Relevé Incomplet",
+            "phone": "0600003344",
+            "country": "FR",
+            "customer_type": "B2C",
+            "is_active": True,
+        },
+        headers=headers,
+    ).json()
+    mission = client.post(
+        "/v2/mmg/missions",
+        json={
+            "client_id": crm_client["id"],
+            "site": {
+                "address_line1": "3 rue du Relevé",
+                "postal_code": "44000",
+                "city": "Nantes",
+                "country": "FR",
+            },
+            "assigned_user_id": 1,
+            "scheduled_start": "2026-08-11T09:00:00",
+            "status": "SCHEDULED",
+        },
+        headers=headers,
+    ).json()
+    client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "ON_SITE"},
+        headers=headers,
+    )
+    opening = client.post(
+        f"/v2/mmg/missions/{mission['id']}/openings",
+        json={"label": "F01", "status": "DRAFT"},
+        headers=headers,
+    )
+    assert opening.status_code == 200, opening.text
+    review = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "TO_REVIEW"},
+        headers=headers,
+    )
+    assert review.status_code == 422
+    assert "Tous les ouvrages" in review.text
+
+
 def test_mmg_status_and_send_quote_flow(client):
     headers = _login(client)
     dossier = client.post("/v2/mmg/", json=_mmg_payload(), headers=headers).json()

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional
 from datetime import datetime
 from .models import MaterialType, StationName, UserRole, PlanningStatus
@@ -259,8 +259,142 @@ class MMGLogistics(BaseModel):
     access_difficulty: Optional[str] = "Standard"
     environment: Optional[str] = "Standard"
 
+class ClientSiteAddressBase(BaseModel):
+    label: str = "Chantier"
+    address_line1: str
+    address_line2: Optional[str] = None
+    postal_code: Optional[str] = None
+    city: Optional[str] = None
+    country: str = "FR"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    access_instructions: Optional[str] = None
+    is_default: bool = False
+
+class ClientSiteAddressCreate(ClientSiteAddressBase):
+    client_id: Optional[int] = None
+
+class ClientSiteAddressResponse(ClientSiteAddressBase):
+    id: int
+    client_id: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+class MeasureMissionStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    TO_SCHEDULE = "TO_SCHEDULE"
+    SCHEDULED = "SCHEDULED"
+    ON_SITE = "ON_SITE"
+    TO_REVIEW = "TO_REVIEW"
+    CORRECTION_REQUIRED = "CORRECTION_REQUIRED"
+    VALIDATED = "VALIDATED"
+    QUOTED = "QUOTED"
+    CANCELLED = "CANCELLED"
+
+class MeasureMissionCreate(BaseModel):
+    client_id: int
+    site_address_id: Optional[int] = None
+    site: Optional[ClientSiteAddressCreate] = None
+    sale_order_id: Optional[int] = None
+    assigned_user_id: Optional[int] = None
+    purpose: Optional[str] = None
+    scheduled_start: Optional[datetime] = None
+    scheduled_end: Optional[datetime] = None
+    notes: Optional[str] = None
+    status: MeasureMissionStatus = MeasureMissionStatus.DRAFT
+
+class MeasureMissionUpdate(BaseModel):
+    site_address_id: Optional[int] = None
+    site: Optional[ClientSiteAddressCreate] = None
+    assigned_user_id: Optional[int] = None
+    purpose: Optional[str] = None
+    scheduled_start: Optional[datetime] = None
+    scheduled_end: Optional[datetime] = None
+    notes: Optional[str] = None
+
+class MeasureMissionStatusUpdate(BaseModel):
+    status: MeasureMissionStatus
+
+class MeasureOpeningStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    COMPLETE = "COMPLETE"
+    TO_REVIEW = "TO_REVIEW"
+    CORRECTION_REQUIRED = "CORRECTION_REQUIRED"
+    VALIDATED = "VALIDATED"
+
+class MeasureOpeningBase(BaseModel):
+    label: str
+    room: Optional[str] = None
+    product_type: str = "WINDOW"
+    width_mm: Optional[float] = None
+    height_mm: Optional[float] = None
+    passage_height_mm: Optional[float] = None
+    material: str = "ALU"
+    opening_type: Optional[str] = None
+    opening_side: Optional[str] = None
+    sash_count: int = 1
+    installation_type: Optional[str] = None
+    status: MeasureOpeningStatus = MeasureOpeningStatus.DRAFT
+    configuration: Optional[dict] = None
+    notes: Optional[str] = None
+
+class MeasureOpeningCreate(MeasureOpeningBase):
+    sequence: Optional[int] = None
+
+class MeasureOpeningUpdate(BaseModel):
+    label: Optional[str] = None
+    room: Optional[str] = None
+    product_type: Optional[str] = None
+    width_mm: Optional[float] = None
+    height_mm: Optional[float] = None
+    passage_height_mm: Optional[float] = None
+    material: Optional[str] = None
+    opening_type: Optional[str] = None
+    opening_side: Optional[str] = None
+    sash_count: Optional[int] = None
+    installation_type: Optional[str] = None
+    status: Optional[MeasureOpeningStatus] = None
+    configuration: Optional[dict] = None
+    notes: Optional[str] = None
+
+class MeasureOpeningResponse(MeasureOpeningBase):
+    id: int
+    mission_id: int
+    sequence: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+class MeasureMissionResponse(BaseModel):
+    id: int
+    reference: str
+    client_id: int
+    client_name: str
+    site_address_id: Optional[int] = None
+    site: Optional[ClientSiteAddressResponse] = None
+    sale_order_id: Optional[int] = None
+    assigned_user_id: Optional[int] = None
+    assigned_user_name: Optional[str] = None
+    status: MeasureMissionStatus
+    purpose: Optional[str] = None
+    scheduled_start: Optional[datetime] = None
+    scheduled_end: Optional[datetime] = None
+    notes: Optional[str] = None
+    dossier_ids: List[int] = Field(default_factory=list)
+    openings: List[MeasureOpeningResponse] = Field(default_factory=list)
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
 class MMGCreate(BaseModel):
     client: MMGClient
+    client_id: Optional[int] = None
+    site_address_id: Optional[int] = None
+    site: Optional[ClientSiteAddressCreate] = None
+    measure_mission_id: Optional[int] = None
     measurements: MMGMeasurements
     options: MMGOptions
     configuration: MMGConfiguration
@@ -274,6 +408,9 @@ class MMGResponse(BaseModel):
     id: int
     reference: str
     client_name: str
+    client_id: Optional[int] = None
+    site_address_id: Optional[int] = None
+    measure_mission_id: Optional[int] = None
     status: MMGStatus
     sale_order_id: Optional[int] = None
     created_at: datetime

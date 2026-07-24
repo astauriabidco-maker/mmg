@@ -9,6 +9,7 @@ const OperatorDashboard = lazy(() => import('./pages/OperatorDashboard'));
 const ManagerDashboard = lazy(() => import('./pages/ManagerDashboard'));
 const ManualUpload = lazy(() => import('./pages/ManualUpload'));
 const MMGDossiers = lazy(() => import('./pages/MMGDossiers'));
+const MeasureMissionPage = lazy(() => import('./pages/MeasureMissionPage'));
 const POSDashboard = lazy(() => import('./pages/POSDashboard'));
 const StockDashboard = lazy(() => import('./pages/StockDashboard'));
 const ClientPortal = lazy(() => import('./pages/ClientPortal'));
@@ -91,6 +92,22 @@ export default function App() {
                                     <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
                                         <MMGDossiers />
                                     </RoleRoute>
+                                }
+                            />
+                            <Route
+                                path="/measure-missions/new"
+                                element={
+                                    <ProtectedRoute>
+                                        <MeasureMissionPage />
+                                    </ProtectedRoute>
+                                }
+                            />
+                            <Route
+                                path="/measure-missions/:missionId"
+                                element={
+                                    <ProtectedRoute>
+                                        <MeasureMissionPage />
+                                    </ProtectedRoute>
                                 }
                             />
                             <Route

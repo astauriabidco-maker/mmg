@@ -32,6 +32,11 @@ export default function CRMClientsDashboard() {
         customer_type: 'B2B',
     });
 
+    const planMeasureForClient = () => {
+        const query = selectedClient?.id ? `?clientId=${selectedClient.id}` : '';
+        navigate(`/measure-missions/new${query}`);
+    };
+
     const { data: clients = [], refetch: refetchClients } = useQuery({
         queryKey: ['partners', 'clients'],
         queryFn: async () => {
@@ -447,7 +452,7 @@ export default function CRMClientsDashboard() {
                                 Pipeline avant-vente
                             </button>
                             <button
-                                onClick={() => setCrmView('measures')}
+                                onClick={planMeasureForClient}
                                 className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${crmView === 'measures' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'}`}
                             >
                                 Métrés fabrication
@@ -475,7 +480,7 @@ export default function CRMClientsDashboard() {
                             Créer une proposition
                         </button>
                         <button
-                            onClick={() => setCrmView('measures')}
+                            onClick={planMeasureForClient}
                             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-500"
                         >
                             <ClipboardList className="w-4 h-4" />
@@ -513,7 +518,7 @@ export default function CRMClientsDashboard() {
                                 Ouvrir les fiches clients
                             </button>
                             <button
-                                onClick={() => setCrmView('measures')}
+                                onClick={planMeasureForClient}
                                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-500"
                             >
                                 <ClipboardList className="w-4 h-4" />
@@ -556,7 +561,7 @@ export default function CRMClientsDashboard() {
                                                 </p>
                                                 <div className="mt-4 grid gap-2">
                                                     <button
-                                                        onClick={() => setCrmView('measures')}
+                                                        onClick={planMeasureForClient}
                                                         className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-500"
                                                     >
                                                         <ClipboardList className="w-4 h-4" />
@@ -578,7 +583,9 @@ export default function CRMClientsDashboard() {
                                                 key={dossier.id}
                                                 dossier={dossier}
                                                 formatDate={formatDate}
-                                                onOpen={() => setCrmView('measures')}
+                                                onOpen={() => dossier.measure_mission_id
+                                                    ? navigate(`/measure-missions/${dossier.measure_mission_id}`)
+                                                    : setCrmView('measures')}
                                             />
                                         ))}
                                         {column.kind === 'sale' && column.items.map(sale => (
@@ -708,7 +715,7 @@ export default function CRMClientsDashboard() {
                                                 Proposition
                                             </button>
                                             <button
-                                                onClick={() => setCrmView('measures')}
+                                                onClick={planMeasureForClient}
                                                 className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-500"
                                             >
                                                 <ClipboardList className="w-4 h-4" />
@@ -743,7 +750,7 @@ export default function CRMClientsDashboard() {
                                                 Proposition
                                             </button>
                                             <button
-                                                onClick={() => setCrmView('measures')}
+                                                onClick={planMeasureForClient}
                                                 className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-100"
                                             >
                                                 <ClipboardList className="w-4 h-4" />
@@ -829,7 +836,7 @@ export default function CRMClientsDashboard() {
                                                         <Plus className="w-4 h-4" />
                                                         Proposition
                                                     </button>
-                                                    <button onClick={() => setCrmView('measures')} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white hover:bg-emerald-500">
+                                                    <button onClick={planMeasureForClient} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white hover:bg-emerald-500">
                                                         <ClipboardList className="w-4 h-4" />
                                                         Prise de côte
                                                     </button>
@@ -853,7 +860,9 @@ export default function CRMClientsDashboard() {
                                                 key={`dossier-${dossier.id}`}
                                                 dossier={dossier}
                                                 formatDate={formatDate}
-                                                onOpen={() => setCrmView('measures')}
+                                                onOpen={() => dossier.measure_mission_id
+                                                    ? navigate(`/measure-missions/${dossier.measure_mission_id}`)
+                                                    : setCrmView('measures')}
                                             />
                                         ))}
                                     </div>

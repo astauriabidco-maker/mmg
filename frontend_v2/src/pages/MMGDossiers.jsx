@@ -24,9 +24,10 @@ import {
     Upload
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 const MMGDossiers = ({ isEmbedded = false }) => {
+    const navigate = useNavigate();
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [dossiers, setDossiers] = useState([]);
     const [clients, setClients] = useState([]);
@@ -38,18 +39,32 @@ const MMGDossiers = ({ isEmbedded = false }) => {
     const [isNewClient, setIsNewClient] = useState(false);
     const [clientSearch, setClientSearch] = useState('');
     const [isSameAddress, setIsSameAddress] = useState(true);
+    const [formError, setFormError] = useState('');
 
     // Entry Form State
     const [isEntryFormOpen, setIsEntryFormOpen] = useState(false);
     const [formStep, setFormStep] = useState(1);
     const [formData, setFormData] = useState({
         client: {
+            id: null,
             name: '',
             contact: '',
             address: '',
             site_address: '',
             email: '',
             client_type: 'PARTICULIER'
+        },
+        site: {
+            label: 'Chantier principal',
+            address_line1: '',
+            address_line2: '',
+            postal_code: '',
+            city: '',
+            country: 'FR',
+            contact_name: '',
+            contact_phone: '',
+            access_instructions: '',
+            is_default: false
         },
         measurements: { width_mm: '', height_mm: '', passage_height_mm: '' },
         options: { sill_height_mm: '', transom_height_mm: '', shutter_type: 'gauche' },
@@ -129,11 +144,33 @@ const MMGDossiers = ({ isEmbedded = false }) => {
     const handleFormSubmit = async () => {
         setLoading(true);
         try {
+            let clientId = formData.client.id;
+            if (!clientId) {
+                const clientResponse = await api.post('/v2/partners/clients', {
+                    name: formData.client.name,
+                    contact_name: formData.site.contact_name || formData.client.name,
+                    email: formData.client.email || null,
+                    phone: formData.client.contact || null,
+                    address: formData.client.address || null,
+                    country: formData.site.country || 'FR',
+                    customer_type: formData.client.client_type === 'PRO' ? 'B2B' : 'B2C',
+                    is_active: true,
+                });
+                clientId = clientResponse.data.id;
+            }
+
             // Normalise le payload vers le contrat MMGCreate du backend :
             // floats requis, '' -> null pour les optionnels (sinon 422).
             const toFloatOrNull = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+            const siteAddress = formData.site.address_line1.trim();
             const payload = {
                 ...formData,
+                client_id: clientId,
+                site: siteAddress ? {
+                    ...formData.site,
+                    client_id: clientId,
+                    address_line1: siteAddress,
+                } : null,
                 measurements: {
                     width_mm: Number(formData.measurements.width_mm) || 0,
                     height_mm: Number(formData.measurements.height_mm) || 0,
@@ -160,6 +197,25 @@ const MMGDossiers = ({ isEmbedded = false }) => {
 
     const updateClient = (field, value) => {
         setFormData({ ...formData, client: { ...formData.client, [field]: value } });
+    };
+
+    const updateSite = (field, value) => {
+        setFormData({ ...formData, site: { ...formData.site, [field]: value } });
+    };
+
+    const goToNextStep = () => {
+        if (formStep === 1) {
+            if (!formData.client.name) {
+                setFormError('Sélectionnez un client existant ou créez sa fiche.');
+                return;
+            }
+            if (!formData.site.address_line1.trim()) {
+                setFormError("Renseignez l'adresse du chantier avant de continuer.");
+                return;
+            }
+        }
+        setFormError('');
+        setFormStep(formStep + 1);
     };
 
     const updateMeasurements = (field, value) => {
@@ -319,14 +375,11 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                     Dossier (PDF)
                                 </Link>
                                 <button
-                                    onClick={() => {
-                                        setIsEntryFormOpen(true);
-                                        setFormStep(1);
-                                    }}
+                                    onClick={() => navigate('/measure-missions/new')}
                                     className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
                                 >
                                     <Plus className="w-5 h-5" />
-                                    Saisie Manuelle
+                                    Planifier un métré
                                 </button>
                             </div>
                         </header>
@@ -339,14 +392,11 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                 <p className="text-slate-500 text-sm">Convertissez vos prises de côtes en devis commerciaux.</p>
                             </div>
                             <button
-                                onClick={() => {
-                                    setIsEntryFormOpen(true);
-                                    setFormStep(1);
-                                }}
+                                onClick={() => navigate('/measure-missions/new')}
                                 className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
                             >
                                 <Plus className="w-5 h-5" />
-                                Nouvelle Prise de Côte (Métré)
+                                Planifier une mission
                             </button>
                         </div>
                     )}
@@ -741,7 +791,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
             {/* NEW DOSSIER MODAL (Agency Entry) */}
             {isEntryFormOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden relative flex flex-col max-h-[90vh]">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl overflow-hidden relative flex flex-col max-h-[90vh]">
                         {/* Header */}
                         <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                             <div className="flex items-center gap-3">
@@ -750,7 +800,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                 </div>
                                 <div>
                                     <h2 className="text-xl font-bold text-slate-900">Nouveau Métré (Prise de Côte)</h2>
-                                    <p className="text-slate-500 text-sm">Étape {formStep} sur 6</p>
+                                    <p className="text-slate-500 text-sm">Étape {formStep} sur 7</p>
                                 </div>
                             </div>
                             <button onClick={() => setIsEntryFormOpen(false)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full">
@@ -767,7 +817,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                         <h3>Information Client</h3>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div className="md:col-span-2 relative z-50">
+                                        <div className="md:col-span-2">
                                             <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Rechercher un client</label>
                                             <div className="relative">
                                                 <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -779,8 +829,12 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                                     onChange={(e) => {
                                                         setClientSearch(e.target.value);
                                                         setIsNewClient(false);
+                                                        setFormError('');
                                                         if (formData.client.name) {
-                                                            setFormData({...formData, client: {...formData.client, name: ''}});
+                                                            setFormData({
+                                                                ...formData,
+                                                                client: {...formData.client, id: null, name: ''},
+                                                            });
                                                         }
                                                     }}
                                                 />
@@ -788,7 +842,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
 
                                             {/* Dropdown Suggestions */}
                                             {clientSearch && !formData.client.name && !isNewClient && (
-                                                <div className="absolute top-full mt-2 left-0 right-0 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden">
+                                                <div className="mt-2 max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-2xl shadow-lg">
                                                     {clients.filter(c => c.name.toLowerCase().includes(clientSearch.toLowerCase()) || (c.phone && c.phone.includes(clientSearch))).map(c => (
                                                         <button 
                                                             key={c.id} 
@@ -797,16 +851,25 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                                                 setFormData({
                                                                     ...formData, 
                                                                     client: { 
+                                                                        id: c.id,
                                                                         name: c.name,
                                                                         contact: c.phone || '',
                                                                         email: c.email || '',
                                                                         address: c.address || '',
                                                                         site_address: c.address || '',
-                                                                        client_type: c.client_type || 'PARTICULIER'
+                                                                        client_type: c.customer_type === 'B2B' ? 'PRO' : 'PARTICULIER'
+                                                                    },
+                                                                    site: {
+                                                                        ...formData.site,
+                                                                        address_line1: c.address || '',
+                                                                        country: c.country || 'FR',
+                                                                        contact_name: c.contact_name || c.name,
+                                                                        contact_phone: c.phone || '',
                                                                     }
                                                                 });
                                                                 setClientSearch('');
                                                                 setIsSameAddress(true);
+                                                                setFormError('');
                                                             }}
                                                         >
                                                             <div>
@@ -820,6 +883,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                                         className="w-full text-left px-6 py-4 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold transition-colors flex items-center gap-2"
                                                         onClick={() => {
                                                             setIsNewClient(true);
+                                                            updateClient('id', null);
                                                             updateClient('name', clientSearch);
                                                             setClientSearch('');
                                                         }}
@@ -836,18 +900,20 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                                 <div className="absolute top-0 right-0 p-4 opacity-10 scale-150 transform translate-x-4 -translate-y-4">
                                                     <User className="w-24 h-24 text-blue-600"/>
                                                 </div>
-                                                <div className="relative z-10">
+                                                <div className="relative z-10 min-w-0">
                                                     <div className="flex items-center gap-3 mb-1">
                                                         <h4 className="font-black text-xl text-blue-900">{formData.client.name}</h4>
+                                                        <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2 py-1 rounded-md uppercase tracking-widest">Client sélectionné</span>
                                                         <span className="text-[10px] font-black text-blue-600 bg-blue-200/50 px-2 py-1 rounded-md uppercase tracking-widest">{formData.client.client_type}</span>
                                                     </div>
-                                                    <div className="flex items-center gap-4 text-sm font-medium text-blue-700/80">
+                                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-medium text-blue-700/80">
                                                         <span className="flex items-center gap-1"><Phone className="w-4 h-4"/> {formData.client.contact}</span>
                                                         <span className="flex items-center gap-1"><Mail className="w-4 h-4"/> {formData.client.email}</span>
+                                                        {formData.client.address && <span className="flex items-center gap-1"><MapPin className="w-4 h-4"/> {formData.client.address}</span>}
                                                     </div>
                                                 </div>
                                                 <button onClick={() => {
-                                                    setFormData({...formData, client: {...formData.client, name: ''}});
+                                                    setFormData({...formData, client: {...formData.client, id: null, name: ''}});
                                                     setIsNewClient(false);
                                                 }} className="relative z-10 bg-white/50 hover:bg-white text-blue-600 p-2 rounded-xl transition-all shadow-sm">
                                                     <X className="w-5 h-5"/>
@@ -914,8 +980,18 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                                         className="w-full p-4 bg-white border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold text-slate-900 shadow-sm"
                                                         value={formData.client.address}
                                                         onChange={(e) => {
-                                                            updateClient('address', e.target.value);
-                                                            if (isSameAddress) updateClient('site_address', e.target.value);
+                                                            const address = e.target.value;
+                                                            setFormData({
+                                                                ...formData,
+                                                                client: {
+                                                                    ...formData.client,
+                                                                    address,
+                                                                    site_address: isSameAddress ? address : formData.client.site_address,
+                                                                },
+                                                                site: isSameAddress
+                                                                    ? {...formData.site, address_line1: address}
+                                                                    : formData.site,
+                                                            });
                                                         }}
                                                     />
                                                 </div>
@@ -924,7 +1000,16 @@ const MMGDossiers = ({ isEmbedded = false }) => {
 
                                         {/* Adresse du Chantier */}
                                         {(formData.client.name) && (
-                                            <div className="md:col-span-2 mt-4 space-y-4">
+                                            <div className="md:col-span-2 mt-4 space-y-4 rounded-3xl border border-blue-100 bg-blue-50/40 p-5">
+                                                <div className="flex items-start gap-3">
+                                                    <div className="rounded-xl bg-blue-600 p-2 text-white">
+                                                        <MapPin className="h-5 w-5" />
+                                                    </div>
+                                                    <div>
+                                                        <h4 className="font-black text-slate-900">Adresse du chantier</h4>
+                                                        <p className="text-sm text-slate-500">Lieu transmis au métreur et utilisé pour la planification.</p>
+                                                    </div>
+                                                </div>
                                                 <label className="flex items-center gap-3 cursor-pointer group">
                                                     <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${isSameAddress ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-300 bg-white'}`}>
                                                         {isSameAddress && <CheckCircle2 className="w-4 h-4" />}
@@ -935,28 +1020,136 @@ const MMGDossiers = ({ isEmbedded = false }) => {
                                                         className="hidden"
                                                         checked={isSameAddress}
                                                         onChange={(e) => {
-                                                            setIsSameAddress(e.target.checked);
-                                                            if (e.target.checked) updateClient('site_address', formData.client.address);
-                                                            else updateClient('site_address', '');
+                                                            const sameAddress = e.target.checked;
+                                                            setIsSameAddress(sameAddress);
+                                                            setFormData({
+                                                                ...formData,
+                                                                client: {
+                                                                    ...formData.client,
+                                                                    site_address: sameAddress ? formData.client.address : '',
+                                                                },
+                                                                site: {
+                                                                    ...formData.site,
+                                                                    address_line1: sameAddress ? formData.client.address : '',
+                                                                },
+                                                            });
                                                         }}
                                                     />
                                                 </label>
 
-                                                {!isSameAddress && (
-                                                    <div className="animate-in slide-in-from-top-4 fade-in duration-300">
-                                                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 text-blue-600">Adresse Spécifique du Chantier</label>
-                                                        <div className="relative">
-                                                            <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-blue-400" />
+                                                {isSameAddress ? (
+                                                    <div className={`rounded-2xl border bg-white p-4 ${formData.client.address ? 'border-blue-100' : 'border-amber-200'}`}>
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Adresse retenue</p>
+                                                        <p className={`mt-1 font-bold ${formData.client.address ? 'text-slate-800' : 'text-amber-700'}`}>
+                                                            {formData.client.address || "L'adresse de facturation du client est manquante."}
+                                                        </p>
+                                                    </div>
+                                                ) : (
+                                                    <div className="grid grid-cols-1 gap-4 animate-in slide-in-from-top-4 fade-in duration-300 md:grid-cols-2">
+                                                        <div className="md:col-span-2">
+                                                            <label className="block text-[10px] font-black uppercase tracking-widest mb-2 text-blue-600">Adresse</label>
                                                             <input
                                                                 type="text"
-                                                                className="w-full pl-12 pr-4 py-4 bg-blue-50/50 border border-blue-100 rounded-2xl focus:ring-2 focus:ring-blue-500 transition-all font-bold text-blue-900 shadow-inner"
-                                                                value={formData.client.site_address}
-                                                                onChange={(e) => updateClient('site_address', e.target.value)}
-                                                                placeholder="Lieu exact de la pose ..."
+                                                                className="w-full rounded-2xl border border-blue-100 bg-white p-4 font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                                                                value={formData.site.address_line1}
+                                                                onChange={(e) => {
+                                                                    const address = e.target.value;
+                                                                    setFormData({
+                                                                        ...formData,
+                                                                        client: {...formData.client, site_address: address},
+                                                                        site: {...formData.site, address_line1: address},
+                                                                    });
+                                                                }}
+                                                                placeholder="Numéro et voie"
                                                             />
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[10px] font-black uppercase tracking-widest mb-2 text-slate-500">Complément</label>
+                                                            <input
+                                                                type="text"
+                                                                className="w-full rounded-2xl border border-slate-200 bg-white p-4 font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                                                                value={formData.site.address_line2}
+                                                                onChange={(e) => updateSite('address_line2', e.target.value)}
+                                                                placeholder="Bâtiment, résidence..."
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[10px] font-black uppercase tracking-widest mb-2 text-slate-500">Code postal</label>
+                                                            <input
+                                                                type="text"
+                                                                className="w-full rounded-2xl border border-slate-200 bg-white p-4 font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                                                                value={formData.site.postal_code}
+                                                                onChange={(e) => updateSite('postal_code', e.target.value)}
+                                                                placeholder="75001"
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[10px] font-black uppercase tracking-widest mb-2 text-slate-500">Ville</label>
+                                                            <input
+                                                                type="text"
+                                                                className="w-full rounded-2xl border border-slate-200 bg-white p-4 font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                                                                value={formData.site.city}
+                                                                onChange={(e) => updateSite('city', e.target.value)}
+                                                                placeholder="Paris"
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[10px] font-black uppercase tracking-widest mb-2 text-slate-500">Pays</label>
+                                                            <select
+                                                                className="w-full rounded-2xl border border-slate-200 bg-white p-4 font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                                                                value={formData.site.country}
+                                                                onChange={(e) => updateSite('country', e.target.value)}
+                                                            >
+                                                                <option value="FR">France</option>
+                                                                <option value="CM">Cameroun</option>
+                                                                <option value="BE">Belgique</option>
+                                                                <option value="CH">Suisse</option>
+                                                                <option value="ES">Espagne</option>
+                                                                <option value="OTHER">Autre</option>
+                                                            </select>
                                                         </div>
                                                     </div>
                                                 )}
+
+                                                <div className="grid grid-cols-1 gap-4 border-t border-blue-100 pt-4 md:grid-cols-2">
+                                                    <div>
+                                                        <label className="block text-[10px] font-black uppercase tracking-widest mb-2 text-slate-500">Contact sur place</label>
+                                                        <input
+                                                            type="text"
+                                                            className="w-full rounded-2xl border border-slate-200 bg-white p-4 font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                                                            value={formData.site.contact_name}
+                                                            onChange={(e) => updateSite('contact_name', e.target.value)}
+                                                            placeholder="Nom du contact"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-[10px] font-black uppercase tracking-widest mb-2 text-slate-500">Téléphone sur place</label>
+                                                        <input
+                                                            type="tel"
+                                                            className="w-full rounded-2xl border border-slate-200 bg-white p-4 font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                                                            value={formData.site.contact_phone}
+                                                            onChange={(e) => updateSite('contact_phone', e.target.value)}
+                                                            placeholder="+33..."
+                                                        />
+                                                    </div>
+                                                    <div className="md:col-span-2">
+                                                        <label className="block text-[10px] font-black uppercase tracking-widest mb-2 text-slate-500">Consignes d'accès</label>
+                                                        <textarea
+                                                            rows="2"
+                                                            className="w-full resize-none rounded-2xl border border-slate-200 bg-white p-4 font-medium text-slate-900 focus:ring-2 focus:ring-blue-500"
+                                                            value={formData.site.access_instructions}
+                                                            onChange={(e) => updateSite('access_instructions', e.target.value)}
+                                                            placeholder="Interphone, stationnement, étage, accès réglementé..."
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {formError && (
+                                            <div className="md:col-span-2 flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-bold text-rose-700">
+                                                <AlertTriangle className="h-5 w-5 shrink-0" />
+                                                {formError}
                                             </div>
                                         )}
                                     </div>
@@ -1517,7 +1710,7 @@ const MMGDossiers = ({ isEmbedded = false }) => {
 
                             {formStep < 7 ? (
                                 <button
-                                    onClick={() => setFormStep(formStep + 1)}
+                                    onClick={goToNextStep}
                                     className="px-8 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 shadow-lg shadow-blue-500/20"
                                 >
                                     Suivant
