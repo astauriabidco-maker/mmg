@@ -492,6 +492,73 @@ class MeasureMissionDocumentResponse(BaseModel):
     uploaded_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
+class TechnicalDossierStatus(str, enum.Enum):
+    LOCKED = "LOCKED"
+    DRAFT = "DRAFT"
+    TO_REVIEW = "TO_REVIEW"
+    CORRECTION_REQUIRED = "CORRECTION_REQUIRED"
+    VALIDATED = "VALIDATED"
+    ARCHIVED = "ARCHIVED"
+
+class TechnicalDocumentType(str, enum.Enum):
+    QUOTING = "QUOTING"
+    FABRICATION = "FABRICATION"
+    CUTTING = "CUTTING"
+
+class TechnicalSourceSystem(str, enum.Enum):
+    PROGES = "PROGES"
+    ORGADATA = "ORGADATA"
+    INTERNAL = "INTERNAL"
+    OTHER = "OTHER"
+
+class TechnicalDossierVersionResponse(BaseModel):
+    id: int
+    dossier_id: int
+    version_number: int
+    document_type: TechnicalDocumentType
+    source_system: TechnicalSourceSystem
+    source_reference: Optional[str] = None
+    original_filename: str
+    content_type: Optional[str] = None
+    file_size: int = 0
+    checksum_sha256: str
+    opening_ids: List[int] = Field(default_factory=list)
+    notes: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+class TechnicalDossierResponse(BaseModel):
+    id: int
+    reference: str
+    mission_id: int
+    quoting_status: TechnicalDossierStatus
+    production_status: TechnicalDossierStatus
+    quoting_review_note: Optional[str] = None
+    production_review_note: Optional[str] = None
+    quoting_submitted_at: Optional[datetime] = None
+    quoting_submitted_by: Optional[str] = None
+    quoting_validated_at: Optional[datetime] = None
+    quoting_validated_by: Optional[str] = None
+    production_submitted_at: Optional[datetime] = None
+    production_submitted_by: Optional[str] = None
+    production_validated_at: Optional[datetime] = None
+    production_validated_by: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    versions: List[TechnicalDossierVersionResponse] = Field(default_factory=list)
+    model_config = ConfigDict(from_attributes=True)
+
+class TechnicalDossierReviewAction(str, enum.Enum):
+    VALIDATE = "VALIDATE"
+    REQUEST_CORRECTION = "REQUEST_CORRECTION"
+
+class TechnicalDossierReviewRequest(BaseModel):
+    phase: TechnicalDocumentType
+    action: TechnicalDossierReviewAction
+    note: Optional[str] = None
+
 class MeasureOpeningStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     COMPLETE = "COMPLETE"
@@ -551,6 +618,7 @@ class MeasureMissionResponse(BaseModel):
     site: Optional[ClientSiteAddressResponse] = None
     opportunity_id: Optional[int] = None
     sale_order_id: Optional[int] = None
+    sale_order_status: Optional[str] = None
     assigned_user_id: Optional[int] = None
     assigned_user_name: Optional[str] = None
     status: MeasureMissionStatus
@@ -568,6 +636,7 @@ class MeasureMissionResponse(BaseModel):
     dossier_ids: List[int] = Field(default_factory=list)
     openings: List[MeasureOpeningResponse] = Field(default_factory=list)
     source_documents: List[MeasureMissionDocumentResponse] = Field(default_factory=list)
+    technical_dossier: Optional[TechnicalDossierResponse] = None
     created_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime

@@ -493,6 +493,89 @@ def test_validated_measure_mission_generates_idempotent_multi_opening_quote(clie
     )
     assert validated.status_code == 200, validated.text
     assert validated.json()["verification_status"] == "READY_FOR_FABRICATION"
+    assert validated.json()["technical_dossier"]["quoting_status"] == "DRAFT"
+    assert validated.json()["technical_dossier"]["production_status"] == "LOCKED"
+
+    handoff = client.get(
+        f"/v2/mmg/missions/{mission['id']}/technical-dossier/handoff",
+        params={"target_system": "PROGES"},
+        headers=headers,
+    )
+    assert handoff.status_code == 200, handoff.text
+    assert "PROGES" in handoff.text
+    assert "F01" in handoff.text
+    assert "PF01" in handoff.text
+    assert handoff.headers["content-disposition"].endswith('proges-transfert.csv"')
+
+    blocked_without_technical_review = client.post(
+        f"/v2/mmg/missions/{mission['id']}/generate-quote",
+        headers=headers,
+    )
+    assert blocked_without_technical_review.status_code == 409
+    assert "chiffrage" in blocked_without_technical_review.text.lower()
+
+    technical_version = client.post(
+        f"/v2/mmg/missions/{mission['id']}/technical-dossier/versions",
+        data={
+            "document_type": "QUOTING",
+            "source_system": "PROGES",
+            "source_reference": "PROGES-CHANTIER-42",
+            "opening_ids": ",".join(str(value) for value in opening_ids),
+            "notes": "Export technique initial",
+        },
+        files={"file": ("proges-export.txt", b"PROGES;F01;PF01", "text/plain")},
+        headers=headers,
+    )
+    assert technical_version.status_code == 200, technical_version.text
+    assert technical_version.json()["versions"][0]["version_number"] == 1
+    assert technical_version.json()["versions"][0]["opening_ids"] == opening_ids
+
+    submitted = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/technical-dossier/submit",
+        params={"phase": "QUOTING"},
+        headers=headers,
+    )
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.json()["quoting_status"] == "TO_REVIEW"
+
+    correction = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/technical-dossier/review",
+        json={"phase": "QUOTING", "action": "REQUEST_CORRECTION", "note": "Corriger la référence de la porte-fenêtre"},
+        headers=headers,
+    )
+    assert correction.status_code == 200, correction.text
+    assert correction.json()["quoting_status"] == "CORRECTION_REQUIRED"
+
+    second_version = client.post(
+        f"/v2/mmg/missions/{mission['id']}/technical-dossier/versions",
+        data={
+            "document_type": "QUOTING",
+            "source_system": "PROGES",
+            "source_reference": "PROGES-CHANTIER-42-B",
+            "opening_ids": ",".join(str(value) for value in opening_ids),
+            "notes": "Référence porte-fenêtre corrigée",
+        },
+        files={"file": ("proges-export-v2.txt", b"PROGES;F01;PF01;CORRECTED", "text/plain")},
+        headers=headers,
+    )
+    assert second_version.status_code == 200, second_version.text
+    assert [version["version_number"] for version in second_version.json()["versions"]] == [1, 2]
+    assert second_version.json()["quoting_status"] == "DRAFT"
+
+    resubmitted = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/technical-dossier/submit",
+        params={"phase": "QUOTING"},
+        headers=headers,
+    )
+    assert resubmitted.status_code == 200, resubmitted.text
+
+    technical_validation = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/technical-dossier/review",
+        json={"phase": "QUOTING", "action": "VALIDATE", "note": "Cohérent avec les ouvrages du métré"},
+        headers=headers,
+    )
+    assert technical_validation.status_code == 200, technical_validation.text
+    assert technical_validation.json()["quoting_status"] == "VALIDATED"
 
     generated = client.post(
         f"/v2/mmg/missions/{mission['id']}/generate-quote",
@@ -502,6 +585,19 @@ def test_validated_measure_mission_generates_idempotent_multi_opening_quote(clie
     result = generated.json()
     assert result["created"] is True
     assert result["line_count"] == 2
+
+    fabrication_before_signature = client.post(
+        f"/v2/mmg/missions/{mission['id']}/technical-dossier/versions",
+        data={
+            "document_type": "FABRICATION",
+            "source_system": "PROGES",
+            "opening_ids": ",".join(str(value) for value in opening_ids),
+        },
+        files={"file": ("fabrication.pdf", b"FABRICATION", "application/pdf")},
+        headers=headers,
+    )
+    assert fabrication_before_signature.status_code == 409
+    assert "signature" in fabrication_before_signature.text.lower()
 
     repeated = client.post(
         f"/v2/mmg/missions/{mission['id']}/generate-quote",
@@ -529,7 +625,8 @@ def test_validated_measure_mission_generates_idempotent_multi_opening_quote(clie
         for dossier in client.get("/v2/mmg/", headers=headers).json()
         if dossier["measure_mission_id"] == mission["id"]
     ]
-    assert len(linked_dossiers) == 2
+    # La proposition commerciale ne crée aucune fiche de fabrication avant signature.
+    assert linked_dossiers == []
 
 
 def test_measure_mission_rejects_incomplete_opening_for_review(client):

@@ -899,6 +899,12 @@ class MeasureMission(Base):
         cascade="all, delete-orphan",
         order_by="MeasureMissionDocument.uploaded_at",
     )
+    technical_dossier = relationship(
+        "TechnicalDossier",
+        back_populates="mission",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class MeasureOpening(Base):
@@ -963,6 +969,78 @@ class MeasureMissionDocument(Base):
 
     mission = relationship("MeasureMission", back_populates="source_documents")
     opening = relationship("MeasureOpening", back_populates="documents")
+
+
+class TechnicalDossier(Base):
+    __tablename__ = "technical_dossiers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, unique=True, nullable=False, index=True)
+    mission_id = Column(
+        Integer,
+        ForeignKey("measure_missions.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    quoting_status = Column(String, default="DRAFT", nullable=False, index=True)
+    production_status = Column(String, default="LOCKED", nullable=False, index=True)
+    quoting_review_note = Column(Text, nullable=True)
+    production_review_note = Column(Text, nullable=True)
+    quoting_submitted_at = Column(DateTime, nullable=True)
+    quoting_submitted_by = Column(String, nullable=True)
+    quoting_validated_at = Column(DateTime, nullable=True)
+    quoting_validated_by = Column(String, nullable=True)
+    production_submitted_at = Column(DateTime, nullable=True)
+    production_submitted_by = Column(String, nullable=True)
+    production_validated_at = Column(DateTime, nullable=True)
+    production_validated_by = Column(String, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    mission = relationship("MeasureMission", back_populates="technical_dossier")
+    versions = relationship(
+        "TechnicalDossierVersion",
+        back_populates="dossier",
+        cascade="all, delete-orphan",
+        order_by="TechnicalDossierVersion.version_number",
+    )
+
+
+class TechnicalDossierVersion(Base):
+    __tablename__ = "technical_dossier_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "dossier_id",
+            "version_number",
+            name="uq_technical_dossier_versions_number",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    dossier_id = Column(
+        Integer,
+        ForeignKey("technical_dossiers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version_number = Column(Integer, nullable=False)
+    document_type = Column(String, nullable=False, default="QUOTING", index=True)
+    source_system = Column(String, nullable=False, index=True)
+    source_reference = Column(String, nullable=True)
+    original_filename = Column(String, nullable=False)
+    stored_filename = Column(String, nullable=False)
+    content_type = Column(String, nullable=True)
+    file_path = Column(String, nullable=False)
+    file_size = Column(Integer, default=0, nullable=False)
+    checksum_sha256 = Column(String, nullable=False, index=True)
+    opening_ids = Column(JSON, nullable=False, default=list)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+    dossier = relationship("TechnicalDossier", back_populates="versions")
 
 # --- FOURNISSEURS (SUPPLIERS) ---
 class Supplier(Base):

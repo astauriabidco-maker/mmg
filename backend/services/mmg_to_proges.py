@@ -39,3 +39,70 @@ def save_proges_export(mmg_data: dict, export_dir: str = "exports_proges_valides
         f.write(csv_content)
     
     return filepath
+
+
+def generate_measure_mission_handoff(mission, target_system: str) -> str:
+    """Generate the multi-opening handoff used as the shared BE source.
+
+    This is deliberately a documented neutral CSV. A vendor-specific mapping
+    can later be added without changing mission data or technical versions.
+    """
+    import csv
+    import io
+
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(
+        [
+            "Cible",
+            "Mission",
+            "Dossier_technique",
+            "Client",
+            "Chantier",
+            "Sequence",
+            "Reference_ouvrage",
+            "Piece",
+            "Type_produit",
+            "Largeur_mm",
+            "Hauteur_mm",
+            "Hauteur_passage_mm",
+            "Materiau",
+            "Type_ouverture",
+            "Sens_ouverture",
+            "Nb_vantaux",
+            "Type_pose",
+            "Perimetre",
+            "Notes",
+        ]
+    )
+    dossier_reference = (
+        mission.technical_dossier.reference
+        if mission.technical_dossier
+        else ""
+    )
+    site_reference = mission.site.reference if mission.site else ""
+    for opening in mission.openings:
+        writer.writerow(
+            [
+                target_system,
+                mission.reference,
+                dossier_reference,
+                mission.client.name,
+                site_reference,
+                opening.sequence,
+                opening.label,
+                opening.room or "",
+                opening.product_type or "",
+                opening.width_mm or "",
+                opening.height_mm or "",
+                opening.passage_height_mm or "",
+                opening.material or "",
+                opening.opening_type or "",
+                opening.opening_side or "",
+                opening.sash_count or "",
+                opening.installation_type or "",
+                mission.project_scope or "",
+                opening.notes or "",
+            ]
+        )
+    return "\ufeff" + output.getvalue()

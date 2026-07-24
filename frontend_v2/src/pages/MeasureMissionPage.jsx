@@ -80,6 +80,15 @@ const OPENING_STATUS_META = {
     VALIDATED: ['Validé', 'bg-emerald-100 text-emerald-700'],
 };
 
+const TECHNICAL_STATUS_META = {
+    LOCKED: ['Verrouillé', 'border-amber-200 bg-amber-50 text-amber-800'],
+    DRAFT: ['À compléter', 'border-slate-200 bg-slate-50 text-slate-700'],
+    TO_REVIEW: ['Contrôle BE', 'border-orange-200 bg-orange-50 text-orange-800'],
+    CORRECTION_REQUIRED: ['Correction demandée', 'border-red-200 bg-red-50 text-red-700'],
+    VALIDATED: ['Validé BE', 'border-emerald-200 bg-emerald-50 text-emerald-700'],
+    ARCHIVED: ['Archivé', 'border-slate-200 bg-slate-100 text-slate-500'],
+};
+
 const emptyOpening = {
     label: '',
     room: '',
@@ -199,6 +208,13 @@ export default function MeasureMissionPage() {
     const [users, setUsers] = useState([]);
     const [sites, setSites] = useState([]);
     const [mission, setMission] = useState(null);
+    const [technicalForm, setTechnicalForm] = useState({
+        source_system: 'PROGES',
+        document_type: 'QUOTING',
+        source_reference: '',
+        notes: '',
+    });
+    const [technicalReviewNote, setTechnicalReviewNote] = useState('');
     const [selectedOpeningId, setSelectedOpeningId] = useState(null);
     const [openingForm, setOpeningForm] = useState(emptyOpening);
     const [planForm, setPlanForm] = useState({
@@ -585,11 +601,133 @@ export default function MeasureMissionPage() {
         }
     };
 
+    const updateTechnicalDossier = dossier => {
+        setMission(current => ({ ...current, technical_dossier: dossier }));
+    };
+
+    const uploadTechnicalVersion = async event => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        setSaving(true);
+        setError('');
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('source_system', technicalForm.source_system);
+            formData.append('document_type', technicalForm.document_type);
+            formData.append('source_reference', technicalForm.source_reference);
+            formData.append('notes', technicalForm.notes);
+            formData.append('opening_ids', (mission.openings || []).map(opening => opening.id).join(','));
+            const response = await api.post(
+                `/v2/mmg/missions/${missionId}/technical-dossier/versions`,
+                formData,
+                { headers: { 'Content-Type': 'multipart/form-data' } },
+            );
+            updateTechnicalDossier(response.data);
+            setTechnicalForm(current => ({ ...current, source_reference: '', notes: '' }));
+        } catch (requestError) {
+            setError(apiError(requestError));
+        } finally {
+            event.target.value = '';
+            setSaving(false);
+        }
+    };
+
+    const downloadTechnicalHandoff = async () => {
+        setError('');
+        try {
+            const response = await api.get(
+                `/v2/mmg/missions/${missionId}/technical-dossier/handoff`,
+                {
+                    params: { target_system: technicalForm.source_system },
+                    responseType: 'blob',
+                },
+            );
+            const href = URL.createObjectURL(response.data);
+            const anchor = window.document.createElement('a');
+            anchor.href = href;
+            anchor.download = `${mission.technical_dossier.reference}-${technicalForm.source_system.toLowerCase()}-transfert.csv`;
+            anchor.click();
+            URL.revokeObjectURL(href);
+        } catch (requestError) {
+            setError(apiError(requestError));
+        }
+    };
+
+    const submitTechnicalDossier = async () => {
+        setSaving(true);
+        setError('');
+        try {
+            const phase = technicalForm.document_type === 'QUOTING' ? 'QUOTING' : 'FABRICATION';
+            const response = await api.patch(
+                `/v2/mmg/missions/${missionId}/technical-dossier/submit`,
+                null,
+                { params: { phase } },
+            );
+            updateTechnicalDossier(response.data);
+        } catch (requestError) {
+            setError(apiError(requestError));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const reviewTechnicalDossier = async action => {
+        if (action === 'REQUEST_CORRECTION' && !technicalReviewNote.trim()) {
+            setError('Précisez la correction technique attendue avant de renvoyer le dossier.');
+            return;
+        }
+        setSaving(true);
+        setError('');
+        try {
+            const response = await api.patch(
+                `/v2/mmg/missions/${missionId}/technical-dossier/review`,
+                {
+                    phase: technicalForm.document_type === 'QUOTING' ? 'QUOTING' : 'FABRICATION',
+                    action,
+                    note: technicalReviewNote || null,
+                },
+            );
+            updateTechnicalDossier(response.data);
+            setTechnicalReviewNote('');
+        } catch (requestError) {
+            setError(apiError(requestError));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const downloadTechnicalVersion = async version => {
+        try {
+            const response = await api.get(
+                `/v2/mmg/missions/${missionId}/technical-dossier/versions/${version.id}/download`,
+                { responseType: 'blob' },
+            );
+            const href = URL.createObjectURL(response.data);
+            const anchor = window.document.createElement('a');
+            anchor.href = href;
+            anchor.download = version.original_filename;
+            anchor.click();
+            URL.revokeObjectURL(href);
+        } catch (requestError) {
+            setError(apiError(requestError));
+        }
+    };
+
     const managerNavigate = view => navigate(`/manager?view=${view}`);
     const missionLocked = ['VALIDATED', 'QUOTED', 'CANCELLED'].includes(mission?.status);
     const isSiteVisit = (mission?.source_type || planForm.source_type) === 'SITE_VISIT';
     const sourceMeta = SOURCE_META[mission?.source_type || planForm.source_type] || SOURCE_META.SITE_VISIT;
     const verificationMeta = VERIFICATION_META[mission?.verification_status] || VERIFICATION_META.UNVERIFIED;
+    const productionUnlocked = ['VALIDATED', 'DELIVERED'].includes(mission?.sale_order_status);
+    const technicalPhase = technicalForm.document_type === 'QUOTING' ? 'quoting' : 'production';
+    const technicalStatus = mission?.technical_dossier?.[`${technicalPhase}_status`] || 'LOCKED';
+    const technicalReview = mission?.technical_dossier?.[`${technicalPhase}_review_note`];
+    const phaseVersions = (mission?.technical_dossier?.versions || []).filter(version => (
+        technicalPhase === 'quoting'
+            ? version.document_type === 'QUOTING'
+            : ['FABRICATION', 'CUTTING'].includes(version.document_type)
+    ));
 
     if (loading || (!isNew && !mission)) {
         return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>;
@@ -806,10 +944,10 @@ export default function MeasureMissionPage() {
                                     {mission.status === 'VALIDATED' && mission.verification_status === 'SITE_VERIFICATION_REQUIRED' && canReview && (
                                         <button onClick={() => confirmVerification('SITE_VERIFIED')} className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-black text-white">Confirmer vérification chantier MMG</button>
                                     )}
-                                    {mission.status === 'VALIDATED' && mission.verification_status === 'READY_FOR_FABRICATION' && (
+                                    {mission.status === 'VALIDATED' && mission.verification_status === 'READY_FOR_FABRICATION' && mission.technical_dossier?.quoting_status === 'VALIDATED' && (
                                         <button onClick={generateQuote} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-black text-white disabled:opacity-50">
                                             <FilePlus2 className="h-4 w-4" />
-                                            Générer le brouillon de devis
+                                            Créer la proposition depuis le chiffrage
                                         </button>
                                     )}
                                     {mission.status === 'QUOTED' && mission.sale_order_id && (
@@ -873,6 +1011,158 @@ export default function MeasureMissionPage() {
                                 {!missionDocuments.length && <p className="text-xs font-bold text-slate-400">Aucun document joint.</p>}
                             </div>
                         </section>
+
+                        {['VALIDATED', 'QUOTED'].includes(mission.status) && mission.technical_dossier && (
+                            <section className="border-b border-indigo-200 bg-indigo-50 px-4 py-6 md:px-7">
+                                <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                                    <div className="max-w-2xl">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-indigo-600">Passerelle métier</p>
+                                        <div className="mt-1 flex flex-wrap items-center gap-3">
+                                            <h2 className="text-lg font-black text-slate-950">Passerelle PROGES / ORGADATA</h2>
+                                            <span className={`border px-2 py-1 text-[10px] font-black uppercase ${TECHNICAL_STATUS_META[technicalStatus]?.[1] || TECHNICAL_STATUS_META.DRAFT[1]}`}>
+                                                {TECHNICAL_STATUS_META[technicalStatus]?.[0] || technicalStatus}
+                                            </span>
+                                            <span className="text-xs font-black text-slate-500">{mission.technical_dossier.reference}</span>
+                                        </div>
+                                        <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+                                            Le chiffrage précède la signature client. Les fiches de fabrication et de débit ne sont importées qu'après signature.
+                                        </p>
+                                        <div className="mt-4 inline-flex border border-indigo-200 bg-white p-1">
+                                            <button type="button" onClick={() => setTechnicalForm(current => ({ ...current, document_type: 'QUOTING' }))} className={`px-3 py-2 text-xs font-black ${technicalPhase === 'quoting' ? 'bg-indigo-600 text-white' : 'text-slate-600'}`}>1. Chiffrage</button>
+                                            <button type="button" onClick={() => setTechnicalForm(current => ({ ...current, document_type: 'FABRICATION' }))} className={`px-3 py-2 text-xs font-black ${technicalPhase === 'production' ? 'bg-emerald-600 text-white' : 'text-slate-600'}`}>2. Fabrication & débit</button>
+                                        </div>
+                                        {technicalPhase === 'production' && !productionUnlocked && (
+                                            <div className="mt-3 border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">Verrouillé jusqu'à la signature du devis client.</div>
+                                        )}
+                                        {technicalReview && (
+                                            <div className="mt-3 border border-red-200 bg-white px-4 py-3 text-sm font-bold text-red-700">
+                                                Correction BE : {technicalReview}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {['DRAFT', 'CORRECTION_REQUIRED'].includes(technicalStatus) && (technicalPhase === 'quoting' || productionUnlocked) && (
+                                        <div className="grid w-full gap-2 sm:grid-cols-2 xl:w-[560px]">
+                                            {technicalPhase === 'production' && (
+                                                <select value={technicalForm.document_type} onChange={event => setTechnicalForm(current => ({ ...current, document_type: event.target.value }))} className={`${inputClass} sm:col-span-2`}>
+                                                    <option value="FABRICATION">Fiche de fabrication</option>
+                                                    <option value="CUTTING">Fichier de débit</option>
+                                                </select>
+                                            )}
+                                            <select
+                                                value={technicalForm.source_system}
+                                                onChange={event => setTechnicalForm(current => ({ ...current, source_system: event.target.value }))}
+                                                className={inputClass}
+                                            >
+                                                <option value="PROGES">PROGES</option>
+                                                <option value="ORGADATA">ORGADATA / LogiKal</option>
+                                                <option value="INTERNAL">Document technique MMG</option>
+                                                <option value="OTHER">Autre logiciel</option>
+                                            </select>
+                                            <input
+                                                value={technicalForm.source_reference}
+                                                onChange={event => setTechnicalForm(current => ({ ...current, source_reference: event.target.value }))}
+                                                placeholder="Référence dossier logiciel"
+                                                className={inputClass}
+                                            />
+                                            <input
+                                                value={technicalForm.notes}
+                                                onChange={event => setTechnicalForm(current => ({ ...current, notes: event.target.value }))}
+                                                placeholder="Note de version"
+                                                className={`${inputClass} sm:col-span-2`}
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={downloadTechnicalHandoff}
+                                                className="inline-flex items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-white px-4 py-3 text-sm font-black text-indigo-700 hover:bg-indigo-100 sm:col-span-2"
+                                            >
+                                                <Download className="h-4 w-4" />
+                                                Télécharger la fiche de transfert des {openingCount} ouvrage(s)
+                                            </button>
+                                            <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 text-sm font-black text-white hover:bg-indigo-500 sm:col-span-2">
+                                                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                                                Importer {technicalForm.document_type === 'QUOTING' ? 'le chiffrage' : technicalForm.document_type === 'CUTTING' ? 'le débit' : 'la fabrication'}
+                                                <input
+                                                    type="file"
+                                                    accept=".pdf,.txt,.xml,.csv,.json,.zip,.dat,.cut,.dxf"
+                                                    onChange={uploadTechnicalVersion}
+                                                    disabled={saving}
+                                                    className="hidden"
+                                                />
+                                            </label>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+                                    <div className="overflow-hidden border border-indigo-200 bg-white">
+                                        <div className="grid grid-cols-[70px_110px_minmax(0,1fr)_110px] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[10px] font-black uppercase text-slate-400">
+                                            <span>Version</span><span>Source</span><span>Fichier</span><span>Ouvrages</span>
+                                        </div>
+                                        {[...phaseVersions].reverse().map(version => (
+                                            <button
+                                                key={version.id}
+                                                onClick={() => downloadTechnicalVersion(version)}
+                                                className="grid w-full grid-cols-[70px_110px_minmax(0,1fr)_110px] gap-3 border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-indigo-50"
+                                            >
+                                                <span className="text-sm font-black text-indigo-700">V{version.version_number}<span className="block text-[9px] text-slate-400">{version.document_type}</span></span>
+                                                <span className="text-xs font-black text-slate-700">{version.source_system}</span>
+                                                <span className="min-w-0">
+                                                    <span className="block truncate text-xs font-black text-slate-800">{version.original_filename}</span>
+                                                    <span className="block truncate text-[10px] font-bold text-slate-400">{version.checksum_sha256.slice(0, 12)} · {formatDate(version.created_at)}</span>
+                                                </span>
+                                                <span className="text-xs font-black text-slate-600">{version.opening_ids.length}/{openingCount}</span>
+                                            </button>
+                                        ))}
+                                        {!phaseVersions.length && (
+                                            <p className="px-4 py-8 text-center text-sm font-bold text-slate-400">Aucun document importé pour cette phase.</p>
+                                        )}
+                                    </div>
+
+                                    <div className="border border-indigo-200 bg-white p-4">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contrôle BE</p>
+                                        {['DRAFT', 'CORRECTION_REQUIRED'].includes(technicalStatus) && (
+                                            <>
+                                                <p className="mt-2 text-sm font-bold text-slate-600">Soumettez la dernière version quand elle couvre tous les ouvrages.</p>
+                                                <button
+                                                    onClick={submitTechnicalDossier}
+                                                    disabled={saving || !phaseVersions.length}
+                                                    className="mt-4 w-full rounded-lg bg-orange-600 px-4 py-3 text-sm font-black text-white disabled:opacity-40"
+                                                >
+                                                    Envoyer au contrôle BE
+                                                </button>
+                                            </>
+                                        )}
+                                        {technicalStatus === 'TO_REVIEW' && (
+                                            <>
+                                                <textarea
+                                                    value={technicalReviewNote}
+                                                    onChange={event => setTechnicalReviewNote(event.target.value)}
+                                                    rows={3}
+                                                    placeholder="Observation ou correction attendue"
+                                                    className={`${inputClass} mt-3 resize-none`}
+                                                />
+                                                {canReview ? (
+                                                    <div className="mt-3 grid grid-cols-2 gap-2">
+                                                        <button onClick={() => reviewTechnicalDossier('REQUEST_CORRECTION')} disabled={saving} className="rounded-lg border border-red-200 px-3 py-2.5 text-xs font-black text-red-700">À corriger</button>
+                                                        <button onClick={() => reviewTechnicalDossier('VALIDATE')} disabled={saving} className="rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-black text-white">Valider BE</button>
+                                                    </div>
+                                                ) : (
+                                                    <p className="mt-3 text-xs font-bold text-orange-700">En attente d’un profil habilité BE.</p>
+                                                )}
+                                            </>
+                                        )}
+                                        {technicalStatus === 'VALIDATED' && (
+                                            <div className="mt-3 border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm font-bold text-emerald-800">
+                                                {technicalPhase === 'quoting'
+                                                    ? `Chiffrage validé par ${mission.technical_dossier.quoting_validated_by || 'le BE'} le ${formatDate(mission.technical_dossier.quoting_validated_at)}. La proposition client est déverrouillée.`
+                                                    : `Fabrication et débit validés par ${mission.technical_dossier.production_validated_by || 'le BE'} le ${formatDate(mission.technical_dossier.production_validated_at)}.`}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </section>
+                        )}
 
                         <section className="grid min-h-[calc(100vh-330px)] lg:grid-cols-[300px_minmax(0,1fr)]">
                             <aside className="border-b border-slate-200 bg-white lg:border-b-0 lg:border-r">

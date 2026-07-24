@@ -346,6 +346,7 @@ def _sale_has_measure_context(sale: models.SaleOrder) -> bool:
 
 def _ensure_sale_can_prepare_workshop(
     sale: models.SaleOrder,
+    db: Optional[Session] = None,
     allowed_statuses: Optional[set[str]] = None,
 ) -> None:
     workflow_type = _normalise_sale_workflow_type(getattr(sale, "workflow_type", None))
@@ -365,7 +366,26 @@ def _ensure_sale_can_prepare_workshop(
             status_code=400,
             detail=f"Préparation atelier autorisée uniquement pour les statuts: {readable_statuses}.",
         )
-
+    if workflow_type == "FABRICATION_FROM_MEASURE" and db is not None:
+        mission = (
+            db.query(models.MeasureMission)
+            .filter(models.MeasureMission.sale_order_id == sale.id)
+            .first()
+        )
+        if (
+            mission
+            and (
+                not mission.technical_dossier
+                or mission.technical_dossier.production_status != "VALIDATED"
+            )
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "La préparation atelier exige les fiches de fabrication et de débit "
+                    "PROGES/ORGADATA validées par le BE."
+                ),
+            )
 def _material_from_text(value: Optional[str]) -> Optional[str]:
     text = (value or "").upper()
     if "PVC" in text:
@@ -812,7 +832,7 @@ async def preview_sale_workshop_preparation(
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
-    _ensure_sale_can_prepare_workshop(sale, allowed_statuses={"IN_DESIGN", "VALIDATED"})
+    _ensure_sale_can_prepare_workshop(sale, db, allowed_statuses={"IN_DESIGN", "VALIDATED"})
     records, issues, _source_names = await _parse_workshop_uploads(files)
     return build_preview_payload(
         db,
@@ -836,7 +856,7 @@ async def reserve_sale_workshop_preparation(
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
-    _ensure_sale_can_prepare_workshop(sale, allowed_statuses={"IN_DESIGN", "VALIDATED"})
+    _ensure_sale_can_prepare_workshop(sale, db, allowed_statuses={"IN_DESIGN", "VALIDATED"})
 
     records, issues, source_names = await _parse_workshop_uploads(files)
     blocking_errors = [issue for issue in issues if issue.severity == "error"]
@@ -1373,7 +1393,7 @@ def launch_production(order_id: int, db: Session = Depends(get_db)):
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
-    _ensure_sale_can_prepare_workshop(sale)
+    _ensure_sale_can_prepare_workshop(sale, db)
 
     if sale.status not in ["READY_FOR_PROD", "IN_PRODUCTION"]:
         raise HTTPException(

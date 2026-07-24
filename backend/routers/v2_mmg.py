@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, File, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, File, Form, UploadFile
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional
 import os
 import base64
+import hashlib
 import uuid
 from datetime import datetime
 from ..database import get_db
@@ -107,6 +108,7 @@ def _serialize_mission(mission: models.MeasureMission) -> schemas.MeasureMission
         site=mission.site,
         opportunity_id=mission.opportunity_id,
         sale_order_id=mission.sale_order_id,
+        sale_order_status=mission.sale_order.status if mission.sale_order else None,
         assigned_user_id=mission.assigned_user_id,
         assigned_user_name=assigned_user_name,
         status=mission.status,
@@ -124,10 +126,70 @@ def _serialize_mission(mission: models.MeasureMission) -> schemas.MeasureMission
         dossier_ids=[dossier.id for dossier in mission.dossiers],
         openings=mission.openings,
         source_documents=mission.source_documents,
+        technical_dossier=mission.technical_dossier,
         created_by=mission.created_by,
         created_at=mission.created_at,
         updated_at=mission.updated_at,
     )
+
+
+def _get_or_create_technical_dossier(
+    db: Session,
+    mission: models.MeasureMission,
+    actor: str,
+) -> models.TechnicalDossier:
+    if mission.technical_dossier:
+        return mission.technical_dossier
+    dossier = models.TechnicalDossier(
+        reference=next_number(db, "technical_dossier"),
+        mission=mission,
+        quoting_status=schemas.TechnicalDossierStatus.DRAFT.value,
+        production_status=schemas.TechnicalDossierStatus.LOCKED.value,
+        created_by=actor,
+    )
+    db.add(dossier)
+    db.flush()
+    return dossier
+
+
+def _latest_technical_version(
+    dossier: models.TechnicalDossier,
+    document_type: Optional[str] = None,
+) -> Optional[models.TechnicalDossierVersion]:
+    versions = [
+        version
+        for version in dossier.versions
+        if document_type is None or version.document_type == document_type
+    ]
+    return versions[-1] if versions else None
+
+
+def _sale_is_signed(mission: models.MeasureMission) -> bool:
+    return bool(
+        mission.sale_order
+        and mission.sale_order.status in {"VALIDATED", "DELIVERED"}
+        and mission.sale_order.signed_at
+    )
+
+
+def _validate_technical_coverage(
+    mission: models.MeasureMission,
+    opening_ids: List[int],
+) -> None:
+    mission_opening_ids = {opening.id for opening in mission.openings}
+    supplied_ids = set(opening_ids)
+    unknown_ids = supplied_ids - mission_opening_ids
+    if unknown_ids:
+        raise HTTPException(
+            422,
+            f"Ouvrage(s) hors mission: {', '.join(str(value) for value in sorted(unknown_ids))}",
+        )
+    missing_ids = mission_opening_ids - supplied_ids
+    if missing_ids:
+        raise HTTPException(
+            422,
+            f"Le dossier technique ne couvre pas {len(missing_ids)} ouvrage(s) de la mission",
+        )
 
 
 def _resolve_site(
@@ -1013,6 +1075,11 @@ def update_measure_mission_status(
                 mission.verification_status = schemas.MeasureVerificationStatus.CLIENT_APPROVAL_REQUIRED.value
             else:
                 mission.verification_status = schemas.MeasureVerificationStatus.SITE_VERIFICATION_REQUIRED.value
+            _get_or_create_technical_dossier(
+                db,
+                mission,
+                current_user.get("sub", "Système"),
+            )
         else:
             mission.verification_status = schemas.MeasureVerificationStatus.UNVERIFIED.value
             for opening in mission.openings:
@@ -1022,6 +1089,320 @@ def update_measure_mission_status(
     db.commit()
     db.refresh(mission)
     return _serialize_mission(mission)
+
+
+@router.get(
+    "/missions/{mission_id}/technical-dossier",
+    response_model=schemas.TechnicalDossierResponse,
+)
+def get_measure_technical_dossier(
+    mission_id: int,
+    db: Session = Depends(get_db),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    if not mission.technical_dossier:
+        raise HTTPException(404, "Le dossier technique n'a pas encore été créé")
+    return mission.technical_dossier
+
+
+@router.post(
+    "/missions/{mission_id}/technical-dossier",
+    response_model=schemas.TechnicalDossierResponse,
+)
+def create_measure_technical_dossier(
+    mission_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    if mission.status not in {
+        models.MeasureMissionStatus.VALIDATED.value,
+        models.MeasureMissionStatus.QUOTED.value,
+    }:
+        raise HTTPException(409, "Validez d'abord le métré et ses ouvrages")
+    dossier = _get_or_create_technical_dossier(
+        db,
+        mission,
+        current_user.get("sub", "Système"),
+    )
+    db.commit()
+    db.refresh(dossier)
+    return dossier
+
+
+@router.post(
+    "/missions/{mission_id}/technical-dossier/versions",
+    response_model=schemas.TechnicalDossierResponse,
+)
+async def upload_measure_technical_version(
+    mission_id: int,
+    document_type: str = Form(...),
+    source_system: str = Form(...),
+    source_reference: Optional[str] = Form(None),
+    opening_ids: str = Form(""),
+    notes: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    if mission.status not in {
+        models.MeasureMissionStatus.VALIDATED.value,
+        models.MeasureMissionStatus.QUOTED.value,
+    }:
+        raise HTTPException(409, "Validez d'abord le métré et ses ouvrages")
+    dossier = _get_or_create_technical_dossier(
+        db,
+        mission,
+        current_user.get("sub", "Système"),
+    )
+    try:
+        normalized_type = schemas.TechnicalDocumentType(document_type.upper()).value
+    except ValueError as exc:
+        raise HTTPException(422, "Type de document technique invalide") from exc
+    is_quoting = normalized_type == schemas.TechnicalDocumentType.QUOTING.value
+    if not is_quoting and not _sale_is_signed(mission):
+        raise HTTPException(
+            409,
+            "Les fichiers de fabrication et de débit ne sont acceptés qu'après signature du devis client",
+        )
+    status_field = "quoting_status" if is_quoting else "production_status"
+    current_status = getattr(dossier, status_field)
+    if current_status not in {
+        schemas.TechnicalDossierStatus.DRAFT.value,
+        schemas.TechnicalDossierStatus.CORRECTION_REQUIRED.value,
+        schemas.TechnicalDossierStatus.LOCKED.value if not is_quoting else "",
+    }:
+        raise HTTPException(
+            409,
+            "Cette phase doit être en brouillon ou à corriger pour ajouter une version",
+        )
+    try:
+        normalized_source = schemas.TechnicalSourceSystem(source_system.upper()).value
+    except ValueError as exc:
+        raise HTTPException(422, "Logiciel source invalide") from exc
+
+    parsed_opening_ids = []
+    if opening_ids.strip():
+        try:
+            parsed_opening_ids = [
+                int(value.strip())
+                for value in opening_ids.split(",")
+                if value.strip()
+            ]
+        except ValueError as exc:
+            raise HTTPException(422, "La liste des ouvrages est invalide") from exc
+    else:
+        parsed_opening_ids = [opening.id for opening in mission.openings]
+    _validate_technical_coverage(mission, parsed_opening_ids)
+
+    directory = os.path.join("uploads", "mmg", "technical-dossiers", str(dossier.id))
+    file_path = await uploads.save_upload_file(
+        file,
+        directory,
+        extra_extensions={
+            ".txt",
+            ".xml",
+            ".csv",
+            ".json",
+            ".zip",
+            ".dat",
+            ".cut",
+            ".dxf",
+        },
+        prefix=f"v{len(dossier.versions) + 1}_",
+    )
+    with open(file_path, "rb") as saved_file:
+        checksum = hashlib.sha256(saved_file.read()).hexdigest()
+    latest = _latest_technical_version(dossier)
+    if latest and latest.checksum_sha256 == checksum:
+        os.remove(file_path)
+        raise HTTPException(409, "Ce fichier est identique à la dernière version")
+
+    version = models.TechnicalDossierVersion(
+        dossier=dossier,
+        version_number=len(dossier.versions) + 1,
+        document_type=normalized_type,
+        source_system=normalized_source,
+        source_reference=(source_reference or "").strip() or None,
+        original_filename=file.filename or "dossier-technique",
+        stored_filename=os.path.basename(file_path),
+        content_type=file.content_type,
+        file_path=file_path,
+        file_size=os.path.getsize(file_path),
+        checksum_sha256=checksum,
+        opening_ids=sorted(set(parsed_opening_ids)),
+        notes=(notes or "").strip() or None,
+        created_by=current_user.get("sub", "Système"),
+    )
+    db.add(version)
+    setattr(dossier, status_field, schemas.TechnicalDossierStatus.DRAFT.value)
+    prefix = "quoting" if is_quoting else "production"
+    setattr(dossier, f"{prefix}_review_note", None)
+    setattr(dossier, f"{prefix}_validated_at", None)
+    setattr(dossier, f"{prefix}_validated_by", None)
+    db.commit()
+    db.refresh(dossier)
+    return dossier
+
+
+@router.get("/missions/{mission_id}/technical-dossier/handoff")
+def export_measure_technical_handoff(
+    mission_id: int,
+    target_system: schemas.TechnicalSourceSystem = schemas.TechnicalSourceSystem.PROGES,
+    db: Session = Depends(get_db),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    if mission.status not in {
+        models.MeasureMissionStatus.VALIDATED.value,
+        models.MeasureMissionStatus.QUOTED.value,
+    }:
+        raise HTTPException(409, "Validez d'abord le métré et ses ouvrages")
+    if not mission.technical_dossier:
+        raise HTTPException(404, "Dossier technique introuvable")
+    if not mission.openings:
+        raise HTTPException(422, "Aucun ouvrage à transmettre")
+    from ..services.mmg_to_proges import generate_measure_mission_handoff
+
+    content = generate_measure_mission_handoff(mission, target_system.value)
+    filename = (
+        f"{mission.technical_dossier.reference}-"
+        f"{target_system.value.lower()}-transfert.csv"
+    )
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.patch(
+    "/missions/{mission_id}/technical-dossier/submit",
+    response_model=schemas.TechnicalDossierResponse,
+)
+def submit_measure_technical_dossier(
+    mission_id: int,
+    phase: schemas.TechnicalDocumentType,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    dossier = mission.technical_dossier
+    if not dossier:
+        raise HTTPException(404, "Dossier technique introuvable")
+    is_quoting = phase == schemas.TechnicalDocumentType.QUOTING
+    if not is_quoting and not _sale_is_signed(mission):
+        raise HTTPException(409, "Le devis client doit être signé avant le contrôle fabrication")
+    status_field = "quoting_status" if is_quoting else "production_status"
+    if getattr(dossier, status_field) not in {
+        schemas.TechnicalDossierStatus.DRAFT.value,
+        schemas.TechnicalDossierStatus.CORRECTION_REQUIRED.value,
+    }:
+        raise HTTPException(409, "Ce dossier ne peut pas être soumis dans son état actuel")
+    required_types = (
+        [schemas.TechnicalDocumentType.QUOTING.value]
+        if is_quoting
+        else [
+            schemas.TechnicalDocumentType.FABRICATION.value,
+            schemas.TechnicalDocumentType.CUTTING.value,
+        ]
+    )
+    for required_type in required_types:
+        latest = _latest_technical_version(dossier, required_type)
+        if not latest:
+            label = "chiffrage" if is_quoting else required_type.lower()
+            raise HTTPException(422, f"Ajoutez le fichier {label} PROGES/ORGADATA")
+        _validate_technical_coverage(mission, latest.opening_ids or [])
+    prefix = "quoting" if is_quoting else "production"
+    setattr(dossier, status_field, schemas.TechnicalDossierStatus.TO_REVIEW.value)
+    setattr(dossier, f"{prefix}_submitted_at", utcnow())
+    setattr(dossier, f"{prefix}_submitted_by", current_user.get("sub", "Système"))
+    db.commit()
+    db.refresh(dossier)
+    return dossier
+
+
+@router.patch(
+    "/missions/{mission_id}/technical-dossier/review",
+    response_model=schemas.TechnicalDossierResponse,
+)
+def review_measure_technical_dossier(
+    mission_id: int,
+    item: schemas.TechnicalDossierReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    if not (_current_roles(current_user) & BE_REVIEW_ROLES):
+        raise HTTPException(403, "La validation du dossier technique est réservée au BE")
+    mission = _get_mission_or_404(db, mission_id)
+    dossier = mission.technical_dossier
+    if not dossier:
+        raise HTTPException(404, "Dossier technique introuvable")
+    is_quoting = item.phase == schemas.TechnicalDocumentType.QUOTING
+    status_field = "quoting_status" if is_quoting else "production_status"
+    prefix = "quoting" if is_quoting else "production"
+    if getattr(dossier, status_field) != schemas.TechnicalDossierStatus.TO_REVIEW.value:
+        raise HTTPException(409, "Cette phase n'est pas en attente de contrôle")
+    actor = current_user.get("sub", "Système")
+    note = (item.note or "").strip() or None
+    if item.action == schemas.TechnicalDossierReviewAction.REQUEST_CORRECTION:
+        if not note:
+            raise HTTPException(422, "Précisez la correction attendue")
+        setattr(dossier, status_field, schemas.TechnicalDossierStatus.CORRECTION_REQUIRED.value)
+        setattr(dossier, f"{prefix}_review_note", note)
+        setattr(dossier, f"{prefix}_validated_at", None)
+        setattr(dossier, f"{prefix}_validated_by", None)
+    else:
+        required_types = (
+            [schemas.TechnicalDocumentType.QUOTING.value]
+            if is_quoting
+            else [
+                schemas.TechnicalDocumentType.FABRICATION.value,
+                schemas.TechnicalDocumentType.CUTTING.value,
+            ]
+        )
+        for required_type in required_types:
+            latest = _latest_technical_version(dossier, required_type)
+            if not latest:
+                raise HTTPException(422, f"Fichier {required_type.lower()} absent")
+            _validate_technical_coverage(mission, latest.opening_ids or [])
+        setattr(dossier, status_field, schemas.TechnicalDossierStatus.VALIDATED.value)
+        setattr(dossier, f"{prefix}_review_note", note)
+        setattr(dossier, f"{prefix}_validated_at", utcnow())
+        setattr(dossier, f"{prefix}_validated_by", actor)
+    db.commit()
+    db.refresh(dossier)
+    return dossier
+
+
+@router.get(
+    "/missions/{mission_id}/technical-dossier/versions/{version_id}/download",
+)
+def download_measure_technical_version(
+    mission_id: int,
+    version_id: int,
+    db: Session = Depends(get_db),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    if not mission.technical_dossier:
+        raise HTTPException(404, "Dossier technique introuvable")
+    version = (
+        db.query(models.TechnicalDossierVersion)
+        .filter(
+            models.TechnicalDossierVersion.id == version_id,
+            models.TechnicalDossierVersion.dossier_id == mission.technical_dossier.id,
+        )
+        .first()
+    )
+    if not version:
+        raise HTTPException(404, "Version technique introuvable")
+    if not os.path.exists(version.file_path):
+        raise HTTPException(404, "Fichier technique introuvable sur le stockage")
+    return FileResponse(
+        version.file_path,
+        media_type=version.content_type or "application/octet-stream",
+        filename=version.original_filename,
+    )
 
 
 @router.patch(
@@ -1085,6 +1466,15 @@ def generate_measure_mission_quote(
         )
     if not mission.openings:
         raise HTTPException(422, "Aucun ouvrage validé à chiffrer")
+    if (
+        not mission.technical_dossier
+        or mission.technical_dossier.quoting_status
+        != schemas.TechnicalDossierStatus.VALIDATED.value
+    ):
+        raise HTTPException(
+            409,
+            "Le chiffrage PROGES/ORGADATA doit être validé par le BE avant de créer la proposition",
+        )
     invalid_openings = [
         opening
         for opening in mission.openings
@@ -1153,40 +1543,6 @@ def generate_measure_mission_quote(
                 visual_config=None,
             )
         )
-        configuration = dict(opening.configuration or {})
-        configuration["measure_opening_id"] = opening.id
-        dossier = models.MMG(
-            reference=generate_reference(db),
-            client_id=mission.client_id,
-            site_address_id=mission.site_address_id,
-            measure_mission_id=mission.id,
-            client_name=mission.client.name,
-            client_contact=mission.client.phone or mission.client.contact_name,
-            client_address=mission.client.address,
-            site_address=_site_address_text(mission.site) if mission.site else None,
-            client_email=mission.client.email,
-            client_type=mission.client.customer_type,
-            width=opening.width_mm,
-            height=opening.height_mm,
-            passage_height=opening.passage_height_mm or 0,
-            opening_type=opening.opening_type or "À définir",
-            opening_side=opening.opening_side or "À définir",
-            sash_count=opening.sash_count or 1,
-            view_type="interior",
-            material=opening.material,
-            installation_type=opening.installation_type,
-            product_series=configuration.get("product_series"),
-            configuration=configuration,
-            photos=",".join(
-                document.file_path
-                for document in opening.documents
-                if (document.content_type or "").startswith("image/")
-            ),
-            status=models.MMGStatus.IN_STUDY,
-            sale_order_id=sale.id,
-        )
-        db.add(dossier)
-
     mission.sale_order_id = sale.id
     mission.status = models.MeasureMissionStatus.QUOTED.value
     if mission.opportunity:
