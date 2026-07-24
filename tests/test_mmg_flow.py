@@ -65,6 +65,7 @@ def client(monkeypatch):
         models.Base.metadata.drop_all(bind=engine)
         # Nettoyage des fichiers uploades pendant le test
         shutil.rmtree(ROOT_DIR / "uploads" / "mmg", ignore_errors=True)
+        shutil.rmtree(ROOT_DIR / "uploads" / "measure_missions", ignore_errors=True)
 
 
 def _login(test_client: TestClient) -> dict:
@@ -382,6 +383,170 @@ def test_measure_mission_rejects_incomplete_opening_for_review(client):
     )
     assert review.status_code == 422
     assert "Tous les ouvrages" in review.text
+
+
+def test_client_measure_documents_require_source_and_client_approval(client):
+    headers = _login(client)
+    crm_client = client.post(
+        "/v2/partners/clients",
+        json={
+            "name": "Client Plans Fournis",
+            "phone": "0600112233",
+            "country": "FR",
+            "customer_type": "B2C",
+            "is_active": True,
+        },
+        headers=headers,
+    ).json()
+    mission_response = client.post(
+        "/v2/mmg/missions",
+        json={
+            "client_id": crm_client["id"],
+            "source_type": "CLIENT_DOCUMENTS",
+            "project_scope": "SUPPLY_ONLY",
+            "status": "IN_CAPTURE",
+            "purpose": "Fenêtres sur plans client",
+        },
+        headers=headers,
+    )
+    assert mission_response.status_code == 200, mission_response.text
+    mission = mission_response.json()
+    assert mission["source_type"] == "CLIENT_DOCUMENTS"
+    assert mission["verification_status"] == "UNVERIFIED"
+
+    opening = client.post(
+        f"/v2/mmg/missions/{mission['id']}/openings",
+        json={
+            "label": "F01",
+            "width_mm": 1200,
+            "height_mm": 1400,
+            "status": "COMPLETE",
+        },
+        headers=headers,
+    )
+    assert opening.status_code == 200, opening.text
+
+    no_document = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "TO_REVIEW"},
+        headers=headers,
+    )
+    assert no_document.status_code == 422
+    assert "plan ou croquis" in no_document.text
+
+    document = client.post(
+        f"/v2/mmg/missions/{mission['id']}/documents",
+        files={"file": ("cotes-client.pdf", b"%PDF-1.4 client measurements", "application/pdf")},
+        headers=headers,
+    )
+    assert document.status_code == 200, document.text
+    assert document.json()["source_documents"][0]["original_filename"] == "cotes-client.pdf"
+
+    review = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "TO_REVIEW"},
+        headers=headers,
+    )
+    assert review.status_code == 200, review.text
+    validated = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "VALIDATED"},
+        headers=headers,
+    )
+    assert validated.status_code == 200, validated.text
+    assert validated.json()["verification_status"] == "CLIENT_APPROVAL_REQUIRED"
+
+    approval = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/verification",
+        json={"action": "CLIENT_APPROVED"},
+        headers=headers,
+    )
+    assert approval.status_code == 200, approval.text
+    assert approval.json()["verification_status"] == "READY_FOR_FABRICATION"
+    assert approval.json()["client_approved_at"] is not None
+
+
+def test_agency_measure_with_install_requires_site_verification(client):
+    headers = _login(client)
+    crm_client = client.post(
+        "/v2/partners/clients",
+        json={
+            "name": "Client Agence Pose",
+            "phone": "0600445566",
+            "country": "FR",
+            "customer_type": "B2C",
+            "is_active": True,
+        },
+        headers=headers,
+    ).json()
+    mission = client.post(
+        "/v2/mmg/missions",
+        json={
+            "client_id": crm_client["id"],
+            "source_type": "AGENCY_ASSISTED",
+            "project_scope": "SUPPLY_AND_INSTALL",
+            "site": {
+                "address_line1": "8 rue du Chantier",
+                "postal_code": "33000",
+                "city": "Bordeaux",
+                "country": "FR",
+            },
+            "status": "IN_CAPTURE",
+        },
+        headers=headers,
+    ).json()
+    accidental_schedule = client.put(
+        f"/v2/mmg/missions/{mission['id']}",
+        json={
+            "assigned_user_id": 1,
+            "scheduled_start": "2026-08-12T09:00:00",
+            "scheduled_end": "2026-08-12T10:00:00",
+        },
+        headers=headers,
+    )
+    assert accidental_schedule.status_code == 200, accidental_schedule.text
+    assert accidental_schedule.json()["status"] == "IN_CAPTURE"
+
+    opening = client.post(
+        f"/v2/mmg/missions/{mission['id']}/openings",
+        json={
+            "label": "PF01",
+            "width_mm": 1800,
+            "height_mm": 2150,
+            "status": "COMPLETE",
+        },
+        headers=headers,
+    )
+    assert opening.status_code == 200, opening.text
+    assert client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "TO_REVIEW"},
+        headers=headers,
+    ).status_code == 200
+    validated = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "VALIDATED"},
+        headers=headers,
+    )
+    assert validated.status_code == 200, validated.text
+    assert validated.json()["verification_status"] == "SITE_VERIFICATION_REQUIRED"
+
+    client_approval = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/verification",
+        json={"action": "CLIENT_APPROVED"},
+        headers=headers,
+    )
+    assert client_approval.status_code == 200
+    assert client_approval.json()["verification_status"] == "SITE_VERIFICATION_REQUIRED"
+
+    site_verification = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/verification",
+        json={"action": "SITE_VERIFIED"},
+        headers=headers,
+    )
+    assert site_verification.status_code == 200, site_verification.text
+    assert site_verification.json()["verification_status"] == "READY_FOR_FABRICATION"
+    assert site_verification.json()["site_verified_at"] is not None
 
 
 def test_mmg_status_and_send_quote_flow(client):

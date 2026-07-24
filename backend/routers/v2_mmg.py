@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, File, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional
@@ -108,12 +109,20 @@ def _serialize_mission(mission: models.MeasureMission) -> schemas.MeasureMission
         assigned_user_id=mission.assigned_user_id,
         assigned_user_name=assigned_user_name,
         status=mission.status,
+        source_type=mission.source_type,
+        project_scope=mission.project_scope,
+        verification_status=mission.verification_status,
         purpose=mission.purpose,
         scheduled_start=mission.scheduled_start,
         scheduled_end=mission.scheduled_end,
         notes=mission.notes,
+        client_approved_at=mission.client_approved_at,
+        client_approved_by=mission.client_approved_by,
+        site_verified_at=mission.site_verified_at,
+        site_verified_by=mission.site_verified_by,
         dossier_ids=[dossier.id for dossier in mission.dossiers],
         openings=mission.openings,
+        source_documents=mission.source_documents,
         created_by=mission.created_by,
         created_at=mission.created_at,
         updated_at=mission.updated_at,
@@ -170,6 +179,7 @@ MISSION_TRANSITIONS = {
     models.MeasureMissionStatus.DRAFT.value: {
         models.MeasureMissionStatus.TO_SCHEDULE.value,
         models.MeasureMissionStatus.SCHEDULED.value,
+        models.MeasureMissionStatus.IN_CAPTURE.value,
         models.MeasureMissionStatus.CANCELLED.value,
     },
     models.MeasureMissionStatus.TO_SCHEDULE.value: {
@@ -177,7 +187,13 @@ MISSION_TRANSITIONS = {
         models.MeasureMissionStatus.CANCELLED.value,
     },
     models.MeasureMissionStatus.SCHEDULED.value: {
+        models.MeasureMissionStatus.IN_CAPTURE.value,
         models.MeasureMissionStatus.ON_SITE.value,
+        models.MeasureMissionStatus.CANCELLED.value,
+    },
+    models.MeasureMissionStatus.IN_CAPTURE.value: {
+        models.MeasureMissionStatus.TO_REVIEW.value,
+        models.MeasureMissionStatus.SCHEDULED.value,
         models.MeasureMissionStatus.CANCELLED.value,
     },
     models.MeasureMissionStatus.ON_SITE.value: {
@@ -189,6 +205,7 @@ MISSION_TRANSITIONS = {
         models.MeasureMissionStatus.VALIDATED.value,
     },
     models.MeasureMissionStatus.CORRECTION_REQUIRED.value: {
+        models.MeasureMissionStatus.IN_CAPTURE.value,
         models.MeasureMissionStatus.ON_SITE.value,
         models.MeasureMissionStatus.TO_REVIEW.value,
     },
@@ -319,6 +336,8 @@ def create_measure_mission(
         if not assigned_user or not assigned_user.is_active:
             raise HTTPException(400, "Technicien introuvable ou inactif")
     if item.status == schemas.MeasureMissionStatus.SCHEDULED:
+        if item.source_type != schemas.MeasureSourceType.SITE_VISIT:
+            raise HTTPException(422, "Seul un relevé MMG sur chantier doit être planifié")
         if not site:
             raise HTTPException(422, "Une adresse chantier est obligatoire pour planifier la mission")
         if not item.assigned_user_id or not item.scheduled_start:
@@ -332,6 +351,9 @@ def create_measure_mission(
         sale_order_id=item.sale_order_id,
         assigned_user_id=item.assigned_user_id,
         status=item.status.value,
+        source_type=item.source_type.value,
+        project_scope=item.project_scope.value,
+        verification_status=schemas.MeasureVerificationStatus.UNVERIFIED.value,
         purpose=item.purpose,
         scheduled_start=item.scheduled_start,
         scheduled_end=item.scheduled_end,
@@ -377,10 +399,15 @@ def update_measure_mission(
         setattr(mission, field, value)
     if mission.scheduled_start and mission.scheduled_end and mission.scheduled_end <= mission.scheduled_start:
         raise HTTPException(422, "La fin planifiée doit être postérieure au début")
-    if mission.scheduled_start and mission.assigned_user_id and mission.status in {
-        models.MeasureMissionStatus.DRAFT.value,
-        models.MeasureMissionStatus.TO_SCHEDULE.value,
-    }:
+    if (
+        mission.source_type == schemas.MeasureSourceType.SITE_VISIT.value
+        and mission.scheduled_start
+        and mission.assigned_user_id
+        and mission.status in {
+            models.MeasureMissionStatus.DRAFT.value,
+            models.MeasureMissionStatus.TO_SCHEDULE.value,
+        }
+    ):
         mission.status = models.MeasureMissionStatus.SCHEDULED.value
     db.commit()
     db.refresh(mission)
@@ -504,9 +531,18 @@ def update_measure_mission_status(
             f"Transition de mission interdite: {mission.status} → {target}",
         )
     if target == models.MeasureMissionStatus.SCHEDULED.value:
+        if mission.source_type != schemas.MeasureSourceType.SITE_VISIT.value:
+            raise HTTPException(422, "Ce dossier de cotes ne nécessite pas de mission sur chantier")
+        if not mission.site_address_id:
+            raise HTTPException(422, "Une adresse chantier est obligatoire pour planifier la mission")
         if not mission.assigned_user_id or not mission.scheduled_start:
             raise HTTPException(422, "Affectez un métreur et une date avant de planifier")
     if target == models.MeasureMissionStatus.TO_REVIEW.value:
+        if (
+            mission.source_type == schemas.MeasureSourceType.CLIENT_DOCUMENTS.value
+            and not mission.source_documents
+        ):
+            raise HTTPException(422, "Joignez au moins un plan ou croquis fourni par le client")
         if not mission.openings:
             raise HTTPException(422, "Ajoutez au moins un ouvrage avant le contrôle BE")
         incomplete = [
@@ -534,12 +570,146 @@ def update_measure_mission_status(
             for opening in mission.openings:
                 _validate_opening_dimensions(opening)
                 opening.status = schemas.MeasureOpeningStatus.VALIDATED.value
+            if mission.source_type == schemas.MeasureSourceType.SITE_VISIT.value:
+                mission.verification_status = schemas.MeasureVerificationStatus.READY_FOR_FABRICATION.value
+                mission.site_verified_at = utcnow()
+                mission.site_verified_by = current_user.get("sub", "Système")
+            elif mission.project_scope == schemas.MeasureProjectScope.SUPPLY_ONLY.value:
+                mission.verification_status = schemas.MeasureVerificationStatus.CLIENT_APPROVAL_REQUIRED.value
+            else:
+                mission.verification_status = schemas.MeasureVerificationStatus.SITE_VERIFICATION_REQUIRED.value
         else:
+            mission.verification_status = schemas.MeasureVerificationStatus.UNVERIFIED.value
             for opening in mission.openings:
                 if opening.status != schemas.MeasureOpeningStatus.VALIDATED.value:
                     opening.status = schemas.MeasureOpeningStatus.CORRECTION_REQUIRED.value
     mission.status = target
     db.commit()
+    db.refresh(mission)
+    return _serialize_mission(mission)
+
+
+@router.patch(
+    "/missions/{mission_id}/verification",
+    response_model=schemas.MeasureMissionResponse,
+)
+def update_measure_mission_verification(
+    mission_id: int,
+    item: schemas.MeasureVerificationUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    if mission.status != models.MeasureMissionStatus.VALIDATED.value:
+        raise HTTPException(409, "Le contrôle BE doit être validé avant cette confirmation")
+    actor = current_user.get("sub", "Système")
+    if item.action == schemas.MeasureVerificationAction.CLIENT_APPROVED:
+        if mission.source_type == schemas.MeasureSourceType.SITE_VISIT.value:
+            raise HTTPException(409, "Les cotes ont déjà été relevées et vérifiées par MMG")
+        mission.client_approved_at = utcnow()
+        mission.client_approved_by = actor
+        if mission.project_scope == schemas.MeasureProjectScope.SUPPLY_ONLY.value:
+            mission.verification_status = schemas.MeasureVerificationStatus.READY_FOR_FABRICATION.value
+        else:
+            mission.verification_status = schemas.MeasureVerificationStatus.SITE_VERIFICATION_REQUIRED.value
+    else:
+        if not (_current_roles(current_user) & BE_REVIEW_ROLES):
+            raise HTTPException(403, "La vérification chantier est réservée aux profils habilités")
+        if not mission.site_address_id:
+            raise HTTPException(422, "Renseignez l'adresse du chantier avant de confirmer la vérification")
+        mission.site_verified_at = utcnow()
+        mission.site_verified_by = actor
+        mission.verification_status = schemas.MeasureVerificationStatus.READY_FOR_FABRICATION.value
+    db.commit()
+    db.refresh(mission)
+    return _serialize_mission(mission)
+
+
+@router.post(
+    "/missions/{mission_id}/documents",
+    response_model=schemas.MeasureMissionResponse,
+)
+async def upload_measure_mission_document(
+    mission_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    _ensure_mission_editable(mission)
+    file_path = await uploads.save_upload_file(
+        file,
+        os.path.join("uploads", "measure_missions", str(mission.id)),
+        extra_extensions={".txt"},
+        prefix=f"metre_{mission.id}_",
+    )
+    document = models.MeasureMissionDocument(
+        mission_id=mission.id,
+        original_filename=os.path.basename(file.filename or "document"),
+        stored_filename=os.path.basename(file_path),
+        content_type=file.content_type,
+        file_path=file_path.replace(os.sep, "/"),
+        file_size=os.path.getsize(file_path),
+        uploaded_by=current_user.get("sub", "Système"),
+    )
+    db.add(document)
+    db.commit()
+    db.refresh(mission)
+    return _serialize_mission(mission)
+
+
+@router.get("/missions/{mission_id}/documents/{document_id}/download")
+def download_measure_mission_document(
+    mission_id: int,
+    document_id: int,
+    db: Session = Depends(get_db),
+):
+    document = (
+        db.query(models.MeasureMissionDocument)
+        .filter(
+            models.MeasureMissionDocument.id == document_id,
+            models.MeasureMissionDocument.mission_id == mission_id,
+        )
+        .first()
+    )
+    if not document:
+        raise HTTPException(404, "Document de cotes introuvable")
+    if not os.path.exists(document.file_path):
+        raise HTTPException(404, "Fichier source introuvable")
+    filename = document.original_filename.replace('"', "")
+    return FileResponse(
+        document.file_path,
+        media_type=document.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete(
+    "/missions/{mission_id}/documents/{document_id}",
+    response_model=schemas.MeasureMissionResponse,
+)
+def delete_measure_mission_document(
+    mission_id: int,
+    document_id: int,
+    db: Session = Depends(get_db),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    _ensure_mission_editable(mission)
+    document = (
+        db.query(models.MeasureMissionDocument)
+        .filter(
+            models.MeasureMissionDocument.id == document_id,
+            models.MeasureMissionDocument.mission_id == mission_id,
+        )
+        .first()
+    )
+    if not document:
+        raise HTTPException(404, "Document de cotes introuvable")
+    file_path = document.file_path
+    db.delete(document)
+    db.commit()
+    if os.path.exists(file_path):
+        os.remove(file_path)
     db.refresh(mission)
     return _serialize_mission(mission)
 
@@ -581,6 +751,9 @@ async def create_dossier(
             site_address_id=site.id if site else None,
             sale_order_id=item.sale_order_id,
             status=models.MeasureMissionStatus.TO_REVIEW.value,
+            source_type=schemas.MeasureSourceType.AGENCY_ASSISTED.value,
+            project_scope=schemas.MeasureProjectScope.SUPPLY_AND_INSTALL.value,
+            verification_status=schemas.MeasureVerificationStatus.UNVERIFIED.value,
             purpose="Prise de côte saisie directement",
             created_by=current_user.get("sub", "Système"),
         )

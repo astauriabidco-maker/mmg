@@ -333,6 +333,7 @@ class MeasureMissionStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     TO_SCHEDULE = "TO_SCHEDULE"
     SCHEDULED = "SCHEDULED"
+    IN_CAPTURE = "IN_CAPTURE"
     ON_SITE = "ON_SITE"
     TO_REVIEW = "TO_REVIEW"
     CORRECTION_REQUIRED = "CORRECTION_REQUIRED"
@@ -618,10 +619,17 @@ class MeasureMission(Base):
     sale_order_id = Column(Integer, ForeignKey("sale_orders.id"), nullable=True, index=True)
     assigned_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     status = Column(String, default=MeasureMissionStatus.DRAFT.value, nullable=False, index=True)
+    source_type = Column(String, default="SITE_VISIT", nullable=False, index=True)
+    project_scope = Column(String, default="SUPPLY_AND_INSTALL", nullable=False)
+    verification_status = Column(String, default="UNVERIFIED", nullable=False, index=True)
     purpose = Column(String, nullable=True)
     scheduled_start = Column(DateTime, nullable=True)
     scheduled_end = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)
+    client_approved_at = Column(DateTime, nullable=True)
+    client_approved_by = Column(String, nullable=True)
+    site_verified_at = Column(DateTime, nullable=True)
+    site_verified_by = Column(String, nullable=True)
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
@@ -640,6 +648,12 @@ class MeasureMission(Base):
         back_populates="mission",
         cascade="all, delete-orphan",
         order_by="MeasureOpening.sequence",
+    )
+    source_documents = relationship(
+        "MeasureMissionDocument",
+        back_populates="mission",
+        cascade="all, delete-orphan",
+        order_by="MeasureMissionDocument.uploaded_at",
     )
 
 
@@ -670,6 +684,28 @@ class MeasureOpening(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     mission = relationship("MeasureMission", back_populates="openings")
+
+
+class MeasureMissionDocument(Base):
+    __tablename__ = "measure_mission_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    mission_id = Column(
+        Integer,
+        ForeignKey("measure_missions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    original_filename = Column(String, nullable=False)
+    stored_filename = Column(String, nullable=False)
+    content_type = Column(String, nullable=True)
+    file_path = Column(String, nullable=False)
+    file_size = Column(Integer, default=0)
+    document_type = Column(String, default="SOURCE_MEASURE")
+    uploaded_by = Column(String, nullable=True)
+    uploaded_at = Column(DateTime, default=utcnow)
+
+    mission = relationship("MeasureMission", back_populates="source_documents")
 
 # --- FOURNISSEURS (SUPPLIERS) ---
 class Supplier(Base):

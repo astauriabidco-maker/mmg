@@ -287,6 +287,7 @@ class MeasureMissionStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     TO_SCHEDULE = "TO_SCHEDULE"
     SCHEDULED = "SCHEDULED"
+    IN_CAPTURE = "IN_CAPTURE"
     ON_SITE = "ON_SITE"
     TO_REVIEW = "TO_REVIEW"
     CORRECTION_REQUIRED = "CORRECTION_REQUIRED"
@@ -294,12 +295,30 @@ class MeasureMissionStatus(str, enum.Enum):
     QUOTED = "QUOTED"
     CANCELLED = "CANCELLED"
 
+class MeasureSourceType(str, enum.Enum):
+    SITE_VISIT = "SITE_VISIT"
+    CLIENT_DOCUMENTS = "CLIENT_DOCUMENTS"
+    AGENCY_ASSISTED = "AGENCY_ASSISTED"
+
+class MeasureProjectScope(str, enum.Enum):
+    SUPPLY_ONLY = "SUPPLY_ONLY"
+    SUPPLY_AND_INSTALL = "SUPPLY_AND_INSTALL"
+
+class MeasureVerificationStatus(str, enum.Enum):
+    UNVERIFIED = "UNVERIFIED"
+    BE_REVIEWED = "BE_REVIEWED"
+    CLIENT_APPROVAL_REQUIRED = "CLIENT_APPROVAL_REQUIRED"
+    SITE_VERIFICATION_REQUIRED = "SITE_VERIFICATION_REQUIRED"
+    READY_FOR_FABRICATION = "READY_FOR_FABRICATION"
+
 class MeasureMissionCreate(BaseModel):
     client_id: int
     site_address_id: Optional[int] = None
     site: Optional[ClientSiteAddressCreate] = None
     sale_order_id: Optional[int] = None
     assigned_user_id: Optional[int] = None
+    source_type: MeasureSourceType = MeasureSourceType.SITE_VISIT
+    project_scope: MeasureProjectScope = MeasureProjectScope.SUPPLY_AND_INSTALL
     purpose: Optional[str] = None
     scheduled_start: Optional[datetime] = None
     scheduled_end: Optional[datetime] = None
@@ -310,6 +329,7 @@ class MeasureMissionUpdate(BaseModel):
     site_address_id: Optional[int] = None
     site: Optional[ClientSiteAddressCreate] = None
     assigned_user_id: Optional[int] = None
+    project_scope: Optional[MeasureProjectScope] = None
     purpose: Optional[str] = None
     scheduled_start: Optional[datetime] = None
     scheduled_end: Optional[datetime] = None
@@ -317,6 +337,24 @@ class MeasureMissionUpdate(BaseModel):
 
 class MeasureMissionStatusUpdate(BaseModel):
     status: MeasureMissionStatus
+
+class MeasureVerificationAction(str, enum.Enum):
+    CLIENT_APPROVED = "CLIENT_APPROVED"
+    SITE_VERIFIED = "SITE_VERIFIED"
+
+class MeasureVerificationUpdate(BaseModel):
+    action: MeasureVerificationAction
+
+class MeasureMissionDocumentResponse(BaseModel):
+    id: int
+    mission_id: int
+    original_filename: str
+    content_type: Optional[str] = None
+    file_size: int = 0
+    document_type: str
+    uploaded_by: Optional[str] = None
+    uploaded_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
 class MeasureOpeningStatus(str, enum.Enum):
     DRAFT = "DRAFT"
@@ -379,12 +417,20 @@ class MeasureMissionResponse(BaseModel):
     assigned_user_id: Optional[int] = None
     assigned_user_name: Optional[str] = None
     status: MeasureMissionStatus
+    source_type: MeasureSourceType
+    project_scope: MeasureProjectScope
+    verification_status: MeasureVerificationStatus
     purpose: Optional[str] = None
     scheduled_start: Optional[datetime] = None
     scheduled_end: Optional[datetime] = None
     notes: Optional[str] = None
+    client_approved_at: Optional[datetime] = None
+    client_approved_by: Optional[str] = None
+    site_verified_at: Optional[datetime] = None
+    site_verified_by: Optional[str] = None
     dossier_ids: List[int] = Field(default_factory=list)
     openings: List[MeasureOpeningResponse] = Field(default_factory=list)
+    source_documents: List[MeasureMissionDocumentResponse] = Field(default_factory=list)
     created_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime

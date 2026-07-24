@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, BellRing, CalendarClock, CheckCircle2, ClipboardList, FileText, Mail, MapPin, Package, Phone, Plus, Search, Send, Truck, Users, Wrench, X } from 'lucide-react';
+import { ArrowRight, BellRing, Building2, CalendarClock, CheckCircle2, ClipboardList, FileText, Mail, MapPin, Package, Phone, Plus, Search, Send, Truck, Users, Wrench, X } from 'lucide-react';
 import api from '../services/api';
 import MMGDossiers from './MMGDossiers';
 import BusinessTimeline from '../components/BusinessTimeline';
@@ -21,6 +21,7 @@ export default function CRMClientsDashboard() {
     const [selectedClientId, setSelectedClientId] = useState(null);
     const [showProposalStarter, setShowProposalStarter] = useState(false);
     const [showClientModal, setShowClientModal] = useState(false);
+    const [showMeasureStarter, setShowMeasureStarter] = useState(false);
     const [isCreatingClient, setIsCreatingClient] = useState(false);
     const [clientDraft, setClientDraft] = useState({
         name: '',
@@ -33,8 +34,14 @@ export default function CRMClientsDashboard() {
     });
 
     const planMeasureForClient = () => {
-        const query = selectedClient?.id ? `?clientId=${selectedClient.id}` : '';
-        navigate(`/measure-missions/new${query}`);
+        setShowMeasureStarter(true);
+    };
+
+    const startMeasureFlow = (source, scope = 'SUPPLY_AND_INSTALL') => {
+        const params = new URLSearchParams({ source, scope });
+        if (selectedClient?.id) params.set('clientId', selectedClient.id);
+        setShowMeasureStarter(false);
+        navigate(`/measure-missions/new?${params.toString()}`);
     };
 
     const { data: clients = [], refetch: refetchClients } = useQuery({
@@ -950,6 +957,14 @@ export default function CRMClientsDashboard() {
                 />
             )}
 
+            {showMeasureStarter && (
+                <MeasureFlowStarter
+                    client={selectedClient}
+                    onClose={() => setShowMeasureStarter(false)}
+                    onStart={startMeasureFlow}
+                />
+            )}
+
             {showClientModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6">
                     <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
@@ -1390,6 +1405,69 @@ function InfoLine({ icon: Icon, label, value }) {
                 <span className="text-[10px] font-black uppercase tracking-widest">{label}</span>
             </div>
             <p className="text-sm font-black text-slate-800 truncate">{value || 'Non renseigné'}</p>
+        </div>
+    );
+}
+
+function MeasureFlowStarter({ client, onClose, onStart }) {
+    const options = [
+        {
+            source: 'SITE_VISIT',
+            icon: MapPin,
+            title: 'Planifier un métré sur chantier',
+            description: 'MMG affecte un métreur, planifie le rendez-vous et relève les cotes sur place.',
+            tone: 'border-emerald-200 bg-emerald-50 text-emerald-950',
+        },
+        {
+            source: 'CLIENT_DOCUMENTS',
+            icon: FileText,
+            title: 'Importer les cotes du client',
+            description: 'Le client apporte plans, croquis ou relevés. Le BE les contrôle avant fabrication.',
+            tone: 'border-amber-200 bg-amber-50 text-amber-950',
+        },
+        {
+            source: 'AGENCY_ASSISTED',
+            icon: Building2,
+            title: 'Saisir les cotes en agence',
+            description: 'Un commercial ou technicien structure les ouvrages avec le client au comptoir.',
+            tone: 'border-blue-200 bg-blue-50 text-blue-950',
+        },
+    ];
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+            <div className="w-full max-w-4xl overflow-hidden border border-slate-200 bg-white shadow-2xl">
+                <div className="flex items-start justify-between bg-slate-900 px-6 py-5 text-white">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">Dossier fabrication</p>
+                        <h3 className="mt-2 text-2xl font-black">Comment les cotes sont-elles obtenues ?</h3>
+                        <p className="mt-1 text-sm font-bold text-slate-300">
+                            {client ? `${client.name} est déjà sélectionné.` : 'Le client pourra être sélectionné à l’étape suivante.'}
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="rounded-full p-2 text-slate-300 hover:bg-white/10 hover:text-white"><X className="h-5 w-5" /></button>
+                </div>
+                <div className="grid gap-3 p-6 md:grid-cols-3">
+                    {options.map(option => {
+                        const Icon = option.icon;
+                        return (
+                            <button
+                                key={option.source}
+                                onClick={() => onStart(option.source)}
+                                className={`min-h-52 border p-5 text-left transition-transform hover:-translate-y-0.5 hover:shadow-md ${option.tone}`}
+                            >
+                                <Icon className="h-7 w-7" />
+                                <p className="mt-5 text-lg font-black">{option.title}</p>
+                                <p className="mt-2 text-sm font-semibold leading-6 opacity-80">{option.description}</p>
+                                <span className="mt-5 inline-flex items-center gap-2 text-xs font-black uppercase tracking-widest">Continuer <ArrowRight className="h-4 w-4" /></span>
+                            </button>
+                        );
+                    })}
+                </div>
+                <div className="border-t border-slate-200 bg-slate-50 px-6 py-4 text-xs font-bold text-slate-600">
+                    Dans tous les cas : saisie multi-ouvrages, contrôle BE et traçabilité de la responsabilité des cotes.
+                </div>
+            </div>
         </div>
     );
 }
