@@ -283,14 +283,48 @@ export default function CRMClientsDashboard() {
             .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
     ), [clientSales]);
 
+    const clientDossiers = useMemo(() => {
+        if (!selectedClient) return [];
+        const clientKeys = [
+            selectedClient.name,
+            selectedClient.phone,
+            selectedClient.email,
+        ].map(normalize).filter(Boolean);
+        return dossiers
+            .filter(dossier => {
+                const dossierKeys = [
+                    dossier.client_name,
+                    dossier.client_contact,
+                    dossier.client_email,
+                ].map(normalize).filter(Boolean);
+                return clientKeys.some(key => dossierKeys.includes(key));
+            })
+            .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    }, [dossiers, selectedClient]);
+
     const activePresalesQuotes = useMemo(() => (
         presalesQuotes.filter(sale => isActivePresalesStatus(sale.status))
     ), [presalesQuotes]);
+
+    const openMeasureDossiers = useMemo(() => (
+        clientDossiers.filter(dossier => dossier.status !== 'VALIDATED')
+    ), [clientDossiers]);
 
     const nextActions = useMemo(() => {
         const actions = [];
         const draft = activePresalesQuotes.find(sale => sale.status === 'DRAFT');
         const sent = activePresalesQuotes.find(sale => sale.status === 'SENT');
+        const pendingMeasure = openMeasureDossiers[0];
+
+        if (selectedClient && (!selectedClient.phone || !selectedClient.email)) {
+            actions.push({
+                key: 'complete-contact',
+                tone: 'slate',
+                title: 'Compléter la fiche client',
+                detail: 'Téléphone ou email manquant pour les relances.',
+                onClick: () => setShowClientModal(true),
+            });
+        }
 
         if (draft) {
             actions.push({
@@ -310,6 +344,15 @@ export default function CRMClientsDashboard() {
                 saleId: sent.id,
             });
         }
+        if (pendingMeasure) {
+            actions.push({
+                key: `measure-${pendingMeasure.id}`,
+                tone: 'emerald',
+                title: 'Traiter la prise de côte',
+                detail: `${pendingMeasure.reference} · ${formatDate(pendingMeasure.created_at)}`,
+                onClick: () => setCrmView('measures'),
+            });
+        }
         if (actions.length === 0 && selectedClient) {
             actions.push({
                 key: 'new-proposal',
@@ -320,7 +363,7 @@ export default function CRMClientsDashboard() {
             });
         }
         return actions.slice(0, 3);
-    }, [activePresalesQuotes, selectedClient]);
+    }, [activePresalesQuotes, selectedClient, openMeasureDossiers]);
 
     const clientTimeline = useMemo(() => {
         const events = [];
@@ -649,9 +692,34 @@ export default function CRMClientsDashboard() {
                     ) : (
                         <div className="space-y-6">
                             <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                                <div className="border-b border-slate-100 bg-slate-50/70 px-6 py-4">
+                                    <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                                        <div>
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500">Cockpit client</p>
+                                            <h3 className="mt-1 text-2xl font-black text-slate-900">À comprendre en 5 secondes</h3>
+                                            <p className="mt-1 text-sm font-bold text-slate-500">Identité, action suivante, opportunités et historique commercial.</p>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                onClick={createQuoteForClient}
+                                                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white shadow-md shadow-blue-500/20 hover:bg-blue-500"
+                                            >
+                                                <Plus className="w-4 h-4" />
+                                                Proposition
+                                            </button>
+                                            <button
+                                                onClick={() => setCrmView('measures')}
+                                                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-500"
+                                            >
+                                                <ClipboardList className="w-4 h-4" />
+                                                Prise de côte
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
                                 <div className="p-6 flex flex-col xl:flex-row xl:items-start xl:justify-between gap-5">
                                     <div>
-                                        <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-2">Fiche client</p>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-2">Identité client</p>
                                         <h3 className="text-3xl font-black text-slate-900 tracking-tight">{selectedClient.name}</h3>
                                         {selectedClient.contact_name && <p className="text-sm font-bold text-slate-500 mt-1">{selectedClient.contact_name}</p>}
                                         <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -683,7 +751,7 @@ export default function CRMClientsDashboard() {
                                             </button>
                                         </div>
                                     </div>
-                                    <div className="grid grid-cols-3 gap-3 w-full xl:w-auto">
+                                    <div className="grid grid-cols-2 gap-3 w-full xl:w-auto xl:grid-cols-4">
                                         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
                                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Avant-vente</p>
                                             <p className="text-2xl font-black text-slate-900">{totals.presales}</p>
@@ -696,6 +764,10 @@ export default function CRMClientsDashboard() {
                                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">CA signé HT</p>
                                             <p className="text-2xl font-black text-slate-900">{formatMoney(totals.orderAmount)}</p>
                                         </div>
+                                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Métrés</p>
+                                            <p className="text-2xl font-black text-emerald-900">{clientDossiers.length}</p>
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 px-6 pb-6">
@@ -705,60 +777,13 @@ export default function CRMClientsDashboard() {
                                 </div>
                             </section>
 
-                            <section className="grid grid-cols-[1fr_320px] gap-6 items-start">
-                                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-                                    <div className="px-5 py-4 bg-blue-50 border-b border-blue-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                                        <div>
-                                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Avant-vente client</p>
-                                            <p className="text-sm font-bold text-blue-950">Devis ouverts, signature en attente et opportunités à décider.</p>
-                                        </div>
-                                        <button
-                                            onClick={createQuoteForClient}
-                                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white shadow-md shadow-blue-500/20 hover:bg-blue-500"
-                                        >
-                                            <Plus className="w-4 h-4" />
-                                            Créer une proposition
-                                        </button>
-                                    </div>
-
-                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 p-5 border-b border-slate-100">
-                                        <PipelineStep label="Brouillons" count={presalesQuotes.filter(sale => sale.status === 'DRAFT').length} amount={formatMoney(presalesQuotes.filter(sale => sale.status === 'DRAFT').reduce((sum, sale) => sum + saleAmount(sale), 0))} tone="slate" />
-                                        <PipelineStep label="Envoyés" count={presalesQuotes.filter(sale => sale.status === 'SENT').length} amount={formatMoney(presalesQuotes.filter(sale => sale.status === 'SENT').reduce((sum, sale) => sum + saleAmount(sale), 0))} tone="blue" />
-                                        <PipelineStep label="Perdus / annulés" count={presalesQuotes.filter(sale => sale.status === 'CANCELLED').length} amount={formatMoney(presalesQuotes.filter(sale => sale.status === 'CANCELLED').reduce((sum, sale) => sum + saleAmount(sale), 0))} tone="red" />
-                                    </div>
-
-                                    <div className="divide-y divide-slate-100">
-                                        {presalesQuotes.map(sale => (
-                                            <SaleRow
-                                                key={sale.id}
-                                                sale={sale}
-                                                total={saleAmount(sale)}
-                                                statusLabel={statusLabel(sale)}
-                                                statusClassName={statusClassName(sale.status)}
-                                                formatDate={formatDate}
-                                                formatMoney={formatMoney}
-                                                onOpen={() => openSale(sale.id)}
-                                            />
-                                        ))}
-                                        {presalesQuotes.length === 0 && (
-                                            <div className="p-10 text-center">
-                                                <FileText className="w-12 h-12 mx-auto text-blue-200 mb-3" />
-                                                <p className="text-sm font-black text-slate-600">Aucun devis en avant-vente pour ce client.</p>
-                                                <button onClick={createQuoteForClient} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-black text-white hover:bg-blue-500">
-                                                    <Plus className="w-4 h-4" />
-                                                    Créer le premier devis
-                                                </button>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div className="space-y-4">
+                            <section className="grid grid-cols-1 gap-6 xl:grid-cols-[420px_1fr] items-start">
+                                <div className="space-y-6">
                                     <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-                                        <div className="flex items-center justify-between mb-4">
+                                        <div className="mb-4 flex items-center justify-between">
                                             <div>
-                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">À traiter</p>
-                                                <p className="text-sm font-bold text-slate-700">Actions avant-vente</p>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Prochaines actions</p>
+                                                <p className="text-sm font-bold text-slate-700">Ce qu'il faut faire maintenant.</p>
                                             </div>
                                             <BellRing className="w-5 h-5 text-amber-500" />
                                         </div>
@@ -781,6 +806,56 @@ export default function CRMClientsDashboard() {
                                             <DocMetric icon={FileText} label="Factures" value={totals.invoices} />
                                             <DocMetric icon={Truck} label="BL" value={totals.deliveryNotes} />
                                         </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                                    <div className="px-5 py-4 bg-blue-50 border-b border-blue-100">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Opportunités ouvertes</p>
+                                        <p className="text-sm font-bold text-blue-950">Propositions non signées et prises de côte en cours.</p>
+                                    </div>
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 p-5 border-b border-slate-100">
+                                        <PipelineStep label="Brouillons" count={presalesQuotes.filter(sale => sale.status === 'DRAFT').length} amount={formatMoney(presalesQuotes.filter(sale => sale.status === 'DRAFT').reduce((sum, sale) => sum + saleAmount(sale), 0))} tone="slate" />
+                                        <PipelineStep label="Envoyés" count={presalesQuotes.filter(sale => sale.status === 'SENT').length} amount={formatMoney(presalesQuotes.filter(sale => sale.status === 'SENT').reduce((sum, sale) => sum + saleAmount(sale), 0))} tone="blue" />
+                                        <PipelineStep label="Métrés ouverts" count={openMeasureDossiers.length} amount={`${clientDossiers.filter(dossier => dossier.status === 'VALIDATED').length} réalisé(s)`} tone="emerald" />
+                                    </div>
+                                    <div className="divide-y divide-slate-100">
+                                        {[...presalesQuotes, ...clientDossiers].length === 0 && (
+                                            <div className="p-10 text-center">
+                                                <FileText className="w-12 h-12 mx-auto text-blue-200 mb-3" />
+                                                <p className="text-sm font-black text-slate-600">Aucune opportunité ouverte pour ce client.</p>
+                                                <div className="mt-4 flex justify-center gap-2">
+                                                    <button onClick={createQuoteForClient} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-black text-white hover:bg-blue-500">
+                                                        <Plus className="w-4 h-4" />
+                                                        Proposition
+                                                    </button>
+                                                    <button onClick={() => setCrmView('measures')} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white hover:bg-emerald-500">
+                                                        <ClipboardList className="w-4 h-4" />
+                                                        Prise de côte
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {presalesQuotes.map(sale => (
+                                            <SaleRow
+                                                key={`sale-${sale.id}`}
+                                                sale={sale}
+                                                total={saleAmount(sale)}
+                                                statusLabel={statusLabel(sale)}
+                                                statusClassName={statusClassName(sale.status)}
+                                                formatDate={formatDate}
+                                                formatMoney={formatMoney}
+                                                onOpen={() => openSale(sale.id)}
+                                            />
+                                        ))}
+                                        {clientDossiers.map(dossier => (
+                                            <DossierRow
+                                                key={`dossier-${dossier.id}`}
+                                                dossier={dossier}
+                                                formatDate={formatDate}
+                                                onOpen={() => setCrmView('measures')}
+                                            />
+                                        ))}
                                     </div>
                                 </div>
                             </section>
@@ -1400,6 +1475,7 @@ function PipelineStep({ label, count, amount, tone }) {
     const toneClasses = {
         slate: 'border-slate-200 bg-slate-50 text-slate-700',
         blue: 'border-blue-200 bg-blue-50 text-blue-700',
+        emerald: 'border-emerald-200 bg-emerald-50 text-emerald-700',
         red: 'border-red-200 bg-red-50 text-red-700',
     };
 
@@ -1418,6 +1494,7 @@ function actionToneClass(tone) {
     const classes = {
         blue: 'border-blue-200 bg-blue-50 text-blue-900 hover:bg-blue-100',
         amber: 'border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100',
+        emerald: 'border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100',
         slate: 'border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100',
     };
     return classes[tone] || classes.slate;
@@ -1449,6 +1526,30 @@ function SaleRow({ sale, total, statusLabel, statusClassName, formatDate, format
                 {statusLabel}
             </span>
             <p className="text-right font-black text-slate-900">{formatMoney(total)}</p>
+            <ArrowRight className="w-4 h-4 text-slate-400" />
+        </button>
+    );
+}
+
+function DossierRow({ dossier, formatDate, onOpen }) {
+    const isDone = dossier.status === 'VALIDATED';
+    const statusClass = isDone
+        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+        : 'border-amber-200 bg-amber-50 text-amber-700';
+
+    return (
+        <button
+            onClick={onOpen}
+            className="w-full grid grid-cols-[1fr_170px_130px_40px] gap-4 px-5 py-4 items-center text-left hover:bg-emerald-50/40 transition-colors"
+        >
+            <div className="min-w-0">
+                <p className="font-black text-slate-900 truncate">{dossier.reference}</p>
+                <p className="text-xs font-bold text-slate-500">{formatDate(dossier.created_at)} · {dossier.client_address || 'Adresse à compléter'}</p>
+            </div>
+            <span className={`justify-self-start rounded-lg border px-3 py-1.5 text-[10px] font-black uppercase tracking-widest ${statusClass}`}>
+                {isDone ? 'Métré réalisé' : 'Métré à traiter'}
+            </span>
+            <p className="text-right text-xs font-black uppercase tracking-widest text-emerald-700">Fabrication</p>
             <ArrowRight className="w-4 h-4 text-slate-400" />
         </button>
     );
