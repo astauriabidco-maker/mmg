@@ -242,7 +242,7 @@ export default function CRMClientActionWorkspace({
 
     return (
         <div className="mx-auto w-full max-w-[1680px] space-y-5">
-            <header className="border-b border-slate-200 pb-5">
+            <header className="border-l-4 border-blue-500 bg-blue-50/70 px-5 py-5">
                 <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
                     <div className="min-w-0">
                         <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Fiche client CRM</p>
@@ -283,11 +283,12 @@ export default function CRMClientActionWorkspace({
                 </div>
             </section>
 
-            <section className="border-y border-slate-200 bg-white">
+            <section className="border-y border-l-4 border-slate-200 border-l-indigo-500 bg-white">
                 <SectionHeading
                     eyebrow="Pipeline client"
                     title="Opportunités ouvertes"
                     detail="Étape, probabilité, montant et prochain jalon commercial."
+                    tone="indigo"
                     action={<button onClick={() => resetAndOpen('opportunity')} className="inline-flex items-center gap-2 text-xs font-black text-blue-700 hover:text-blue-900"><Plus className="h-4 w-4" />Nouvelle opportunité</button>}
                 />
                 <AsyncBlock
@@ -328,11 +329,12 @@ export default function CRMClientActionWorkspace({
             </section>
 
             <div className="grid gap-5 2xl:grid-cols-2">
-                <section className="border-y border-slate-200 bg-white">
+                <section className="border-y border-l-4 border-slate-200 border-l-cyan-500 bg-white">
                     <SectionHeading
                         eyebrow="Agenda commercial"
                         title="Activités à faire"
                         detail="Relances, appels et jalons qui demandent une action."
+                        tone="cyan"
                         action={<button onClick={() => resetAndOpen('follow-up')} className="inline-flex items-center gap-2 text-xs font-black text-blue-700 hover:text-blue-900"><Plus className="h-4 w-4" />Planifier</button>}
                     />
                     <AsyncBlock
@@ -357,8 +359,8 @@ export default function CRMClientActionWorkspace({
                     </AsyncBlock>
                 </section>
 
-                <section className="border-y border-slate-200 bg-white">
-                    <SectionHeading eyebrow="Mémoire CRM" title="Historique des activités" detail="Appels, notes et actions commerciales terminées." />
+                <section className="border-y border-l-4 border-slate-200 border-l-slate-400 bg-white">
+                    <SectionHeading eyebrow="Mémoire CRM" title="Historique des activités" detail="Appels, notes et actions commerciales terminées." tone="slate" />
                     <AsyncBlock
                         loading={activitiesQuery.isLoading}
                         error={activitiesQuery.error}
@@ -377,11 +379,12 @@ export default function CRMClientActionWorkspace({
                 </section>
             </div>
 
-            <section className="border-y border-slate-200 bg-white">
+            <section className="border-y border-l-4 border-slate-200 border-l-emerald-500 bg-white">
                 <SectionHeading
                     eyebrow="Contexte opérationnel"
                     title="Chantiers, métrés et propositions"
                     detail="Les éléments existants restent accessibles sans quitter la fiche client."
+                    tone="emerald"
                     action={<button onClick={onCreateSite} className="inline-flex items-center gap-2 text-xs font-black text-slate-700 hover:text-slate-950"><Plus className="h-4 w-4" />Nouveau chantier</button>}
                 />
                 <div className="grid divide-y divide-slate-200 xl:grid-cols-3 xl:divide-x xl:divide-y-0">
@@ -434,8 +437,8 @@ export default function CRMClientActionWorkspace({
             </section>
 
             <section className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]">
-                <div className="border-y border-slate-200 bg-white">
-                    <SectionHeading eyebrow="Après signature" title={`Commandes & exécution (${executionOrders.length})`} detail="Consultation uniquement : l'exécution reste dans le module Commandes signées." />
+                <div className="border-y border-l-4 border-slate-200 border-l-amber-500 bg-white">
+                    <SectionHeading eyebrow="Après signature" title={`Commandes & exécution (${executionOrders.length})`} detail="Consultation uniquement : l'exécution reste dans le module Commandes signées." tone="amber" />
                     {executionOrders.length ? (
                         <div className="divide-y divide-slate-100">
                             {executionOrders.slice(0, 6).map(sale => (
@@ -451,8 +454,8 @@ export default function CRMClientActionWorkspace({
                         </div>
                     ) : <InlineEmpty icon={Briefcase} title="Aucune commande signée" detail="Les propositions gagnées apparaîtront ici pour consultation." />}
                 </div>
-                <div className="border-y border-slate-200 bg-white">
-                    <SectionHeading eyebrow="Historique client" title="Derniers événements" />
+                <div className="border-y border-l-4 border-slate-200 border-l-violet-500 bg-white">
+                    <SectionHeading eyebrow="Historique client" title="Derniers événements" tone="violet" />
                     {timeline.length ? (
                         <div className="divide-y divide-slate-100 px-5">
                             {timeline.slice(0, 7).map(event => (
@@ -504,17 +507,48 @@ function ActionButton({ icon: Icon, label, onClick, primary, accent }) {
     );
 }
 
-function SectionHeading({ eyebrow, title, detail, action }) {
+function SectionHeading({ eyebrow, title, detail, action, tone = 'slate' }) {
+    const tones = {
+        slate: 'bg-slate-50 text-slate-950',
+        indigo: 'bg-indigo-50 text-indigo-950',
+        cyan: 'bg-cyan-50 text-cyan-950',
+        emerald: 'bg-emerald-50 text-emerald-950',
+        amber: 'bg-amber-50 text-amber-950',
+        violet: 'bg-violet-50 text-violet-950',
+    };
+    const eyebrowTones = {
+        slate: 'text-slate-500',
+        indigo: 'text-indigo-600',
+        cyan: 'text-cyan-700',
+        emerald: 'text-emerald-700',
+        amber: 'text-amber-700',
+        violet: 'text-violet-700',
+    };
     return (
-        <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className={`flex flex-col gap-3 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between ${tones[tone] || tones.slate}`}>
             <div>
-                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{eyebrow}</p>
-                <h4 className="mt-1 text-base font-black text-slate-950">{title}</h4>
+                <p className={`text-[9px] font-black uppercase tracking-widest ${eyebrowTones[tone] || eyebrowTones.slate}`}>{eyebrow}</p>
+                <h4 className="mt-1 text-base font-black">{title}</h4>
                 {detail && <p className="mt-1 text-xs font-semibold text-slate-500">{detail}</p>}
             </div>
             {action}
         </div>
     );
+}
+
+function readableError(error) {
+    const detail = error?.response?.data?.detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+        return detail
+            .map(item => (typeof item === 'string' ? item : item?.msg))
+            .filter(Boolean)
+            .join(' · ') || 'Les données reçues ne sont pas valides.';
+    }
+    if (detail && typeof detail === 'object') {
+        return detail.msg || detail.message || 'Les données reçues ne sont pas valides.';
+    }
+    return error?.message || 'Une erreur est survenue.';
 }
 
 function AsyncBlock({ loading, error, onRetry, empty, emptyIcon, emptyTitle, emptyDetail, children }) {
@@ -531,7 +565,7 @@ function AsyncBlock({ loading, error, onRetry, empty, emptyIcon, emptyTitle, emp
             <div className="flex min-h-28 flex-col items-center justify-center px-5 py-6 text-center">
                 <AlertCircle className="h-6 w-6 text-red-500" />
                 <p className="mt-2 text-sm font-black text-red-800">Données CRM indisponibles</p>
-                <p className="mt-1 max-w-xl text-xs font-semibold text-slate-500">{error?.response?.data?.detail || error.message || 'Une erreur est survenue.'}</p>
+                <p className="mt-1 max-w-xl text-xs font-semibold text-slate-500">{readableError(error)}</p>
                 <button onClick={onRetry} className="mt-3 inline-flex items-center gap-2 text-xs font-black text-blue-700"><RefreshCw className="h-4 w-4" />Réessayer</button>
             </div>
         );

@@ -96,6 +96,49 @@ const emptyOpening = {
     notes: '',
 };
 
+const OPENING_TYPE_OPTIONS = [
+    ['Fixe', 'Fixe'],
+    ['Battant', 'Battant à la française'],
+    ['Oscillo-battant', 'Oscillo-battant'],
+    ['Soufflet', 'Soufflet'],
+    ['Coulissant', 'Coulissant'],
+    ['Levant-coulissant', 'Levant-coulissant'],
+    ['Pivotant', 'Pivotant'],
+    ['Pliant / accordéon', 'Pliant / accordéon'],
+    ['Autre / à définir', 'Autre / à définir'],
+];
+
+const OPENING_SIDE_OPTIONS = [
+    ['Non applicable', 'Non applicable'],
+    ['Droite tirant', 'Droite tirant'],
+    ['Gauche tirant', 'Gauche tirant'],
+    ['Droite poussant', 'Droite poussant'],
+    ['Gauche poussant', 'Gauche poussant'],
+    ['À définir', 'À définir'],
+];
+
+const INSTALLATION_TYPE_OPTIONS = [
+    ['Neuf - applique intérieure', 'Neuf - applique intérieure'],
+    ['Neuf - applique extérieure', 'Neuf - applique extérieure'],
+    ['Tunnel', 'Pose en tunnel'],
+    ['Feuillure', 'Pose en feuillure'],
+    ['Rénovation sur dormant existant', 'Rénovation sur dormant existant'],
+    ['Dépose totale', 'Dépose totale'],
+    ['À définir', 'À définir'],
+];
+
+const ROOM_SUGGESTIONS = [
+    'Séjour',
+    'Cuisine',
+    'Entrée',
+    'Chambre 1',
+    'Chambre 2',
+    'Salle de bain',
+    'Bureau',
+    'Garage',
+    'Façade',
+];
+
 const toLocalInput = value => {
     if (!value) return '';
     const date = new Date(value);
@@ -124,6 +167,19 @@ function Field({ label, children, className = '' }) {
             <span className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-500">{label}</span>
             {children}
         </label>
+    );
+}
+
+function GuidedSelect({ value, onChange, options, placeholder = 'Sélectionner...', disabled }) {
+    const hasLegacyValue = value && !options.some(([optionValue]) => optionValue === value);
+    return (
+        <select disabled={disabled} value={value} onChange={onChange} className={inputClass}>
+            <option value="">{placeholder}</option>
+            {hasLegacyValue && <option value={value}>{value} · valeur existante</option>}
+            {options.map(([optionValue, label]) => (
+                <option key={optionValue} value={optionValue}>{label}</option>
+            ))}
+        </select>
     );
 }
 
@@ -864,35 +920,78 @@ export default function MeasureMissionPage() {
 
                                     {(selectedOpeningId || !missionLocked) ? (
                                         <div className="py-6">
-                                            <div className="grid gap-4 md:grid-cols-6">
-                                                <Field label="Repère / libellé" className="md:col-span-3"><input disabled={missionLocked} value={openingForm.label} onChange={event => setOpeningForm(current => ({ ...current, label: event.target.value }))} className={inputClass} placeholder="Ex. F01 - fenêtre séjour" /></Field>
-                                                <Field label="Pièce" className="md:col-span-3"><input disabled={missionLocked} value={openingForm.room} onChange={event => setOpeningForm(current => ({ ...current, room: event.target.value }))} className={inputClass} placeholder="Séjour, chambre 1..." /></Field>
-                                                <Field label="Type" className="md:col-span-2"><select disabled={missionLocked} value={openingForm.product_type} onChange={event => setOpeningForm(current => ({ ...current, product_type: event.target.value }))} className={inputClass}><option value="WINDOW">Fenêtre</option><option value="DOOR">Porte</option><option value="SLIDING">Coulissant</option><option value="CURTAIN_WALL">Façade / verrière</option><option value="OTHER">Autre</option></select></Field>
-                                                <Field label="Matière" className="md:col-span-2"><select disabled={missionLocked} value={openingForm.material} onChange={event => setOpeningForm(current => ({ ...current, material: event.target.value }))} className={inputClass}><option>ALU</option><option>PVC</option><option>ACIER</option><option>BOIS</option></select></Field>
-                                                <Field label="Type d'ouverture" className="md:col-span-2"><input disabled={missionLocked} value={openingForm.opening_type} onChange={event => setOpeningForm(current => ({ ...current, opening_type: event.target.value }))} className={inputClass} placeholder="Battant, coulissant..." /></Field>
+                                            <div className="border-l-4 border-blue-500 bg-blue-50/60 p-4 sm:p-5">
+                                                <div className="mb-4">
+                                                    <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">Identification</p>
+                                                    <h3 className="mt-1 font-black text-blue-950">Quel ouvrage mesure-t-on ?</h3>
+                                                </div>
+                                                <div className="grid gap-4 md:grid-cols-6">
+                                                    <Field label="Repère / libellé" className="md:col-span-3"><input disabled={missionLocked} value={openingForm.label} onChange={event => setOpeningForm(current => ({ ...current, label: event.target.value }))} className={inputClass} placeholder="Ex. F01 - fenêtre séjour" /></Field>
+                                                    <Field label="Pièce" className="md:col-span-3">
+                                                        <input list="measure-room-options" disabled={missionLocked} value={openingForm.room} onChange={event => setOpeningForm(current => ({ ...current, room: event.target.value }))} className={inputClass} placeholder="Choisir ou saisir une pièce" />
+                                                        <datalist id="measure-room-options">
+                                                            {ROOM_SUGGESTIONS.map(room => <option key={room} value={room} />)}
+                                                        </datalist>
+                                                    </Field>
+                                                    <Field label="Type d'ouvrage" className="md:col-span-2"><select disabled={missionLocked} value={openingForm.product_type} onChange={event => setOpeningForm(current => ({ ...current, product_type: event.target.value }))} className={inputClass}><option value="WINDOW">Fenêtre</option><option value="DOOR">Porte</option><option value="SLIDING">Coulissant</option><option value="CURTAIN_WALL">Façade / verrière</option><option value="OTHER">Autre</option></select></Field>
+                                                    <Field label="Matière" className="md:col-span-2"><select disabled={missionLocked} value={openingForm.material} onChange={event => setOpeningForm(current => ({ ...current, material: event.target.value }))} className={inputClass}><option>ALU</option><option>PVC</option><option>ACIER</option><option>BOIS</option></select></Field>
+                                                    <Field label="Type d'ouverture" className="md:col-span-2">
+                                                        <GuidedSelect
+                                                            disabled={missionLocked}
+                                                            value={openingForm.opening_type}
+                                                            onChange={event => setOpeningForm(current => ({ ...current, opening_type: event.target.value }))}
+                                                            options={OPENING_TYPE_OPTIONS}
+                                                        />
+                                                    </Field>
+                                                </div>
                                             </div>
 
-                                            <div className="my-6 border-t border-slate-200 pt-6">
-                                                <div className="mb-4 flex items-center gap-2"><Ruler className="h-5 w-5 text-blue-600" /><h3 className="font-black text-slate-900">Dimensions de référence</h3></div>
+                                            <div className="mt-5 border-l-4 border-amber-500 bg-amber-50/60 p-4 sm:p-5">
+                                                <div className="mb-4 flex items-center gap-2"><Ruler className="h-5 w-5 text-amber-700" /><div><p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Dimensions</p><h3 className="font-black text-amber-950">Cotes de référence</h3></div></div>
                                                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                                                     <Field label="Largeur tableau (mm)"><input type="number" min="0" disabled={missionLocked} value={openingForm.width_mm} onChange={event => setOpeningForm(current => ({ ...current, width_mm: event.target.value }))} className={inputClass} /></Field>
                                                     <Field label="Hauteur tableau (mm)"><input type="number" min="0" disabled={missionLocked} value={openingForm.height_mm} onChange={event => setOpeningForm(current => ({ ...current, height_mm: event.target.value }))} className={inputClass} /></Field>
                                                     <Field label="Passage utile (mm)"><input type="number" min="0" disabled={missionLocked} value={openingForm.passage_height_mm} onChange={event => setOpeningForm(current => ({ ...current, passage_height_mm: event.target.value }))} className={inputClass} /></Field>
-                                                    <Field label="Nombre de vantaux"><input type="number" min="1" disabled={missionLocked} value={openingForm.sash_count} onChange={event => setOpeningForm(current => ({ ...current, sash_count: event.target.value }))} className={inputClass} /></Field>
+                                                    <Field label="Nombre de vantaux">
+                                                        <select disabled={missionLocked} value={openingForm.sash_count} onChange={event => setOpeningForm(current => ({ ...current, sash_count: Number(event.target.value) }))} className={inputClass}>
+                                                            {[1, 2, 3, 4, 5, 6].map(count => <option key={count} value={count}>{count} {count > 1 ? 'vantaux' : 'vantail'}</option>)}
+                                                        </select>
+                                                    </Field>
                                                 </div>
                                             </div>
 
-                                            <div className="grid gap-4 border-t border-slate-200 pt-6 md:grid-cols-3">
-                                                <Field label="Sens d'ouverture"><input disabled={missionLocked} value={openingForm.opening_side} onChange={event => setOpeningForm(current => ({ ...current, opening_side: event.target.value }))} className={inputClass} /></Field>
-                                                <Field label="Type de pose"><input disabled={missionLocked} value={openingForm.installation_type} onChange={event => setOpeningForm(current => ({ ...current, installation_type: event.target.value }))} className={inputClass} placeholder="Neuf, rénovation..." /></Field>
-                                                <Field label="Observations"><input disabled={missionLocked} value={openingForm.notes} onChange={event => setOpeningForm(current => ({ ...current, notes: event.target.value }))} className={inputClass} placeholder="Jeux, aplomb, accès..." /></Field>
+                                            <div className="mt-5 border-l-4 border-emerald-500 bg-emerald-50/60 p-4 sm:p-5">
+                                                <div className="mb-4">
+                                                    <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Configuration</p>
+                                                    <h3 className="mt-1 font-black text-emerald-950">Ouverture et conditions de pose</h3>
+                                                </div>
+                                                <div className="grid gap-4 md:grid-cols-2">
+                                                    <Field label="Sens d'ouverture">
+                                                        <GuidedSelect
+                                                            disabled={missionLocked}
+                                                            value={openingForm.opening_side}
+                                                            onChange={event => setOpeningForm(current => ({ ...current, opening_side: event.target.value }))}
+                                                            options={OPENING_SIDE_OPTIONS}
+                                                        />
+                                                    </Field>
+                                                    <Field label="Type de pose">
+                                                        <GuidedSelect
+                                                            disabled={missionLocked}
+                                                            value={openingForm.installation_type}
+                                                            onChange={event => setOpeningForm(current => ({ ...current, installation_type: event.target.value }))}
+                                                            options={INSTALLATION_TYPE_OPTIONS}
+                                                        />
+                                                    </Field>
+                                                    <Field label="Observations terrain" className="md:col-span-2"><textarea disabled={missionLocked} value={openingForm.notes} onChange={event => setOpeningForm(current => ({ ...current, notes: event.target.value }))} className={`${inputClass} min-h-24 resize-y`} placeholder="Jeux, aplomb, accès, contraintes ou réserves..." /></Field>
+                                                </div>
                                             </div>
 
                                             {selectedOpeningId && (
-                                                <div className="mt-6 border-t border-slate-200 pt-6">
+                                                <div className="mt-5 border-l-4 border-cyan-500 bg-cyan-50/60 p-4 sm:p-5">
                                                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                                         <div>
-                                                            <h3 className="font-black text-slate-900">Photos et documents de l’ouvrage</h3>
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-cyan-700">Preuves terrain</p>
+                                                            <h3 className="mt-1 font-black text-cyan-950">Photos et documents de l’ouvrage</h3>
                                                             <p className="mt-1 text-xs font-semibold text-slate-500">Photos du tableau, détails de pose, croquis et anomalies constatées.</p>
                                                         </div>
                                                         {!missionLocked && (
