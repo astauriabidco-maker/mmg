@@ -431,7 +431,11 @@ class FunctionalAudit:
 
         required_checks = [
             ("Manager vues deep-linkables", "frontend_v2/src/pages/ManagerDashboard.jsx", "useSearchParams"),
-            ("Titre facturation manager explicite", "frontend_v2/src/pages/ManagerDashboard.jsx", "activeView === 'accounting' ? 'Facturation (NF525)'"),
+            ("Titre CRM avant-vente explicite", "frontend_v2/src/pages/ManagerDashboard.jsx", "activeView === 'crm' ? 'CRM Avant-vente'"),
+            ("Titre commandes signées explicite", "frontend_v2/src/pages/ManagerDashboard.jsx", "activeView === 'sales' ? 'Commandes signées & exécution'"),
+            ("Titre facturation clients explicite", "frontend_v2/src/pages/ManagerDashboard.jsx", "activeView === 'accounting' ? 'Facturation clients'"),
+            ("Menu CRM avant-vente", "frontend_v2/src/components/Sidebar.jsx", "CRM Avant-vente"),
+            ("Menu commandes signées", "frontend_v2/src/components/Sidebar.jsx", "Commandes signées"),
             ("Sidebar liens internes par vue", "frontend_v2/src/components/Sidebar.jsx", "?view=${item.id}"),
             ("CI readiness backend", ".github/workflows/ci.yml", "/health/ready"),
             ("Exemple env prod", ".env.example", "APP_ENV=production"),

@@ -51,9 +51,9 @@ export default function ManagerDashboard() {
                 activeView === 'stock' ? 'Gestion de Stock' :
                     activeView === 'purchases' ? 'Achats & Appro' :
                         activeView === 'sale-detail' ? 'Dossier métier client' :
-                            activeView === 'sales' ? 'Commandes & Exécution Ventes' :
-                            activeView === 'crm' ? 'CRM Clients - Avant-vente' :
-                                activeView === 'accounting' ? 'Facturation (NF525)' :
+                            activeView === 'sales' ? 'Commandes signées & exécution' :
+                            activeView === 'crm' ? 'CRM Avant-vente' :
+                                activeView === 'accounting' ? 'Facturation clients' :
                                     activeView === 'logistics' ? 'Logistique & Expéditions' :
                                         activeView === 'analytics_atelier' ? 'Performance Atelier' :
                                             activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration';

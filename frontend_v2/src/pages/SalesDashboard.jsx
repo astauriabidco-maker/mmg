@@ -902,14 +902,14 @@ export default function SalesDashboard() {
 
     const getStatusLabel = (status) => {
         switch (status) {
-            case 'DRAFT': return 'CRM - Brouillon';
-            case 'SENT': return 'CRM - Envoyé';
+            case 'DRAFT': return 'Proposition brouillon';
+            case 'SENT': return 'Proposition envoyée';
             case 'VALIDATED': return 'Commande signée';
             case 'IN_DESIGN': return 'Bureau d\'Études';
             case 'READY_FOR_PROD': return 'Préparation atelier';
             case 'IN_PRODUCTION': return 'En Production';
             case 'CANCELLED': return 'Refusé / Annulé';
-            case 'DELIVERED': return 'Livré / Facturé';
+            case 'DELIVERED': return 'Livré';
             default: return status;
         }
     };
@@ -1259,8 +1259,8 @@ export default function SalesDashboard() {
         return sale.status === stageId;
     };
     const pipelineFilters = [
-        { key: 'execution', label: 'Exécution signée', match: isExecutionSale },
-        { key: 'validated', label: 'Signés / validés', match: (sale) => ['VALIDATED', 'IN_DESIGN'].includes(sale.status) },
+        { key: 'execution', label: 'Commandes actives', match: isExecutionSale },
+        { key: 'validated', label: 'Signées', match: (sale) => ['VALIDATED', 'IN_DESIGN'].includes(sale.status) },
         { key: 'production', label: 'Atelier / production', match: (sale) => ['READY_FOR_PROD', 'IN_PRODUCTION'].includes(sale.status) },
         { key: 'to_deliver', label: 'À livrer', match: isSaleToDeliver },
         { key: 'to_invoice', label: 'À facturer', match: (sale) => {
@@ -1272,7 +1272,7 @@ export default function SalesDashboard() {
             return trace.isReturned || trace.hasCreditNote;
         }},
         { key: 'fabrication', label: 'Fabrication signée', match: (sale) => isExecutionSale(sale) && (sale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' },
-        { key: 'all', label: 'Toutes commandes', match: isExecutionSale },
+        { key: 'all', label: 'Toutes', match: isExecutionSale },
     ];
 
     const SalePipelineCard = ({ sale, compact = false }) => {
@@ -1338,7 +1338,7 @@ export default function SalesDashboard() {
         .reduce((sum, s) => sum + s.lines.reduce((lsum, l) => lsum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0), 0);
 
     const executionPipelineStages = [
-        { id: 'VALIDATED', title: 'Gagnés / signés' },
+        { id: 'VALIDATED', title: 'Signées' },
         { id: 'IN_DESIGN', title: "Bureau d'études" },
         { id: 'READY_FOR_PROD', title: 'Prêts pour production' },
         { id: 'IN_PRODUCTION', title: 'En production' },
@@ -1360,7 +1360,7 @@ export default function SalesDashboard() {
                     }}
                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'pipeline' && pipelineView === 'kanban' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
-                    <DollarSign className="w-5 h-5"/> Exécution
+                    <DollarSign className="w-5 h-5"/> Commandes
                 </button>
                 <button
                     onClick={() => {
@@ -1369,7 +1369,7 @@ export default function SalesDashboard() {
                     }}
                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'pipeline' && pipelineView === 'list' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
-                    <FileText className="w-5 h-5"/> Liste signés
+                    <FileText className="w-5 h-5"/> Liste commandes
                 </button>
                 </div>
                 <button
@@ -1393,7 +1393,7 @@ export default function SalesDashboard() {
 	                    <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
 	                        <div className="flex flex-wrap items-center gap-4">
 	                            <h3 className="font-black text-slate-900 flex items-center gap-2 tracking-tight text-lg">
-	                                <Users className="text-blue-600 w-5 h-5"/> Exécution commerciale
+	                                <Users className="text-blue-600 w-5 h-5"/> Commandes signées
 	                            </h3>
 	                            <div className="flex items-center gap-3">
 	                                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
@@ -1418,7 +1418,7 @@ export default function SalesDashboard() {
                             onClick={() => navigate('/manager?view=crm')}
                             className="px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl font-black flex items-center gap-2 transition-all"
                         >
-                            <Plus className="w-4 h-4"/> Créer dans CRM
+                            <Plus className="w-4 h-4"/> Nouvelle proposition CRM
                         </button>
                         <button
                             onClick={() => setMainTab('dossiers')}

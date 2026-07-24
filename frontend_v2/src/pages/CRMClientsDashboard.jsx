@@ -388,11 +388,11 @@ export default function CRMClientsDashboard() {
                     <div>
                         <div className="inline-flex items-center gap-2 rounded-xl bg-white/10 border border-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-blue-100 mb-3">
                             <Users className="w-4 h-4" />
-                            CRM Clients
+                            CRM Avant-vente
                         </div>
-                        <h2 className="text-3xl font-black tracking-tight">Clients & relation commerciale</h2>
+                        <h2 className="text-3xl font-black tracking-tight">Avant-vente & relation client</h2>
                         <p className="mt-2 text-sm font-bold text-slate-300 max-w-3xl">
-                            Pilotez l'avant-vente client: propositions ouvertes, relances, historique et passage vers l'exécution.
+                            Qualifiez les clients, les prises de côte et les propositions avant leur passage en commande signée.
                         </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
@@ -870,7 +870,7 @@ export default function CRMClientsDashboard() {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6">
                     <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
                         <div className="bg-slate-900 px-6 py-5 text-white">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">CRM Clients</p>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">CRM Avant-vente</p>
                             <h3 className="mt-2 text-2xl font-black">Nouveau client</h3>
                             <p className="mt-1 text-sm font-bold text-slate-300">Créez la fiche client avant toute proposition commerciale.</p>
                         </div>
