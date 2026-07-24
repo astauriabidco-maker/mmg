@@ -12,6 +12,45 @@ import StockValuationView from '../components/StockValuationView';
 import { useAuth } from '../context/AuthContext';
 import { userHasAnyRole } from '../utils/roleNavigation';
 
+const DEFAULT_CATALOG_CATEGORIES = [
+    'PROFIL',
+    'ACCESSOIRE',
+    'QUINCAILLERIE',
+    'VITRAGE',
+    'CONSOMMABLE',
+    'JOINT',
+    'PANNEAU',
+    'EMBALLAGE',
+];
+
+const DEFAULT_MATERIALS = [
+    'ALU',
+    'PVC',
+    'ACIER',
+    'INOX',
+    'VERRE',
+    'CAOUTCHOUC',
+    'BOIS',
+    'COMPOSITE',
+    'AUTRE',
+];
+
+const DEFAULT_STOCK_UNITS = [
+    'pce',
+    'barre',
+    'ml',
+    'm2',
+    'kg',
+    'l',
+    'rouleau',
+    'boîte',
+    'lot',
+];
+
+const normalizedOptions = (values) => Array.from(
+    new Set(values.map(value => String(value || '').trim()).filter(Boolean))
+).sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' }));
+
 export default function StockDashboard() {
     const queryClient = useQueryClient();
     const { user } = useAuth();
@@ -38,6 +77,7 @@ export default function StockDashboard() {
     const canManageLocations = isAdmin || stockPermissions.manageLocations;
 
     const { data: appConfigs = [] } = useQuery({ queryKey: ['configs'], queryFn: async () => { const res = await api.get('/v2/config/app_configs'); return res.data; }});
+    const { data: supplierDirectory = [] } = useQuery({ queryKey: ['suppliers', 'catalog'], queryFn: async () => { const res = await api.get('/v2/suppliers/'); return res.data; }});
     const { data: products = [], isLoading: loadingProducts } = useQuery({ queryKey: ['products'], queryFn: async () => { const res = await api.get('/v2/stock/products'); return res.data; }});
     const { data: locations = [], isLoading: loadingLocations } = useQuery({ queryKey: ['locations'], queryFn: async () => { const res = await api.get('/v2/stock/locations'); return res.data; }});
     const { data: quants = [], isLoading: loadingQuants } = useQuery({ queryKey: ['quants'], queryFn: async () => { const res = await api.get('/v2/stock/quants'); return res.data; }});
@@ -53,6 +93,26 @@ export default function StockDashboard() {
             return res.data;
         },
     });
+    const catalogCategoryOptions = normalizedOptions([
+        ...DEFAULT_CATALOG_CATEGORIES,
+        ...appConfigs.filter(config => config.category === 'product_category').map(config => config.value),
+        ...products.filter(product => product.product_type !== 'service').map(product => product.category),
+    ]);
+    const materialOptions = normalizedOptions([
+        ...DEFAULT_MATERIALS,
+        ...appConfigs.filter(config => config.category === 'material').map(config => config.value),
+        ...products.filter(product => product.product_type !== 'service').map(product => product.material_type),
+    ]);
+    const stockUnitOptions = normalizedOptions([
+        ...DEFAULT_STOCK_UNITS,
+        ...appConfigs.filter(config => config.category === 'unit').map(config => config.value),
+        ...products.filter(product => product.product_type !== 'service').map(product => product.unit),
+    ]);
+    const supplierOptions = normalizedOptions([
+        ...supplierDirectory.filter(supplier => supplier.is_active !== false).map(supplier => supplier.name),
+        ...appConfigs.filter(config => config.category === 'supplier').map(config => config.value),
+        ...products.map(product => product.supplier),
+    ]);
 
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
@@ -98,7 +158,7 @@ export default function StockDashboard() {
     const [editingLocationId, setEditingLocationId] = useState(null);
     const [editingLocationName, setEditingLocationName] = useState('');
     const [newProductForm, setNewProductForm] = useState({
-        reference_base: '', name: '', material_type: 'PVC', unit: 'pce', supplier: '', product_type: 'stockable', available_in_pos: false, image_url: '', technical_doc_url: '', compatible_series: '',
+        reference_base: '', name: '', category: '', material_type: '', unit: '', supplier: '', product_type: 'stockable', available_in_pos: false, image_url: '', technical_doc_url: '', compatible_series: '',
         variant_ref: '', barcode: '', color: '', length_per_unit: '', supplier_reference: '', cost_price: '', min_threshold: 10, location: ''
     });
 
@@ -154,8 +214,9 @@ export default function StockDashboard() {
     const defaultNewProductForm = (type = 'stockable') => ({
         reference_base: '',
         name: '',
-        material_type: type === 'service' ? 'SERVICE' : 'PVC',
-        unit: type === 'service' ? 'forfait' : 'pce',
+        category: type === 'service' ? 'SERVICE' : '',
+        material_type: type === 'service' ? 'SERVICE' : '',
+        unit: type === 'service' ? 'forfait' : '',
         supplier: type === 'service' ? 'MMG' : '',
         product_type: type,
         available_in_pos: false,
@@ -469,6 +530,7 @@ export default function StockDashboard() {
             id: product.id,
             reference_base: product.reference_base,
             name: product.name,
+            category: product.category || product.material_type || '',
             material_type: product.material_type || '',
             unit: product.unit || '',
             supplier: product.supplier || '',
@@ -487,6 +549,7 @@ export default function StockDashboard() {
             await api.put(`/v2/stock/products/${editProductForm.id}`, {
                 reference_base: editProductForm.reference_base,
                 name: editProductForm.name,
+                category: editProductForm.category || null,
                 material_type: editProductForm.material_type,
                 unit: editProductForm.unit,
                 supplier: editProductForm.supplier,
@@ -772,22 +835,36 @@ export default function StockDashboard() {
 
     // -------- NEW PRODUCT FAST --------
     const handleQuickCreateProduct = async () => {
-        if (!newProductForm.name || !newProductForm.reference_base || !newProductForm.variant_ref) {
-            return alert("Nom et Références requises");
+        if (!newProductForm.name || !newProductForm.reference_base || !newProductForm.variant_ref || !newProductForm.category || !newProductForm.material_type || !newProductForm.unit) {
+            return alert("Renseignez le nom, les références, la catégorie, la matière et l'unité de gestion.");
         }
         try {
             await api.post('/v2/stock/products', {
-                reference_base: newProductForm.reference_base, name: newProductForm.name, material_type: newProductForm.material_type, unit: newProductForm.unit, supplier: newProductForm.supplier, product_type: newProductForm.product_type, available_in_pos: newProductForm.available_in_pos, image_url: newProductForm.image_url, compatible_series: newProductForm.compatible_series,
+                reference_base: newProductForm.reference_base.trim().toUpperCase(),
+                name: newProductForm.name.trim(),
+                category: newProductForm.category,
+                material_type: newProductForm.material_type,
+                unit: newProductForm.unit,
+                supplier: newProductForm.supplier || null,
+                product_type: newProductForm.product_type,
+                available_in_pos: newProductForm.available_in_pos,
+                image_url: newProductForm.image_url || null,
+                technical_doc_url: newProductForm.technical_doc_url || null,
+                compatible_series: newProductForm.compatible_series || null,
                 variants: [{
-                    reference: newProductForm.variant_ref, barcode: newProductForm.barcode || null, color: newProductForm.color, length_per_unit: newProductForm.length_per_unit ? parseFloat(newProductForm.length_per_unit) : null,
-                    supplier_reference: newProductForm.supplier_reference, cost_price: newProductForm.cost_price ? parseFloat(newProductForm.cost_price) : null,
-                    min_threshold: parseFloat(newProductForm.min_threshold)
+                    reference: newProductForm.variant_ref.trim().toUpperCase(),
+                    barcode: newProductForm.barcode || null,
+                    color: newProductForm.color || null,
+                    length_per_unit: newProductForm.length_per_unit ? parseFloat(newProductForm.length_per_unit) : null,
+                    supplier_reference: newProductForm.supplier_reference || null,
+                    cost_price: newProductForm.cost_price ? parseFloat(newProductForm.cost_price) : null,
+                    min_threshold: Number.isFinite(parseFloat(newProductForm.min_threshold)) ? parseFloat(newProductForm.min_threshold) : 0,
                 }]
             });
             setShowNewProductModal(false);
             queryClient.invalidateQueries();
         } catch (e) {
-            alert("Erreur lors de la création.");
+            alert(e.response?.data?.detail || "Erreur lors de la création.");
         }
     };
 
@@ -1884,7 +1961,7 @@ export default function StockDashboard() {
                                         </div>
                                         <h2 className="text-3xl font-black leading-tight truncate">{selectedProduct.name}</h2>
                                         <p className="mt-2 text-sm font-bold text-slate-300">
-                                            {selectedProduct.reference_base} · {selectedProduct.supplier || 'Fournisseur non renseigné'} · {selectedProduct.material_type || 'Catégorie non renseignée'}
+                                            {selectedProduct.reference_base} · {selectedProduct.supplier || 'Fournisseur non renseigné'} · {selectedProduct.category || 'Catégorie non renseignée'} · {selectedProduct.material_type || 'Matière non renseignée'}
                                         </p>
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2">
@@ -2680,7 +2757,7 @@ export default function StockDashboard() {
                                                         </div>
                                                     </td>
                                                     <td className="py-4 px-4 text-center">
-                                                        <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider">{product.material_type}</span>
+                                                        <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider">{product.category || product.material_type}</span>
                                                     </td>
                                                     <td className="py-4 px-4 text-center">
                                                         {inventoryFocus === 'services' ? (
@@ -2859,7 +2936,7 @@ export default function StockDashboard() {
                                                 </div>
                                             )}
                                             <div className="absolute top-3 left-3 px-2.5 py-1 bg-white/90 backdrop-blur border border-white/50 rounded-lg shadow-sm text-[10px] font-black tracking-wider text-slate-700 uppercase">
-                                                {product.material_type}
+                                                {product.category || product.material_type}
                                             </div>
                                             {draftProduct && (
                                                 <div className="absolute top-3 right-3 px-2.5 py-1 bg-amber-100 text-amber-700 border border-amber-200 rounded-lg shadow-sm text-[10px] font-black tracking-wider uppercase">
@@ -3276,16 +3353,32 @@ export default function StockDashboard() {
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
+                                    <label className="text-xs font-black text-slate-400 mb-1 block">Famille / catégorie</label>
+                                    <select value={editProductForm.category} onChange={e=>setEditProductForm({...editProductForm, category: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold">
+                                        <option value="">Sélectionner...</option>
+                                        {catalogCategoryOptions.map(category => <option key={category} value={category}>{category}</option>)}
+                                    </select>
+                                </div>
+                                <div>
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Matière</label>
-                                    <input value={editProductForm.material_type} onChange={e=>setEditProductForm({...editProductForm, material_type: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
+                                    <select value={editProductForm.material_type} onChange={e=>setEditProductForm({...editProductForm, material_type: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold">
+                                        <option value="">Sélectionner...</option>
+                                        {materialOptions.map(material => <option key={material} value={material}>{material}</option>)}
+                                    </select>
                                 </div>
                                 <div>
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Unité</label>
-                                    <input value={editProductForm.unit} onChange={e=>setEditProductForm({...editProductForm, unit: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
+                                    <select value={editProductForm.unit} onChange={e=>setEditProductForm({...editProductForm, unit: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold">
+                                        <option value="">Sélectionner...</option>
+                                        {stockUnitOptions.map(unit => <option key={unit} value={unit}>{unit}</option>)}
+                                    </select>
                                 </div>
                                 <div>
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Fournisseur</label>
-                                    <input value={editProductForm.supplier} onChange={e=>setEditProductForm({...editProductForm, supplier: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
+                                    <select value={editProductForm.supplier} onChange={e=>setEditProductForm({...editProductForm, supplier: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold">
+                                        <option value="">Aucun / à qualifier</option>
+                                        {supplierOptions.map(supplier => <option key={supplier} value={supplier}>{supplier}</option>)}
+                                    </select>
                                 </div>
                             </div>
                             <div>
@@ -3440,138 +3533,337 @@ export default function StockDashboard() {
             {/* -------- NEW PRODUCT MODAL (QUICK) -------- */}
             {showNewProductModal && (
                 <div
-                    className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-2 backdrop-blur-sm sm:p-4"
                     onPaste={e => handlePaste(e, setNewProductForm, newProductForm)}
                 >
-                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-2xl w-full">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-black text-2xl">{newProductForm.product_type === 'service' ? 'Créer une Prestation' : 'Créer un Produit'}</h3>
-                            <button onClick={()=>setShowNewProductModal(false)} className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
+                    <div className="flex max-h-[calc(100vh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl sm:max-h-[calc(100vh-2rem)]">
+                        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 py-4 sm:px-6">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Catalogue articles</p>
+                                <h3 className="mt-1 text-xl font-black text-slate-900">
+                                    {newProductForm.product_type === 'service' ? 'Nouvelle prestation' : 'Nouvel article'}
+                                </h3>
+                                <p className="mt-1 text-sm font-semibold text-slate-500">
+                                    Créez la fiche article et sa première variante sans mouvementer le stock.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowNewProductModal(false)}
+                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200"
+                                aria-label="Fermer"
+                            >
+                                <X className="h-5 w-5"/>
+                            </button>
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="col-span-1">
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Réf Parent (ex: VEK-70)</label>
-                                <input value={newProductForm.reference_base} onChange={e=>setNewProductForm({...newProductForm, reference_base: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="Réf générique"/>
-                            </div>
-                            <div className="col-span-1">
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Nom Commercial / Description</label>
-                                <input value={newProductForm.name} onChange={e=>setNewProductForm({...newProductForm, name: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" placeholder="Dormant 70mm..."/>
-                            </div>
 
-                            {/* Nouveaux Champs PIM : Catégorie, Unité, Fournisseur */}
-                            <div className="col-span-1">
-                                <label className="text-xs font-black text-slate-400 mb-1 block">{newProductForm.product_type === 'service' ? 'Famille prestation' : 'Catégorie Matériau'}</label>
-                                <select value={newProductForm.material_type} onChange={e=>setNewProductForm({...newProductForm, material_type: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700">
-                                    <option value="">Sélectionner...</option>
-                                    {newProductForm.product_type === 'service' && <option value="SERVICE">SERVICE</option>}
-                                    {appConfigs.filter(c => c.category === 'material').map(c => (
-                                        <option key={c.id} value={c.value}>{c.value}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="col-span-1 grid grid-cols-2 gap-2">
-                                <div>
-                                    <label className="text-xs font-black text-slate-400 mb-1 block">Unité de Mesure</label>
-                                    <select value={newProductForm.unit} onChange={e=>setNewProductForm({...newProductForm, unit: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700">
-                                        <option value="">Sélectionner...</option>
-                                        {newProductForm.product_type === 'service' && (
-                                            <>
-                                                <option value="forfait">forfait</option>
-                                                <option value="heure">heure</option>
-                                                <option value="jour">jour</option>
-                                                <option value="ml">ml</option>
-                                                <option value="u">u</option>
-                                            </>
-                                        )}
-                                        {appConfigs.filter(c => c.category === 'unit').map(c => (
-                                            <option key={c.id} value={c.value}>{c.value}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="text-xs font-black text-slate-400 mb-1 block">Fournisseur (opt.)</label>
-                                    {/* Pour le fournisseur on laisse libre ou on propose le dictionnaire via Datalist */}
-                                    <input list="supplier-list" value={newProductForm.supplier} onChange={e=>setNewProductForm({...newProductForm, supplier: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="Cortizo..."/>
-                                    <datalist id="supplier-list">
-                                        {appConfigs.filter(c => c.category === 'supplier').map(c => (
-                                            <option key={c.id} value={c.value} />
-                                        ))}
-                                    </datalist>
-                                </div>
-                            </div>
-
-                            <div className="col-span-2 border-t border-slate-100 my-2 pt-4">
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Gammes Compatibles (Séparées par virgule, ex: COR 60, COR 70)</label>
-                                <input value={newProductForm.compatible_series} onChange={e=>setNewProductForm({...newProductForm, compatible_series: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" placeholder="Applicable pour quelles gammes ?"/>
-                            </div>
-
-                            <div className="col-span-2 border-t border-slate-100 my-2 pt-4 flex gap-4">
-                                <div className="flex-1">
-                                    <label className="text-xs font-black text-slate-400 mb-1 block">Type d'Article</label>
-                                    <select
-                                        value={newProductForm.product_type}
-                                        onChange={e => {
-                                            const nextType = e.target.value;
+                        <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 sm:px-6">
+                            <div className="inline-flex w-full rounded-lg border border-slate-200 bg-white p-1 sm:w-auto">
+                                {[
+                                    ['stockable', 'Article stocké'],
+                                    ['consumable', 'Consommable'],
+                                    ['service', 'Prestation'],
+                                ].map(([value, label]) => (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        onClick={() => {
+                                            const nextForm = defaultNewProductForm(value);
                                             setNewProductForm({
-                                                ...newProductForm,
-                                                product_type: nextType,
-                                                material_type: nextType === 'service' ? 'SERVICE' : newProductForm.material_type,
-                                                unit: nextType === 'service' ? 'forfait' : newProductForm.unit,
-                                                supplier: nextType === 'service' ? 'MMG' : newProductForm.supplier,
-                                                min_threshold: nextType === 'service' ? 0 : newProductForm.min_threshold,
-                                                compatible_series: nextType === 'service' ? 'Prestation devis libre' : newProductForm.compatible_series
+                                                ...nextForm,
+                                                reference_base: newProductForm.reference_base,
+                                                name: newProductForm.name,
                                             });
                                         }}
-                                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700"
+                                        className={`min-w-0 flex-1 rounded-md px-3 py-2 text-sm font-black transition-colors sm:flex-none ${
+                                            newProductForm.product_type === value
+                                                ? 'bg-slate-900 text-white'
+                                                : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
+                                        }`}
                                     >
-                                        <option value="stockable">Article Stockable (Inventaire)</option>
-                                        <option value="consumable">Consommable (Sans suivi fin)</option>
-                                        <option value="service">Prestation (hors stock)</option>
-                                    </select>
-                                </div>
-                                <div className="flex-1">
-                                    <label className="text-xs font-black text-slate-400 mb-1 block">Image Produit (Optionnel)</label>
-                                    <input type="file" accept="image/*" onChange={e => handleFileInput(e, setNewProductForm, newProductForm, 'image_url')} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
-                                    {newProductForm.image_url && <p className="text-xs text-emerald-500 mt-1 font-bold">Image chargée ✓</p>}
-                                </div>
-                                <div className="flex-1">
-                                    <label className="text-xs font-black text-slate-400 mb-1 block">Fiche Technique (PDF)</label>
-                                    <input type="file" accept="application/pdf,image/*" onChange={e => handleFileInput(e, setNewProductForm, newProductForm, 'technical_doc_url')} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl" />
-                                    {newProductForm.technical_doc_url && <p className="text-xs text-blue-500 mt-1 font-bold">Doc chargée ✓</p>}
-                                </div>
-                            </div>
-                            <div className="col-span-2 flex items-center bg-slate-50 border border-slate-200 rounded-xl px-4 mt-2 py-2">
-                                <label className="flex items-center gap-3 cursor-pointer w-full">
-                                    <input type="checkbox" checked={newProductForm.available_in_pos} onChange={e=>setNewProductForm({...newProductForm, available_in_pos: e.target.checked})} className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                                    <span className="font-bold text-sm text-slate-700">Visible dans l'Application Vente (PDV)</span>
-                                </label>
-                            </div>
-
-                            <div className="col-span-2 border-t border-slate-100 my-2 pt-4">
-                                <label className="text-xs font-black text-emerald-500 mb-1 block">{newProductForm.product_type === 'service' ? 'Référence prestation' : 'Déclinaison Initiale (Réf Interne)'}</label>
-                                <input value={newProductForm.variant_ref} onChange={e=>setNewProductForm({...newProductForm, variant_ref: e.target.value})} className="w-full p-3 bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 rounded-xl" placeholder={newProductForm.product_type === 'service' ? 'SERV-POSE-001' : 'VEK-70-BLANC'}/>
-                            </div>
-
-                            <div className="col-span-1">
-                                <label className="text-xs font-black text-blue-500 mb-1 block">Code Barre / EAN13</label>
-                                <input value={newProductForm.barcode} onChange={e=>setNewProductForm({...newProductForm, barcode: e.target.value})} className="w-full p-3 bg-blue-50 text-blue-700 font-mono border border-blue-200 rounded-xl" placeholder="Scanner ici..."/>
-                            </div>
-
-                            <div>
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Spécificités (Couleur, Sens, Finition...)</label>
-                                <input list="specs-list" value={newProductForm.color} onChange={e=>setNewProductForm({...newProductForm, color: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="Ex: ANODISÉ - DROIT"/>
-                                <datalist id="specs-list">
-                                        {appConfigs.filter(c => c.category === 'specs').map(c => (
-                                            <option key={c.id} value={c.value} />
-                                        ))}
-                                </datalist>
-                            </div>
-                            <div>
-                                <label className="text-xs font-black text-slate-400 mb-1 block">{newProductForm.product_type === 'service' ? 'Prix HT conseillé (€)' : 'Prix Achat (€)'}</label>
-                                <input type="number" value={newProductForm.cost_price} onChange={e=>setNewProductForm({...newProductForm, cost_price: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" placeholder={newProductForm.product_type === 'service' ? '80.00' : '45.50'}/>
+                                        {label}
+                                    </button>
+                                ))}
                             </div>
                         </div>
-                        <button onClick={handleQuickCreateProduct} className="w-full mt-6 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-lg shadow-lg">{newProductForm.product_type === 'service' ? 'Enregistrer la prestation' : 'Enregistrer et Continuer'}</button>
+
+                        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+                            <div className="space-y-7">
+                                <section>
+                                    <div className="mb-4 flex items-center gap-3">
+                                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                                            <Package className="h-4 w-4" />
+                                        </div>
+                                        <div>
+                                            <h4 className="font-black text-slate-900">Identité article</h4>
+                                            <p className="text-xs font-semibold text-slate-500">Référencement et classement dans le catalogue.</p>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                                        <div className="xl:col-span-1">
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Référence famille *</label>
+                                            <input
+                                                value={newProductForm.reference_base}
+                                                onChange={e => setNewProductForm({...newProductForm, reference_base: e.target.value})}
+                                                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono font-bold uppercase text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                                placeholder="CORTIZO:202004"
+                                            />
+                                        </div>
+                                        <div className="md:col-span-1 xl:col-span-3">
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Désignation commerciale *</label>
+                                            <input
+                                                value={newProductForm.name}
+                                                onChange={e => setNewProductForm({...newProductForm, name: e.target.value})}
+                                                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-bold text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                                placeholder="Dormant 70 mm, paumelle, joint..."
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">
+                                                {newProductForm.product_type === 'service' ? 'Famille de prestation *' : 'Famille / catégorie *'}
+                                            </label>
+                                            <select
+                                                value={newProductForm.category}
+                                                onChange={e => setNewProductForm({...newProductForm, category: e.target.value})}
+                                                className="w-full rounded-lg border border-slate-200 bg-white p-3 font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                            >
+                                                <option value="">Sélectionner...</option>
+                                                {newProductForm.product_type === 'service'
+                                                    ? <option value="SERVICE">SERVICE</option>
+                                                    : catalogCategoryOptions.map(category => <option key={category} value={category}>{category}</option>)
+                                                }
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Matière *</label>
+                                            <select
+                                                value={newProductForm.material_type}
+                                                onChange={e => setNewProductForm({...newProductForm, material_type: e.target.value})}
+                                                disabled={newProductForm.product_type === 'service'}
+                                                className="w-full rounded-lg border border-slate-200 bg-white p-3 font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
+                                            >
+                                                {newProductForm.product_type === 'service'
+                                                    ? <option value="SERVICE">SERVICE</option>
+                                                    : <>
+                                                        <option value="">Sélectionner...</option>
+                                                        {materialOptions.map(material => <option key={material} value={material}>{material}</option>)}
+                                                    </>
+                                                }
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Unité de gestion *</label>
+                                            <select
+                                                value={newProductForm.unit}
+                                                onChange={e => setNewProductForm({...newProductForm, unit: e.target.value})}
+                                                className="w-full rounded-lg border border-slate-200 bg-white p-3 font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                            >
+                                                <option value="">Sélectionner...</option>
+                                                {(newProductForm.product_type === 'service'
+                                                    ? ['forfait', 'heure', 'jour', 'ml', 'm2', 'u']
+                                                    : stockUnitOptions
+                                                ).map(unit => <option key={unit} value={unit}>{unit}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Fournisseur principal</label>
+                                            <select
+                                                value={newProductForm.supplier}
+                                                onChange={e => setNewProductForm({...newProductForm, supplier: e.target.value})}
+                                                disabled={newProductForm.product_type === 'service'}
+                                                className="w-full rounded-lg border border-slate-200 bg-white p-3 font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
+                                            >
+                                                <option value="">Aucun / à qualifier</option>
+                                                {supplierOptions.map(supplier => <option key={supplier} value={supplier}>{supplier}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Gamme ou série compatible</label>
+                                            <input
+                                                value={newProductForm.compatible_series}
+                                                onChange={e => setNewProductForm({...newProductForm, compatible_series: e.target.value})}
+                                                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                                placeholder="COR 60, COR 70..."
+                                            />
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <section className="border-t border-slate-200 pt-6">
+                                    <div className="mb-4 flex items-center gap-3">
+                                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                                            <Hash className="h-4 w-4" />
+                                        </div>
+                                        <div>
+                                            <h4 className="font-black text-slate-900">
+                                                {newProductForm.product_type === 'service' ? 'Tarification' : 'Première variante'}
+                                            </h4>
+                                            <p className="text-xs font-semibold text-slate-500">
+                                                {newProductForm.product_type === 'service'
+                                                    ? 'Référence et prix conseillé de la prestation.'
+                                                    : 'Référence exploitable pour les achats, le scan et le stock.'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                                        <div className="xl:col-span-2">
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">
+                                                {newProductForm.product_type === 'service' ? 'Référence prestation *' : 'Référence variante *'}
+                                            </label>
+                                            <input
+                                                value={newProductForm.variant_ref}
+                                                onChange={e => setNewProductForm({...newProductForm, variant_ref: e.target.value})}
+                                                className="w-full rounded-lg border border-emerald-200 bg-emerald-50 p-3 font-mono font-bold uppercase text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-100"
+                                                placeholder={newProductForm.product_type === 'service' ? 'SERV-POSE-001' : 'CORTIZO:202004-BLANC'}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Référence fournisseur</label>
+                                            <input
+                                                value={newProductForm.supplier_reference}
+                                                onChange={e => setNewProductForm({...newProductForm, supplier_reference: e.target.value})}
+                                                disabled={newProductForm.product_type === 'service'}
+                                                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono font-bold text-slate-700 outline-none focus:border-blue-500 disabled:text-slate-400"
+                                                placeholder="202004"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Code-barres / EAN</label>
+                                            <input
+                                                value={newProductForm.barcode}
+                                                onChange={e => setNewProductForm({...newProductForm, barcode: e.target.value})}
+                                                disabled={newProductForm.product_type === 'service'}
+                                                className="w-full rounded-lg border border-blue-200 bg-blue-50 p-3 font-mono text-blue-800 outline-none focus:ring-2 focus:ring-blue-100 disabled:text-slate-400"
+                                                placeholder="Scanner ou saisir"
+                                            />
+                                        </div>
+                                        <div className="xl:col-span-2">
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Spécificités</label>
+                                            <input
+                                                list="specs-list"
+                                                value={newProductForm.color}
+                                                onChange={e => setNewProductForm({...newProductForm, color: e.target.value})}
+                                                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-bold uppercase text-slate-700 outline-none focus:border-blue-500"
+                                                placeholder="RAL 9016, gauche, anodisé..."
+                                            />
+                                            <datalist id="specs-list">
+                                                {appConfigs.filter(config => config.category === 'specs').map(config => (
+                                                    <option key={config.id} value={config.value} />
+                                                ))}
+                                            </datalist>
+                                        </div>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">
+                                                {newProductForm.product_type === 'service' ? 'Prix HT conseillé (€)' : 'Prix d’achat HT (€)'}
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="0.01"
+                                                value={newProductForm.cost_price}
+                                                onChange={e => setNewProductForm({...newProductForm, cost_price: e.target.value})}
+                                                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono font-bold text-slate-800 outline-none focus:border-blue-500"
+                                                placeholder="0,00"
+                                            />
+                                        </div>
+                                        {newProductForm.product_type !== 'service' && (
+                                            <div>
+                                                <label className="mb-1.5 block text-xs font-black text-slate-500">Longueur par unité (m)</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.001"
+                                                    value={newProductForm.length_per_unit}
+                                                    onChange={e => setNewProductForm({...newProductForm, length_per_unit: e.target.value})}
+                                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono font-bold text-slate-800 outline-none focus:border-blue-500"
+                                                    placeholder="6,50"
+                                                />
+                                            </div>
+                                        )}
+                                        {newProductForm.product_type !== 'service' && (
+                                            <div>
+                                                <label className="mb-1.5 block text-xs font-black text-slate-500">Seuil d’alerte</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    value={newProductForm.min_threshold}
+                                                    onChange={e => setNewProductForm({...newProductForm, min_threshold: e.target.value})}
+                                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono font-bold text-slate-800 outline-none focus:border-blue-500"
+                                                    placeholder="0"
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                </section>
+
+                                <section className="border-t border-slate-200 pt-6">
+                                    <div className="mb-4 flex items-center gap-3">
+                                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+                                            <FileText className="h-4 w-4" />
+                                        </div>
+                                        <div>
+                                            <h4 className="font-black text-slate-900">Documents & diffusion</h4>
+                                            <p className="text-xs font-semibold text-slate-500">Éléments utiles au magasin, aux achats et à la vente.</p>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Image article</label>
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                onChange={e => handleFileInput(e, setNewProductForm, newProductForm, 'image_url')}
+                                                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm"
+                                            />
+                                            {newProductForm.image_url && <p className="mt-1 text-xs font-bold text-emerald-600">Image chargée</p>}
+                                        </div>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-black text-slate-500">Fiche technique</label>
+                                            <input
+                                                type="file"
+                                                accept="application/pdf,image/*"
+                                                onChange={e => handleFileInput(e, setNewProductForm, newProductForm, 'technical_doc_url')}
+                                                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm"
+                                            />
+                                            {newProductForm.technical_doc_url && <p className="mt-1 text-xs font-bold text-blue-600">Document chargé</p>}
+                                        </div>
+                                        <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 md:col-span-2">
+                                            <input
+                                                type="checkbox"
+                                                checked={newProductForm.available_in_pos}
+                                                onChange={e => setNewProductForm({...newProductForm, available_in_pos: e.target.checked})}
+                                                className="h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                            />
+                                            <span className="text-sm font-bold text-slate-700">Disponible dans le Point de Vente (PDV)</span>
+                                        </label>
+                                    </div>
+                                </section>
+                            </div>
+                        </div>
+
+                        <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                            <p className="text-xs font-semibold text-slate-500">
+                                Le stock initial reste à zéro. Utilisez ensuite une réception ou un inventaire physique.
+                            </p>
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowNewProductModal(false)}
+                                    className="h-11 flex-1 rounded-lg border border-slate-200 px-5 text-sm font-black text-slate-600 hover:bg-slate-50 sm:flex-none"
+                                >
+                                    Annuler
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleQuickCreateProduct}
+                                    disabled={!newProductForm.name || !newProductForm.reference_base || !newProductForm.variant_ref || !newProductForm.category || !newProductForm.material_type || !newProductForm.unit}
+                                    className="h-11 flex-1 rounded-lg bg-emerald-600 px-5 text-sm font-black text-white shadow-sm hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-300 sm:flex-none"
+                                >
+                                    {newProductForm.product_type === 'service' ? 'Créer la prestation' : 'Créer l’article'}
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}

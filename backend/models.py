@@ -152,7 +152,8 @@ class Product(Base):
     id = Column(Integer, primary_key=True, index=True)
     reference_base = Column(String, unique=True, index=True) # Ex: VEK-70
     name = Column(String) # Ex: Dormant 70mm
-    material_type = Column(String) # PVC, ALU, VITRAGE, ACCESSOIRE
+    category = Column(String, nullable=True, index=True) # PROFIL, ACCESSOIRE, QUINCAILLERIE...
+    material_type = Column(String) # ALU, PVC, ACIER, VERRE...
     unit = Column(String) # ml, m2, pce
     supplier = Column(String, nullable=True)
     product_type = Column(String, default="stockable") # stockable, consumable, service

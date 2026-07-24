@@ -41,6 +41,7 @@ def test_inventory_operator_journey_catalog_locations_receipt_transfer_count_aud
             json={
                 "reference_base": "OP-JOURNEY-001",
                 "name": "Article parcours opérateur",
+                "category": "QUINCAILLERIE",
                 "material_type": "ACCESSOIRE",
                 "unit": "pce",
                 "supplier": "MMG",
@@ -58,6 +59,7 @@ def test_inventory_operator_journey_catalog_locations_receipt_transfer_count_aud
         )
         assert product_response.status_code == 200, product_response.text
         product = product_response.json()
+        assert product["category"] == "QUINCAILLERIE"
         product_id = product["id"]
         variant_id = product["variants"][0]["id"]
 
@@ -67,6 +69,7 @@ def test_inventory_operator_journey_catalog_locations_receipt_transfer_count_aud
             json={
                 "reference_base": "OP-JOURNEY-001",
                 "name": "Article parcours opérateur modifié",
+                "category": "ACCESSOIRE",
                 "material_type": "ACCESSOIRE",
                 "unit": "pce",
                 "supplier": "MMG",
@@ -77,6 +80,24 @@ def test_inventory_operator_journey_catalog_locations_receipt_transfer_count_aud
         )
         assert update_response.status_code == 200, update_response.text
         assert update_response.json()["name"] == "Article parcours opérateur modifié"
+        assert update_response.json()["category"] == "ACCESSOIRE"
+
+        legacy_update_response = client.put(
+            f"/v2/stock/products/{product_id}",
+            headers=headers,
+            json={
+                "reference_base": "OP-JOURNEY-001",
+                "name": "Article parcours opérateur compatible",
+                "material_type": "ACCESSOIRE",
+                "unit": "pce",
+                "supplier": "MMG",
+                "product_type": "stockable",
+                "available_in_pos": False,
+                "catalog_status": "ACTIVE",
+            },
+        )
+        assert legacy_update_response.status_code == 200, legacy_update_response.text
+        assert legacy_update_response.json()["category"] == "ACCESSOIRE"
 
         warehouse_response = client.post(
             "/v2/stock/locations",

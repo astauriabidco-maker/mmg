@@ -48,6 +48,7 @@ class StockRecord:
     quantity: float | None
     gamme: str
     unit: str = "pce"
+    category: str = "ACCESSOIRE"
     material_type: str = "ACCESSOIRE"
     product_type: str = "stockable"
 
@@ -297,6 +298,7 @@ def consolidate_records(records: list[StockRecord]) -> list[StockRecord]:
             quantity=quantity,
             gamme=merged_gamme,
             unit=existing.unit,
+            category=existing.category,
             material_type=existing.material_type,
             product_type=existing.product_type,
         )
@@ -458,6 +460,7 @@ def import_records(records: list[StockRecord], location_name: str, dry_run: bool
                 product = models.Product(
                     reference_base=product_reference,
                     name=record.designation,
+                    category=record.category,
                     material_type=record.material_type,
                     unit=record.unit,
                     supplier=record.supplier,
@@ -469,6 +472,7 @@ def import_records(records: list[StockRecord], location_name: str, dry_run: bool
                 stats["created_products"] += 1
             else:
                 product.name = record.designation or product.name
+                product.category = record.category
                 product.material_type = record.material_type
                 product.unit = record.unit
                 product.supplier = record.supplier

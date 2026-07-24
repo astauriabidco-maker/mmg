@@ -80,7 +80,8 @@ export default function ConfigDashboard() {
                 <div className="flex-1">
                     <label className="block text-xs font-black text-blue-800 uppercase tracking-widest mb-2">Ajouter à la liste :</label>
                     <select value={newCat} onChange={e=>setNewCat(e.target.value)} className="w-full p-3 bg-white border border-blue-200 rounded-xl font-bold text-slate-700 focus:ring-2 outline-none">
-                        <option value="material">Catégories de Matériau</option>
+                        <option value="product_category">Familles / catégories articles</option>
+                        <option value="material">Matières</option>
                         <option value="unit">Unités de Mesure</option>
                         <option value="supplier">Fournisseurs</option>
                         <option value="specs">Spécificités (Couleur, Sens, Finition...)</option>
@@ -96,8 +97,9 @@ export default function ConfigDashboard() {
                 </button>
             </form>
 
-            <div className="grid grid-cols-5 gap-6">
-                {renderTable('material', 'Catégories (Matériaux)')}
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+                {renderTable('product_category', 'Familles / catégories')}
+                {renderTable('material', 'Matières')}
                 {renderTable('unit', 'Unités')}
                 {renderTable('supplier', 'Fournisseurs')}
                 {renderTable('specs', 'Spécificités Variantes')}

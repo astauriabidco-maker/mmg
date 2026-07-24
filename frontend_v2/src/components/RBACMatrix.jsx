@@ -325,24 +325,21 @@ export default function RBACMatrix() {
     ];
 
     return (
-        <div className="space-y-6 font-sans">
-            <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-slate-100 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+        <div className="min-w-0 space-y-5 font-sans">
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <div className="flex flex-col gap-4 border-b border-slate-100 p-4 sm:p-5 2xl:flex-row 2xl:items-center 2xl:justify-between">
                     <div>
                         <p className="text-[11px] font-black uppercase tracking-widest text-blue-500">Accès plateforme</p>
-                        <h2 className="text-2xl font-black text-slate-900 mt-1">Utilisateurs & profils</h2>
-                        <p className="text-sm font-semibold text-slate-500 mt-1 max-w-3xl">
-                            Créez les comptes, appliquez des profils métier et gardez la matrice fine pour les exceptions.
-                        </p>
+                        <h2 className="mt-1 text-xl font-black text-slate-900">Gestion des accès</h2>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 min-w-[320px]">
+                    <div className="grid w-full grid-cols-3 gap-2 2xl:w-auto 2xl:min-w-[390px]">
                         <RoleMetric icon={Users} label="Utilisateurs" value={users.length} />
                         <RoleMetric icon={ShieldCheck} label="Profils" value={roles.length} />
                         <RoleMetric icon={Mail} label="Invitations" value={pendingInvitations} />
                     </div>
                 </div>
-                <div className="p-3 bg-slate-50 border-b border-slate-200">
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                <div className="border-b border-slate-200 bg-slate-50 p-2">
+                    <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
                         {rbacViews.map(view => {
                             const Icon = view.icon;
                             const active = rbacView === view.id;
@@ -351,14 +348,14 @@ export default function RBACMatrix() {
                                     key={view.id}
                                     type="button"
                                     onClick={() => setRbacView(view.id)}
-                                    className={`rounded-2xl border p-4 text-left transition-all ${active ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-200 hover:text-blue-700'}`}
+                                    className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2.5 text-left transition-colors ${active ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-200 hover:text-blue-700'}`}
                                 >
-                                    <div className="flex items-center gap-2">
-                                        <Icon className="w-4 h-4" />
-                                        <span className="font-black text-sm">{view.label}</span>
-                                    </div>
-                                    <span className={`block mt-1 text-[11px] font-bold ${active ? 'text-white/60' : 'text-slate-400'}`}>
-                                        {view.helper}
+                                    <Icon className="h-4 w-4 shrink-0" />
+                                    <span className="min-w-0">
+                                        <span className="block text-sm font-black">{view.label}</span>
+                                        <span className={`hidden truncate text-[11px] font-bold 2xl:block ${active ? 'text-white/60' : 'text-slate-400'}`}>
+                                            {view.helper}
+                                        </span>
                                     </span>
                                 </button>
                             );
@@ -585,9 +582,9 @@ export default function RBACMatrix() {
             )}
 
             {rbacView === 'profiles' && selectedRole && (
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] min-h-[520px]">
-                        <aside className="border-r border-slate-200 bg-slate-50 p-5">
+                <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                    <div className="grid min-h-[520px] grid-cols-1 2xl:grid-cols-[280px_minmax(0,1fr)]">
+                        <aside className="border-b border-slate-200 bg-slate-50 p-4 2xl:border-b-0 2xl:border-r">
                             <div className="flex items-center justify-between mb-4">
                                 <div>
                                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fiches profils</p>
@@ -595,7 +592,7 @@ export default function RBACMatrix() {
                                 </div>
                                 <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-black text-slate-500">{roles.length}</span>
                             </div>
-                            <div className="space-y-2 max-h-[430px] overflow-y-auto pr-1">
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:max-h-[620px] 2xl:grid-cols-1 2xl:overflow-y-auto 2xl:pr-1">
                                 {roles.map(role => {
                                     const preset = ROLE_PRESETS.find(item => item.name === role.name) || ROLE_FALLBACKS[role.name];
                                     const roleUsers = users.filter(user => userHasRole(user, role.name)).length;
@@ -604,7 +601,7 @@ export default function RBACMatrix() {
                                             key={role.id}
                                             type="button"
                                             onClick={() => setSelectedRoleName(role.name)}
-                                            className={`w-full text-left rounded-2xl border p-4 transition-all ${selectedRole.name === role.name ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-white border-slate-200 text-slate-700 hover:border-blue-200 hover:text-blue-700'}`}
+                                            className={`w-full rounded-lg border p-3 text-left transition-colors ${selectedRole.name === role.name ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-blue-200 hover:text-blue-700'}`}
                                         >
                                             <div className="flex items-start justify-between gap-3">
                                                 <div>
@@ -621,7 +618,7 @@ export default function RBACMatrix() {
                             </div>
                         </aside>
 
-                        <section className="p-6 lg:p-8 space-y-6">
+                        <section className="min-w-0 space-y-5 p-4 sm:p-6 xl:p-7">
                             <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
                                 <div>
                                     <p className="text-[11px] font-black uppercase tracking-widest text-blue-500">Fiche rôle</p>
@@ -655,13 +652,13 @@ export default function RBACMatrix() {
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                                 <RoleMetric icon={ShieldCheck} label="Permissions actives" value={isBuiltinFullAccess ? 'Toutes' : selectedPermissions.length} />
                                 <RoleMetric icon={Users} label="Utilisateurs rattachés" value={selectedUsers.length} />
                                 <RoleMetric icon={Eye} label="Périmètre métier" value={selectedPreset?.scope || 'Custom'} />
                             </div>
 
-                            <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-5">
+                            <div className="grid min-w-0 grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_340px]">
                                 <div className="rounded-2xl border border-slate-200 overflow-hidden">
                                     <div className="px-5 py-4 bg-slate-50 border-b border-slate-200">
                                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Ce profil peut faire</p>

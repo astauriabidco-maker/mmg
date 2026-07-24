@@ -618,7 +618,10 @@ def create_product(product_data: schemas.ProductCreate, db: Session = Depends(ge
     existing = db.query(models.Product).filter(models.Product.reference_base == product_data.reference_base).first()
     if existing: raise HTTPException(400, "Base reference already exists")
     
-    new_product = models.Product(**product_data.model_dump(exclude={'variants'}))
+    product_values = product_data.model_dump(exclude={'variants'})
+    if not product_values.get("category"):
+        product_values["category"] = "SERVICE" if product_data.product_type == "service" else product_data.material_type
+    new_product = models.Product(**product_values)
     db.add(new_product)
     db.commit()
     db.refresh(new_product)
@@ -636,7 +639,13 @@ def update_product(product_id: int, product_data: schemas.ProductBase, db: Sessi
         
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product: raise HTTPException(404, "Product not found")
-    for key, value in product_data.model_dump().items(): setattr(product, key, value)
+    product_values = product_data.model_dump()
+    if "category" not in product_data.model_fields_set:
+        product_values.pop("category", None)
+    elif not product_values.get("category"):
+        product_values["category"] = "SERVICE" if product_data.product_type == "service" else product_data.material_type
+    for key, value in product_values.items():
+        setattr(product, key, value)
     db.commit()
     db.refresh(product)
     return product

@@ -55,67 +55,61 @@ export default function PlatformSettings() {
     ];
 
     return (
-        <div className="max-w-7xl mx-auto flex gap-8 animate-fade-in">
-            {/* LEFT SIDEBAR MENU */}
-            <div className="w-80 shrink-0 space-y-2">
-                <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 mb-6">
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center text-indigo-600">
-                            <Settings className="w-5 h-5" />
+        <div className="w-full min-w-0 animate-fade-in">
+            <header className="border-b border-slate-200 bg-white px-4 py-5 sm:px-6 xl:px-8">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+                            <Settings className="h-5 w-5" />
                         </div>
-                        <div>
-                            <h2 className="text-lg font-black text-slate-800">Paramètres</h2>
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Utilisateurs, atelier, référentiels</p>
+                        <div className="min-w-0">
+                            <h1 className="text-xl font-black text-slate-900">Paramètres & accès</h1>
+                            <p className="text-sm font-semibold text-slate-500">
+                                Utilisateurs, atelier, référentiels et intégrations.
+                            </p>
                         </div>
                     </div>
+                    {['general', 'ai', 'workflow'].includes(activeTab) && (
+                        <button
+                            onClick={handleSave}
+                            className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-lg bg-indigo-600 px-5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-indigo-500 xl:self-auto"
+                        >
+                            {isSaving ? <CheckCircle2 className="h-4 w-4 animate-pulse" /> : <Save className="h-4 w-4" />}
+                            {isSaving ? 'Enregistré' : 'Enregistrer'}
+                        </button>
+                    )}
                 </div>
 
-                <nav className="bg-white p-4 rounded-3xl shadow-sm border border-slate-200 space-y-1">
+                <nav className="mt-5 grid grid-cols-2 gap-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="Sections des paramètres">
                     {tabs.map(tab => {
                         const Icon = tab.icon;
                         const isActive = activeTab === tab.id;
                         return (
                             <button
                                 key={tab.id}
+                                type="button"
                                 onClick={() => setActiveTab(tab.id)}
-                                className={`w-full flex items-start gap-3 px-4 py-3 rounded-2xl text-sm font-bold transition-all ${
-                                    isActive 
-                                    ? 'bg-indigo-50 text-indigo-700 shadow-sm' 
-                                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                                aria-current={isActive ? 'page' : undefined}
+                                className={`flex min-w-0 items-center gap-3 rounded-lg border px-3 py-3 text-left transition-colors ${
+                                    isActive
+                                        ? 'border-slate-900 bg-slate-900 text-white'
+                                        : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700'
                                 }`}
                             >
-                                <Icon className={`w-5 h-5 mt-0.5 ${isActive ? 'text-indigo-600' : 'text-slate-400'}`} />
-                                <span className="text-left">
-                                    <span className="block">{tab.label}</span>
-                                    <span className="block text-[11px] leading-snug font-bold text-slate-400 mt-0.5">{tab.helper}</span>
+                                <Icon className={`h-4 w-4 shrink-0 ${isActive ? 'text-indigo-300' : 'text-slate-400'}`} />
+                                <span className="min-w-0">
+                                    <span className="block truncate text-sm font-black">{tab.label}</span>
+                                    <span className={`mt-0.5 hidden truncate text-[11px] font-semibold 2xl:block ${isActive ? 'text-white/60' : 'text-slate-400'}`}>
+                                        {tab.helper}
+                                    </span>
                                 </span>
                             </button>
                         );
                     })}
                 </nav>
-            </div>
+            </header>
 
-            {/* MAIN CONTENT AREA */}
-            <div className="flex-1">
-                <div className="bg-white rounded-3xl shadow-sm border border-slate-200 min-h-[700px]">
-                    {/* TOP BAR */}
-                    <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 rounded-t-3xl">
-                        <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
-                            {tabs.find(t => t.id === activeTab)?.label}
-                        </h2>
-                        {['general', 'ai', 'workflow'].includes(activeTab) && (
-                            <button 
-                                onClick={handleSave}
-                                className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold shadow-md shadow-indigo-500/20 flex items-center gap-2 transition-all active:scale-95"
-                            >
-                                {isSaving ? <CheckCircle2 className="w-4 h-4 animate-pulse" /> : <Save className="w-4 h-4" />}
-                                {isSaving ? "Enregistré" : "Enregistrer"}
-                            </button>
-                        )}
-                    </div>
-
-                    {/* CONTENT BODY */}
-                    <div className="p-8">
+            <main className="min-w-0 px-4 py-5 sm:px-6 xl:px-8">
                         
                         {/* 1. GENERAL SETTINGS */}
                         {activeTab === 'general' && (
@@ -335,9 +329,7 @@ export default function PlatformSettings() {
                             </div>
                         )}
 
-                    </div>
-                </div>
-            </div>
+            </main>
         </div>
     );
 }

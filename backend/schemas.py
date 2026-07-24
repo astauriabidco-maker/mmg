@@ -530,6 +530,7 @@ class ProductVariantResponse(ProductVariantBase):
 class ProductBase(BaseModel):
     reference_base: str
     name: str
+    category: Optional[str] = None
     material_type: str
     unit: str
     supplier: Optional[str] = None
