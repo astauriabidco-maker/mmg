@@ -1,53 +1,59 @@
-import React from 'react';
-import { ArrowLeft, Box, LogOut, UserRound } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import React, { useState } from 'react';
+import { Menu, Sparkles } from 'lucide-react';
+import Sidebar from '../components/Sidebar';
 import ScheduleDashboard from './ScheduleDashboard';
-import { useAuth } from '../context/AuthContext';
 
 export default function SchedulePage() {
-    const { user, logout } = useAuth();
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
     return (
-        <div className="min-h-screen bg-slate-50">
-            <header className="sticky top-0 z-40 border-b border-slate-200 bg-white">
-                <div className="flex min-h-16 items-center justify-between gap-3 px-4 sm:px-6 xl:px-8">
-                    <div className="flex min-w-0 items-center gap-3">
-                        <Link
-                            to="/dashboard"
-                            className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-slate-900 text-white"
-                            title="Retour à mon espace"
-                        >
-                            <Box className="h-5 w-5" />
-                        </Link>
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-black text-slate-950">MMG Planning</p>
-                            <p className="truncate text-xs font-semibold text-slate-500">Pilotage transversal des équipes</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <Link
-                            to="/dashboard"
-                            className="flex h-9 items-center gap-2 rounded-md border border-slate-200 px-3 text-xs font-black text-slate-700 hover:bg-slate-50"
-                        >
-                            <ArrowLeft className="h-4 w-4" />
-                            <span className="hidden sm:inline">Mon espace</span>
-                        </Link>
-                        <div className="hidden items-center gap-2 border-l border-slate-200 pl-3 md:flex">
-                            <UserRound className="h-4 w-4 text-slate-400" />
-                            <span className="max-w-40 truncate text-xs font-bold text-slate-600">{user?.username}</span>
-                        </div>
+        <div className="flex min-h-screen overflow-x-hidden bg-slate-50">
+            <Sidebar
+                activeView="schedule"
+                isOpen={isSidebarOpen}
+                setIsOpen={setIsSidebarOpen}
+            />
+
+            <main className="min-w-0 flex-1 transition-all duration-300 lg:ml-72">
+                <header className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/80 px-4 py-3 backdrop-blur-md sm:px-6 sm:py-4 lg:px-8">
+                    <div className="flex min-w-0 items-center gap-3 sm:gap-4">
                         <button
                             type="button"
-                            onClick={logout}
-                            className="grid h-9 w-9 place-items-center rounded-md text-slate-500 hover:bg-red-50 hover:text-red-600"
-                            title="Déconnexion"
+                            onClick={() => setIsSidebarOpen(true)}
+                            className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden"
+                            title="Ouvrir la navigation"
                         >
-                            <LogOut className="h-4 w-4" />
+                            <Menu className="h-6 w-6" />
                         </button>
+                        <h1 className="truncate text-lg font-bold text-slate-900 sm:text-xl">
+                            Planning & Agenda
+                        </h1>
                     </div>
+
+                    <div className="mx-4 hidden min-w-0 max-w-lg flex-1 items-center rounded-full border border-transparent bg-slate-100 px-5 py-2 md:flex lg:mx-6">
+                        <Sparkles className="mr-2 h-4 w-4 shrink-0 text-indigo-500" />
+                        <span className="truncate text-sm font-medium text-slate-400">Demander à l'IA...</span>
+                        <div className="ml-auto flex items-center gap-1">
+                            <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-slate-400">⌘</kbd>
+                            <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-slate-400">K</kbd>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        <span className="relative flex h-3 w-3">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                            <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
+                        </span>
+                        <span className="hidden text-xs font-bold uppercase tracking-wider text-slate-500 md:block">
+                            Système Live
+                        </span>
+                    </div>
+                </header>
+
+                <div className="manager-view-shell p-0 sm:p-4 xl:p-8">
+                    <ScheduleDashboard />
                 </div>
-            </header>
-            <ScheduleDashboard />
+            </main>
         </div>
     );
 }
