@@ -5,6 +5,7 @@ import {
     ArrowRight,
     BarChart3,
     BellRing,
+    CalendarPlus,
     CalendarClock,
     Check,
     ClipboardList,
@@ -18,6 +19,7 @@ import {
     TrendingUp,
     Users,
     UserRound,
+    UserPlus,
     X,
 } from 'lucide-react';
 import api from '../services/api';
@@ -72,6 +74,14 @@ const isToday = value => {
         && date.getDate() === today.getDate();
 };
 
+const defaultActionDate = () => {
+    const date = new Date();
+    date.setDate(date.getDate() + 1);
+    date.setHours(9, 0, 0, 0);
+    const offset = date.getTimezoneOffset();
+    return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
+};
+
 export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
     const [horizonDays, setHorizonDays] = useState(14);
     const [selectedOwnerId, setSelectedOwnerId] = useState('');
@@ -82,6 +92,7 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
     const [notification, setNotification] = useState(null);
     const [showRules, setShowRules] = useState(false);
     const [savingRuleId, setSavingRuleId] = useState(null);
+    const [cockpitAction, setCockpitAction] = useState(null);
 
     const cockpitQuery = useQuery({
         queryKey: ['crm-cockpit', horizonDays, selectedOwnerId],
@@ -288,6 +299,68 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
         }
     };
 
+    const refreshActionableCockpit = async () => {
+        await Promise.all([cockpitQuery.refetch(), plansQuery.refetch()]);
+    };
+
+    const assignOpportunityOwner = async values => {
+        const item = cockpitAction.item;
+        const opportunityId = item.opportunity_id || item.id;
+        setWorkingKey(item.key);
+        setActionError('');
+        try {
+            await api.post(`/v2/mmg/crm/cockpit/opportunities/${opportunityId}/assign-owner`, {
+                owner_user_id: Number(values.owner_user_id),
+            });
+            await refreshActionableCockpit();
+            setNotification({
+                tone: 'success',
+                message: `${item.client_name} est maintenant affecté à ${values.owner_name}.`,
+            });
+            setCockpitAction(null);
+        } catch (error) {
+            setActionError(error?.response?.data?.detail || "L'affectation n'a pas pu être enregistrée.");
+        } finally {
+            setWorkingKey('');
+        }
+    };
+
+    const scheduleOpportunityAction = async values => {
+        const item = cockpitAction.item;
+        const opportunityId = item.opportunity_id || item.id;
+        setWorkingKey(item.key);
+        setActionError('');
+        try {
+            await api.post(`/v2/mmg/crm/cockpit/opportunities/${opportunityId}/schedule-action`, {
+                activity_type: values.activity_type,
+                subject: values.subject,
+                note: values.note || null,
+                due_at: new Date(values.due_at).toISOString(),
+                reminder_plan_id: item.kind === 'PLANNED_REMINDER' ? item.target_id : null,
+            });
+            await refreshActionableCockpit();
+            setNotification({
+                tone: 'success',
+                message: `Prochaine action planifiée pour ${item.client_name}.`,
+            });
+            setCockpitAction(null);
+        } catch (error) {
+            setActionError(error?.response?.data?.detail || "La prochaine action n'a pas pu être planifiée.");
+        } finally {
+            setWorkingKey('');
+        }
+    };
+
+    const prepareCockpitReminder = item => previewEmail({
+        ...item,
+        key: item.key || `opportunity-${item.id}`,
+        plan_id: item.plan_id || (item.kind === 'PLANNED_REMINDER' ? item.target_id : null),
+        kind: item.kind || 'MISSING_NEXT_STEP',
+        opportunity_id: item.opportunity_id || item.id,
+        suggested_subject: item.suggested_subject || `Relancer ${item.client_name}`,
+        due_at: item.due_at || null,
+    });
+
     if (cockpitQuery.isLoading) {
         return (
             <div className="flex min-h-96 items-center justify-center bg-white">
@@ -393,6 +466,9 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                             overdue={data.overdue_reminders || []}
                             withoutAction={data.opportunities_without_action || []}
                             onOpenClient={onOpenClient}
+                            onAssign={item => setCockpitAction({ mode: 'assign', item })}
+                            onSchedule={item => setCockpitAction({ mode: 'schedule', item })}
+                            onPrepareReminder={prepareCockpitReminder}
                         />
                     </div>
                 </section>
@@ -652,6 +728,18 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                     onSend={sendEmailReminder}
                 />
             )}
+
+            {cockpitAction && (
+                <CockpitOpportunityActionModal
+                    action={cockpitAction}
+                    users={(usersQuery.data || []).filter(user => user.is_active)}
+                    saving={workingKey === cockpitAction.item.key}
+                    onClose={() => setCockpitAction(null)}
+                    onSubmit={cockpitAction.mode === 'assign'
+                        ? assignOpportunityOwner
+                        : scheduleOpportunityAction}
+                />
+            )}
         </div>
     );
 }
@@ -706,7 +794,15 @@ function OwnerPerformanceTable({ owners, onSelectOwner }) {
     );
 }
 
-function DailyCommercialFocus({ today, overdue, withoutAction, onOpenClient }) {
+function DailyCommercialFocus({
+    today,
+    overdue,
+    withoutAction,
+    onOpenClient,
+    onAssign,
+    onSchedule,
+    onPrepareReminder,
+}) {
     const items = [
         ...overdue.map(item => ({ ...item, focusTone: 'red', focusLabel: 'En retard' })),
         ...today.map(item => ({ ...item, focusTone: 'blue', focusLabel: "Aujourd'hui" })),
@@ -716,6 +812,9 @@ function DailyCommercialFocus({ today, overdue, withoutAction, onOpenClient }) {
             focusTone: 'amber',
             focusLabel: 'Sans action',
             reason: STAGE_LABELS[item.stage] || item.stage,
+            kind: 'MISSING_NEXT_STEP',
+            opportunity_id: item.id,
+            suggested_subject: `Relancer ${item.client_name}`,
         })),
     ].slice(0, 8);
     const tones = {
@@ -729,20 +828,45 @@ function DailyCommercialFocus({ today, overdue, withoutAction, onOpenClient }) {
     return (
         <div className="divide-y divide-slate-100">
             {items.map(item => (
-                <button
-                    key={item.key}
-                    onClick={() => onOpenClient(item.client_id)}
-                    className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-slate-50"
-                >
-                    <span className={`shrink-0 px-2 py-1 text-[9px] font-black uppercase tracking-wide ${tones[item.focusTone]}`}>
-                        {item.focusLabel}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-black text-slate-900">{item.client_name} · {item.title}</p>
-                        <p className="mt-1 truncate text-xs font-semibold text-slate-500">{item.reason || item.reference}</p>
+                <div key={item.key} className="grid gap-3 px-5 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                    <button
+                        onClick={() => onOpenClient(item.client_id)}
+                        className="flex min-w-0 items-center gap-3 text-left hover:text-blue-700"
+                    >
+                        <span className={`shrink-0 px-2 py-1 text-[9px] font-black uppercase tracking-wide ${tones[item.focusTone]}`}>
+                            {item.focusLabel}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-black">{item.client_name} · {item.title}</p>
+                            <p className="mt-1 truncate text-xs font-semibold text-slate-500">{item.reason || item.reference}</p>
+                        </div>
+                        <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" />
+                    </button>
+                    <div className="flex items-center gap-1 sm:justify-end">
+                        <button
+                            onClick={() => onAssign(item)}
+                            title="Affecter un responsable"
+                            className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 bg-white text-slate-500 hover:border-blue-300 hover:text-blue-700"
+                        >
+                            <UserPlus className="h-4 w-4" />
+                        </button>
+                        <button
+                            onClick={() => onSchedule(item)}
+                            title="Planifier une action"
+                            className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 bg-white text-slate-500 hover:border-blue-300 hover:text-blue-700"
+                        >
+                            <CalendarPlus className="h-4 w-4" />
+                        </button>
+                        <button
+                            onClick={() => onPrepareReminder(item)}
+                            disabled={!item.client_email}
+                            title={item.client_email ? 'Préparer une relance email' : 'Email client manquant'}
+                            className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 bg-white text-slate-500 hover:border-blue-300 hover:text-blue-700 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-300"
+                        >
+                            <Mail className="h-4 w-4" />
+                        </button>
                     </div>
-                    <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" />
-                </button>
+                </div>
             ))}
             {(overdue.length + today.length + withoutAction.length) > items.length && (
                 <p className="px-5 py-3 text-xs font-bold text-slate-500">
@@ -1058,6 +1182,161 @@ function EmptyState({ title, detail }) {
             <Check className="mx-auto h-8 w-8 text-emerald-500" />
             <p className="mt-3 text-sm font-black text-slate-800">{title}</p>
             <p className="mt-1 text-xs font-semibold text-slate-400">{detail}</p>
+        </div>
+    );
+}
+
+function CockpitOpportunityActionModal({ action, users, saving, onClose, onSubmit }) {
+    const { mode, item } = action;
+    const [form, setForm] = useState({
+        owner_user_id: item.owner_user_id ? String(item.owner_user_id) : '',
+        activity_type: 'appel',
+        subject: item.suggested_subject || `Relancer ${item.client_name}`,
+        note: item.reason || '',
+        due_at: defaultActionDate(),
+    });
+
+    useEffect(() => {
+        setForm({
+            owner_user_id: item.owner_user_id ? String(item.owner_user_id) : '',
+            activity_type: 'appel',
+            subject: item.suggested_subject || `Relancer ${item.client_name}`,
+            note: item.reason || '',
+            due_at: defaultActionDate(),
+        });
+    }, [item, mode]);
+
+    const submit = event => {
+        event.preventDefault();
+        if (mode === 'assign') {
+            const owner = users.find(user => String(user.id) === form.owner_user_id);
+            if (!owner) return;
+            onSubmit({
+                owner_user_id: form.owner_user_id,
+                owner_name: [owner.first_name, owner.last_name].filter(Boolean).join(' ') || owner.username,
+            });
+            return;
+        }
+        if (!form.subject.trim() || !form.due_at) return;
+        onSubmit(form);
+    };
+
+    const isValid = mode === 'assign'
+        ? Boolean(form.owner_user_id)
+        : Boolean(form.subject.trim() && form.due_at);
+
+    return (
+        <div className="fixed inset-0 z-[125] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm">
+            <form onSubmit={submit} className="w-full max-w-xl overflow-hidden bg-white shadow-2xl">
+                <header className="flex items-start justify-between gap-4 bg-slate-950 px-5 py-5 text-white">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-300">
+                            {item.reference || 'Action commerciale'}
+                        </p>
+                        <h3 className="mt-1 text-xl font-black">
+                            {mode === 'assign' ? 'Affecter le dossier' : 'Planifier la prochaine action'}
+                        </h3>
+                        <p className="mt-1 text-xs font-semibold text-slate-300">
+                            {item.client_name} · {item.title}
+                        </p>
+                    </div>
+                    <button type="button" onClick={onClose} title="Fermer" className="p-2 text-slate-300 hover:text-white">
+                        <X className="h-5 w-5" />
+                    </button>
+                </header>
+
+                <div className="space-y-4 p-5">
+                    {mode === 'assign' ? (
+                        <label className="block">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Responsable commercial</span>
+                            <select
+                                value={form.owner_user_id}
+                                onChange={event => setForm(current => ({ ...current, owner_user_id: event.target.value }))}
+                                autoFocus
+                                className="mt-2 w-full border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-500"
+                            >
+                                <option value="">Sélectionner un responsable</option>
+                                {users.map(user => (
+                                    <option key={user.id} value={user.id}>
+                                        {[user.first_name, user.last_name].filter(Boolean).join(' ') || user.username}
+                                    </option>
+                                ))}
+                            </select>
+                            <p className="mt-2 text-xs font-semibold text-slate-500">
+                                Les relances encore en attente seront transférées au même responsable.
+                            </p>
+                        </label>
+                    ) : (
+                        <>
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <label>
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Type d'action</span>
+                                    <select
+                                        value={form.activity_type}
+                                        onChange={event => setForm(current => ({ ...current, activity_type: event.target.value }))}
+                                        className="mt-2 w-full border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-500"
+                                    >
+                                        <option value="appel">Appel</option>
+                                        <option value="email">Email</option>
+                                        <option value="rendez_vous">Rendez-vous</option>
+                                        <option value="tache">Tâche</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Échéance</span>
+                                    <input
+                                        type="datetime-local"
+                                        value={form.due_at}
+                                        onChange={event => setForm(current => ({ ...current, due_at: event.target.value }))}
+                                        className="mt-2 w-full border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-500"
+                                    />
+                                </label>
+                            </div>
+                            <label className="block">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Action attendue</span>
+                                <input
+                                    value={form.subject}
+                                    onChange={event => setForm(current => ({ ...current, subject: event.target.value }))}
+                                    autoFocus
+                                    maxLength={255}
+                                    className="mt-2 w-full border border-slate-200 px-3 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-500"
+                                />
+                            </label>
+                            <label className="block">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Contexte utile</span>
+                                <textarea
+                                    value={form.note}
+                                    onChange={event => setForm(current => ({ ...current, note: event.target.value }))}
+                                    rows={3}
+                                    className="mt-2 w-full resize-none border border-slate-200 px-3 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500"
+                                />
+                            </label>
+                        </>
+                    )}
+                </div>
+
+                <footer className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-600"
+                    >
+                        Annuler
+                    </button>
+                    <button
+                        type="submit"
+                        disabled={saving || !isValid}
+                        className="inline-flex items-center gap-2 bg-blue-600 px-4 py-2.5 text-sm font-black text-white disabled:bg-slate-300"
+                    >
+                        {saving
+                            ? <RefreshCw className="h-4 w-4 animate-spin" />
+                            : mode === 'assign'
+                                ? <UserPlus className="h-4 w-4" />
+                                : <CalendarPlus className="h-4 w-4" />}
+                        {mode === 'assign' ? 'Affecter' : 'Planifier'}
+                    </button>
+                </footer>
+            </form>
         </div>
     );
 }

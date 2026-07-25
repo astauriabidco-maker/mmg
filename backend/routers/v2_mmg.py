@@ -1290,6 +1290,94 @@ def update_crm_opportunity(
     return opportunity
 
 
+@router.post(
+    "/crm/cockpit/opportunities/{opportunity_id}/assign-owner",
+    response_model=schemas.CRMOpportunityResponse,
+)
+def assign_crm_opportunity_owner(
+    opportunity_id: int,
+    item: schemas.CRMCockpitAssignOwnerRequest,
+    db: Session = Depends(get_db),
+):
+    opportunity = _get_opportunity_or_404(db, opportunity_id)
+    _validate_opportunity_links(
+        db,
+        opportunity.client_id,
+        opportunity.site_address_id,
+        item.owner_user_id,
+        opportunity.sale_order_id,
+    )
+    opportunity.owner_user_id = item.owner_user_id
+    (
+        db.query(models.CRMReminderPlan)
+        .filter(
+            models.CRMReminderPlan.opportunity_id == opportunity.id,
+            models.CRMReminderPlan.status == "PENDING",
+        )
+        .update(
+            {models.CRMReminderPlan.assigned_user_id: item.owner_user_id},
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    db.refresh(opportunity)
+    return opportunity
+
+
+@router.post(
+    "/crm/cockpit/opportunities/{opportunity_id}/schedule-action",
+    response_model=schemas.CRMActivityResponse,
+    status_code=201,
+)
+def schedule_crm_opportunity_action(
+    opportunity_id: int,
+    item: schemas.CRMCockpitScheduleActionRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    opportunity = _get_opportunity_or_404(db, opportunity_id)
+    if opportunity.stage in {
+        models.CRMOpportunityStage.WON.value,
+        models.CRMOpportunityStage.LOST.value,
+    }:
+        raise HTTPException(
+            409,
+            "Une opportunité gagnée ou perdue ne peut plus recevoir de prochaine action",
+        )
+
+    subject = item.subject.strip()
+    activity = models.CRMActivity(
+        client_id=opportunity.client_id,
+        opportunity_id=opportunity.id,
+        activity_type=item.activity_type.value,
+        subject=subject,
+        note=item.note.strip() if item.note else None,
+        due_at=item.due_at,
+        status=models.CRMActivityStatus.TODO.value,
+        author=current_user.get("sub", "Système"),
+    )
+    opportunity.next_milestone = subject
+    opportunity.next_milestone_at = item.due_at
+    if item.reminder_plan_id is not None:
+        reminder_plan = (
+            db.query(models.CRMReminderPlan)
+            .filter(
+                models.CRMReminderPlan.id == item.reminder_plan_id,
+                models.CRMReminderPlan.opportunity_id == opportunity.id,
+                models.CRMReminderPlan.status == "PENDING",
+            )
+            .first()
+        )
+        if not reminder_plan:
+            raise HTTPException(409, "La relance planifiée n'est plus disponible")
+        reminder_plan.status = "CANCELLED"
+        reminder_plan.cancelled_reason = "Convertie en action commerciale"
+    db.add(activity)
+    db.commit()
+    db.refresh(activity)
+    return activity
+
+
 @router.delete("/opportunities/{opportunity_id}", status_code=204)
 def delete_crm_opportunity(opportunity_id: int, db: Session = Depends(get_db)):
     opportunity = _get_opportunity_or_404(db, opportunity_id)

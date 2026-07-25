@@ -390,6 +390,18 @@ class CRMActivityCreate(BaseModel):
     status: CRMActivityStatus = CRMActivityStatus.TODO
 
 
+class CRMCockpitAssignOwnerRequest(BaseModel):
+    owner_user_id: int
+
+
+class CRMCockpitScheduleActionRequest(BaseModel):
+    activity_type: CRMActivityType = CRMActivityType.TASK
+    subject: str = Field(min_length=1, max_length=255)
+    note: Optional[str] = None
+    due_at: datetime
+    reminder_plan_id: Optional[int] = None
+
+
 class CRMActivityUpdate(BaseModel):
     opportunity_id: Optional[int] = None
     activity_type: Optional[CRMActivityType] = None
@@ -473,6 +485,7 @@ class CRMCockpitOpportunitySummary(BaseModel):
     reference: str
     client_id: int
     client_name: str
+    client_email: Optional[str] = None
     title: str
     stage: CRMOpportunityStage
     owner_user_id: Optional[int] = None

@@ -219,6 +219,7 @@ def build_crm_cockpit(
                 "reference": opportunity.reference,
                 "client_id": opportunity.client_id,
                 "client_name": _client_name(opportunity),
+                "client_email": _client_email(opportunity),
                 "title": opportunity.title,
                 "stage": opportunity.stage,
                 "owner_user_id": getattr(opportunity, "owner_user_id", None),

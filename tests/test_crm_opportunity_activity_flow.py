@@ -7,6 +7,8 @@ Expected endpoints:
 
 * ``/v2/mmg/opportunities``
 * ``/v2/mmg/opportunities/{opportunity_id}``
+* ``/v2/mmg/crm/cockpit/opportunities/{opportunity_id}/assign-owner``
+* ``/v2/mmg/crm/cockpit/opportunities/{opportunity_id}/schedule-action``
 * ``/v2/mmg/activities``
 * ``/v2/mmg/activities/{activity_id}``
 
@@ -447,6 +449,98 @@ def test_activity_rejects_client_opportunity_mismatch(crm_api):
     assert response.status_code == 400, response.text
     assert "client" in response.text.lower()
     assert "opportunit" in response.text.lower()
+
+
+def test_cockpit_schedules_action_and_updates_opportunity_milestone(crm_api):
+    client, headers, user_id = crm_api
+    crm_client = _create_client(client, headers, "Client Action Cockpit")
+    site = _create_site(client, headers, crm_client["id"])
+    opportunity = _create_opportunity(
+        client,
+        headers,
+        _opportunity_payload(crm_client["id"], site["id"], user_id),
+    )
+
+    response = client.post(
+        f"/v2/mmg/crm/cockpit/opportunities/{opportunity['id']}/schedule-action",
+        json={
+            "activity_type": "appel",
+            "subject": "Confirmer les contraintes d'accès",
+            "note": "Appeler le conducteur de travaux avant déplacement.",
+            "due_at": "2026-08-06T09:30:00Z",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    activity = response.json()
+    assert activity["opportunity_id"] == opportunity["id"]
+    assert activity["client_id"] == crm_client["id"]
+    assert activity["activity_type"] == "appel"
+    assert activity["status"] == "a_faire"
+
+    updated = client.get(
+        f"/v2/mmg/opportunities/{opportunity['id']}",
+        headers=headers,
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["next_milestone"] == "Confirmer les contraintes d'accès"
+    assert updated.json()["next_milestone_at"].startswith("2026-08-06T09:30:00")
+
+
+def test_cockpit_assigns_active_owner(crm_api):
+    client, headers, user_id = crm_api
+    crm_client = _create_client(client, headers, "Client Affectation Cockpit")
+    site = _create_site(client, headers, crm_client["id"])
+    opportunity = _create_opportunity(
+        client,
+        headers,
+        _opportunity_payload(
+            crm_client["id"],
+            site["id"],
+            None,
+        ),
+    )
+
+    response = client.post(
+        f"/v2/mmg/crm/cockpit/opportunities/{opportunity['id']}/assign-owner",
+        json={"owner_user_id": user_id},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["owner_user_id"] == user_id
+    assert response.json()["owner_name"] == "crm-contract-admin"
+
+
+def test_cockpit_rejects_scheduling_action_on_terminal_opportunity(crm_api):
+    client, headers, user_id = crm_api
+    crm_client = _create_client(client, headers, "Client Opportunité Gagnée")
+    site = _create_site(client, headers, crm_client["id"])
+    opportunity = _create_opportunity(
+        client,
+        headers,
+        _opportunity_payload(
+            crm_client["id"],
+            site["id"],
+            user_id,
+            stage="gagne",
+            sale_order_id=None,
+        ),
+    )
+
+    response = client.post(
+        f"/v2/mmg/crm/cockpit/opportunities/{opportunity['id']}/schedule-action",
+        json={
+            "activity_type": "tache",
+            "subject": "Action impossible",
+            "due_at": "2026-08-06T09:30:00Z",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 409, response.text
+    assert "gagnée ou perdue" in response.text
 
 
 def test_activity_rejects_reopening_completed_item(crm_api):
