@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional
+from pathlib import Path
 import os
 import base64
 import hashlib
@@ -13,7 +14,14 @@ from .. import models, schemas
 from ..core import security
 from ..core import uploads
 from ..services.document_sequences import next_number
+from ..services.technical_document_analysis import analyze_technical_document
+from ..services.technical_dossier_governance import (
+    build_document_matrix,
+    compare_material_versions,
+)
+from ..services.stock_reservations import preview_records
 from ..core.time import utcnow
+from scripts.import_workshop_debits import DebitRecord
 
 router = APIRouter(
     prefix="/v2/mmg",
@@ -192,6 +200,152 @@ def _validate_technical_coverage(
         )
 
 
+def _validate_production_document_analysis(
+    dossier: models.TechnicalDossier,
+) -> models.TechnicalDossierVersion:
+    fabrication = _latest_technical_version(
+        dossier,
+        schemas.TechnicalDocumentType.FABRICATION.value,
+    )
+    cutting = _latest_technical_version(
+        dossier,
+        schemas.TechnicalDocumentType.CUTTING.value,
+    )
+    if not fabrication or not cutting:
+        raise HTTPException(422, "Ajoutez les fichiers fabrication et débit")
+    if (
+        cutting.analysis_status not in {"PARSED", "PARSED_WITH_WARNINGS"}
+        or not cutting.parsed_records
+    ):
+        raise HTTPException(
+            422,
+            "Le fichier de débit n'est pas exploitable automatiquement. "
+            "Importez un SEPVER.TXT ou un Débit optimisé ORGADATA reconnu.",
+        )
+
+    fabrication_reference = (
+        fabrication.detected_project_reference or fabrication.source_reference
+    )
+    cutting_reference = cutting.detected_project_reference or cutting.source_reference
+    if (
+        fabrication_reference
+        and cutting_reference
+        and fabrication_reference != cutting_reference
+    ):
+        raise HTTPException(
+            409,
+            "La fiche de fabrication et le débit ne portent pas la même référence "
+            f"({fabrication_reference} / {cutting_reference}).",
+        )
+    return cutting
+
+
+def _records_from_technical_version(
+    version: models.TechnicalDossierVersion,
+) -> list[DebitRecord]:
+    records = []
+    for record in version.parsed_records or []:
+        records.append(
+            DebitRecord(
+                source=str(record.get("source") or version.original_filename),
+                row=record.get("row"),
+                supplier=str(record.get("supplier") or ""),
+                reference=str(record.get("reference") or ""),
+                designation=str(
+                    record.get("designation") or record.get("reference") or ""
+                ),
+                quantity=float(record.get("quantity") or 0),
+                unit=str(record.get("unit") or "unité"),
+                project_reference=record.get("project_reference"),
+                color=record.get("color"),
+                length_mm=record.get("length_mm"),
+                position=record.get("position"),
+            )
+        )
+    return records
+
+
+def _technical_stock_snapshot(
+    db: Session,
+    dossier: models.TechnicalDossier,
+) -> dict:
+    cutting = _latest_technical_version(
+        dossier,
+        schemas.TechnicalDocumentType.CUTTING.value,
+    )
+    if not cutting or not cutting.parsed_records:
+        return {
+            "ready": False,
+            "line_count": 0,
+            "ok_count": 0,
+            "unknown_count": 0,
+            "shortage_count": 0,
+            "matches": [],
+        }
+    matches = preview_records(
+        db,
+        _records_from_technical_version(cutting),
+        "WH/Stock",
+    )
+    return {
+        "ready": bool(matches) and all(match.status == "ok" for match in matches),
+        "line_count": len(matches),
+        "ok_count": sum(match.status == "ok" for match in matches),
+        "unknown_count": sum(match.status == "not_found" for match in matches),
+        "shortage_count": sum(match.status == "shortage" for match in matches),
+        "matches": [match.__dict__ for match in matches],
+    }
+
+
+def _technical_execution_context(
+    db: Session,
+    mission: models.MeasureMission,
+) -> dict:
+    reservation = None
+    preparation = None
+    production_orders = []
+    if mission.sale_order_id:
+        reservation = (
+            db.query(models.StockReservation)
+            .filter(
+                models.StockReservation.sale_order_id == mission.sale_order_id,
+                models.StockReservation.status == "reserved",
+                models.StockReservation.source_label.notin_(["devis libre", "devis_libre"]),
+            )
+            .order_by(models.StockReservation.created_at.desc())
+            .first()
+        )
+        if reservation:
+            preparation = (
+                db.query(models.WorkshopPreparation)
+                .filter(models.WorkshopPreparation.reservation_id == reservation.id)
+                .first()
+            )
+        production_orders = (
+            db.query(models.Order)
+            .filter(models.Order.sale_order_id == mission.sale_order_id)
+            .order_by(models.Order.id)
+            .all()
+        )
+    return {
+        "sale_order_id": mission.sale_order_id,
+        "reservation": {
+            "id": reservation.id,
+            "reference": reservation.reference,
+            "status": reservation.status,
+        } if reservation else None,
+        "preparation": {
+            "id": preparation.id,
+            "reference": preparation.reference,
+            "status": preparation.status,
+        } if preparation else None,
+        "production_orders": [
+            {"id": order.id, "reference": order.reference}
+            for order in production_orders
+        ],
+    }
+
+
 def _resolve_site(
     db: Session,
     client_id: int,
@@ -289,6 +443,8 @@ MISSION_TERMINAL_STATUSES = {
 }
 
 BE_REVIEW_ROLES = {"ADMIN", "MANAGER", "QUALITY_CONTROLLER", "WORKSHOP_LEAD"}
+STOCK_REVIEW_ROLES = {"ADMIN", "MANAGER", "CHEF_STOCK"}
+LAUNCH_REVIEW_ROLES = {"ADMIN", "MANAGER", "WORKSHOP_LEAD"}
 
 
 def _get_mission_or_404(db: Session, mission_id: int) -> models.MeasureMission:
@@ -1168,11 +1324,14 @@ async def upload_measure_technical_version(
         )
     status_field = "quoting_status" if is_quoting else "production_status"
     current_status = getattr(dossier, status_field)
-    if current_status not in {
+    editable_statuses = {
         schemas.TechnicalDossierStatus.DRAFT.value,
         schemas.TechnicalDossierStatus.CORRECTION_REQUIRED.value,
         schemas.TechnicalDossierStatus.LOCKED.value if not is_quoting else "",
-    }:
+    }
+    if not is_quoting and dossier.launched_at:
+        editable_statuses.add(schemas.TechnicalDossierStatus.VALIDATED.value)
+    if current_status not in editable_statuses:
         raise HTTPException(
             409,
             "Cette phase doit être en brouillon ou à corriger pour ajouter une version",
@@ -1219,12 +1378,79 @@ async def upload_measure_technical_version(
         os.remove(file_path)
         raise HTTPException(409, "Ce fichier est identique à la dernière version")
 
+    analysis = analyze_technical_document(
+        Path(file_path),
+        normalized_type,
+        normalized_source,
+        source_reference,
+    )
+    previous_same_type = _latest_technical_version(dossier, normalized_type)
+    comparison = (
+        compare_material_versions(
+            previous_same_type.parsed_records or [],
+            analysis.records,
+        )
+        if normalized_type == schemas.TechnicalDocumentType.CUTTING.value
+        and previous_same_type
+        else {}
+    )
+    revision_after_launch = bool(
+        normalized_type != schemas.TechnicalDocumentType.QUOTING.value
+        and dossier.launched_at
+    )
+    impact_status = (
+        "BLOCKING"
+        if revision_after_launch and comparison.get("has_changes")
+        else "REVIEW_REQUIRED"
+        if comparison.get("has_changes")
+        else "NO_CHANGE"
+        if previous_same_type
+        else "INITIAL"
+    )
+    revision_status = (
+        "PENDING"
+        if revision_after_launch and comparison.get("has_changes")
+        else "NOT_REQUIRED"
+    )
+    resolved_external_reference = (
+        (source_reference or "").strip()
+        or analysis.detected_project_reference
+        or None
+    )
+    if not is_quoting:
+        if not dossier.external_source_system:
+            dossier.external_source_system = normalized_source
+        if not dossier.external_project_reference and resolved_external_reference:
+            dossier.external_project_reference = resolved_external_reference
+        if (
+            dossier.external_project_reference
+            and resolved_external_reference
+            and dossier.external_project_reference != resolved_external_reference
+        ):
+            analysis.issues.append(
+                {
+                    "severity": "error",
+                    "code": "technical_dossier_reference_mismatch",
+                    "source": file.filename or "dossier-technique",
+                    "row": None,
+                    "reference": resolved_external_reference,
+                    "message": (
+                        f"Le dossier industriel attend la référence "
+                        f"{dossier.external_project_reference}, pas {resolved_external_reference}."
+                    ),
+                }
+            )
+            analysis.summary["issue_count"] = len(analysis.issues)
     version = models.TechnicalDossierVersion(
         dossier=dossier,
         version_number=len(dossier.versions) + 1,
         document_type=normalized_type,
         source_system=normalized_source,
-        source_reference=(source_reference or "").strip() or None,
+        source_reference=(
+            (source_reference or "").strip()
+            or analysis.detected_project_reference
+            or None
+        ),
         original_filename=file.filename or "dossier-technique",
         stored_filename=os.path.basename(file_path),
         content_type=file.content_type,
@@ -1233,6 +1459,19 @@ async def upload_measure_technical_version(
         checksum_sha256=checksum,
         opening_ids=sorted(set(parsed_opening_ids)),
         notes=(notes or "").strip() or None,
+        analysis_status=analysis.status,
+        detected_document_type=analysis.detected_document_type,
+        detected_source_system=analysis.detected_source_system,
+        detected_project_reference=analysis.detected_project_reference,
+        parsed_summary=analysis.summary,
+        parsed_records=analysis.records,
+        parsed_issues=analysis.issues,
+        analyzed_at=utcnow(),
+        previous_version_id=previous_same_type.id if previous_same_type else None,
+        comparison_summary=comparison,
+        impact_status=impact_status,
+        revision_after_launch=revision_after_launch,
+        revision_status=revision_status,
         created_by=current_user.get("sub", "Système"),
     )
     db.add(version)
@@ -1241,6 +1480,23 @@ async def upload_measure_technical_version(
     setattr(dossier, f"{prefix}_review_note", None)
     setattr(dossier, f"{prefix}_validated_at", None)
     setattr(dossier, f"{prefix}_validated_by", None)
+    if not is_quoting:
+        dossier.stock_status = schemas.TechnicalDossierStatus.LOCKED.value
+        dossier.stock_review_note = None
+        dossier.stock_validated_at = None
+        dossier.stock_validated_by = None
+        dossier.launch_status = (
+            schemas.TechnicalDossierStatus.CORRECTION_REQUIRED.value
+            if revision_after_launch
+            else schemas.TechnicalDossierStatus.LOCKED.value
+        )
+        dossier.launch_review_note = (
+            "Nouvelle version technique importée après lancement."
+            if revision_after_launch
+            else None
+        )
+        dossier.launch_validated_at = None
+        dossier.launch_validated_by = None
     db.commit()
     db.refresh(dossier)
     return dossier
@@ -1313,6 +1569,8 @@ def submit_measure_technical_dossier(
             label = "chiffrage" if is_quoting else required_type.lower()
             raise HTTPException(422, f"Ajoutez le fichier {label} PROGES/ORGADATA")
         _validate_technical_coverage(mission, latest.opening_ids or [])
+    if not is_quoting:
+        _validate_production_document_analysis(dossier)
     prefix = "quoting" if is_quoting else "production"
     setattr(dossier, status_field, schemas.TechnicalDossierStatus.TO_REVIEW.value)
     setattr(dossier, f"{prefix}_submitted_at", utcnow())
@@ -1366,10 +1624,173 @@ def review_measure_technical_dossier(
             if not latest:
                 raise HTTPException(422, f"Fichier {required_type.lower()} absent")
             _validate_technical_coverage(mission, latest.opening_ids or [])
+        cutting = None
+        if not is_quoting:
+            cutting = _validate_production_document_analysis(dossier)
         setattr(dossier, status_field, schemas.TechnicalDossierStatus.VALIDATED.value)
         setattr(dossier, f"{prefix}_review_note", note)
         setattr(dossier, f"{prefix}_validated_at", utcnow())
         setattr(dossier, f"{prefix}_validated_by", actor)
+        if cutting:
+            dossier.stock_status = schemas.TechnicalDossierStatus.TO_REVIEW.value
+            dossier.stock_review_note = None
+            dossier.stock_validated_at = None
+            dossier.stock_validated_by = None
+            dossier.launch_status = schemas.TechnicalDossierStatus.LOCKED.value
+            dossier.launch_review_note = None
+            dossier.launch_validated_at = None
+            dossier.launch_validated_by = None
+    db.commit()
+    db.refresh(dossier)
+    return dossier
+
+
+@router.get("/missions/{mission_id}/technical-dossier/governance")
+def get_measure_technical_governance(
+    mission_id: int,
+    db: Session = Depends(get_db),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    dossier = mission.technical_dossier
+    if not dossier:
+        raise HTTPException(404, "Dossier technique introuvable")
+    latest_cutting = _latest_technical_version(
+        dossier,
+        schemas.TechnicalDocumentType.CUTTING.value,
+    )
+    return {
+        "dossier_reference": dossier.reference,
+        "external_source_system": dossier.external_source_system,
+        "external_project_reference": dossier.external_project_reference,
+        "document_matrix": build_document_matrix(dossier.versions),
+        "stock": _technical_stock_snapshot(db, dossier),
+        "execution": _technical_execution_context(db, mission),
+        "gates": {
+            "be": dossier.production_status,
+            "stock": dossier.stock_status,
+            "launch": dossier.launch_status,
+        },
+        "latest_revision": {
+            "version_id": latest_cutting.id,
+            "version_number": latest_cutting.version_number,
+            "impact_status": latest_cutting.impact_status,
+            "revision_after_launch": latest_cutting.revision_after_launch,
+            "revision_status": latest_cutting.revision_status,
+            "comparison_summary": latest_cutting.comparison_summary or {},
+        } if latest_cutting else None,
+    }
+
+
+@router.patch(
+    "/missions/{mission_id}/technical-dossier/gate-review",
+    response_model=schemas.TechnicalDossierResponse,
+)
+def review_measure_technical_gate(
+    mission_id: int,
+    item: schemas.TechnicalGateReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    mission = _get_mission_or_404(db, mission_id)
+    dossier = mission.technical_dossier
+    if not dossier:
+        raise HTTPException(404, "Dossier technique introuvable")
+    roles = _current_roles(current_user)
+    actor = current_user.get("sub", "Système")
+    note = (item.note or "").strip() or None
+
+    if item.gate == schemas.TechnicalGate.STOCK:
+        if not (roles & STOCK_REVIEW_ROLES):
+            raise HTTPException(403, "La validation stock est réservée au chef stock")
+        if dossier.production_status != schemas.TechnicalDossierStatus.VALIDATED.value:
+            raise HTTPException(409, "Le BE doit valider fabrication et débit avant le stock")
+        if item.action == schemas.TechnicalDossierReviewAction.REQUEST_CORRECTION:
+            if not note:
+                raise HTTPException(422, "Précisez la correction stock attendue")
+            dossier.stock_status = schemas.TechnicalDossierStatus.CORRECTION_REQUIRED.value
+            dossier.stock_review_note = note
+            dossier.stock_validated_at = None
+            dossier.stock_validated_by = None
+        else:
+            matrix = build_document_matrix(dossier.versions)
+            if not matrix["complete"] or not matrix["reference_consistent"]:
+                raise HTTPException(409, "La matrice documentaire est incomplète ou incohérente")
+            cutting = _validate_production_document_analysis(dossier)
+            if cutting.revision_status == "PENDING":
+                raise HTTPException(409, "La révision post-lancement doit d'abord être approuvée")
+            stock = _technical_stock_snapshot(db, dossier)
+            if not stock["ready"]:
+                raise HTTPException(
+                    409,
+                    f"Stock non validable : {stock['unknown_count']} inconnue(s), "
+                    f"{stock['shortage_count']} manque(s).",
+                )
+            dossier.stock_status = schemas.TechnicalDossierStatus.VALIDATED.value
+            dossier.stock_review_note = note
+            dossier.stock_validated_at = utcnow()
+            dossier.stock_validated_by = actor
+            dossier.launch_status = schemas.TechnicalDossierStatus.TO_REVIEW.value
+            cutting.stock_data_approved_at = utcnow()
+            cutting.stock_data_approved_by = actor
+    else:
+        if not (roles & LAUNCH_REVIEW_ROLES):
+            raise HTTPException(403, "Le lancement est réservé au chef d'atelier")
+        if dossier.stock_status != schemas.TechnicalDossierStatus.VALIDATED.value:
+            raise HTTPException(409, "Le stock doit être validé avant le lancement atelier")
+        if item.action == schemas.TechnicalDossierReviewAction.REQUEST_CORRECTION:
+            if not note:
+                raise HTTPException(422, "Précisez le blocage atelier")
+            dossier.launch_status = schemas.TechnicalDossierStatus.CORRECTION_REQUIRED.value
+            dossier.launch_review_note = note
+            dossier.launch_validated_at = None
+            dossier.launch_validated_by = None
+        else:
+            execution = _technical_execution_context(db, mission)
+            if not execution["reservation"]:
+                raise HTTPException(409, "Créez la réservation atelier avant d'autoriser le lancement")
+            dossier.launch_status = schemas.TechnicalDossierStatus.VALIDATED.value
+            dossier.launch_review_note = note
+            dossier.launch_validated_at = utcnow()
+            dossier.launch_validated_by = actor
+
+    db.commit()
+    db.refresh(dossier)
+    return dossier
+
+
+@router.patch(
+    "/missions/{mission_id}/technical-dossier/versions/{version_id}/revision-review",
+    response_model=schemas.TechnicalDossierResponse,
+)
+def review_measure_technical_revision(
+    mission_id: int,
+    version_id: int,
+    item: schemas.TechnicalRevisionReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    if not (_current_roles(current_user) & BE_REVIEW_ROLES):
+        raise HTTPException(403, "La revue de révision est réservée au BE")
+    mission = _get_mission_or_404(db, mission_id)
+    dossier = mission.technical_dossier
+    if not dossier:
+        raise HTTPException(404, "Dossier technique introuvable")
+    version = next((value for value in dossier.versions if value.id == version_id), None)
+    if not version:
+        raise HTTPException(404, "Version technique introuvable")
+    if version.revision_status != "PENDING":
+        raise HTTPException(409, "Cette version n'attend pas de décision de révision")
+    note = (item.note or "").strip() or None
+    if item.action == schemas.TechnicalDossierReviewAction.REQUEST_CORRECTION and not note:
+        raise HTTPException(422, "Précisez la correction demandée")
+    version.revision_status = (
+        "APPROVED"
+        if item.action == schemas.TechnicalDossierReviewAction.VALIDATE
+        else "CORRECTION_REQUIRED"
+    )
+    version.revision_review_note = note
+    version.revision_reviewed_at = utcnow()
+    version.revision_reviewed_by = current_user.get("sub", "Système")
     db.commit()
     db.refresh(dossier)
     return dossier

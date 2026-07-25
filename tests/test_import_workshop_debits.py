@@ -3,6 +3,7 @@ from pathlib import Path
 from scripts.import_workshop_debits import (
     build_summary,
     consolidate_records,
+    detect_project_reference,
     parse_orgadata_optimized_pdf,
     parse_progers_txt,
 )
@@ -33,6 +34,7 @@ RAL 8017S Satiné (+25%);70305;EMBOUT DE FAITAGE;4;unité
     assert records[0].reference == "7007"
     assert records[0].quantity == 3
     assert records[0].length_mm == 6500
+    assert detect_project_reference(path.read_text(encoding="latin-1")) == "VER DIMASCIO"
 
 
 def test_parse_orgadata_optimized_pdf_text_extracts_bar_requirements(tmp_path):

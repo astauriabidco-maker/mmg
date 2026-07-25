@@ -89,6 +89,14 @@ const TECHNICAL_STATUS_META = {
     ARCHIVED: ['Archivé', 'border-slate-200 bg-slate-100 text-slate-500'],
 };
 
+const ANALYSIS_STATUS_META = {
+    PENDING: ['Analyse en attente', 'border-slate-200 bg-slate-50 text-slate-600'],
+    DOCUMENT_ONLY: ['Document consultable', 'border-blue-200 bg-blue-50 text-blue-700'],
+    PARSED: ['Données extraites', 'border-emerald-200 bg-emerald-50 text-emerald-700'],
+    PARSED_WITH_WARNINGS: ['Extrait avec alertes', 'border-amber-200 bg-amber-50 text-amber-800'],
+    FAILED: ['Analyse impossible', 'border-red-200 bg-red-50 text-red-700'],
+};
+
 const emptyOpening = {
     label: '',
     room: '',
@@ -208,6 +216,7 @@ export default function MeasureMissionPage() {
     const [users, setUsers] = useState([]);
     const [sites, setSites] = useState([]);
     const [mission, setMission] = useState(null);
+    const [technicalGovernance, setTechnicalGovernance] = useState(null);
     const [technicalForm, setTechnicalForm] = useState({
         source_system: 'PROGES',
         document_type: 'QUOTING',
@@ -244,6 +253,8 @@ export default function MeasureMissionPage() {
 
     const roles = new Set([user?.role, ...(user?.roles || [])].filter(Boolean));
     const canReview = [...roles].some(role => ['ADMIN', 'MANAGER', 'QUALITY_CONTROLLER', 'WORKSHOP_LEAD'].includes(role));
+    const canReviewStock = [...roles].some(role => ['ADMIN', 'MANAGER', 'CHEF_STOCK'].includes(role));
+    const canReviewLaunch = [...roles].some(role => ['ADMIN', 'MANAGER', 'WORKSHOP_LEAD'].includes(role));
     const selectedOpening = mission?.openings?.find(item => item.id === selectedOpeningId);
     const selectedOpeningDocuments = mission?.source_documents?.filter(
         document => document.opening_id === selectedOpeningId,
@@ -274,6 +285,16 @@ export default function MeasureMissionPage() {
                 } else {
                     const response = await api.get(`/v2/mmg/missions/${missionId}`);
                     setMission(response.data);
+                    if (response.data.technical_dossier) {
+                        try {
+                            const governanceResponse = await api.get(
+                                `/v2/mmg/missions/${missionId}/technical-dossier/governance`,
+                            );
+                            setTechnicalGovernance(governanceResponse.data);
+                        } catch {
+                            setTechnicalGovernance(null);
+                        }
+                    }
                     setPlanForm(current => ({
                         ...current,
                         client_id: response.data.client_id,
@@ -601,8 +622,21 @@ export default function MeasureMissionPage() {
         }
     };
 
+    const refreshTechnicalGovernance = async () => {
+        if (!missionId) return;
+        try {
+            const response = await api.get(
+                `/v2/mmg/missions/${missionId}/technical-dossier/governance`,
+            );
+            setTechnicalGovernance(response.data);
+        } catch {
+            setTechnicalGovernance(null);
+        }
+    };
+
     const updateTechnicalDossier = dossier => {
         setMission(current => ({ ...current, technical_dossier: dossier }));
+        refreshTechnicalGovernance();
     };
 
     const uploadTechnicalVersion = async event => {
@@ -697,6 +731,53 @@ export default function MeasureMissionPage() {
         }
     };
 
+    const reviewTechnicalGate = async (gate, action) => {
+        const needsNote = action === 'REQUEST_CORRECTION';
+        const note = technicalReviewNote.trim();
+        if (needsNote && !note) {
+            setError('Précisez la correction ou le blocage avant de poursuivre.');
+            return;
+        }
+        setSaving(true);
+        setError('');
+        try {
+            const response = await api.patch(
+                `/v2/mmg/missions/${missionId}/technical-dossier/gate-review`,
+                { gate, action, note: note || null },
+            );
+            updateTechnicalDossier(response.data);
+            setTechnicalReviewNote('');
+        } catch (requestError) {
+            setError(apiError(requestError));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const reviewTechnicalRevision = async action => {
+        const revision = technicalGovernance?.latest_revision;
+        if (!revision) return;
+        const note = technicalReviewNote.trim();
+        if (action === 'REQUEST_CORRECTION' && !note) {
+            setError('Précisez la correction demandée sur cette révision.');
+            return;
+        }
+        setSaving(true);
+        setError('');
+        try {
+            const response = await api.patch(
+                `/v2/mmg/missions/${missionId}/technical-dossier/versions/${revision.version_id}/revision-review`,
+                { action, note: note || null },
+            );
+            updateTechnicalDossier(response.data);
+            setTechnicalReviewNote('');
+        } catch (requestError) {
+            setError(apiError(requestError));
+        } finally {
+            setSaving(false);
+        }
+    };
+
     const downloadTechnicalVersion = async version => {
         try {
             const response = await api.get(
@@ -726,8 +807,11 @@ export default function MeasureMissionPage() {
     const phaseVersions = (mission?.technical_dossier?.versions || []).filter(version => (
         technicalPhase === 'quoting'
             ? version.document_type === 'QUOTING'
-            : ['FABRICATION', 'CUTTING'].includes(version.document_type)
+            : ['FABRICATION', 'CUTTING', 'VALUATION'].includes(version.document_type)
     ));
+    const latestCuttingVersion = [...(mission?.technical_dossier?.versions || [])]
+        .reverse()
+        .find(version => version.document_type === 'CUTTING');
 
     if (loading || (!isNew && !mission)) {
         return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>;
@@ -1045,8 +1129,9 @@ export default function MeasureMissionPage() {
                                         <div className="grid w-full gap-2 sm:grid-cols-2 xl:w-[560px]">
                                             {technicalPhase === 'production' && (
                                                 <select value={technicalForm.document_type} onChange={event => setTechnicalForm(current => ({ ...current, document_type: event.target.value }))} className={`${inputClass} sm:col-span-2`}>
-                                                    <option value="FABRICATION">Fiche de fabrication</option>
-                                                    <option value="CUTTING">Fichier de débit</option>
+                                                    <option value="FABRICATION">Fiche de fabrication PDF</option>
+                                                    <option value="CUTTING">Débit matière TXT / PDF optimisé</option>
+                                                    <option value="VALUATION">Valorisation matière PDF</option>
                                                 </select>
                                             )}
                                             <select
@@ -1094,22 +1179,194 @@ export default function MeasureMissionPage() {
                                     )}
                                 </div>
 
+                                {technicalPhase === 'production' && technicalGovernance && (
+                                    <div className="mt-5 border-y border-indigo-200 bg-white">
+                                        <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+                                            <div className="border-b border-indigo-100 p-4 md:p-5 lg:border-b-0 lg:border-r">
+                                                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                                    <div>
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-indigo-600">Dossier industriel unique</p>
+                                                        <h3 className="mt-1 text-lg font-black text-slate-950">
+                                                            {technicalGovernance.external_project_reference || technicalGovernance.dossier_reference}
+                                                        </h3>
+                                                        <p className="mt-1 text-xs font-bold text-slate-500">
+                                                            {technicalGovernance.external_source_system || 'Source à confirmer'}
+                                                            {' · '}
+                                                            {technicalGovernance.dossier_reference}
+                                                        </p>
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {(technicalGovernance.document_matrix?.documents || []).map(document => (
+                                                            <span
+                                                                key={document.document_type}
+                                                                className={`border px-2 py-1 text-[9px] font-black uppercase ${
+                                                                    document.present
+                                                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                                        : document.required
+                                                                        ? 'border-red-200 bg-red-50 text-red-700'
+                                                                        : 'border-slate-200 bg-slate-50 text-slate-500'
+                                                                }`}
+                                                            >
+                                                                {document.document_type} {document.present ? `V${document.version_number}` : document.required ? 'manquant' : 'optionnel'}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div className="mt-5 grid gap-2 sm:grid-cols-3">
+                                                    {[
+                                                        ['1', 'Contrôle BE', technicalGovernance.gates?.be, mission.technical_dossier.production_validated_by],
+                                                        ['2', 'Validation stock', technicalGovernance.gates?.stock, mission.technical_dossier.stock_validated_by],
+                                                        ['3', 'Autorisation atelier', technicalGovernance.gates?.launch, mission.technical_dossier.launch_validated_by],
+                                                    ].map(([number, label, status, actor]) => (
+                                                        <div key={label} className={`border px-3 py-3 ${
+                                                            status === 'VALIDATED'
+                                                                ? 'border-emerald-200 bg-emerald-50'
+                                                                : status === 'CORRECTION_REQUIRED'
+                                                                ? 'border-red-200 bg-red-50'
+                                                                : status === 'TO_REVIEW'
+                                                                ? 'border-orange-200 bg-orange-50'
+                                                                : 'border-slate-200 bg-slate-50'
+                                                        }`}>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-[10px] font-black text-white">{number}</span>
+                                                                <p className="text-xs font-black text-slate-900">{label}</p>
+                                                            </div>
+                                                            <p className="mt-2 text-[10px] font-black uppercase text-slate-500">
+                                                                {{
+                                                                    VALIDATED: 'Validé',
+                                                                    TO_REVIEW: 'À contrôler',
+                                                                    CORRECTION_REQUIRED: 'Bloqué',
+                                                                    LOCKED: 'Verrouillé',
+                                                                    DRAFT: 'À compléter',
+                                                                }[status] || status || 'Verrouillé'}
+                                                            </p>
+                                                            {actor && <p className="mt-1 truncate text-[10px] font-bold text-slate-500">{actor}</p>}
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                <div className="mt-4 flex flex-wrap gap-2">
+                                                    {mission.technical_dossier.production_status === 'VALIDATED' && ['TO_REVIEW', 'CORRECTION_REQUIRED'].includes(mission.technical_dossier.stock_status) && canReviewStock && (
+                                                        <>
+                                                            <button onClick={() => reviewTechnicalGate('STOCK', 'VALIDATE')} disabled={saving} className="rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-black text-white">
+                                                                Valider les données stock
+                                                            </button>
+                                                            <button onClick={() => reviewTechnicalGate('STOCK', 'REQUEST_CORRECTION')} disabled={saving} className="rounded-lg border border-red-200 px-4 py-2.5 text-xs font-black text-red-700">
+                                                                Bloquer côté stock
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                    {mission.technical_dossier.stock_status === 'VALIDATED' && ['TO_REVIEW', 'CORRECTION_REQUIRED'].includes(mission.technical_dossier.launch_status) && canReviewLaunch && (
+                                                        <>
+                                                            <button onClick={() => reviewTechnicalGate('LAUNCH', 'VALIDATE')} disabled={saving} className="rounded-lg bg-slate-950 px-4 py-2.5 text-xs font-black text-white">
+                                                                Autoriser le lancement atelier
+                                                            </button>
+                                                            <button onClick={() => reviewTechnicalGate('LAUNCH', 'REQUEST_CORRECTION')} disabled={saving} className="rounded-lg border border-red-200 px-4 py-2.5 text-xs font-black text-red-700">
+                                                                Bloquer le lancement
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="p-4 md:p-5">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Exécution matière</p>
+                                                <div className="mt-3 grid grid-cols-3 gap-2">
+                                                    {[
+                                                        ['OK', technicalGovernance.stock?.ok_count || 0, 'text-emerald-700'],
+                                                        ['Inconnues', technicalGovernance.stock?.unknown_count || 0, 'text-red-700'],
+                                                        ['Manques', technicalGovernance.stock?.shortage_count || 0, 'text-orange-700'],
+                                                    ].map(([label, value, color]) => (
+                                                        <div key={label} className="border border-slate-200 bg-slate-50 px-3 py-3">
+                                                            <p className="text-[9px] font-black uppercase text-slate-400">{label}</p>
+                                                            <p className={`mt-1 text-xl font-black ${color}`}>{value}</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <dl className="mt-4 space-y-2 text-xs">
+                                                    <div className="flex justify-between gap-4 border-b border-slate-100 pb-2">
+                                                        <dt className="font-bold text-slate-500">Réservation</dt>
+                                                        <dd className="text-right font-black text-slate-800">{technicalGovernance.execution?.reservation?.reference || 'À créer'}</dd>
+                                                    </div>
+                                                    <div className="flex justify-between gap-4 border-b border-slate-100 pb-2">
+                                                        <dt className="font-bold text-slate-500">Bon préparation</dt>
+                                                        <dd className="text-right font-black text-slate-800">
+                                                            {technicalGovernance.execution?.preparation
+                                                                ? `${technicalGovernance.execution.preparation.reference} · ${technicalGovernance.execution.preparation.status}`
+                                                                : 'À créer après réservation'}
+                                                        </dd>
+                                                    </div>
+                                                    <div className="flex justify-between gap-4">
+                                                        <dt className="font-bold text-slate-500">Ordres atelier</dt>
+                                                        <dd className="text-right font-black text-slate-800">{technicalGovernance.execution?.production_orders?.length || 0}</dd>
+                                                    </div>
+                                                </dl>
+                                                <textarea
+                                                    value={technicalReviewNote}
+                                                    onChange={event => setTechnicalReviewNote(event.target.value)}
+                                                    rows={2}
+                                                    placeholder="Note de validation ou motif de blocage"
+                                                    className={`${inputClass} mt-4 resize-none`}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {technicalGovernance.latest_revision?.comparison_summary?.has_changes && (
+                                            <div className={`border-t px-4 py-4 md:px-5 ${
+                                                technicalGovernance.latest_revision.impact_status === 'BLOCKING'
+                                                    ? 'border-red-200 bg-red-50'
+                                                    : 'border-amber-200 bg-amber-50'
+                                            }`}>
+                                                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                                    <div>
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-red-700">Impact de révision V{technicalGovernance.latest_revision.version_number}</p>
+                                                        <p className="mt-1 text-sm font-black text-slate-900">
+                                                            {technicalGovernance.latest_revision.comparison_summary.added_count} ajout(s),
+                                                            {' '}{technicalGovernance.latest_revision.comparison_summary.removed_count} retrait(s),
+                                                            {' '}{technicalGovernance.latest_revision.comparison_summary.changed_count} quantité(s) modifiée(s)
+                                                        </p>
+                                                        <p className="mt-1 text-xs font-bold text-slate-600">
+                                                            Delta matière : {technicalGovernance.latest_revision.comparison_summary.quantity_delta > 0 ? '+' : ''}
+                                                            {technicalGovernance.latest_revision.comparison_summary.quantity_delta}
+                                                        </p>
+                                                    </div>
+                                                    {technicalGovernance.latest_revision.revision_status === 'PENDING' && canReview && (
+                                                        <div className="flex gap-2">
+                                                            <button onClick={() => reviewTechnicalRevision('REQUEST_CORRECTION')} disabled={saving} className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-black text-red-700">Refuser</button>
+                                                            <button onClick={() => reviewTechnicalRevision('VALIDATE')} disabled={saving} className="rounded-lg bg-red-700 px-3 py-2 text-xs font-black text-white">Accepter la révision</button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
                                 <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
                                     <div className="overflow-hidden border border-indigo-200 bg-white">
-                                        <div className="grid grid-cols-[70px_110px_minmax(0,1fr)_110px] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[10px] font-black uppercase text-slate-400">
-                                            <span>Version</span><span>Source</span><span>Fichier</span><span>Ouvrages</span>
+                                        <div className="hidden grid-cols-[70px_100px_minmax(0,1fr)_150px_80px] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[10px] font-black uppercase text-slate-400 md:grid">
+                                            <span>Version</span><span>Source</span><span>Fichier</span><span>Analyse</span><span>Ouvrages</span>
                                         </div>
                                         {[...phaseVersions].reverse().map(version => (
                                             <button
                                                 key={version.id}
                                                 onClick={() => downloadTechnicalVersion(version)}
-                                                className="grid w-full grid-cols-[70px_110px_minmax(0,1fr)_110px] gap-3 border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-indigo-50"
+                                                className="grid w-full gap-2 border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-indigo-50 md:grid-cols-[70px_100px_minmax(0,1fr)_150px_80px] md:items-center md:gap-3"
                                             >
                                                 <span className="text-sm font-black text-indigo-700">V{version.version_number}<span className="block text-[9px] text-slate-400">{version.document_type}</span></span>
                                                 <span className="text-xs font-black text-slate-700">{version.source_system}</span>
                                                 <span className="min-w-0">
                                                     <span className="block truncate text-xs font-black text-slate-800">{version.original_filename}</span>
                                                     <span className="block truncate text-[10px] font-bold text-slate-400">{version.checksum_sha256.slice(0, 12)} · {formatDate(version.created_at)}</span>
+                                                </span>
+                                                <span>
+                                                    <span className={`inline-flex border px-2 py-1 text-[9px] font-black uppercase ${ANALYSIS_STATUS_META[version.analysis_status]?.[1] || ANALYSIS_STATUS_META.PENDING[1]}`}>
+                                                        {ANALYSIS_STATUS_META[version.analysis_status]?.[0] || version.analysis_status || 'En attente'}
+                                                    </span>
+                                                    {version.detected_project_reference && (
+                                                        <span className="mt-1 block truncate text-[10px] font-black text-slate-500">{version.detected_project_reference}</span>
+                                                    )}
                                                 </span>
                                                 <span className="text-xs font-black text-slate-600">{version.opening_ids.length}/{openingCount}</span>
                                             </button>
@@ -1161,6 +1418,91 @@ export default function MeasureMissionPage() {
                                         )}
                                     </div>
                                 </div>
+
+                                {technicalPhase === 'production' && latestCuttingVersion && (
+                                    <div className="mt-5 border border-slate-200 bg-white p-4 md:p-5">
+                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contrôle des données matière</p>
+                                                <h3 className="mt-1 text-base font-black text-slate-950">Dernier débit analysé · V{latestCuttingVersion.version_number}</h3>
+                                                <p className="mt-1 text-xs font-bold text-slate-500">
+                                                    {latestCuttingVersion.detected_project_reference || 'Référence dossier non détectée'}
+                                                    {' · '}
+                                                    {latestCuttingVersion.detected_source_system || latestCuttingVersion.source_system}
+                                                </p>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                <span className={`border px-2 py-1 text-[10px] font-black uppercase ${ANALYSIS_STATUS_META[latestCuttingVersion.analysis_status]?.[1] || ANALYSIS_STATUS_META.PENDING[1]}`}>
+                                                    {ANALYSIS_STATUS_META[latestCuttingVersion.analysis_status]?.[0] || latestCuttingVersion.analysis_status || 'En attente'}
+                                                </span>
+                                                {latestCuttingVersion.stock_data_approved_at && (
+                                                    <span className="border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase text-emerald-700">
+                                                        Données stock validées
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {latestCuttingVersion.parsed_summary && (
+                                            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                                                {[
+                                                    ['Lignes matière', latestCuttingVersion.parsed_summary.total_lines ?? latestCuttingVersion.parsed_summary.records ?? 0],
+                                                    ['Quantité totale', latestCuttingVersion.parsed_summary.total_quantity ?? 0],
+                                                    ['Références', latestCuttingVersion.parsed_summary.unique_references ?? latestCuttingVersion.parsed_records?.length ?? 0],
+                                                    ['Alertes', latestCuttingVersion.parsed_issues?.length ?? 0],
+                                                ].map(([label, value]) => (
+                                                    <div key={label} className="border border-slate-200 bg-slate-50 px-3 py-3">
+                                                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">{label}</p>
+                                                        <p className="mt-1 text-lg font-black text-slate-900">{value}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {!!latestCuttingVersion.parsed_issues?.length && (
+                                            <div className="mt-4 border border-amber-200 bg-amber-50 px-4 py-3">
+                                                <p className="text-xs font-black text-amber-900">Points à contrôler avant validation BE</p>
+                                                <ul className="mt-2 space-y-1 text-xs font-semibold text-amber-800">
+                                                    {latestCuttingVersion.parsed_issues.slice(0, 5).map((issue, index) => (
+                                                        <li key={`${issue.code || 'issue'}-${index}`}>• {issue.message || issue.detail || String(issue)}</li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+
+                                        {!!latestCuttingVersion.parsed_records?.length && (
+                                            <div className="mt-4 overflow-x-auto border border-slate-200">
+                                                <table className="w-full min-w-[680px] text-left text-xs">
+                                                    <thead className="bg-slate-50 text-[9px] font-black uppercase tracking-wider text-slate-400">
+                                                        <tr>
+                                                            <th className="px-3 py-2">Référence</th>
+                                                            <th className="px-3 py-2">Fournisseur</th>
+                                                            <th className="px-3 py-2">Quantité</th>
+                                                            <th className="px-3 py-2">Unité</th>
+                                                            <th className="px-3 py-2">Longueur</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {latestCuttingVersion.parsed_records.slice(0, 12).map((record, index) => (
+                                                            <tr key={`${record.reference || 'record'}-${index}`} className="border-t border-slate-100">
+                                                                <td className="px-3 py-2 font-black text-slate-800">{record.reference || '—'}</td>
+                                                                <td className="px-3 py-2 font-bold text-slate-600">{record.supplier || '—'}</td>
+                                                                <td className="px-3 py-2 font-black text-slate-800">{record.quantity ?? '—'}</td>
+                                                                <td className="px-3 py-2 font-bold text-slate-600">{record.unit || '—'}</td>
+                                                                <td className="px-3 py-2 font-bold text-slate-600">{record.length_mm ? `${record.length_mm} mm` : '—'}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                                {latestCuttingVersion.parsed_records.length > 12 && (
+                                                    <p className="border-t border-slate-100 px-3 py-2 text-[10px] font-bold text-slate-500">
+                                                        {latestCuttingVersion.parsed_records.length - 12} ligne(s) supplémentaire(s) conservée(s) dans cette version.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </section>
                         )}
 

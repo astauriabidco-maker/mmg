@@ -138,6 +138,12 @@ def detect_project_reference(text: str) -> str | None:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             return clean_text(match.group(1))
+    lines = [clean_text(line) for line in text.splitlines()]
+    for index, line in enumerate(lines):
+        if re.fullmatch(r"\d{2}[-/]\d{2}[-/]\d{4}", line) and index:
+            for candidate in reversed(lines[:index]):
+                if candidate and "GAMME" not in candidate.upper():
+                    return candidate
     return None
 
 
@@ -206,7 +212,10 @@ def parse_progers_txt(path: Path, text: str) -> tuple[list[DebitRecord], list[De
     return records, issues
 
 
-ORGADATA_SECTION_RE = re.compile(r"^\s*(Cortizo)\s+([A-Za-z0-9./_-]+)\s+(.+?)\s*$", re.IGNORECASE)
+ORGADATA_SECTION_RE = re.compile(
+    r"^\s*(Cortizo|Technal|Hydro|Sepalumic)\s+([A-Za-z0-9./_-]+)\s+(.+?)\s*$",
+    re.IGNORECASE,
+)
 ORGADATA_BAR_RE = re.compile(r"^\s*([0-9]+)\s+Pce\s+[àaá]\s+([0-9 ]+(?:[,.][0-9]+)?)\s*mm", re.IGNORECASE)
 
 

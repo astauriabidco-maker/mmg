@@ -504,6 +504,7 @@ class TechnicalDocumentType(str, enum.Enum):
     QUOTING = "QUOTING"
     FABRICATION = "FABRICATION"
     CUTTING = "CUTTING"
+    VALUATION = "VALUATION"
 
 class TechnicalSourceSystem(str, enum.Enum):
     PROGES = "PROGES"
@@ -524,6 +525,24 @@ class TechnicalDossierVersionResponse(BaseModel):
     checksum_sha256: str
     opening_ids: List[int] = Field(default_factory=list)
     notes: Optional[str] = None
+    analysis_status: str = "PENDING"
+    detected_document_type: Optional[str] = None
+    detected_source_system: Optional[str] = None
+    detected_project_reference: Optional[str] = None
+    parsed_summary: dict = Field(default_factory=dict)
+    parsed_records: List[dict] = Field(default_factory=list)
+    parsed_issues: List[dict] = Field(default_factory=list)
+    analyzed_at: Optional[datetime] = None
+    stock_data_approved_at: Optional[datetime] = None
+    stock_data_approved_by: Optional[str] = None
+    previous_version_id: Optional[int] = None
+    comparison_summary: dict = Field(default_factory=dict)
+    impact_status: str = "INITIAL"
+    revision_after_launch: bool = False
+    revision_status: str = "NOT_REQUIRED"
+    revision_review_note: Optional[str] = None
+    revision_reviewed_at: Optional[datetime] = None
+    revision_reviewed_by: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
@@ -534,6 +553,18 @@ class TechnicalDossierResponse(BaseModel):
     mission_id: int
     quoting_status: TechnicalDossierStatus
     production_status: TechnicalDossierStatus
+    external_source_system: Optional[str] = None
+    external_project_reference: Optional[str] = None
+    stock_status: TechnicalDossierStatus = TechnicalDossierStatus.LOCKED
+    stock_review_note: Optional[str] = None
+    stock_validated_at: Optional[datetime] = None
+    stock_validated_by: Optional[str] = None
+    launch_status: TechnicalDossierStatus = TechnicalDossierStatus.LOCKED
+    launch_review_note: Optional[str] = None
+    launch_validated_at: Optional[datetime] = None
+    launch_validated_by: Optional[str] = None
+    launched_at: Optional[datetime] = None
+    launched_by: Optional[str] = None
     quoting_review_note: Optional[str] = None
     production_review_note: Optional[str] = None
     quoting_submitted_at: Optional[datetime] = None
@@ -556,6 +587,22 @@ class TechnicalDossierReviewAction(str, enum.Enum):
 
 class TechnicalDossierReviewRequest(BaseModel):
     phase: TechnicalDocumentType
+    action: TechnicalDossierReviewAction
+    note: Optional[str] = None
+
+
+class TechnicalGate(str, enum.Enum):
+    STOCK = "STOCK"
+    LAUNCH = "LAUNCH"
+
+
+class TechnicalGateReviewRequest(BaseModel):
+    gate: TechnicalGate
+    action: TechnicalDossierReviewAction
+    note: Optional[str] = None
+
+
+class TechnicalRevisionReviewRequest(BaseModel):
     action: TechnicalDossierReviewAction
     note: Optional[str] = None
 

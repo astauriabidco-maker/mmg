@@ -985,6 +985,18 @@ class TechnicalDossier(Base):
     )
     quoting_status = Column(String, default="DRAFT", nullable=False, index=True)
     production_status = Column(String, default="LOCKED", nullable=False, index=True)
+    external_source_system = Column(String, nullable=True, index=True)
+    external_project_reference = Column(String, nullable=True, index=True)
+    stock_status = Column(String, default="LOCKED", nullable=False, index=True)
+    stock_review_note = Column(Text, nullable=True)
+    stock_validated_at = Column(DateTime, nullable=True)
+    stock_validated_by = Column(String, nullable=True)
+    launch_status = Column(String, default="LOCKED", nullable=False, index=True)
+    launch_review_note = Column(Text, nullable=True)
+    launch_validated_at = Column(DateTime, nullable=True)
+    launch_validated_by = Column(String, nullable=True)
+    launched_at = Column(DateTime, nullable=True)
+    launched_by = Column(String, nullable=True)
     quoting_review_note = Column(Text, nullable=True)
     production_review_note = Column(Text, nullable=True)
     quoting_submitted_at = Column(DateTime, nullable=True)
@@ -1037,10 +1049,38 @@ class TechnicalDossierVersion(Base):
     checksum_sha256 = Column(String, nullable=False, index=True)
     opening_ids = Column(JSON, nullable=False, default=list)
     notes = Column(Text, nullable=True)
+    analysis_status = Column(String, nullable=False, default="PENDING", index=True)
+    detected_document_type = Column(String, nullable=True)
+    detected_source_system = Column(String, nullable=True)
+    detected_project_reference = Column(String, nullable=True, index=True)
+    parsed_summary = Column(JSON, nullable=False, default=dict)
+    parsed_records = Column(JSON, nullable=False, default=list)
+    parsed_issues = Column(JSON, nullable=False, default=list)
+    analyzed_at = Column(DateTime, nullable=True)
+    stock_data_approved_at = Column(DateTime, nullable=True)
+    stock_data_approved_by = Column(String, nullable=True)
+    previous_version_id = Column(
+        Integer,
+        ForeignKey("technical_dossier_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    comparison_summary = Column(JSON, nullable=False, default=dict)
+    impact_status = Column(String, nullable=False, default="INITIAL", index=True)
+    revision_after_launch = Column(Boolean, nullable=False, default=False)
+    revision_status = Column(String, nullable=False, default="NOT_REQUIRED", index=True)
+    revision_review_note = Column(Text, nullable=True)
+    revision_reviewed_at = Column(DateTime, nullable=True)
+    revision_reviewed_by = Column(String, nullable=True)
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=utcnow, nullable=False)
 
     dossier = relationship("TechnicalDossier", back_populates="versions")
+    previous_version = relationship(
+        "TechnicalDossierVersion",
+        remote_side=[id],
+        foreign_keys=[previous_version_id],
+    )
 
 # --- FOURNISSEURS (SUPPLIERS) ---
 class Supplier(Base):

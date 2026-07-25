@@ -851,12 +851,35 @@ async def reserve_sale_workshop_preparation(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    if current_user.get("role") not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut préparer un débit atelier depuis un devis.")
+    user_roles = set(current_user.get("roles") or [])
+    if current_user.get("role"):
+        user_roles.add(current_user["role"])
+    if not (user_roles & {"ADMIN", "MANAGER", "CHEF_STOCK"}):
+        raise HTTPException(
+            status_code=403,
+            detail="La réservation atelier est réservée au manager ou au chef stock.",
+        )
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
     _ensure_sale_can_prepare_workshop(sale, db, allowed_statuses={"IN_DESIGN", "VALIDATED"})
+    technical_dossier = (
+        db.query(models.TechnicalDossier)
+        .join(
+            models.MeasureMission,
+            models.MeasureMission.id == models.TechnicalDossier.mission_id,
+        )
+        .filter(models.MeasureMission.sale_order_id == sale.id)
+        .first()
+    )
+    if technical_dossier and technical_dossier.stock_status != "VALIDATED":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "La réservation atelier est verrouillée jusqu'à la validation "
+                "des données matière par le chef stock."
+            ),
+        )
 
     records, issues, source_names = await _parse_workshop_uploads(files)
     blocking_errors = [issue for issue in issues if issue.severity == "error"]
@@ -1389,7 +1412,11 @@ def return_free_sale_delivery(
 
 
 @router.post("/{order_id}/launch-production", dependencies=AUTH_DEPENDENCIES)
-def launch_production(order_id: int, db: Session = Depends(get_db)):
+def launch_production(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == order_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Devis introuvable.")
@@ -1399,6 +1426,23 @@ def launch_production(order_id: int, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=400,
             detail="Transmettre à l'atelier nécessite une préparation atelier avec stock réservé.",
+        )
+    technical_dossier = (
+        db.query(models.TechnicalDossier)
+        .join(
+            models.MeasureMission,
+            models.MeasureMission.id == models.TechnicalDossier.mission_id,
+        )
+        .filter(models.MeasureMission.sale_order_id == sale.id)
+        .first()
+    )
+    if technical_dossier and technical_dossier.launch_status != "VALIDATED":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Le dossier industriel doit être validé successivement par le BE, "
+                "le stock et le chef d'atelier avant le lancement."
+            ),
         )
 
     existing_orders = (
@@ -1412,6 +1456,9 @@ def launch_production(order_id: int, db: Session = Depends(get_db)):
             _ensure_first_planning_step(db, order)
         linked_reservations = _link_active_reservations_to_order(db, sale.id, existing_orders[0])
         sale.status = "IN_PRODUCTION"
+        if technical_dossier and not technical_dossier.launched_at:
+            technical_dossier.launched_at = utcnow()
+            technical_dossier.launched_by = current_user.get("sub", "Système")
         db.commit()
         return {
             "message": "Dossier déjà transmis à l'atelier.",
@@ -1464,6 +1511,9 @@ def launch_production(order_id: int, db: Session = Depends(get_db)):
         linked_reservations = _link_active_reservations_to_order(db, sale.id, created_orders[0])
 
     sale.status = "IN_PRODUCTION"
+    if technical_dossier:
+        technical_dossier.launched_at = utcnow()
+        technical_dossier.launched_by = current_user.get("sub", "Système")
     db.commit()
     return {
         "message": "Dossier lancé en production avec succès.",
