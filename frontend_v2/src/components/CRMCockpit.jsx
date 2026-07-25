@@ -3,14 +3,19 @@ import { useQuery } from '@tanstack/react-query';
 import {
     AlertTriangle,
     ArrowRight,
+    BellRing,
     CalendarClock,
     Check,
     ClipboardList,
     Clock3,
+    History,
+    Mail,
     RefreshCw,
+    Send,
     Target,
     TrendingUp,
     UserRound,
+    X,
 } from 'lucide-react';
 import api from '../services/api';
 
@@ -29,6 +34,20 @@ const SEVERITY_STYLES = {
     HIGH: 'border-orange-500 bg-orange-50 text-orange-950',
     MEDIUM: 'border-amber-400 bg-amber-50 text-amber-950',
     LOW: 'border-slate-300 bg-slate-50 text-slate-800',
+};
+
+const DELIVERY_STYLES = {
+    SENT: 'bg-emerald-100 text-emerald-800',
+    SKIPPED: 'bg-amber-100 text-amber-800',
+    FAILED: 'bg-red-100 text-red-800',
+    PREPARED: 'bg-slate-100 text-slate-700',
+};
+
+const DELIVERY_LABELS = {
+    SENT: 'Envoyé',
+    SKIPPED: 'Non envoyé',
+    FAILED: 'Échec',
+    PREPARED: 'Préparé',
 };
 
 const formatMoney = value => Number(value || 0).toLocaleString('fr-FR', {
@@ -54,6 +73,9 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
     const [horizonDays, setHorizonDays] = useState(14);
     const [workingKey, setWorkingKey] = useState('');
     const [actionError, setActionError] = useState('');
+    const [emailComposer, setEmailComposer] = useState(null);
+    const [sendConfirmed, setSendConfirmed] = useState(false);
+    const [notification, setNotification] = useState(null);
 
     const cockpitQuery = useQuery({
         queryKey: ['crm-cockpit', horizonDays],
@@ -63,6 +85,18 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
             });
             return response.data;
         },
+    });
+
+    const templatesQuery = useQuery({
+        queryKey: ['crm-reminder-templates'],
+        queryFn: async () => (await api.get('/v2/mmg/crm/reminder-templates')).data,
+    });
+
+    const historyQuery = useQuery({
+        queryKey: ['crm-reminder-history'],
+        queryFn: async () => (
+            await api.get('/v2/mmg/crm/reminders/history', { params: { limit: 8 } })
+        ).data,
     });
 
     const data = cockpitQuery.data;
@@ -102,6 +136,66 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
             await cockpitQuery.refetch();
         } catch (error) {
             setActionError(error?.response?.data?.detail || "L'action de relance n'a pas pu être enregistrée.");
+        } finally {
+            setWorkingKey('');
+        }
+    };
+
+    const previewEmail = async (reminder, templateId = null) => {
+        setActionError('');
+        setWorkingKey(reminder.key);
+        setSendConfirmed(false);
+        try {
+            const response = await api.post('/v2/mmg/crm/reminders/preview', {
+                client_id: reminder.client_id,
+                opportunity_id: reminder.opportunity_id,
+                template_id: templateId,
+                reminder_kind: reminder.kind,
+                due_at: reminder.due_at,
+            });
+            setEmailComposer({
+                reminder,
+                ...response.data,
+            });
+        } catch (error) {
+            setActionError(error?.response?.data?.detail || "La prévisualisation de l'email a échoué.");
+        } finally {
+            setWorkingKey('');
+        }
+    };
+
+    const changeEmailTemplate = async templateId => {
+        if (!emailComposer) return;
+        await previewEmail(emailComposer.reminder, Number(templateId));
+    };
+
+    const sendEmailReminder = async () => {
+        if (!emailComposer || !sendConfirmed) return;
+        setWorkingKey(emailComposer.reminder.key);
+        setActionError('');
+        try {
+            const response = await api.post('/v2/mmg/crm/reminders/send', {
+                reminder_key: emailComposer.reminder.key,
+                client_id: emailComposer.reminder.client_id,
+                opportunity_id: emailComposer.reminder.opportunity_id,
+                template_id: emailComposer.template_id,
+                recipient: emailComposer.recipient,
+                subject: emailComposer.subject,
+                message: emailComposer.message,
+                confirm_send: true,
+            });
+            const delivery = response.data;
+            setNotification({
+                tone: delivery.status === 'SENT' ? 'success' : delivery.status === 'FAILED' ? 'error' : 'warning',
+                message: delivery.notification,
+            });
+            await Promise.all([historyQuery.refetch(), cockpitQuery.refetch()]);
+            setEmailComposer(null);
+            setSendConfirmed(false);
+        } catch (error) {
+            const message = error?.response?.data?.detail || "L'envoi de la relance a échoué.";
+            setActionError(message);
+            setNotification({ tone: 'error', message });
         } finally {
             setWorkingKey('');
         }
@@ -197,6 +291,24 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                     </div>
                 )}
 
+                {notification && (
+                    <div className={`flex items-center justify-between border-l-4 px-4 py-3 text-sm font-bold ${
+                        notification.tone === 'success'
+                            ? 'border-emerald-500 bg-emerald-50 text-emerald-900'
+                            : notification.tone === 'warning'
+                                ? 'border-amber-500 bg-amber-50 text-amber-900'
+                                : 'border-red-500 bg-red-50 text-red-900'
+                    }`}>
+                        <span className="flex items-center gap-2">
+                            <BellRing className="h-4 w-4" />
+                            {notification.message}
+                        </span>
+                        <button onClick={() => setNotification(null)} title="Fermer la notification">
+                            <X className="h-4 w-4" />
+                        </button>
+                    </div>
+                )}
+
                 <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)]">
                     <section className="border-y border-slate-200 bg-white">
                         <SectionHeader
@@ -226,14 +338,14 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                         <div className="divide-y divide-slate-100">
                             {data.reminders.map(reminder => (
                                 <div key={reminder.key} className={`border-l-4 px-4 py-4 ${SEVERITY_STYLES[reminder.severity] || SEVERITY_STYLES.LOW}`}>
-                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div className="flex flex-col gap-3">
                                         <div className="min-w-0">
                                             <p className="text-[10px] font-black uppercase tracking-widest opacity-60">{reminder.reference || reminder.kind}</p>
                                             <p className="mt-1 text-sm font-black">{reminder.client_name} · {reminder.title}</p>
                                             <p className="mt-1 text-xs font-semibold opacity-75">{reminder.reason}</p>
                                             {reminder.due_at && <p className="mt-2 text-[10px] font-black uppercase">Échéance {formatDateTime(reminder.due_at)}</p>}
                                         </div>
-                                        <div className="flex shrink-0 gap-2">
+                                        <div className="flex flex-wrap gap-2">
                                             <button
                                                 onClick={() => onOpenClient(reminder.client_id)}
                                                 className="inline-flex items-center gap-2 border border-current/20 bg-white/70 px-3 py-2 text-xs font-black"
@@ -241,6 +353,16 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                                                 <UserRound className="h-4 w-4" />
                                                 Client
                                             </button>
+                                            {reminder.kind !== 'UNSCHEDULED_MEASURE' && reminder.client_email && (
+                                                <button
+                                                    onClick={() => previewEmail(reminder)}
+                                                    disabled={workingKey === reminder.key}
+                                                    className="inline-flex items-center gap-2 border border-blue-200 bg-white px-3 py-2 text-xs font-black text-blue-800 disabled:opacity-50"
+                                                >
+                                                    <Mail className="h-4 w-4" />
+                                                    Email
+                                                </button>
+                                            )}
                                             <button
                                                 onClick={() => reminder.kind === 'UNSCHEDULED_MEASURE'
                                                     ? onOpenMeasure(reminder.target_id)
@@ -269,7 +391,61 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                         </div>
                     </section>
                 </div>
+
+                <section className="border-y border-slate-200 bg-white">
+                    <SectionHeader
+                        icon={History}
+                        eyebrow="Traçabilité commerciale"
+                        title="Historique des relances email"
+                        detail="Chaque tentative conserve son destinataire, son auteur et son résultat."
+                    />
+                    <div className="divide-y divide-slate-100">
+                        {(historyQuery.data || []).map(delivery => (
+                            <div key={delivery.id} className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center">
+                                <div className="min-w-0">
+                                    <p className="truncate text-sm font-black text-slate-900">{delivery.subject}</p>
+                                    <p className="mt-1 truncate text-xs font-semibold text-slate-500">
+                                        {delivery.client_name} · {delivery.recipient}
+                                    </p>
+                                    {delivery.error_message && (
+                                        <p className="mt-1 text-xs font-bold text-red-700">{delivery.error_message}</p>
+                                    )}
+                                </div>
+                                <span className={`w-fit px-2.5 py-1 text-[10px] font-black uppercase ${DELIVERY_STYLES[delivery.status] || DELIVERY_STYLES.PREPARED}`}>
+                                    {DELIVERY_LABELS[delivery.status] || delivery.status}
+                                </span>
+                                <div className="text-left md:text-right">
+                                    <p className="text-xs font-black text-slate-700">{formatDateTime(delivery.sent_at || delivery.created_at)}</p>
+                                    <p className="mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-400">{delivery.created_by}</p>
+                                </div>
+                            </div>
+                        ))}
+                        {!historyQuery.isLoading && !(historyQuery.data || []).length && (
+                            <EmptyState title="Aucune relance envoyée" detail="Les prochaines tentatives apparaîtront ici, y compris les échecs." />
+                        )}
+                    </div>
+                </section>
             </div>
+
+            {emailComposer && (
+                <EmailComposer
+                    composer={emailComposer}
+                    templates={templatesQuery.data || []}
+                    confirmed={sendConfirmed}
+                    sending={workingKey === emailComposer.reminder.key}
+                    onClose={() => {
+                        setEmailComposer(null);
+                        setSendConfirmed(false);
+                    }}
+                    onChange={patch => {
+                        setEmailComposer(current => ({ ...current, ...patch }));
+                        setSendConfirmed(false);
+                    }}
+                    onTemplateChange={changeEmailTemplate}
+                    onConfirmChange={setSendConfirmed}
+                    onSend={sendEmailReminder}
+                />
+            )}
         </div>
     );
 }
@@ -346,6 +522,113 @@ function EmptyState({ title, detail }) {
             <Check className="mx-auto h-8 w-8 text-emerald-500" />
             <p className="mt-3 text-sm font-black text-slate-800">{title}</p>
             <p className="mt-1 text-xs font-semibold text-slate-400">{detail}</p>
+        </div>
+    );
+}
+
+function EmailComposer({
+    composer,
+    templates,
+    confirmed,
+    sending,
+    onClose,
+    onChange,
+    onTemplateChange,
+    onConfirmChange,
+    onSend,
+}) {
+    return (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm">
+            <div className="flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden bg-white shadow-2xl">
+                <header className="flex items-start justify-between gap-4 bg-slate-950 px-5 py-5 text-white">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-300">Relance contrôlée</p>
+                        <h3 className="mt-1 text-xl font-black">Prévisualiser l’email</h3>
+                        <p className="mt-1 text-xs font-semibold text-slate-300">
+                            {composer.reminder.client_name} · aucun envoi sans votre confirmation.
+                        </p>
+                    </div>
+                    <button onClick={onClose} title="Fermer" className="p-2 text-slate-300 hover:text-white">
+                        <X className="h-5 w-5" />
+                    </button>
+                </header>
+
+                <div className="min-h-0 space-y-4 overflow-y-auto p-5">
+                    {!composer.smtp_configured && (
+                        <div className="border-l-4 border-amber-500 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
+                            SMTP non configuré : vous pouvez préparer le message, mais il ne quittera pas la plateforme.
+                        </div>
+                    )}
+
+                    <label className="block">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Modèle</span>
+                        <select
+                            value={composer.template_id}
+                            onChange={event => onTemplateChange(event.target.value)}
+                            className="mt-2 w-full border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-500"
+                        >
+                            {templates.map(template => (
+                                <option key={template.id} value={template.id}>{template.name}</option>
+                            ))}
+                        </select>
+                    </label>
+
+                    <label className="block">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Destinataire</span>
+                        <input
+                            type="email"
+                            value={composer.recipient}
+                            onChange={event => onChange({ recipient: event.target.value })}
+                            className="mt-2 w-full border border-slate-200 px-3 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-500"
+                        />
+                    </label>
+
+                    <label className="block">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Objet</span>
+                        <input
+                            value={composer.subject}
+                            onChange={event => onChange({ subject: event.target.value })}
+                            className="mt-2 w-full border border-slate-200 px-3 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-500"
+                        />
+                    </label>
+
+                    <label className="block">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Message</span>
+                        <textarea
+                            rows={11}
+                            value={composer.message}
+                            onChange={event => onChange({ message: event.target.value })}
+                            className="mt-2 w-full resize-y border border-slate-200 px-3 py-3 text-sm font-medium leading-6 text-slate-900 outline-none focus:border-blue-500"
+                        />
+                    </label>
+
+                    <label className="flex items-start gap-3 border border-slate-200 bg-slate-50 px-4 py-4">
+                        <input
+                            type="checkbox"
+                            checked={confirmed}
+                            onChange={event => onConfirmChange(event.target.checked)}
+                            className="mt-0.5 h-5 w-5"
+                        />
+                        <span className="text-sm font-bold text-slate-700">
+                            J’ai vérifié le destinataire, l’objet et le contenu. J’autorise cet envoi.
+                        </span>
+                    </label>
+                </div>
+
+                <footer className="flex flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:justify-end">
+                    <button onClick={onClose} className="border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700">
+                        Annuler
+                    </button>
+                    <button
+                        onClick={onSend}
+                        disabled={!confirmed || !composer.recipient.trim() || !composer.subject.trim() || !composer.message.trim() || sending}
+                        className="inline-flex items-center justify-center gap-2 bg-blue-600 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                        {sending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                        Envoyer la relance
+                    </button>
+                </footer>
+            </div>
         </div>
     );
 }

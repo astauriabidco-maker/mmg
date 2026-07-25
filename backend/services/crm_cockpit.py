@@ -55,6 +55,11 @@ def _client_name(item):
     return getattr(client, "name", None) or getattr(item, "client_name", None) or "Client"
 
 
+def _client_email(item):
+    client = getattr(item, "client", None)
+    return getattr(client, "email", None) or getattr(item, "client_email", None)
+
+
 def _owner_name(opportunity):
     owner_name = getattr(opportunity, "owner_name", None)
     if owner_name:
@@ -202,6 +207,7 @@ def build_crm_cockpit(
                     "severity": "CRITICAL",
                     "client_id": activity.client_id,
                     "client_name": _client_name(activity),
+                    "client_email": _client_email(activity),
                     "opportunity_id": getattr(activity, "opportunity_id", None),
                     "reference": getattr(activity, "opportunity_reference", None),
                     "title": getattr(activity, "subject", "Relance échue"),
@@ -218,6 +224,7 @@ def build_crm_cockpit(
         common = {
             "client_id": opportunity.client_id,
             "client_name": _client_name(opportunity),
+            "client_email": _client_email(opportunity),
             "target_id": opportunity.id,
             "opportunity_id": opportunity.id,
             "reference": getattr(opportunity, "reference", None),
@@ -289,6 +296,7 @@ def build_crm_cockpit(
                     "severity": "HIGH",
                     "client_id": mission.client_id,
                     "client_name": _client_name(mission),
+                    "client_email": _client_email(mission),
                     "target_id": mission.id,
                     "opportunity_id": getattr(mission, "opportunity_id", None),
                     "reference": getattr(mission, "reference", None),

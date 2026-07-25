@@ -453,6 +453,7 @@ class CRMCockpitReminder(BaseModel):
     severity: str
     client_id: int
     client_name: str
+    client_email: Optional[str] = None
     target_id: Optional[int] = None
     opportunity_id: Optional[int] = None
     reference: Optional[str] = None
@@ -470,6 +471,79 @@ class CRMCockpitResponse(BaseModel):
     stages: List[CRMCockpitStage]
     agenda: List[CRMCockpitAgendaItem]
     reminders: List[CRMCockpitReminder]
+
+
+class CRMReminderTemplateUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    description: Optional[str] = None
+    subject_template: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    body_template: Optional[str] = Field(default=None, min_length=1)
+    is_active: Optional[bool] = None
+
+
+class CRMReminderTemplateResponse(BaseModel):
+    id: int
+    code: str
+    name: str
+    description: Optional[str] = None
+    subject_template: str
+    body_template: str
+    is_active: bool
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CRMReminderPreviewRequest(BaseModel):
+    client_id: int
+    opportunity_id: Optional[int] = None
+    template_id: Optional[int] = None
+    reminder_kind: Optional[str] = None
+    due_at: Optional[datetime] = None
+
+
+class CRMReminderPreviewResponse(BaseModel):
+    template_id: int
+    template_code: str
+    template_name: str
+    recipient: str
+    subject: str
+    message: str
+    smtp_configured: bool
+
+
+class CRMReminderSendRequest(BaseModel):
+    reminder_key: Optional[str] = Field(default=None, max_length=255)
+    client_id: int
+    opportunity_id: Optional[int] = None
+    template_id: Optional[int] = None
+    recipient: str = Field(min_length=3, max_length=320)
+    subject: str = Field(min_length=1, max_length=255)
+    message: str = Field(min_length=1)
+    confirm_send: bool = False
+
+
+class CRMReminderDeliveryResponse(BaseModel):
+    id: int
+    reminder_key: Optional[str] = None
+    client_id: int
+    client_name: Optional[str] = None
+    opportunity_id: Optional[int] = None
+    opportunity_reference: Optional[str] = None
+    template_id: Optional[int] = None
+    template_name: Optional[str] = None
+    activity_id: Optional[int] = None
+    recipient: str
+    subject: str
+    message: str
+    status: str
+    error_message: Optional[str] = None
+    sent_at: Optional[datetime] = None
+    created_by: str
+    created_at: datetime
+    notification: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MeasureMissionStatus(str, enum.Enum):

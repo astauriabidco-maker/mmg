@@ -846,6 +846,79 @@ class CRMActivity(Base):
         return self.opportunity.reference if self.opportunity else None
 
 
+class CRMReminderTemplate(Base):
+    __tablename__ = "crm_reminder_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    subject_template = Column(String, nullable=False)
+    body_template = Column(Text, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by = Column(String, default="Système", nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    deliveries = relationship("CRMReminderDelivery", back_populates="template")
+
+
+class CRMReminderDelivery(Base):
+    __tablename__ = "crm_reminder_deliveries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reminder_key = Column(String, nullable=True, index=True)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    opportunity_id = Column(
+        Integer,
+        ForeignKey("crm_opportunities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    template_id = Column(
+        Integer,
+        ForeignKey("crm_reminder_templates.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    activity_id = Column(
+        Integer,
+        ForeignKey("crm_activities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    recipient = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+    message = Column(Text, nullable=False)
+    status = Column(String, default="PREPARED", nullable=False, index=True)
+    error_message = Column(Text, nullable=True)
+    sent_at = Column(DateTime, nullable=True)
+    created_by = Column(String, default="Système", nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+    client = relationship("Client")
+    opportunity = relationship("CRMOpportunity")
+    template = relationship("CRMReminderTemplate", back_populates="deliveries")
+    activity = relationship("CRMActivity")
+
+    @property
+    def client_name(self):
+        return self.client.name if self.client else None
+
+    @property
+    def opportunity_reference(self):
+        return self.opportunity.reference if self.opportunity else None
+
+    @property
+    def template_name(self):
+        return self.template.name if self.template else None
+
+
 class MeasureMission(Base):
     __tablename__ = "measure_missions"
 

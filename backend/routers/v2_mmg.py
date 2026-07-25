@@ -13,9 +13,17 @@ from ..database import get_db
 from .. import models, schemas
 from ..core import security
 from ..core import uploads
+from ..core.events import _send_smtp_email, _smtp_settings
 from ..services.document_sequences import next_number
 from ..services.technical_document_analysis import analyze_technical_document
 from ..services.crm_cockpit import build_crm_cockpit
+from ..services.crm_reminders import (
+    build_template_context,
+    ensure_default_templates,
+    plain_text_to_html,
+    reminder_template_code,
+    render_email,
+)
 from ..services.technical_dossier_governance import (
     build_document_matrix,
     compare_material_versions,
@@ -644,6 +652,236 @@ def get_crm_cockpit(
         horizon_days=horizon_days,
         stale_days=stale_days,
     )
+
+
+def _crm_reminder_context(
+    db: Session,
+    client_id: int,
+    opportunity_id: Optional[int],
+):
+    client = db.query(models.Client).filter(models.Client.id == client_id).first()
+    if not client:
+        raise HTTPException(404, "Client introuvable")
+    opportunity = None
+    if opportunity_id is not None:
+        opportunity = _get_opportunity_or_404(db, opportunity_id)
+        if opportunity.client_id != client_id:
+            raise HTTPException(409, "L'opportunité n'appartient pas à ce client")
+    return client, opportunity
+
+
+def _crm_reminder_template(
+    db: Session,
+    template_id: Optional[int],
+    reminder_kind: Optional[str],
+):
+    ensure_default_templates(db)
+    query = db.query(models.CRMReminderTemplate).filter(
+        models.CRMReminderTemplate.is_active.is_(True)
+    )
+    if template_id is not None:
+        template = query.filter(models.CRMReminderTemplate.id == template_id).first()
+    else:
+        template = query.filter(
+            models.CRMReminderTemplate.code == reminder_template_code(reminder_kind)
+        ).first()
+    if not template:
+        raise HTTPException(404, "Modèle de relance actif introuvable")
+    return template
+
+
+def _serialize_crm_delivery(delivery, notification=None):
+    return {
+        "id": delivery.id,
+        "reminder_key": delivery.reminder_key,
+        "client_id": delivery.client_id,
+        "client_name": delivery.client_name,
+        "opportunity_id": delivery.opportunity_id,
+        "opportunity_reference": delivery.opportunity_reference,
+        "template_id": delivery.template_id,
+        "template_name": delivery.template_name,
+        "activity_id": delivery.activity_id,
+        "recipient": delivery.recipient,
+        "subject": delivery.subject,
+        "message": delivery.message,
+        "status": delivery.status,
+        "error_message": delivery.error_message,
+        "sent_at": delivery.sent_at,
+        "created_by": delivery.created_by,
+        "created_at": delivery.created_at,
+        "notification": notification,
+    }
+
+
+@router.get(
+    "/crm/reminder-templates",
+    response_model=List[schemas.CRMReminderTemplateResponse],
+)
+def list_crm_reminder_templates(db: Session = Depends(get_db)):
+    ensure_default_templates(db)
+    return (
+        db.query(models.CRMReminderTemplate)
+        .filter(models.CRMReminderTemplate.is_active.is_(True))
+        .order_by(models.CRMReminderTemplate.name.asc())
+        .all()
+    )
+
+
+@router.post(
+    "/crm/reminders/preview",
+    response_model=schemas.CRMReminderPreviewResponse,
+)
+def preview_crm_reminder(
+    item: schemas.CRMReminderPreviewRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    client, opportunity = _crm_reminder_context(
+        db,
+        item.client_id,
+        item.opportunity_id,
+    )
+    template = _crm_reminder_template(
+        db,
+        item.template_id,
+        item.reminder_kind,
+    )
+    context = build_template_context(
+        client,
+        opportunity,
+        sender_name=current_user.get("sub", "MMG Menuiseries"),
+        due_at=item.due_at,
+    )
+    try:
+        subject, message = render_email(template, context)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "template_id": template.id,
+        "template_code": template.code,
+        "template_name": template.name,
+        "recipient": (client.email or "").strip(),
+        "subject": subject,
+        "message": message,
+        "smtp_configured": bool(_smtp_settings()),
+    }
+
+
+@router.post(
+    "/crm/reminders/send",
+    response_model=schemas.CRMReminderDeliveryResponse,
+)
+def send_crm_reminder(
+    item: schemas.CRMReminderSendRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    if not item.confirm_send:
+        raise HTTPException(
+            409,
+            "Confirmez explicitement l'envoi après vérification du destinataire et du message.",
+        )
+    recipient = item.recipient.strip()
+    if "@" not in recipient or recipient.startswith("@") or recipient.endswith("@"):
+        raise HTTPException(422, "Adresse email destinataire invalide")
+    client, opportunity = _crm_reminder_context(
+        db,
+        item.client_id,
+        item.opportunity_id,
+    )
+    template = None
+    if item.template_id is not None:
+        template = db.query(models.CRMReminderTemplate).filter(
+            models.CRMReminderTemplate.id == item.template_id
+        ).first()
+        if not template:
+            raise HTTPException(404, "Modèle de relance introuvable")
+
+    delivery = models.CRMReminderDelivery(
+        reminder_key=(item.reminder_key or "").strip() or None,
+        client_id=client.id,
+        opportunity_id=opportunity.id if opportunity else None,
+        template_id=template.id if template else None,
+        recipient=recipient,
+        subject=item.subject.strip(),
+        message=item.message.strip(),
+        status="PREPARED",
+        created_by=current_user.get("sub", "Système"),
+    )
+    db.add(delivery)
+    db.flush()
+
+    notification = ""
+    try:
+        sent = _send_smtp_email(
+            recipient,
+            delivery.subject,
+            delivery.message,
+            plain_text_to_html(delivery.message),
+        )
+        if sent:
+            delivery.status = "SENT"
+            delivery.sent_at = utcnow()
+            activity = models.CRMActivity(
+                client_id=client.id,
+                opportunity_id=opportunity.id if opportunity else None,
+                activity_type=models.CRMActivityType.EMAIL.value,
+                subject=delivery.subject,
+                note=f"Relance email envoyée à {recipient}. Journal #{delivery.id}.",
+                status=models.CRMActivityStatus.COMPLETED.value,
+                author=current_user.get("sub", "Système"),
+                completed_at=delivery.sent_at,
+            )
+            db.add(activity)
+            db.flush()
+            delivery.activity_id = activity.id
+            notification = f"Relance envoyée à {recipient}."
+        else:
+            delivery.status = "SKIPPED"
+            delivery.error_message = (
+                "SMTP non configuré : le message est conservé dans l'historique sans être envoyé."
+            )
+            notification = "Message préparé mais non envoyé : SMTP non configuré."
+    except Exception as exc:
+        delivery.status = "FAILED"
+        delivery.error_message = str(exc)
+        notification = "Échec de l'envoi. Le message et l'erreur ont été journalisés."
+
+    db.commit()
+    db.refresh(delivery)
+    return _serialize_crm_delivery(delivery, notification)
+
+
+@router.get(
+    "/crm/reminders/history",
+    response_model=List[schemas.CRMReminderDeliveryResponse],
+)
+def list_crm_reminder_history(
+    client_id: Optional[int] = None,
+    opportunity_id: Optional[int] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    if not 1 <= limit <= 200:
+        raise HTTPException(422, "La limite doit être comprise entre 1 et 200")
+    query = db.query(models.CRMReminderDelivery)
+    if client_id is not None:
+        query = query.filter(models.CRMReminderDelivery.client_id == client_id)
+    if opportunity_id is not None:
+        query = query.filter(
+            models.CRMReminderDelivery.opportunity_id == opportunity_id
+        )
+    if status:
+        query = query.filter(
+            models.CRMReminderDelivery.status == status.strip().upper()
+        )
+    return [
+        _serialize_crm_delivery(item)
+        for item in query.order_by(models.CRMReminderDelivery.created_at.desc())
+        .limit(limit)
+        .all()
+    ]
 
 
 @router.get("/opportunities", response_model=List[schemas.CRMOpportunityResponse])
