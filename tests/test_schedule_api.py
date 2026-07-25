@@ -760,6 +760,65 @@ def test_planning_resources_members_and_unavailability(isolated_client):
     assert deleted.status_code == 200, deleted.text
 
 
+def test_regulated_skill_requires_expiry_date(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id = _create_worker(
+        session_factory,
+        "planning-certified",
+        "Nora",
+        "Sécurité",
+    )
+    created = client.post(
+        "/v2/schedule/skills",
+        headers=headers,
+        json={
+            "code": "TEST_CACES",
+            "name": "CACES de test",
+            "category": "CERTIFICATION",
+            "requires_expiry": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    skill_id = created.json()["id"]
+
+    missing_expiry = client.put(
+        f"/v2/schedule/users/{worker_id}/skills",
+        headers=headers,
+        json={
+            "skills": [
+                {
+                    "skill_id": skill_id,
+                    "level": 3,
+                    "is_certified": True,
+                    "certificate_reference": "CERT-2026-001",
+                }
+            ]
+        },
+    )
+    assert missing_expiry.status_code == 422, missing_expiry.text
+    assert "Date de validité obligatoire" in missing_expiry.json()["detail"]
+
+    assigned = client.put(
+        f"/v2/schedule/users/{worker_id}/skills",
+        headers=headers,
+        json={
+            "skills": [
+                {
+                    "skill_id": skill_id,
+                    "level": 3,
+                    "is_certified": True,
+                    "certificate_reference": "CERT-2026-001",
+                    "valid_until": "2028-12-31T23:59:59",
+                }
+            ]
+        },
+    )
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()[0]["certificate_reference"] == "CERT-2026-001"
+    assert assigned.json()[0]["valid_until"].startswith("2028-12-31")
+
+
 def test_assignment_creates_notification_and_auditable_history(isolated_client):
     client, session_factory = isolated_client
     headers = _admin_headers(session_factory)

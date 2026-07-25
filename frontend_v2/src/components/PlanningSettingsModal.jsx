@@ -12,6 +12,13 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 
+const SKILL_CATEGORY_LABELS = {
+    TRADE: 'Métier',
+    WORKSHOP: 'Atelier',
+    LICENSE: 'Permis',
+    CERTIFICATION: 'Habilitation',
+};
+
 const toInputDateTime = (value) => {
     const date = new Date(value);
     const pad = (part) => String(part).padStart(2, '0');
@@ -105,6 +112,7 @@ export default function PlanningSettingsModal({ users = [], onClose, onChanged }
                 enabled: true,
                 level: row.level || 1,
                 is_certified: Boolean(row.is_certified),
+                certificate_reference: row.certificate_reference || '',
                 valid_until: row.valid_until ? row.valid_until.slice(0, 10) : '',
             };
         });
@@ -144,6 +152,7 @@ export default function PlanningSettingsModal({ users = [], onClose, onChanged }
                     skill_id: Number(skillId),
                     level: Number(value.level || 1),
                     is_certified: Boolean(value.is_certified),
+                    certificate_reference: value.certificate_reference?.trim() || null,
                     valid_until: value.valid_until ? new Date(`${value.valid_until}T23:59:59`).toISOString() : null,
                 })),
         }),
@@ -224,19 +233,28 @@ export default function PlanningSettingsModal({ users = [], onClose, onChanged }
         || closureMutation.error
         || deleteClosureMutation.error;
 
-    const toggleSkill = (skillId) => setSelectedSkills((current) => ({
+    const toggleSkill = (skill) => setSelectedSkills((current) => ({
         ...current,
-        [skillId]: {
+        [skill.id]: {
             level: 1,
-            is_certified: false,
+            is_certified: Boolean(skill.requires_expiry),
+            certificate_reference: '',
             valid_until: '',
-            ...current[skillId],
-            enabled: !current[skillId]?.enabled,
+            ...current[skill.id],
+            enabled: !current[skill.id]?.enabled,
         },
     }));
     const setSkill = (skillId, key, value) => setSelectedSkills((current) => ({
         ...current,
-        [skillId]: { enabled: true, level: 1, is_certified: false, valid_until: '', ...current[skillId], [key]: value },
+        [skillId]: {
+            enabled: true,
+            level: 1,
+            is_certified: false,
+            certificate_reference: '',
+            valid_until: '',
+            ...current[skillId],
+            [key]: value,
+        },
     }));
     const toggleResourceMember = (userId) => setSelectedResourceMembers((current) => ({
         ...current,
@@ -290,15 +308,18 @@ export default function PlanningSettingsModal({ users = [], onClose, onChanged }
                                         const value = selectedSkills[skill.id] || {};
                                         return (
                                             <div key={skill.id} className={`rounded-md border p-3 ${value.enabled ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'}`}>
-                                                <button type="button" onClick={() => toggleSkill(skill.id)} className="flex w-full items-start justify-between gap-3 text-left">
-                                                    <div><p className="font-black text-slate-900">{skill.name}</p><p className="mt-0.5 text-[10px] font-bold uppercase text-slate-400">{skill.category}</p></div>
+                                                <button type="button" onClick={() => toggleSkill(skill)} className="flex w-full items-start justify-between gap-3 text-left">
+                                                    <div><p className="font-black text-slate-900">{skill.name}</p><p className="mt-0.5 text-[10px] font-bold uppercase text-slate-400">{SKILL_CATEGORY_LABELS[skill.category] || skill.category}</p></div>
                                                     <span className={`grid h-6 w-6 place-items-center rounded border ${value.enabled ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 text-transparent'}`}><Check className="h-4 w-4" /></span>
                                                 </button>
                                                 {value.enabled && (
                                                     <div className="mt-3 grid gap-2">
                                                         <label><FieldLabel>Niveau</FieldLabel><select value={value.level || 1} onChange={(event) => setSkill(skill.id, 'level', event.target.value)} className="field">{[1, 2, 3, 4, 5].map((level) => <option key={level} value={level}>{level}</option>)}</select></label>
                                                         <label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={Boolean(value.is_certified)} onChange={(event) => setSkill(skill.id, 'is_certified', event.target.checked)} /> Certification contrôlée</label>
-                                                        {skill.requires_expiry && <label><FieldLabel>Valide jusqu’au</FieldLabel><input type="date" value={value.valid_until || ''} onChange={(event) => setSkill(skill.id, 'valid_until', event.target.value)} className="field" /></label>}
+                                                        {skill.requires_expiry && <>
+                                                            <label><FieldLabel>N° permis / certificat</FieldLabel><input value={value.certificate_reference || ''} onChange={(event) => setSkill(skill.id, 'certificate_reference', event.target.value)} placeholder="Référence du document" className="field" /></label>
+                                                            <label><FieldLabel>Valide jusqu’au (requis)</FieldLabel><input type="date" required value={value.valid_until || ''} onChange={(event) => setSkill(skill.id, 'valid_until', event.target.value)} className={`field ${!value.valid_until ? 'border-amber-400 bg-amber-50' : ''}`} /></label>
+                                                        </>}
                                                     </div>
                                                 )}
                                             </div>

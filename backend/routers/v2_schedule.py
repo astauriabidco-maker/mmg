@@ -1334,14 +1334,28 @@ def replace_user_planning_skills(
     skill_ids = [item.skill_id for item in payload.skills]
     if len(skill_ids) != len(set(skill_ids)):
         raise HTTPException(status_code=422, detail="Compétence en double")
-    known = {
-        item.id
+    known_skills = {
+        item.id: item
         for item in db.query(models.PlanningSkill)
         .filter(models.PlanningSkill.id.in_(skill_ids or [-1]))
         .all()
     }
-    if known != set(skill_ids):
+    if set(known_skills) != set(skill_ids):
         raise HTTPException(status_code=422, detail="Compétence introuvable")
+    missing_expiry = [
+        known_skills[item.skill_id].name
+        for item in payload.skills
+        if known_skills[item.skill_id].requires_expiry
+        and item.valid_until is None
+    ]
+    if missing_expiry:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Date de validité obligatoire pour : "
+                + ", ".join(sorted(missing_expiry))
+            ),
+        )
     db.query(models.UserPlanningSkill).filter(
         models.UserPlanningSkill.user_id == user_id
     ).delete(synchronize_session=False)
