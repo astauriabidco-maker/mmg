@@ -416,6 +416,62 @@ class CRMActivityResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CRMCockpitMetrics(BaseModel):
+    open_opportunities: int
+    pipeline_amount: float
+    weighted_pipeline_amount: float
+    overdue_actions: int
+    measures_to_schedule: int
+    automatic_reminders: int
+
+
+class CRMCockpitStage(BaseModel):
+    stage: CRMOpportunityStage
+    count: int
+    amount: float
+    weighted_amount: float
+
+
+class CRMCockpitAgendaItem(BaseModel):
+    kind: str
+    id: int
+    client_id: int
+    client_name: str
+    opportunity_id: Optional[int] = None
+    reference: Optional[str] = None
+    title: str
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+    status: str
+    owner_name: Optional[str] = None
+    overdue: bool = False
+
+
+class CRMCockpitReminder(BaseModel):
+    key: str
+    kind: str
+    severity: str
+    client_id: int
+    client_name: str
+    target_id: Optional[int] = None
+    opportunity_id: Optional[int] = None
+    reference: Optional[str] = None
+    title: str
+    reason: str
+    suggested_subject: str
+    due_at: Optional[datetime] = None
+    existing_activity_id: Optional[int] = None
+
+
+class CRMCockpitResponse(BaseModel):
+    generated_at: datetime
+    horizon_days: int
+    metrics: CRMCockpitMetrics
+    stages: List[CRMCockpitStage]
+    agenda: List[CRMCockpitAgendaItem]
+    reminders: List[CRMCockpitReminder]
+
+
 class MeasureMissionStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     TO_SCHEDULE = "TO_SCHEDULE"

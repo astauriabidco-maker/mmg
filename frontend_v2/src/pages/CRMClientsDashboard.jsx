@@ -5,6 +5,7 @@ import { ArrowRight, BellRing, Building2, CalendarClock, CheckCircle2, Clipboard
 import api from '../services/api';
 import BusinessTimeline from '../components/BusinessTimeline';
 import CRMClientActionWorkspace from '../components/CRMClientActionWorkspace';
+import CRMCockpit from '../components/CRMCockpit';
 import MeasureMissionBoard from '../components/MeasureMissionBoard';
 
 const saleAmount = (sale) => (sale.lines || []).reduce(
@@ -17,7 +18,7 @@ const isActivePresalesStatus = (status) => ['DRAFT', 'SENT'].includes(status);
 
 export default function CRMClientsDashboard() {
     const navigate = useNavigate();
-    const [crmView, setCrmView] = useState('pipeline');
+    const [crmView, setCrmView] = useState('cockpit');
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedClientId, setSelectedClientId] = useState(null);
     const [showProposalStarter, setShowProposalStarter] = useState(false);
@@ -547,6 +548,12 @@ export default function CRMClientsDashboard() {
                     <div className="flex flex-wrap items-center gap-3">
                         <div className="inline-flex rounded-xl border border-white/10 bg-white/10 p-1">
                             <button
+                                onClick={() => setCrmView('cockpit')}
+                                className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${crmView === 'cockpit' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'}`}
+                            >
+                                Cockpit équipe
+                            </button>
+                            <button
                                 onClick={() => setCrmView('pipeline')}
                                 className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${crmView === 'pipeline' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'}`}
                             >
@@ -590,6 +597,16 @@ export default function CRMClientsDashboard() {
                     </div>
                 </div>
             </div>
+
+            {crmView === 'cockpit' && (
+                <CRMCockpit
+                    onOpenClient={clientId => {
+                        setSelectedClientId(clientId);
+                        setCrmView('clients');
+                    }}
+                    onOpenMeasure={missionId => navigate(`/measure-missions/${missionId}`)}
+                />
+            )}
 
             {crmView === 'pipeline' && (
                 <div className="flex-1 min-h-0 overflow-y-auto p-6">

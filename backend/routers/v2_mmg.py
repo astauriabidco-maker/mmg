@@ -15,6 +15,7 @@ from ..core import security
 from ..core import uploads
 from ..services.document_sequences import next_number
 from ..services.technical_document_analysis import analyze_technical_document
+from ..services.crm_cockpit import build_crm_cockpit
 from ..services.technical_dossier_governance import (
     build_document_matrix,
     compare_material_versions,
@@ -594,6 +595,55 @@ def _validate_activity_links(
     if opportunity.client_id != client_id:
         raise HTTPException(400, "L'activité et l'opportunité doivent appartenir au même client")
     return opportunity
+
+
+@router.get("/crm/cockpit", response_model=schemas.CRMCockpitResponse)
+def get_crm_cockpit(
+    owner_user_id: Optional[int] = None,
+    horizon_days: int = 14,
+    stale_days: int = 7,
+    db: Session = Depends(get_db),
+):
+    if not 1 <= horizon_days <= 60:
+        raise HTTPException(422, "L'horizon CRM doit être compris entre 1 et 60 jours")
+    if not 1 <= stale_days <= 30:
+        raise HTTPException(422, "Le délai d'inactivité doit être compris entre 1 et 30 jours")
+
+    opportunities_query = db.query(models.CRMOpportunity)
+    missions_query = db.query(models.MeasureMission)
+    if owner_user_id is not None:
+        owner = (
+            db.query(models.User)
+            .filter(models.User.id == owner_user_id, models.User.is_active.is_(True))
+            .first()
+        )
+        if not owner:
+            raise HTTPException(404, "Commercial ou métreur introuvable")
+        opportunities_query = opportunities_query.filter(
+            models.CRMOpportunity.owner_user_id == owner_user_id
+        )
+        missions_query = missions_query.filter(
+            models.MeasureMission.assigned_user_id == owner_user_id
+        )
+
+    opportunities = opportunities_query.all()
+    opportunity_ids = [item.id for item in opportunities]
+    activities_query = db.query(models.CRMActivity)
+    if owner_user_id is not None:
+        activities_query = activities_query.filter(
+            models.CRMActivity.opportunity_id.in_(opportunity_ids)
+            if opportunity_ids
+            else models.CRMActivity.id == -1
+        )
+
+    return build_crm_cockpit(
+        opportunities,
+        activities_query.all(),
+        missions_query.all(),
+        now=utcnow(),
+        horizon_days=horizon_days,
+        stale_days=stale_days,
+    )
 
 
 @router.get("/opportunities", response_model=List[schemas.CRMOpportunityResponse])
