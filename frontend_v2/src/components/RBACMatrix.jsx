@@ -10,14 +10,14 @@ const ROLE_PRESETS = [
         label: 'Magasinier',
         description: 'Réceptionne, range, transfère et compte le stock.',
         scope: 'Stock',
-        permissions: ['STOCK_VIEW', 'stock.receive', 'stock.transfer', 'inventory.count', 'purchases.request', 'purchases.receive'],
+        permissions: ['STOCK_VIEW', 'stock.receive', 'stock.transfer', 'inventory.count', 'purchases.request', 'purchases.receive', 'PLANNING_VIEW'],
     },
     {
         name: 'CHEF_STOCK',
         label: 'Chef stock',
         description: 'Pilote le stock, les inventaires, les corrections et le catalogue.',
         scope: 'Stock',
-        permissions: ['STOCK_VIEW', 'STOCK_EDIT', 'stock.receive', 'stock.transfer', 'stock.adjust', 'stock.locations.manage', 'catalog.qualify', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count', 'inventory.validate', 'purchases.request', 'purchases.approve', 'purchases.order', 'purchases.receive'],
+        permissions: ['STOCK_VIEW', 'STOCK_EDIT', 'stock.receive', 'stock.transfer', 'stock.adjust', 'stock.locations.manage', 'catalog.qualify', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count', 'inventory.validate', 'purchases.request', 'purchases.approve', 'purchases.order', 'purchases.receive', 'PLANNING_VIEW', 'PLANNING_EDIT'],
     },
     {
         name: 'DEBIT_OPERATOR',
@@ -31,21 +31,21 @@ const ROLE_PRESETS = [
         label: 'Chef atelier',
         description: 'Pilote les postes, priorités, blocages et débits atelier.',
         scope: 'Atelier',
-        permissions: ['PROD_VIEW', 'PROD_EDIT', 'planning:start', 'planning:pause', 'planning:stop', 'planning:consume_stock', 'planning:reprioritize', 'planning:assign', 'planning:unblock', 'planning:report_issue', 'quality:reject', 'STOCK_VIEW', 'stock.receive', 'stock.transfer', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count'],
+        permissions: ['PROD_VIEW', 'PROD_EDIT', 'planning:start', 'planning:pause', 'planning:stop', 'planning:consume_stock', 'planning:reprioritize', 'planning:assign', 'planning:unblock', 'planning:report_issue', 'quality:reject', 'STOCK_VIEW', 'stock.receive', 'stock.transfer', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count', 'PLANNING_VIEW', 'PLANNING_EDIT'],
     },
     {
         name: 'ACHATS',
         label: 'Achats',
         description: 'Suit les commandes fournisseurs et les réceptions attendues.',
         scope: 'Achats',
-        permissions: ['STOCK_VIEW', 'purchases.request', 'purchases.approve', 'purchases.order', 'purchases.receive'],
+        permissions: ['STOCK_VIEW', 'purchases.request', 'purchases.approve', 'purchases.order', 'purchases.receive', 'PLANNING_VIEW'],
     },
     {
         name: 'SALES',
         label: 'Commercial CRM',
         description: 'Gère les clients, propositions, devis et avant-vente.',
         scope: 'Ventes',
-        permissions: ['SALES_VIEW', 'SALES_EDIT'],
+        permissions: ['SALES_VIEW', 'SALES_EDIT', 'PLANNING_VIEW', 'PLANNING_EDIT'],
     },
 ];
 
@@ -60,6 +60,7 @@ const ROLE_FALLBACKS = {
 const MODULE_PURPOSES = {
     'Comptabilité': 'Factures, paiements, avoirs et export comptable.',
     'Ventes (CRM)': 'Clients, propositions, devis et cycle commercial.',
+    'Planning & Agenda': 'Agenda transverse, affectations, métrés, atelier et livraisons.',
     'Stocks & Logistique': 'Consultation et pilotage global du stock.',
     'Stock - Actions': 'Réception, transfert et correction physique.',
     'Stock - Catalogue': 'Création et qualification des fiches articles.',

@@ -34,6 +34,9 @@ def seed_permissions():
             # Ventes
             {"code": "SALES_VIEW", "module": "Ventes (CRM)", "description": "Voir les devis et clients"},
             {"code": "SALES_EDIT", "module": "Ventes (CRM)", "description": "Créer et modifier des devis"},
+            # Planning transverse
+            {"code": "PLANNING_VIEW", "module": "Planning & Agenda", "description": "Voir le planning transverse de l'entreprise"},
+            {"code": "PLANNING_EDIT", "module": "Planning & Agenda", "description": "Planifier, affecter et déplacer les actions"},
             # Stocks
             {"code": "STOCK_VIEW", "module": "Stocks & Logistique", "description": "Voir l'état des stocks"},
             {"code": "STOCK_EDIT", "module": "Stocks & Logistique", "description": "Gérer les approvisionnements"},
@@ -108,6 +111,8 @@ def seed_permissions():
                 "purchases.approve",
                 "purchases.order",
                 "purchases.receive",
+                "PLANNING_VIEW",
+                "PLANNING_EDIT",
             ],
             "DEBIT_OPERATOR": [
                 "PROD_VIEW",
@@ -125,6 +130,7 @@ def seed_permissions():
                 "inventory.count",
                 "purchases.request",
                 "purchases.receive",
+                "PLANNING_VIEW",
             ],
             "CHEF_STOCK": [
                 "STOCK_VIEW",
@@ -142,6 +148,8 @@ def seed_permissions():
                 "purchases.approve",
                 "purchases.order",
                 "purchases.receive",
+                "PLANNING_VIEW",
+                "PLANNING_EDIT",
             ],
             "ACHATS": [
                 "STOCK_VIEW",
@@ -149,6 +157,7 @@ def seed_permissions():
                 "purchases.approve",
                 "purchases.order",
                 "purchases.receive",
+                "PLANNING_VIEW",
             ],
             "QUALITY_CONTROLLER": [
                 "PROD_VIEW",
@@ -176,10 +185,14 @@ def seed_permissions():
                 "workshop.reserve_stock",
                 "workshop.consume_stock",
                 "inventory.count",
+                "PLANNING_VIEW",
+                "PLANNING_EDIT",
             ],
             "SALES": [
                 "SALES_VIEW",
                 "SALES_EDIT",
+                "PLANNING_VIEW",
+                "PLANNING_EDIT",
             ],
         }
 

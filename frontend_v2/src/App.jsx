@@ -15,6 +15,7 @@ const StockDashboard = lazy(() => import('./pages/StockDashboard'));
 const StockMobileDashboard = lazy(() => import('./pages/StockMobileDashboard'));
 const ClientPortal = lazy(() => import('./pages/ClientPortal'));
 const DriverDashboard = lazy(() => import('./pages/DriverDashboard'));
+const SchedulePage = lazy(() => import('./pages/SchedulePage'));
 
 const PageLoader = () => (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center text-sm font-bold text-slate-500">
@@ -32,6 +33,16 @@ const RoleRoute = ({ children, allowedRoles }) => {
     const { user } = useAuth();
     if (!user) return <Navigate to="/login" replace />;
     if (!userHasAnyRole(user, allowedRoles)) return <Navigate to="/dashboard" replace />;
+    return children;
+};
+
+const PermissionRoute = ({ children, permission }) => {
+    const { user } = useAuth();
+    if (!user) return <Navigate to="/login" replace />;
+    const permissions = user.permissions || [];
+    if (!permissions.includes('*') && !permissions.includes(permission)) {
+        return <Navigate to="/dashboard" replace />;
+    }
     return children;
 };
 
@@ -141,6 +152,14 @@ export default function App() {
                                     <ProtectedRoute>
                                         <StockMobileDashboard />
                                     </ProtectedRoute>
+                                }
+                            />
+                            <Route
+                                path="/planning"
+                                element={
+                                    <PermissionRoute permission="PLANNING_VIEW">
+                                        <SchedulePage />
+                                    </PermissionRoute>
                                 }
                             />
                             <Route

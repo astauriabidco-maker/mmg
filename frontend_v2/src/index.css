@@ -8,6 +8,12 @@
     }
 }
 
+@layer components {
+    .field {
+        @apply min-h-11 w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100;
+    }
+}
+
 @layer utilities {
     .animate-fade-in-up {
         animation: fadeInUp 0.5s ease-out forwards;

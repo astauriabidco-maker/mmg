@@ -92,6 +92,8 @@ class Planning(Base):
     status = Column(SAEnum(PlanningStatus), default=PlanningStatus.PENDING)
     issue_notes = Column(String, nullable=True)
     assigned_to = Column(String, nullable=True) # Name of the operator
+    scheduled_start = Column(DateTime, nullable=True, index=True)
+    scheduled_end = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
     order = relationship("Order")
@@ -99,6 +101,51 @@ class Planning(Base):
     @property
     def order_reference(self):
         return self.order.reference if self.order else f"ORD-{self.order_id}"
+
+
+class CalendarTask(Base):
+    __tablename__ = "calendar_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String, default="TASK", nullable=False, index=True)
+    status = Column(String, default="TODO", nullable=False, index=True)
+    priority = Column(String, default="NORMAL", nullable=False, index=True)
+    start_at = Column(DateTime, nullable=False, index=True)
+    end_at = Column(DateTime, nullable=True)
+    assigned_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    opportunity_id = Column(
+        Integer,
+        ForeignKey("crm_opportunities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    sale_order_id = Column(
+        Integer,
+        ForeignKey("sale_orders.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    assigned_user = relationship("User")
+    client = relationship("Client")
+    opportunity = relationship("CRMOpportunity")
+    sale_order = relationship("SaleOrder")
 
 class Order(Base):
     __tablename__ = "orders"
@@ -850,6 +897,12 @@ class CRMActivity(Base):
         nullable=True,
         index=True,
     )
+    assigned_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     activity_type = Column(String, nullable=False, index=True)
     subject = Column(String, nullable=False)
     note = Column(Text, nullable=True)
@@ -867,6 +920,7 @@ class CRMActivity(Base):
 
     client = relationship("Client", back_populates="crm_activities")
     opportunity = relationship("CRMOpportunity", back_populates="activities")
+    assigned_user = relationship("User")
 
     @property
     def client_name(self):

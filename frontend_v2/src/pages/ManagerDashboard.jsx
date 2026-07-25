@@ -21,6 +21,7 @@ import DeliveryDashboard from './DeliveryDashboard';
 import InsightDashboard from './InsightDashboard';
 import RBACMatrix from '../components/RBACMatrix';
 import PlatformSettings from '../components/PlatformSettings';
+import ScheduleDashboard from './ScheduleDashboard';
 
 export default function ManagerDashboard() {
     const { logout } = useAuth();
@@ -48,6 +49,7 @@ export default function ManagerDashboard() {
         activeView === 'live' ? 'Atelier Live' :
             activeView === 'workshop_supervisor' ? 'Chef d\'atelier' :
             activeView === 'orders' ? 'Suivi Commandes' :
+                activeView === 'schedule' ? 'Planning & Agenda' :
                 activeView === 'stock' ? 'Gestion de Stock' :
                     activeView === 'purchases' ? 'Achats & Appro' :
                         activeView === 'sale-detail' ? 'Dossier métier client' :
@@ -198,6 +200,7 @@ export default function ManagerDashboard() {
                     {activeView === 'live' && renderLiveView()}
                     {activeView === 'workshop_supervisor' && <WorkshopSupervisorView />}
                     {activeView === 'orders' && renderOrdersView()}
+                    {activeView === 'schedule' && <ScheduleDashboard />}
                     {activeView === 'stock' && <StockDashboard />}
                     {activeView === 'purchases' && <PurchasesDashboard />}
                     {activeView === 'sales' && <SalesDashboard />}

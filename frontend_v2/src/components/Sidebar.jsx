@@ -1,10 +1,15 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart, Truck, Users, UserCircle, Sparkles, FileText, BarChart3 } from 'lucide-react';
+import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart, Truck, Users, UserCircle, FileText, BarChart3, CalendarDays } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }) {
-    const { logout } = useAuth();
+    const { logout, user } = useAuth();
+    const canAccess = (item) => {
+        if (!item.permission) return true;
+        const permissions = user?.permissions || [];
+        return permissions.includes('*') || permissions.includes(item.permission);
+    };
 
     const menuCategories = [
         {
@@ -15,6 +20,12 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                 { id: 'workshop_supervisor', label: "Chef d'atelier", icon: Users, type: 'internal' },
                 { id: 'live', label: 'Atelier Live', icon: Activity, type: 'internal' },
                 { id: 'analytics_atelier', label: 'Analyse & Perf.', icon: BarChart3, type: 'internal' },
+            ]
+        },
+        {
+            title: 'Pilotage',
+            items: [
+                { id: 'schedule', label: 'Planning & Agenda', icon: CalendarDays, type: 'external', path: '/planning', permission: 'PLANNING_VIEW' },
             ]
         },
         {
@@ -82,7 +93,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                     {category.title}
                                 </h3>
                                 <nav className="space-y-1">
-                                    {category.items.map((item) => {
+                                    {category.items.filter(canAccess).map((item) => {
                                         const isSelected = activeView === item.id;
                                         const content = (
                                             <>
