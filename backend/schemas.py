@@ -15,6 +15,8 @@ class UserBase(BaseModel):
     team: Optional[str] = None
     access_mode: str = "PIN"
     role: str = "OPERATOR"
+    weekly_hours: float = 35.0
+    work_schedule: Optional[dict] = None
     additional_roles: List[str] = []
     stations: List['Station'] = [] # Changed to list of Station objects
 
@@ -33,6 +35,8 @@ class UserUpdate(BaseModel):
     team: Optional[str] = None
     access_mode: Optional[str] = None
     role: Optional[str] = None
+    weekly_hours: Optional[float] = None
+    work_schedule: Optional[dict] = None
     additional_roles: Optional[List[str]] = None
     pin: Optional[str] = None # Optional PIN reset
     station_codes: Optional[List[str]] = None

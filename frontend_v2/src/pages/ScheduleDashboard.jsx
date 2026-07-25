@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
     AlertTriangle,
     ArrowLeft,
     ArrowRight,
+    CalendarClock,
     CalendarDays,
     CheckCircle2,
     ExternalLink,
@@ -11,6 +12,7 @@ import {
     Plus,
     RefreshCw,
     Search,
+    Save,
     Trash2,
     UserRound,
     X,
@@ -29,6 +31,7 @@ const CATEGORY_META = {
     WORKSHOP: { label: 'Atelier', tone: 'bg-orange-50 text-orange-800 border-orange-200' },
     DELIVERY: { label: 'Livraison', tone: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
     PURCHASE: { label: 'Achat', tone: 'bg-rose-50 text-rose-800 border-rose-200' },
+    ABSENCE: { label: 'Indisponibilité', tone: 'bg-slate-100 text-slate-700 border-slate-300' },
 };
 
 const pad = (value) => String(value).padStart(2, '0');
@@ -66,6 +69,21 @@ const formatLongDate = (value) => new Intl.DateTimeFormat('fr-FR', {
     month: 'long',
     year: 'numeric',
 }).format(new Date(value));
+const roundHours = (value) => Math.round(value * 10) / 10;
+const eventDurationHours = (event) => {
+    if (!event.start_at) return 0;
+    const start = new Date(event.start_at);
+    const end = event.end_at ? new Date(event.end_at) : addHours(start, 1);
+    return Math.max((end - start) / (60 * 60 * 1000), 0.5);
+};
+const overlaps = (left, right) => (
+    new Date(left.start_at) < new Date(right.end_at || addHours(right.start_at, 1))
+    && new Date(right.start_at) < new Date(left.end_at || addHours(left.start_at, 1))
+);
+const countConflicts = (events) => events.reduce((total, event, index) => (
+    total + (events.slice(index + 1).some((candidate) => overlaps(event, candidate)) ? 1 : 0)
+), 0);
+const firstDefined = (...values) => values.find((value) => value !== undefined && value !== null);
 
 function getPeriod(anchor, view) {
     if (view === 'day') {
@@ -73,7 +91,7 @@ function getPeriod(anchor, view) {
         start.setHours(0, 0, 0, 0);
         return { start, end: addDays(start, 1) };
     }
-    if (view === 'week') {
+    if (view === 'week' || view === 'team') {
         const start = mondayOf(anchor);
         return { start, end: addDays(start, 7) };
     }
@@ -109,10 +127,10 @@ function EventChip({ event, compact = false, onOpen, onDragStart }) {
     );
 }
 
-function ModalShell({ title, eyebrow, onClose, children, footer }) {
+function ModalShell({ title, eyebrow, onClose, children, footer, wide = false }) {
     return (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm">
-            <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl">
+            <div className={`flex max-h-[92vh] w-full flex-col overflow-hidden rounded-lg bg-white shadow-2xl ${wide ? 'max-w-6xl' : 'max-w-2xl'}`}>
                 <header className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
                     <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">{eyebrow}</p>
@@ -160,6 +178,7 @@ export default function ScheduleDashboard() {
     const [editForm, setEditForm] = useState(null);
     const [notice, setNotice] = useState(null);
     const [conflictRetry, setConflictRetry] = useState(null);
+    const [availabilityOpen, setAvailabilityOpen] = useState(false);
     const period = useMemo(() => getPeriod(anchor, view), [anchor, view]);
 
     const metaQuery = useQuery({
@@ -240,7 +259,7 @@ export default function ScheduleDashboard() {
 
     const moveAnchor = (direction) => {
         if (view === 'day') setAnchor(addDays(anchor, direction));
-        else if (view === 'week') setAnchor(addDays(anchor, direction * 7));
+        else if (view === 'week' || view === 'team') setAnchor(addDays(anchor, direction * 7));
         else setAnchor(addMonths(anchor, direction));
     };
     const openEvent = (event) => {
@@ -273,6 +292,26 @@ export default function ScheduleDashboard() {
             },
         });
     };
+    const dropOnTeamSlot = (dropEvent, targetDate, hour, assignedUserId) => {
+        dropEvent.preventDefault();
+        dropEvent.stopPropagation();
+        const raw = dropEvent.dataTransfer.getData('application/mmg-schedule');
+        if (!raw) return;
+        const event = JSON.parse(raw);
+        const previousStart = event.start_at ? new Date(event.start_at) : new Date();
+        const previousEnd = event.end_at ? new Date(event.end_at) : addHours(previousStart, 1);
+        const duration = Math.max(previousEnd - previousStart, 30 * 60 * 1000);
+        const nextStart = new Date(targetDate);
+        nextStart.setHours(hour, event.start_at ? previousStart.getMinutes() : 0, 0, 0);
+        updateMutation.mutate({
+            event,
+            payload: {
+                start_at: nextStart.toISOString(),
+                end_at: new Date(nextStart.getTime() + duration).toISOString(),
+                assigned_user_id: assignedUserId ? Number(assignedUserId) : null,
+            },
+        });
+    };
     const dragStart = (dragEvent, event) => {
         dragEvent.dataTransfer.setData('application/mmg-schedule', JSON.stringify(event));
         dragEvent.dataTransfer.effectAllowed = 'move';
@@ -297,7 +336,7 @@ export default function ScheduleDashboard() {
 
     const periodTitle = view === 'day'
         ? formatLongDate(anchor)
-        : view === 'week'
+        : view === 'week' || view === 'team'
             ? `${new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(period.start)} au ${new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }).format(addDays(period.end, -1))}`
             : new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(anchor);
 
@@ -313,13 +352,22 @@ export default function ScheduleDashboard() {
                         <p className="mt-1 text-sm font-medium text-slate-500">CRM, métrés, atelier, livraisons et échéances dans une vue commune.</p>
                     </div>
                     {metaQuery.data?.can_edit && (
-                        <button
-                            type="button"
-                            onClick={() => setCreateForm(initialTask(anchor))}
-                            className="flex h-10 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-black text-white hover:bg-blue-700"
-                        >
-                            <Plus className="h-4 w-4" /> Planifier
-                        </button>
+                        <div className="flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setAvailabilityOpen(true)}
+                                className="flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50"
+                            >
+                                <CalendarClock className="h-4 w-4" /> Disponibilités
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setCreateForm(initialTask(anchor))}
+                                className="flex h-10 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-black text-white hover:bg-blue-700"
+                            >
+                                <Plus className="h-4 w-4" /> Planifier
+                            </button>
+                        </div>
                     )}
                 </div>
 
@@ -332,7 +380,7 @@ export default function ScheduleDashboard() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                         <div className="flex h-9 items-center rounded-md border border-slate-200 bg-slate-50 p-1">
-                            {[['day', 'Jour'], ['week', 'Semaine'], ['month', 'Mois']].map(([key, label]) => (
+                            {[['day', 'Jour'], ['week', 'Semaine'], ['month', 'Mois'], ['team', 'Équipe']].map(([key, label]) => (
                                 <button key={key} type="button" onClick={() => setView(key)} className={`h-7 rounded px-3 text-xs font-black ${view === key ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}>{label}</button>
                             ))}
                         </div>
@@ -373,6 +421,26 @@ export default function ScheduleDashboard() {
                 <main className="min-w-0 border-r border-slate-200">
                     {eventsQuery.isLoading ? (
                         <div className="grid h-96 place-items-center text-sm font-bold text-slate-500">Chargement du planning...</div>
+                    ) : view === 'team' ? (
+                        <>
+                            <TeamLoadCockpit
+                                response={eventsQuery.data}
+                                users={metaQuery.data?.users || []}
+                                events={events}
+                                ownerId={ownerId}
+                            />
+                            <TeamView
+                                date={anchor}
+                                weekStart={period.start}
+                                users={metaQuery.data?.users || []}
+                                ownerId={ownerId}
+                                events={events}
+                                onSelectDate={setAnchor}
+                                onOpen={openEvent}
+                                onDrop={dropOnTeamSlot}
+                                onDragStart={dragStart}
+                            />
+                        </>
                     ) : view === 'month' ? (
                         <MonthView anchor={anchor} events={events} onOpen={openEvent} onDrop={dropOnDate} onDragStart={dragStart} />
                     ) : view === 'week' ? (
@@ -479,7 +547,231 @@ export default function ScheduleDashboard() {
                     </div>
                 </ModalShell>
             )}
+            {availabilityOpen && (
+                <AvailabilityModal
+                    period={period}
+                    onClose={() => setAvailabilityOpen(false)}
+                    onChanged={() => {
+                        refresh();
+                        metaQuery.refetch();
+                    }}
+                />
+            )}
         </div>
+    );
+}
+
+const FULL_TIME_SCHEDULE = Object.fromEntries(
+    Array.from({ length: 5 }, (_, weekday) => [
+        String(weekday),
+        [['09:00', '12:30'], ['13:30', '17:00']],
+    ]),
+);
+const WORK_PRESETS = {
+    FULL_TIME: FULL_TIME_SCHEDULE,
+    FOUR_DAYS: Object.fromEntries(Object.entries(FULL_TIME_SCHEDULE).filter(([day]) => Number(day) < 4)),
+    HALF_TIME: Object.fromEntries(
+        Array.from({ length: 5 }, (_, weekday) => [String(weekday), [['09:00', '12:30']]]),
+    ),
+};
+const FULL_DAY_NAMES = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+const cloneSchedule = (schedule) => JSON.parse(JSON.stringify(schedule || FULL_TIME_SCHEDULE));
+const rowsFromSchedule = (schedule) => Array.from({ length: 7 }, (_, weekday) => {
+    const intervals = schedule?.[String(weekday)] || [];
+    return {
+        weekday,
+        enabled: intervals.length > 0,
+        morningStart: intervals[0]?.[0] || '09:00',
+        morningEnd: intervals[0]?.[1] || '12:30',
+        afternoonStart: intervals[1]?.[0] || '',
+        afternoonEnd: intervals[1]?.[1] || '',
+    };
+});
+const scheduleFromRows = (rows) => Object.fromEntries(rows
+    .filter((row) => row.enabled)
+    .map((row) => {
+        const intervals = [];
+        if (row.morningStart && row.morningEnd) intervals.push([row.morningStart, row.morningEnd]);
+        if (row.afternoonStart && row.afternoonEnd) intervals.push([row.afternoonStart, row.afternoonEnd]);
+        return [String(row.weekday), intervals];
+    })
+    .filter(([, intervals]) => intervals.length));
+const weeklyHoursFromRows = (rows) => roundHours(rows.reduce((total, row) => {
+    if (!row.enabled) return total;
+    return total + [
+        [row.morningStart, row.morningEnd],
+        [row.afternoonStart, row.afternoonEnd],
+    ].reduce((dayTotal, [startValue, endValue]) => {
+        if (!startValue || !endValue) return dayTotal;
+        const [startHour, startMinute] = startValue.split(':').map(Number);
+        const [endHour, endMinute] = endValue.split(':').map(Number);
+        return dayTotal + Math.max((endHour * 60 + endMinute - startHour * 60 - startMinute) / 60, 0);
+    }, 0);
+}, 0));
+
+function AvailabilityModal({ period, onClose, onChanged }) {
+    const queryClient = useQueryClient();
+    const availabilityQuery = useQuery({
+        queryKey: ['schedule-availability'],
+        queryFn: async () => (await api.get('/v2/schedule/availability', {
+            params: {
+                start_at: addDays(period.start, -90).toISOString(),
+                end_at: addDays(period.end, 365).toISOString(),
+            },
+        })).data,
+    });
+    const users = availabilityQuery.data?.users || [];
+    const [selectedUserId, setSelectedUserId] = useState('');
+    const [scheduleRows, setScheduleRows] = useState(rowsFromSchedule(FULL_TIME_SCHEDULE));
+    const [absenceForm, setAbsenceForm] = useState({
+        start_at: toInputDateTime(new Date()),
+        end_at: toInputDateTime(addHours(new Date(), 8)),
+        absence_type: 'LEAVE',
+        reason: '',
+    });
+    const selectedUser = users.find((user) => String(user.id) === String(selectedUserId));
+
+    useEffect(() => {
+        if (!selectedUserId && users[0]) setSelectedUserId(String(users[0].id));
+    }, [selectedUserId, users]);
+    useEffect(() => {
+        if (selectedUser) setScheduleRows(rowsFromSchedule(selectedUser.work_schedule));
+    }, [selectedUserId, selectedUser]);
+
+    const refreshAvailability = async () => {
+        await queryClient.invalidateQueries({ queryKey: ['schedule-availability'] });
+        onChanged();
+    };
+    const scheduleMutation = useMutation({
+        mutationFn: async () => api.put(`/v2/schedule/availability/${selectedUser.id}`, {
+            work_schedule: scheduleFromRows(scheduleRows),
+        }),
+        onSuccess: refreshAvailability,
+    });
+    const absenceMutation = useMutation({
+        mutationFn: async () => api.post(`/v2/schedule/availability/${selectedUser.id}/absences`, {
+            ...absenceForm,
+            start_at: new Date(absenceForm.start_at).toISOString(),
+            end_at: new Date(absenceForm.end_at).toISOString(),
+            reason: absenceForm.reason.trim() || null,
+        }),
+        onSuccess: async () => {
+            setAbsenceForm((current) => ({ ...current, reason: '' }));
+            await refreshAvailability();
+        },
+    });
+    const deleteAbsenceMutation = useMutation({
+        mutationFn: async (absenceId) => api.delete(`/v2/schedule/availability/absences/${absenceId}`),
+        onSuccess: refreshAvailability,
+    });
+    const setRow = (weekday, key, value) => setScheduleRows((current) => current.map((row) => (
+        row.weekday === weekday ? { ...row, [key]: value } : row
+    )));
+    const applyPreset = (presetKey) => setScheduleRows(rowsFromSchedule(cloneSchedule(WORK_PRESETS[presetKey])));
+    const error = scheduleMutation.error || absenceMutation.error || deleteAbsenceMutation.error;
+
+    return (
+        <ModalShell
+            wide
+            eyebrow="Capacité réelle"
+            title="Disponibilités de l’équipe"
+            onClose={onClose}
+            footer={(
+                <button type="button" onClick={onClose} className="h-10 rounded-md border border-slate-200 bg-white px-4 text-sm font-black text-slate-700">Fermer</button>
+            )}
+        >
+            {availabilityQuery.isLoading ? (
+                <div className="py-20 text-center text-sm font-bold text-slate-500">Chargement des disponibilités...</div>
+            ) : (
+                <div className="space-y-5">
+                    <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+                        <aside className="rounded-md border border-slate-200 bg-slate-50 p-4">
+                            <FieldLabel text="Collaborateur" />
+                            <select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)} className="field">
+                                {users.map((user) => <option key={user.id} value={user.id}>{user.name} · {user.role}</option>)}
+                            </select>
+                            {selectedUser && (
+                                <div className="mt-4 rounded-md border border-blue-200 bg-blue-50 p-4">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Contrat planifié</p>
+                                    <p className="mt-1 text-3xl font-black text-blue-950">{weeklyHoursFromRows(scheduleRows)} h</p>
+                                    <p className="mt-1 text-xs font-semibold text-blue-800">La capacité est calculée sur ces plages, après déduction des congés.</p>
+                                </div>
+                            )}
+                            <div className="mt-4 space-y-2">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Modèles</p>
+                                <button type="button" onClick={() => applyPreset('FULL_TIME')} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-xs font-black text-slate-700">35 h · lundi au vendredi</button>
+                                <button type="button" onClick={() => applyPreset('FOUR_DAYS')} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-xs font-black text-slate-700">28 h · quatre jours</button>
+                                <button type="button" onClick={() => applyPreset('HALF_TIME')} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-xs font-black text-slate-700">17,5 h · matinées</button>
+                            </div>
+                        </aside>
+
+                        <section className="min-w-0 rounded-md border border-slate-200">
+                            <div className="border-b border-slate-200 px-4 py-3">
+                                <p className="font-black text-slate-900">Horaires individuels</p>
+                                <p className="text-xs font-semibold text-slate-500">Deux plages sont possibles par jour pour gérer la pause et les demi-journées.</p>
+                            </div>
+                            <div className="divide-y divide-slate-100">
+                                {scheduleRows.map((row) => (
+                                    <div key={row.weekday} className="grid items-center gap-2 px-4 py-3 md:grid-cols-[120px_repeat(4,minmax(90px,1fr))]">
+                                        <label className="flex items-center gap-2 text-sm font-black text-slate-800">
+                                            <input type="checkbox" checked={row.enabled} onChange={(event) => setRow(row.weekday, 'enabled', event.target.checked)} />
+                                            {FULL_DAY_NAMES[row.weekday]}
+                                        </label>
+                                        {['morningStart', 'morningEnd', 'afternoonStart', 'afternoonEnd'].map((key, index) => (
+                                            <label key={key}>
+                                                <span className="mb-1 block text-[9px] font-black uppercase text-slate-400">{['Début 1', 'Fin 1', 'Début 2', 'Fin 2'][index]}</span>
+                                                <input type="time" disabled={!row.enabled} value={row[key]} onChange={(event) => setRow(row.weekday, key, event.target.value)} className="field disabled:bg-slate-100 disabled:text-slate-300" />
+                                            </label>
+                                        ))}
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="flex justify-end border-t border-slate-200 bg-slate-50 p-4">
+                                <button type="button" disabled={!selectedUser || scheduleMutation.isPending} onClick={() => scheduleMutation.mutate()} className="flex h-10 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-black text-white disabled:opacity-40">
+                                    <Save className="h-4 w-4" /> Enregistrer les horaires
+                                </button>
+                            </div>
+                        </section>
+                    </div>
+
+                    <section className="rounded-md border border-slate-200">
+                        <div className="border-b border-slate-200 px-4 py-3">
+                            <p className="font-black text-slate-900">Congés et indisponibilités</p>
+                            <p className="text-xs font-semibold text-slate-500">Une indisponibilité validée réduit la capacité et bloque les nouvelles affectations sur la période.</p>
+                        </div>
+                        <div className="grid gap-3 bg-slate-50 p-4 md:grid-cols-[180px_1fr_1fr_1.4fr_auto]">
+                            <select value={absenceForm.absence_type} onChange={(event) => setAbsenceForm((current) => ({ ...current, absence_type: event.target.value }))} className="field">
+                                <option value="LEAVE">Congé</option>
+                                <option value="RTT">RTT</option>
+                                <option value="SICK">Arrêt maladie</option>
+                                <option value="TRAINING">Formation</option>
+                                <option value="UNAVAILABLE">Indisponible</option>
+                            </select>
+                            <input type="datetime-local" value={absenceForm.start_at} onChange={(event) => setAbsenceForm((current) => ({ ...current, start_at: event.target.value }))} className="field" />
+                            <input type="datetime-local" value={absenceForm.end_at} onChange={(event) => setAbsenceForm((current) => ({ ...current, end_at: event.target.value }))} className="field" />
+                            <input value={absenceForm.reason} onChange={(event) => setAbsenceForm((current) => ({ ...current, reason: event.target.value }))} placeholder="Motif ou note interne" className="field" />
+                            <button type="button" disabled={!selectedUser || absenceMutation.isPending} onClick={() => absenceMutation.mutate()} className="h-10 rounded-md bg-slate-900 px-4 text-sm font-black text-white disabled:opacity-40">Ajouter</button>
+                        </div>
+                        <div className="divide-y divide-slate-100">
+                            {(selectedUser?.absences || []).map((absence) => (
+                                <div key={absence.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                                    <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-600">{absence.absence_type}</span>
+                                    <span className="text-sm font-black text-slate-800">{new Date(absence.start_at).toLocaleString('fr-FR')} → {new Date(absence.end_at).toLocaleString('fr-FR')}</span>
+                                    <span className="min-w-0 flex-1 text-sm font-semibold text-slate-500">{absence.reason || 'Sans note'}</span>
+                                    <button type="button" onClick={() => deleteAbsenceMutation.mutate(absence.id)} className="grid h-9 w-9 place-items-center rounded-md border border-red-200 text-red-700 hover:bg-red-50" title="Supprimer l’indisponibilité"><Trash2 className="h-4 w-4" /></button>
+                                </div>
+                            ))}
+                            {!selectedUser?.absences?.length && <p className="px-4 py-8 text-center text-sm font-bold text-slate-400">Aucune indisponibilité enregistrée.</p>}
+                        </div>
+                    </section>
+                    {error && (
+                        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
+                            {error.response?.data?.detail || 'La mise à jour des disponibilités a échoué.'}
+                        </div>
+                    )}
+                </div>
+            )}
+        </ModalShell>
     );
 }
 
@@ -526,6 +818,401 @@ function EventForm({ event, form, setForm, meta }) {
 
 function FieldLabel({ text }) {
     return <span className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-500">{text}</span>;
+}
+
+function normalizeTeamLoad(response, users, events, ownerId) {
+    const raw = response?.team_load;
+    let rawMembers = [];
+    if (Array.isArray(raw)) rawMembers = raw;
+    else if (Array.isArray(raw?.members)) rawMembers = raw.members;
+    else if (Array.isArray(raw?.users)) rawMembers = raw.users;
+    else if (Array.isArray(raw?.items)) rawMembers = raw.items;
+    else if (raw && typeof raw === 'object') {
+        rawMembers = Object.entries(raw)
+            .filter(([, value]) => value && typeof value === 'object' && !Array.isArray(value))
+            .map(([key, value]) => ({ user_id: key === 'unassigned' ? null : key, ...value }));
+    }
+
+    const visibleUsers = ownerId
+        ? users.filter((user) => String(user.id) === String(ownerId))
+        : users;
+    const members = [
+        ...visibleUsers.map((user) => ({ id: user.id, name: user.name || user.username || `Utilisateur ${user.id}` })),
+        { id: null, name: 'Non affecté' },
+    ];
+    const now = new Date();
+    return members.map((member) => {
+        const memberEvents = events.filter((event) => (
+            member.id === null ? !event.owner_id : String(event.owner_id) === String(member.id)
+        ));
+        const rawMember = rawMembers.find((item) => {
+            const rawId = firstDefined(item.user_id, item.owner_id, item.assigned_user_id, item.id);
+            return member.id === null
+                ? rawId === null || rawId === undefined || rawId === '' || rawId === 'unassigned'
+                : String(rawId) === String(member.id);
+        }) || {};
+        const fallbackHours = roundHours(memberEvents
+            .filter((event) => event.source_type !== 'USER_ABSENCE')
+            .reduce((sum, event) => sum + eventDurationHours(event), 0));
+        const plannedHours = Number(firstDefined(
+            rawMember.planned_hours,
+            rawMember.scheduled_hours,
+            rawMember.hours,
+            fallbackHours,
+        )) || 0;
+        const capacityHours = member.id === null ? 0 : Number(firstDefined(
+            rawMember.capacity_hours,
+            rawMember.weekly_capacity_hours,
+            rawMember.capacity,
+            35,
+        )) || 0;
+        let occupancy = Number(firstDefined(
+            rawMember.occupancy_rate,
+            rawMember.utilization_rate,
+            rawMember.load_rate,
+            capacityHours ? (plannedHours / capacityHours) * 100 : 0,
+        )) || 0;
+        if (occupancy > 0 && occupancy <= 1) occupancy *= 100;
+        const overdue = Number(firstDefined(
+            rawMember.overdue,
+            rawMember.overdue_count,
+            rawMember.late_count,
+            memberEvents.filter((event) => (
+                event.start_at
+                && new Date(event.start_at) < now
+                && !['DONE', 'COMPLETED', 'TERMINE', 'TERMINÉ'].includes(String(event.status || '').toUpperCase())
+            )).length,
+        )) || 0;
+        const conflicts = Number(firstDefined(
+            rawMember.conflicts,
+            rawMember.conflict_count,
+            countConflicts(memberEvents),
+        )) || 0;
+        const absenceHours = Number(firstDefined(
+            rawMember.absence_hours,
+            rawMember.leave_hours,
+            0,
+        )) || 0;
+        const contractHours = Number(firstDefined(
+            rawMember.contract_hours,
+            rawMember.weekly_hours,
+            member.id === null ? 0 : 35,
+        )) || 0;
+        return {
+            ...member,
+            plannedHours: roundHours(plannedHours),
+            capacityHours: roundHours(capacityHours),
+            absenceHours: roundHours(absenceHours),
+            contractHours: roundHours(contractHours),
+            occupancy: Math.round(occupancy),
+            overdue,
+            conflicts,
+            overloaded: Boolean(firstDefined(rawMember.is_overloaded, occupancy > 100)),
+        };
+    });
+}
+
+function normalizeScheduleAlerts(response, loads, events) {
+    const raw = response?.alerts;
+    let items = [];
+    if (Array.isArray(raw)) items = raw;
+    else if (Array.isArray(raw?.items)) items = raw.items;
+    else if (raw && typeof raw === 'object') {
+        items = Object.entries(raw).flatMap(([key, value]) => {
+            if (Array.isArray(value)) return value.map((item) => ({ type: key, ...item }));
+            if (typeof value === 'number' && value > 0) return [{ type: key, count: value }];
+            if (value && typeof value === 'object') return [{ type: key, ...value }];
+            return [];
+        });
+    }
+    const normalized = items.map((item, index) => {
+        const type = String(item.type || '').toLowerCase();
+        const severity = String(item.severity || '').toLowerCase();
+        return {
+            id: item.id || `${type || 'alert'}-${index}`,
+            title: item.title || item.message || item.label || ({
+                overload: 'Collaborateur en surcharge',
+                overloaded: 'Collaborateur en surcharge',
+                conflict: 'Conflit de planning',
+                conflicts: 'Conflits de planning',
+                overdue: 'Actions en retard',
+                unassigned: 'Actions non affectées',
+            }[type] || 'Alerte planning'),
+            detail: item.detail || item.owner_name || item.user_name || item.description,
+            count: Number(firstDefined(item.count, item.total, item.value, 1)) || 1,
+            severity: ['critical', 'high', 'error'].includes(severity)
+                ? 'high'
+                : (['overload', 'overloaded', 'conflict', 'conflicts'].includes(type) ? 'high' : 'medium'),
+        };
+    });
+    if (normalized.length) return normalized;
+
+    const fallback = [];
+    const overloaded = loads.filter((load) => load.overloaded);
+    const conflicts = loads.reduce((sum, load) => sum + load.conflicts, 0);
+    const overdue = loads.reduce((sum, load) => sum + load.overdue, 0);
+    const unassigned = events.filter((event) => !event.owner_id).length;
+    if (overloaded.length) fallback.push({
+        id: 'fallback-overload',
+        title: 'Surcharge équipe',
+        detail: overloaded.map((load) => load.name).join(', '),
+        count: overloaded.length,
+        severity: 'high',
+    });
+    if (conflicts) fallback.push({ id: 'fallback-conflicts', title: 'Conflits de planning', count: conflicts, severity: 'high' });
+    if (overdue) fallback.push({ id: 'fallback-overdue', title: 'Actions en retard', count: overdue, severity: 'medium' });
+    if (unassigned) fallback.push({ id: 'fallback-unassigned', title: 'Actions non affectées', count: unassigned, severity: 'medium' });
+    return fallback;
+}
+
+function TeamLoadCockpit({ response, users, events, ownerId }) {
+    const loads = normalizeTeamLoad(response, users, events, ownerId);
+    const alerts = normalizeScheduleAlerts(response, loads, events);
+    const staffedLoads = loads.filter((load) => load.id !== null);
+    const plannedHours = roundHours(staffedLoads.reduce((sum, load) => sum + load.plannedHours, 0));
+    const capacityHours = roundHours(staffedLoads.reduce((sum, load) => sum + load.capacityHours, 0));
+    const averageOccupancy = capacityHours ? Math.round((plannedHours / capacityHours) * 100) : 0;
+    const conflictCount = loads.reduce((sum, load) => sum + load.conflicts, 0);
+    const overdueCount = loads.reduce((sum, load) => sum + load.overdue, 0);
+
+    return (
+        <section className="border-b border-slate-200 bg-slate-50 px-4 py-4 sm:px-6">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Pilotage manager</p>
+                    <h3 className="mt-1 text-lg font-black text-slate-950">Charge équipe</h3>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">
+                        Heures et capacité de la semaine. La capacité est indicative lorsque le backend ne la fournit pas.
+                    </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {[
+                        ['Planifié', `${plannedHours} h`],
+                        ['Capacité', `${capacityHours} h`],
+                        ['Occupation', `${averageOccupancy} %`],
+                        ['Conflits', conflictCount],
+                        ['Retards', overdueCount],
+                    ].map(([label, value]) => (
+                        <div key={label} className="min-w-24 rounded-md border border-slate-200 bg-white px-3 py-2">
+                            <span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">{label}</span>
+                            <strong className="mt-0.5 block text-base font-black text-slate-950">{value}</strong>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="mt-4 overflow-x-auto pb-1">
+                <div className="flex min-w-max gap-2">
+                    {loads.map((load) => (
+                        <div key={load.id ?? 'unassigned'} className={`w-48 rounded-md border bg-white p-3 ${load.overloaded ? 'border-red-300' : 'border-slate-200'}`}>
+                            <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                    <p className="truncate text-sm font-black text-slate-900">{load.name}</p>
+                                    <p className="mt-0.5 text-[10px] font-bold text-slate-500">
+                                        {load.plannedHours} h / {load.capacityHours || '—'} h
+                                    </p>
+                                    {load.absenceHours > 0 && (
+                                        <p className="mt-0.5 text-[10px] font-bold text-violet-700">
+                                            {load.absenceHours} h d’absence déduite
+                                        </p>
+                                    )}
+                                </div>
+                                <span className={`rounded px-2 py-1 text-[10px] font-black ${load.overloaded ? 'bg-red-100 text-red-700' : load.occupancy >= 80 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                    {load.capacityHours ? `${load.occupancy} %` : 'Hors charge'}
+                                </span>
+                            </div>
+                            <div className="mt-3 h-1.5 overflow-hidden rounded bg-slate-100">
+                                <div className={`h-full rounded ${load.overloaded ? 'bg-red-500' : load.occupancy >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(load.occupancy, 100)}%` }} />
+                            </div>
+                            <div className="mt-3 flex gap-3 text-[10px] font-bold text-slate-500">
+                                <span className={load.conflicts ? 'text-red-700' : ''}>{load.conflicts} conflit(s)</span>
+                                <span className={load.overdue ? 'text-amber-700' : ''}>{load.overdue} retard(s)</span>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+                {alerts.slice(0, 6).map((alert) => (
+                    <div key={alert.id} className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-bold ${alert.severity === 'high' ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                        <span>{alert.title}{alert.detail ? ` · ${alert.detail}` : ''}</span>
+                        <strong className="rounded bg-white/70 px-1.5 py-0.5">{alert.count}</strong>
+                    </div>
+                ))}
+                {!alerts.length && (
+                    <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800">
+                        <CheckCircle2 className="h-4 w-4" /> Aucun conflit ni retard détecté.
+                    </div>
+                )}
+            </div>
+        </section>
+    );
+}
+
+function layoutTeamEvents(events, date) {
+    const rangeStart = new Date(date);
+    rangeStart.setHours(6, 0, 0, 0);
+    const rangeEnd = new Date(date);
+    rangeEnd.setHours(21, 0, 0, 0);
+    const sorted = events
+        .map((event) => {
+            const originalStart = new Date(event.start_at);
+            const originalEnd = event.end_at ? new Date(event.end_at) : addHours(originalStart, 1);
+            return {
+                event,
+                start: new Date(Math.max(originalStart, rangeStart)),
+                end: new Date(Math.min(originalEnd, rangeEnd)),
+            };
+        })
+        .filter((item) => item.start < item.end)
+        .sort((left, right) => left.start - right.start);
+    const groups = [];
+    sorted.forEach((item) => {
+        const group = groups[groups.length - 1];
+        if (!group || item.start >= group.end) {
+            groups.push({ end: item.end, items: [item] });
+        } else {
+            group.items.push(item);
+            if (item.end > group.end) group.end = item.end;
+        }
+    });
+    return groups.flatMap((group) => {
+        const laneEnds = [];
+        const positioned = group.items.map((item) => {
+            let lane = laneEnds.findIndex((end) => end <= item.start);
+            if (lane === -1) lane = laneEnds.length;
+            laneEnds[lane] = item.end;
+            return { ...item, lane };
+        });
+        return positioned.map((item) => ({
+            ...item,
+            laneCount: laneEnds.length,
+            top: ((item.start - rangeStart) / (60 * 60 * 1000)) * 72,
+            height: Math.max(((item.end - item.start) / (60 * 60 * 1000)) * 72, 34),
+        }));
+    });
+}
+
+function TeamView({ date, weekStart, users, ownerId, events, onSelectDate, onOpen, onDrop, onDragStart }) {
+    const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+    const visibleUsers = ownerId
+        ? users.filter((user) => String(user.id) === String(ownerId))
+        : users;
+    const inferredUsers = ownerId ? [] : events
+        .filter((event) => event.owner_id && !visibleUsers.some((user) => String(user.id) === String(event.owner_id)))
+        .reduce((items, event) => (
+            items.some((item) => String(item.id) === String(event.owner_id))
+                ? items
+                : [...items, { id: event.owner_id, name: event.owner_name || `Utilisateur ${event.owner_id}` }]
+        ), []);
+    const members = [
+        ...visibleUsers.map((user) => ({ id: user.id, name: user.name || user.username || `Utilisateur ${user.id}` })),
+        ...inferredUsers,
+        { id: null, name: 'Non affecté' },
+    ];
+    const selectedDayEvents = events.filter((event) => (
+        event.start_at && localDateKey(new Date(event.start_at)) === localDateKey(date)
+    ));
+    const hours = Array.from({ length: 15 }, (_, index) => index + 6);
+    const totalHeight = hours.length * 72;
+
+    return (
+        <section className="bg-white">
+            <div className="flex items-center gap-2 overflow-x-auto border-b border-slate-200 px-4 py-3 sm:px-6">
+                {days.map((day, index) => (
+                    <button
+                        key={day.toISOString()}
+                        type="button"
+                        onClick={() => onSelectDate(day)}
+                        className={`min-w-24 rounded-md border px-3 py-2 text-left ${localDateKey(day) === localDateKey(date) ? 'border-blue-600 bg-blue-50 text-blue-900' : 'border-slate-200 bg-white text-slate-600'}`}
+                    >
+                        <span className="block text-[9px] font-black uppercase tracking-widest">{DAY_NAMES[index]}</span>
+                        <strong className="mt-0.5 block text-sm font-black">{day.getDate()} {new Intl.DateTimeFormat('fr-FR', { month: 'short' }).format(day)}</strong>
+                    </button>
+                ))}
+            </div>
+
+            <div className="overflow-x-auto">
+                <div style={{ minWidth: `${64 + members.length * 230}px` }}>
+                    <div className="sticky top-0 z-30 grid border-b border-slate-200 bg-white" style={{ gridTemplateColumns: `64px repeat(${members.length}, minmax(230px, 1fr))` }}>
+                        <div className="border-r border-slate-200 px-2 py-3 text-center text-[9px] font-black uppercase tracking-widest text-slate-400">Heure</div>
+                        {members.map((member) => {
+                            const count = selectedDayEvents.filter((event) => (
+                                member.id === null ? !event.owner_id : String(event.owner_id) === String(member.id)
+                            )).length;
+                            return (
+                                <div key={member.id ?? 'unassigned'} className="border-r border-slate-200 px-3 py-3">
+                                    <div className="flex min-w-0 items-center justify-between gap-2">
+                                        <span className="truncate text-sm font-black text-slate-900">{member.name}</span>
+                                        <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-600">{count}</span>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div className="grid" style={{ gridTemplateColumns: `64px repeat(${members.length}, minmax(230px, 1fr))` }}>
+                        <div className="relative border-r border-slate-200 bg-slate-50" style={{ height: `${totalHeight}px` }}>
+                            {hours.map((hour, index) => (
+                                <span key={hour} className="absolute right-2 text-[10px] font-black text-slate-400" style={{ top: `${index * 72 - 7}px` }}>{pad(hour)}:00</span>
+                            ))}
+                            <span className="absolute bottom-0 right-2 translate-y-1/2 text-[10px] font-black text-slate-400">21:00</span>
+                        </div>
+                        {members.map((member) => {
+                            const memberEvents = selectedDayEvents.filter((event) => (
+                                member.id === null ? !event.owner_id : String(event.owner_id) === String(member.id)
+                            ));
+                            const positioned = layoutTeamEvents(memberEvents, date);
+                            return (
+                                <div key={member.id ?? 'unassigned'} className="relative border-r border-slate-200" style={{ height: `${totalHeight}px` }}>
+                                    {hours.map((hour, index) => (
+                                        <div
+                                            key={hour}
+                                            onDragOver={(dragEvent) => {
+                                                dragEvent.preventDefault();
+                                                dragEvent.dataTransfer.dropEffect = 'move';
+                                            }}
+                                            onDrop={(dropEvent) => onDrop(dropEvent, date, hour, member.id)}
+                                            className="absolute inset-x-0 border-b border-slate-100 transition hover:bg-blue-50/60"
+                                            style={{ top: `${index * 72}px`, height: '72px' }}
+                                            title={`Déplacer à ${pad(hour)}:00 · ${member.name}`}
+                                        />
+                                    ))}
+                                    {positioned.map((item) => {
+                                        const meta = CATEGORY_META[item.event.category] || CATEGORY_META.TASK;
+                                        const width = 100 / item.laneCount;
+                                        return (
+                                            <button
+                                                key={item.event.id}
+                                                type="button"
+                                                draggable={item.event.editable}
+                                                onDragStart={(dragEvent) => onDragStart(dragEvent, item.event)}
+                                                onClick={() => onOpen(item.event)}
+                                                className={`absolute z-10 overflow-hidden rounded border px-2 py-1.5 text-left shadow-sm transition hover:z-20 hover:shadow-md ${meta.tone}`}
+                                                style={{
+                                                    top: `${item.top + 2}px`,
+                                                    height: `${Math.max(item.height - 4, 30)}px`,
+                                                    left: `calc(${item.lane * width}% + 3px)`,
+                                                    width: `calc(${width}% - 6px)`,
+                                                }}
+                                                title={`${formatTime(item.event.start_at)} · ${item.event.title}`}
+                                            >
+                                                <span className="block truncate text-[10px] font-black">{formatTime(item.event.start_at)} · {item.event.end_at ? formatTime(item.event.end_at) : ''}</span>
+                                                <span className="mt-0.5 block truncate text-xs font-bold">{item.event.title}</span>
+                                                {item.height >= 58 && <span className="mt-0.5 block truncate text-[9px] font-semibold opacity-70">{item.event.client_name || item.event.reference || meta.label}</span>}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
 }
 
 function MonthView({ anchor, events, onOpen, onDrop, onDragStart }) {

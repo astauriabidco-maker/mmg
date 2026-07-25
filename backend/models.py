@@ -57,10 +57,17 @@ class User(Base):
     pin_hash = Column(String) # Hashed 4-digit PIN
     role = Column(String, default="OPERATOR") # Link to roles.name
     is_active = Column(Boolean, default=True)
+    weekly_hours = Column(Float, nullable=False, default=35.0)
+    work_schedule = Column(JSON, nullable=True)
     
     # Many-to-many relationship with Stations
     stations = relationship("Station", secondary="user_stations")
     secondary_roles = relationship("Role", secondary="user_secondary_roles")
+    absences = relationship(
+        "UserAbsence",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def additional_roles(self):
@@ -71,6 +78,27 @@ class User(Base):
         names = [self.role] if self.role else []
         names.extend(role.name for role in self.secondary_roles or [] if role.name not in names)
         return names
+
+
+class UserAbsence(Base):
+    __tablename__ = "user_absences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    start_at = Column(DateTime, nullable=False, index=True)
+    end_at = Column(DateTime, nullable=False, index=True)
+    absence_type = Column(String, nullable=False, default="LEAVE")
+    status = Column(String, nullable=False, default="APPROVED")
+    reason = Column(Text, nullable=True)
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+    user = relationship("User", back_populates="absences")
 
 class UserStation(Base):
     __tablename__ = "user_stations"

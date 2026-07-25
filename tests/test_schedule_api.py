@@ -48,6 +48,54 @@ def _worker_and_client(session_factory):
         db.close()
 
 
+def _create_worker(
+    session_factory,
+    username,
+    first_name,
+    last_name,
+    role="SALES",
+):
+    db = session_factory()
+    try:
+        worker = models.User(
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            pin_hash="unused",
+            role=role,
+            is_active=True,
+        )
+        db.add(worker)
+        db.commit()
+        return worker.id
+    finally:
+        db.close()
+
+
+def _post_task(
+    client,
+    headers,
+    *,
+    title,
+    start_at,
+    end_at,
+    assigned_user_id=None,
+    allow_conflict=False,
+):
+    return client.post(
+        "/v2/schedule/tasks",
+        headers=headers,
+        json={
+            "title": title,
+            "category": "TASK",
+            "start_at": start_at.isoformat(),
+            "end_at": end_at.isoformat(),
+            "assigned_user_id": assigned_user_id,
+            "allow_conflict": allow_conflict,
+        },
+    )
+
+
 def test_schedule_creates_lists_and_cancels_task(isolated_client):
     client, session_factory = isolated_client
     headers = _admin_headers(session_factory)
@@ -119,6 +167,366 @@ def test_schedule_rejects_overlapping_assignment(isolated_client):
 
     second["allow_conflict"] = True
     assert client.post("/v2/schedule/tasks", headers=headers, json=second).status_code == 201
+
+
+def test_schedule_allows_different_workers_on_same_slot(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    first_worker_id, _ = _worker_and_client(session_factory)
+    second_worker_id = _create_worker(
+        session_factory,
+        "poseur",
+        "Nora",
+        "Pose",
+    )
+    start = datetime(2026, 8, 5, 9, 0)
+    end = start + timedelta(hours=2)
+
+    first_response = _post_task(
+        client,
+        headers,
+        title="Métré chantier République",
+        start_at=start,
+        end_at=end,
+        assigned_user_id=first_worker_id,
+    )
+    second_response = _post_task(
+        client,
+        headers,
+        title="Pose chantier Bastille",
+        start_at=start,
+        end_at=end,
+        assigned_user_id=second_worker_id,
+    )
+
+    assert first_response.status_code == 201, first_response.text
+    assert second_response.status_code == 201, second_response.text
+    assert first_response.json()["owner_id"] == first_worker_id
+    assert second_response.json()["owner_id"] == second_worker_id
+
+
+def test_schedule_reports_team_load_and_manager_summary(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    first_worker_id, _ = _worker_and_client(session_factory)
+    second_worker_id = _create_worker(
+        session_factory,
+        "commercial-2",
+        "Amine",
+        "Vente",
+    )
+    day_start = datetime(2020, 1, 6, 6, 0)
+
+    responses = [
+        _post_task(
+            client,
+            headers,
+            title="Journée métrés",
+            start_at=day_start,
+            end_at=day_start + timedelta(hours=8),
+            assigned_user_id=first_worker_id,
+        ),
+        _post_task(
+            client,
+            headers,
+            title="Urgence client",
+            start_at=day_start + timedelta(hours=6),
+            end_at=day_start + timedelta(hours=8),
+            assigned_user_id=first_worker_id,
+            allow_conflict=True,
+        ),
+        _post_task(
+            client,
+            headers,
+            title="Relances commerciales",
+            start_at=day_start + timedelta(hours=2),
+            end_at=day_start + timedelta(hours=6),
+            assigned_user_id=second_worker_id,
+        ),
+    ]
+    assert all(response.status_code == 201 for response in responses)
+
+    response = client.get(
+        "/v2/schedule/events",
+        headers=headers,
+        params={
+            "start_at": datetime(2020, 1, 6).isoformat(),
+            "end_at": datetime(2020, 1, 7).isoformat(),
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    load_by_owner = {
+        load["owner_id"]: load
+        for load in payload["team_load"]
+    }
+
+    overloaded = load_by_owner[first_worker_id]
+    assert overloaded["planned_hours"] == 10.0
+    assert overloaded["capacity_hours"] == 7.0
+    assert overloaded["utilization_pct"] == 142.9
+    assert overloaded["overloaded"] is True
+    assert overloaded["conflicts"] >= 1
+
+    available = load_by_owner[second_worker_id]
+    assert available["planned_hours"] == 4.0
+    assert available["capacity_hours"] == 7.0
+    assert available["utilization_pct"] == 57.1
+    assert available["overloaded"] is False
+    assert available["conflicts"] == 0
+
+    summary = payload["summary"]
+    assert {
+        "planned_hours",
+        "capacity_hours",
+        "utilization_pct",
+        "overloaded_users",
+        "conflicts",
+    } <= summary.keys()
+    assert summary["planned_hours"] == sum(
+        load["planned_hours"] for load in payload["team_load"]
+    )
+    assert summary["capacity_hours"] == sum(
+        load["capacity_hours"] for load in payload["team_load"]
+    )
+    assert summary["utilization_pct"] == round(
+        summary["planned_hours"] / summary["capacity_hours"] * 100,
+        1,
+    )
+    assert summary["overloaded_users"] == 1
+    assert summary["conflicts"] >= 1
+
+
+def test_schedule_defaults_to_35_hours_per_week(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id, _ = _worker_and_client(session_factory)
+
+    response = client.get(
+        "/v2/schedule/events",
+        headers=headers,
+        params={
+            "start_at": datetime(2026, 1, 5).isoformat(),
+            "end_at": datetime(2026, 1, 12).isoformat(),
+        },
+    )
+    assert response.status_code == 200, response.text
+    load = next(
+        item
+        for item in response.json()["team_load"]
+        if item["owner_id"] == worker_id
+    )
+    assert load["contract_hours"] == 35.0
+    assert load["capacity_hours"] == 35.0
+    assert load["absence_hours"] == 0.0
+
+
+def test_part_time_schedule_and_leave_reduce_capacity(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id, _ = _worker_and_client(session_factory)
+    half_time_schedule = {
+        str(weekday): [["09:00", "12:30"]]
+        for weekday in range(5)
+    }
+
+    updated = client.put(
+        f"/v2/schedule/availability/{worker_id}",
+        headers=headers,
+        json={"work_schedule": half_time_schedule},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["weekly_hours"] == 17.5
+
+    absence = client.post(
+        f"/v2/schedule/availability/{worker_id}/absences",
+        headers=headers,
+        json={
+            "start_at": "2026-01-05T07:00:00Z",
+            "end_at": "2026-01-05T12:00:00Z",
+            "absence_type": "RTT",
+            "reason": "Demi-journée RTT",
+        },
+    )
+    assert absence.status_code == 201, absence.text
+
+    response = client.get(
+        "/v2/schedule/events",
+        headers=headers,
+        params={
+            "start_at": datetime(2026, 1, 5).isoformat(),
+            "end_at": datetime(2026, 1, 12).isoformat(),
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    load = next(
+        item for item in payload["team_load"] if item["owner_id"] == worker_id
+    )
+    assert load["contract_hours"] == 17.5
+    assert load["absence_hours"] == 3.5
+    assert load["capacity_hours"] == 14.0
+    assert any(
+        event["source_type"] == "USER_ABSENCE"
+        and event["owner_id"] == worker_id
+        for event in payload["events"]
+    )
+
+    blocked = _post_task(
+        client,
+        headers,
+        title="Tâche pendant RTT",
+        start_at=datetime(2026, 1, 5, 8, 30),
+        end_at=datetime(2026, 1, 5, 10, 0),
+        assigned_user_id=worker_id,
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["conflicts"][0]["source_type"] == "USER_ABSENCE"
+
+    forced = _post_task(
+        client,
+        headers,
+        title="Tâche forcée pendant RTT",
+        start_at=datetime(2026, 1, 5, 8, 30),
+        end_at=datetime(2026, 1, 5, 10, 0),
+        assigned_user_id=worker_id,
+        allow_conflict=True,
+    )
+    assert forced.status_code == 409
+    assert forced.json()["detail"]["conflicts"][0]["source_type"] == "USER_ABSENCE"
+
+
+def test_schedule_exposes_actionable_manager_alerts(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id, _ = _worker_and_client(session_factory)
+    day_start = datetime(2020, 2, 3, 7, 0)
+
+    first = _post_task(
+        client,
+        headers,
+        title="Planning complet",
+        start_at=day_start,
+        end_at=day_start + timedelta(hours=8),
+        assigned_user_id=worker_id,
+    )
+    conflict = _post_task(
+        client,
+        headers,
+        title="Intervention urgente",
+        start_at=day_start + timedelta(hours=5),
+        end_at=day_start + timedelta(hours=8),
+        assigned_user_id=worker_id,
+        allow_conflict=True,
+    )
+    unassigned = _post_task(
+        client,
+        headers,
+        title="Commande à affecter",
+        start_at=day_start + timedelta(hours=9),
+        end_at=day_start + timedelta(hours=10),
+    )
+    assert first.status_code == 201
+    assert conflict.status_code == 201
+    assert unassigned.status_code == 201
+
+    response = client.get(
+        "/v2/schedule/events",
+        headers=headers,
+        params={
+            "start_at": datetime(2020, 2, 3).isoformat(),
+            "end_at": datetime(2020, 2, 4).isoformat(),
+        },
+    )
+    assert response.status_code == 200, response.text
+    alerts = response.json()["alerts"]
+    alert_types = {alert["type"] for alert in alerts}
+
+    assert {"OVERLOAD", "CONFLICT", "UNASSIGNED", "OVERDUE"} <= alert_types
+    assert all(alert["severity"] in {"INFO", "WARNING", "CRITICAL"} for alert in alerts)
+    assert all(alert["message"] for alert in alerts)
+
+
+def test_schedule_filters_events_and_load_by_owner(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    first_worker_id, _ = _worker_and_client(session_factory)
+    second_worker_id = _create_worker(
+        session_factory,
+        "metreur-2",
+        "Sara",
+        "Cotes",
+    )
+    start = datetime(2026, 8, 6, 10, 0)
+
+    for worker_id, title in (
+        (first_worker_id, "Visite client Nord"),
+        (second_worker_id, "Visite client Sud"),
+        (None, "Tâche à affecter"),
+    ):
+        response = _post_task(
+            client,
+            headers,
+            title=title,
+            start_at=start,
+            end_at=start + timedelta(hours=1),
+            assigned_user_id=worker_id,
+        )
+        assert response.status_code == 201, response.text
+
+    response = client.get(
+        "/v2/schedule/events",
+        headers=headers,
+        params={
+            "start_at": datetime(2026, 8, 6).isoformat(),
+            "end_at": datetime(2026, 8, 7).isoformat(),
+            "owner_id": first_worker_id,
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert [event["title"] for event in payload["events"]] == ["Visite client Nord"]
+    assert all(event["owner_id"] == first_worker_id for event in payload["events"])
+    assert payload["summary"]["total"] == 1
+
+
+def test_schedule_normalizes_offset_datetimes_to_utc(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id, _ = _worker_and_client(session_factory)
+
+    response = client.post(
+        "/v2/schedule/tasks",
+        headers=headers,
+        json={
+            "title": "Rendez-vous heure de Paris",
+            "category": "MEETING",
+            "start_at": "2026-08-07T09:00:00+02:00",
+            "end_at": "2026-08-07T10:00:00+02:00",
+            "assigned_user_id": worker_id,
+        },
+    )
+    assert response.status_code == 201, response.text
+    task = response.json()
+    assert task["start_at"] == "2026-08-07T07:00:00Z"
+    assert task["end_at"] == "2026-08-07T08:00:00Z"
+
+    response = client.get(
+        "/v2/schedule/events",
+        headers=headers,
+        params={
+            "start_at": "2026-08-07T00:00:00Z",
+            "end_at": "2026-08-08T00:00:00Z",
+        },
+    )
+    assert response.status_code == 200, response.text
+    event = next(
+        item
+        for item in response.json()["events"]
+        if item["source_id"] == task["source_id"]
+    )
+    assert event["start_at"] == "2026-08-07T07:00:00Z"
+    assert event["end_at"] == "2026-08-07T08:00:00Z"
 
 
 def test_unscheduled_measure_mission_can_be_planned_from_calendar(isolated_client):

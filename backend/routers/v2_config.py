@@ -169,7 +169,9 @@ def create_user(
         pin_must_change=True,
         pin_hash=hashed_pin,
         role=primary_role,
-        is_active=True
+        is_active=True,
+        weekly_hours=user.weekly_hours,
+        work_schedule=user.work_schedule,
     )
     new_user.secondary_roles = _load_secondary_roles(db, primary_role, user.additional_roles)
     
@@ -228,6 +230,12 @@ def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Dep
     if user_update.role:
         db_user.role = user_update.role.upper()
         db_user.secondary_roles = [role for role in db_user.secondary_roles if role.name != db_user.role]
+    if user_update.weekly_hours is not None:
+        if not 0 < user_update.weekly_hours <= 60:
+            raise HTTPException(400, "La durée hebdomadaire doit être comprise entre 0 et 60 heures.")
+        db_user.weekly_hours = user_update.weekly_hours
+    if user_update.work_schedule is not None:
+        db_user.work_schedule = user_update.work_schedule
     if user_update.additional_roles is not None:
         db_user.secondary_roles = _load_secondary_roles(db, db_user.role, user_update.additional_roles)
     if user_update.pin:
