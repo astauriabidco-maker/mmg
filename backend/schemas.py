@@ -371,6 +371,7 @@ class CRMOpportunityResponse(BaseModel):
     next_milestone_at: Optional[datetime] = None
     expected_close_date: Optional[datetime] = None
     loss_reason: Optional[str] = None
+    stage_entered_at: datetime
     won_at: Optional[datetime] = None
     lost_at: Optional[datetime] = None
     created_by: Optional[str] = None
@@ -495,7 +496,66 @@ class CRMReminderTemplateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CRMReminderRuleUpdate(BaseModel):
+    delay_days: Optional[int] = Field(default=None, ge=0, le=90)
+    template_id: Optional[int] = None
+    assignment_strategy: Optional[str] = Field(default=None, pattern="^(OPPORTUNITY_OWNER|FIXED_USER)$")
+    fixed_user_id: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class CRMReminderRuleResponse(BaseModel):
+    id: int
+    name: str
+    stage: CRMOpportunityStage
+    delay_days: int
+    template_id: Optional[int] = None
+    template_name: Optional[str] = None
+    assignment_strategy: str
+    fixed_user_id: Optional[int] = None
+    fixed_user_name: Optional[str] = None
+    is_active: bool
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CRMReminderPlanResponse(BaseModel):
+    id: int
+    plan_key: str
+    rule_id: int
+    rule_name: Optional[str] = None
+    client_id: int
+    client_name: Optional[str] = None
+    client_email: Optional[str] = None
+    opportunity_id: int
+    opportunity_reference: Optional[str] = None
+    opportunity_title: Optional[str] = None
+    assigned_user_id: Optional[int] = None
+    assigned_user_name: Optional[str] = None
+    template_id: Optional[int] = None
+    stage_snapshot: CRMOpportunityStage
+    due_at: datetime
+    status: str
+    cancelled_reason: Optional[str] = None
+    sent_delivery_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CRMReminderPlanCancel(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class CRMReminderSyncResponse(BaseModel):
+    created: int
+    cancelled: int
+
+
 class CRMReminderPreviewRequest(BaseModel):
+    plan_id: Optional[int] = None
     client_id: int
     opportunity_id: Optional[int] = None
     template_id: Optional[int] = None
@@ -504,6 +564,7 @@ class CRMReminderPreviewRequest(BaseModel):
 
 
 class CRMReminderPreviewResponse(BaseModel):
+    plan_id: Optional[int] = None
     template_id: int
     template_code: str
     template_name: str
@@ -514,6 +575,7 @@ class CRMReminderPreviewResponse(BaseModel):
 
 
 class CRMReminderSendRequest(BaseModel):
+    plan_id: Optional[int] = None
     reminder_key: Optional[str] = Field(default=None, max_length=255)
     client_id: int
     opportunity_id: Optional[int] = None

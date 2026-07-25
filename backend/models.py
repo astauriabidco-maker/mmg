@@ -764,6 +764,7 @@ class CRMOpportunity(Base):
     next_milestone_at = Column(DateTime, nullable=True, index=True)
     expected_close_date = Column(DateTime, nullable=True)
     loss_reason = Column(Text, nullable=True)
+    stage_entered_at = Column(DateTime, default=utcnow, nullable=False, index=True)
     won_at = Column(DateTime, nullable=True)
     lost_at = Column(DateTime, nullable=True)
     created_by = Column(String, nullable=True)
@@ -781,6 +782,11 @@ class CRMOpportunity(Base):
     )
     activities = relationship(
         "CRMActivity",
+        back_populates="opportunity",
+        passive_deletes=True,
+    )
+    reminder_plans = relationship(
+        "CRMReminderPlan",
         back_populates="opportunity",
         passive_deletes=True,
     )
@@ -861,6 +867,146 @@ class CRMReminderTemplate(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
     deliveries = relationship("CRMReminderDelivery", back_populates="template")
+    rules = relationship("CRMReminderRule", back_populates="template")
+
+
+class CRMReminderRule(Base):
+    __tablename__ = "crm_reminder_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    stage = Column(String, unique=True, nullable=False, index=True)
+    delay_days = Column(Integer, default=2, nullable=False)
+    template_id = Column(
+        Integer,
+        ForeignKey("crm_reminder_templates.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    assignment_strategy = Column(
+        String,
+        default="OPPORTUNITY_OWNER",
+        nullable=False,
+        index=True,
+    )
+    fixed_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by = Column(String, default="Système", nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    template = relationship("CRMReminderTemplate", back_populates="rules")
+    fixed_user = relationship("User")
+    plans = relationship(
+        "CRMReminderPlan",
+        back_populates="rule",
+        passive_deletes=True,
+    )
+
+    @property
+    def template_name(self):
+        return self.template.name if self.template else None
+
+    @property
+    def fixed_user_name(self):
+        if not self.fixed_user:
+            return None
+        full_name = " ".join(
+            part
+            for part in [self.fixed_user.first_name, self.fixed_user.last_name]
+            if part
+        )
+        return full_name or self.fixed_user.username
+
+
+class CRMReminderPlan(Base):
+    __tablename__ = "crm_reminder_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    plan_key = Column(String, unique=True, nullable=False, index=True)
+    rule_id = Column(
+        Integer,
+        ForeignKey("crm_reminder_rules.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    opportunity_id = Column(
+        Integer,
+        ForeignKey("crm_opportunities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    assigned_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    sent_delivery_id = Column(
+        Integer,
+        ForeignKey("crm_reminder_deliveries.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    stage_snapshot = Column(String, nullable=False, index=True)
+    due_at = Column(DateTime, nullable=False, index=True)
+    status = Column(String, default="PENDING", nullable=False, index=True)
+    cancelled_reason = Column(Text, nullable=True)
+    created_by = Column(String, default="Système", nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    rule = relationship("CRMReminderRule", back_populates="plans")
+    opportunity = relationship("CRMOpportunity", back_populates="reminder_plans")
+    client = relationship("Client")
+    assigned_user = relationship("User")
+    sent_delivery = relationship("CRMReminderDelivery")
+
+    @property
+    def client_name(self):
+        return self.client.name if self.client else None
+
+    @property
+    def client_email(self):
+        return self.client.email if self.client else None
+
+    @property
+    def opportunity_reference(self):
+        return self.opportunity.reference if self.opportunity else None
+
+    @property
+    def opportunity_title(self):
+        return self.opportunity.title if self.opportunity else None
+
+    @property
+    def assigned_user_name(self):
+        if not self.assigned_user:
+            return None
+        full_name = " ".join(
+            part
+            for part in [self.assigned_user.first_name, self.assigned_user.last_name]
+            if part
+        )
+        return full_name or self.assigned_user.username
+
+    @property
+    def template_id(self):
+        return self.rule.template_id if self.rule else None
+
+    @property
+    def rule_name(self):
+        return self.rule.name if self.rule else None
 
 
 class CRMReminderDelivery(Base):

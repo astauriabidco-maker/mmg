@@ -1,8 +1,9 @@
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 
 from .. import models
+from ..core.time import utcnow
 
 
 DEFAULT_TEMPLATES = (
@@ -49,6 +50,51 @@ DEFAULT_TEMPLATES = (
     },
 )
 
+DEFAULT_RULES = (
+    {
+        "stage": models.CRMOpportunityStage.NEW.value,
+        "name": "Qualifier le nouveau besoin",
+        "delay_days": 1,
+        "template_code": "GENERAL_FOLLOW_UP",
+    },
+    {
+        "stage": models.CRMOpportunityStage.QUALIFIED.value,
+        "name": "Organiser la prochaine étape",
+        "delay_days": 2,
+        "template_code": "GENERAL_FOLLOW_UP",
+    },
+    {
+        "stage": models.CRMOpportunityStage.MEASURE_TO_SCHEDULE.value,
+        "name": "Planifier la prise de côte",
+        "delay_days": 1,
+        "template_code": "MEASURE_SCHEDULING",
+    },
+    {
+        "stage": models.CRMOpportunityStage.MEASURE_IN_PROGRESS.value,
+        "name": "Suivre le dossier de métré",
+        "delay_days": 2,
+        "template_code": "GENERAL_FOLLOW_UP",
+    },
+    {
+        "stage": models.CRMOpportunityStage.PROPOSAL_TO_PREPARE.value,
+        "name": "Préparer la proposition",
+        "delay_days": 1,
+        "template_code": "GENERAL_FOLLOW_UP",
+    },
+    {
+        "stage": models.CRMOpportunityStage.PROPOSAL_SENT.value,
+        "name": "Relancer la proposition",
+        "delay_days": 3,
+        "template_code": "PROPOSAL_FOLLOW_UP",
+    },
+    {
+        "stage": models.CRMOpportunityStage.NEGOTIATION.value,
+        "name": "Suivre la décision client",
+        "delay_days": 2,
+        "template_code": "PROPOSAL_FOLLOW_UP",
+    },
+)
+
 _PLACEHOLDER = re.compile(r"\{\{([a-z_]+)\}\}")
 _ALLOWED_VARIABLES = {
     "client_name",
@@ -82,6 +128,123 @@ def ensure_default_templates(db):
         created = True
     if created:
         db.commit()
+
+
+def ensure_default_rules(db):
+    ensure_default_templates(db)
+    templates = {
+        item.code: item.id
+        for item in db.query(models.CRMReminderTemplate)
+        .filter(models.CRMReminderTemplate.is_active.is_(True))
+        .all()
+    }
+    existing_stages = {
+        row[0]
+        for row in db.query(models.CRMReminderRule.stage)
+        .filter(models.CRMReminderRule.stage.in_([item["stage"] for item in DEFAULT_RULES]))
+        .all()
+    }
+    created = False
+    for item in DEFAULT_RULES:
+        if item["stage"] in existing_stages:
+            continue
+        db.add(
+            models.CRMReminderRule(
+                name=item["name"],
+                stage=item["stage"],
+                delay_days=item["delay_days"],
+                template_id=templates.get(item["template_code"]),
+                assignment_strategy="OPPORTUNITY_OWNER",
+                is_active=True,
+                created_by="Système",
+            )
+        )
+        created = True
+    if created:
+        db.commit()
+
+
+def reminder_plan_key(opportunity, rule):
+    entered_at = (
+        getattr(opportunity, "stage_entered_at", None)
+        or getattr(opportunity, "created_at", None)
+        or utcnow()
+    )
+    stamp = entered_at.strftime("%Y%m%d%H%M%S")
+    return f"CRM-PLAN-{opportunity.id}-{rule.id}-{stamp}"
+
+
+def sync_reminder_plans(db, *, created_by="Système", now=None):
+    ensure_default_rules(db)
+    now = now or utcnow()
+    rules = {
+        item.stage: item
+        for item in db.query(models.CRMReminderRule)
+        .filter(models.CRMReminderRule.is_active.is_(True))
+        .all()
+    }
+    opportunities = (
+        db.query(models.CRMOpportunity)
+        .filter(
+            models.CRMOpportunity.stage.notin_(
+                [
+                    models.CRMOpportunityStage.WON.value,
+                    models.CRMOpportunityStage.LOST.value,
+                ]
+            )
+        )
+        .all()
+    )
+    created = 0
+    cancelled = 0
+    for opportunity in opportunities:
+        pending_plans = (
+            db.query(models.CRMReminderPlan)
+            .filter(
+                models.CRMReminderPlan.opportunity_id == opportunity.id,
+                models.CRMReminderPlan.status == "PENDING",
+            )
+            .all()
+        )
+        for plan in pending_plans:
+            if plan.stage_snapshot != opportunity.stage:
+                plan.status = "CANCELLED"
+                plan.cancelled_reason = "Étape commerciale modifiée"
+                cancelled += 1
+
+        rule = rules.get(opportunity.stage)
+        if not rule:
+            continue
+        key = reminder_plan_key(opportunity, rule)
+        if (
+            db.query(models.CRMReminderPlan.id)
+            .filter(models.CRMReminderPlan.plan_key == key)
+            .first()
+        ):
+            continue
+        entered_at = opportunity.stage_entered_at or opportunity.created_at or now
+        assigned_user_id = (
+            rule.fixed_user_id
+            if rule.assignment_strategy == "FIXED_USER"
+            else opportunity.owner_user_id
+        )
+        db.add(
+            models.CRMReminderPlan(
+                plan_key=key,
+                rule_id=rule.id,
+                opportunity_id=opportunity.id,
+                client_id=opportunity.client_id,
+                assigned_user_id=assigned_user_id,
+                stage_snapshot=opportunity.stage,
+                due_at=entered_at + timedelta(days=rule.delay_days),
+                status="PENDING",
+                created_by=created_by,
+            )
+        )
+        created += 1
+    if created or cancelled:
+        db.commit()
+    return {"created": created, "cancelled": cancelled}
 
 
 def reminder_template_code(reminder_kind):

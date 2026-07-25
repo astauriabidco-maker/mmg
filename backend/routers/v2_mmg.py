@@ -8,7 +8,7 @@ import os
 import base64
 import hashlib
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from ..database import get_db
 from .. import models, schemas
 from ..core import security
@@ -19,10 +19,12 @@ from ..services.technical_document_analysis import analyze_technical_document
 from ..services.crm_cockpit import build_crm_cockpit
 from ..services.crm_reminders import (
     build_template_context,
+    ensure_default_rules,
     ensure_default_templates,
     plain_text_to_html,
     reminder_template_code,
     render_email,
+    sync_reminder_plans,
 )
 from ..services.technical_dossier_governance import (
     build_document_matrix,
@@ -713,6 +715,42 @@ def _serialize_crm_delivery(delivery, notification=None):
     }
 
 
+def _get_reminder_plan_or_404(db: Session, plan_id: int) -> models.CRMReminderPlan:
+    plan = (
+        db.query(models.CRMReminderPlan)
+        .filter(models.CRMReminderPlan.id == plan_id)
+        .first()
+    )
+    if not plan:
+        raise HTTPException(404, "Relance planifiée introuvable")
+    return plan
+
+
+def _serialize_crm_plan(plan):
+    return {
+        "id": plan.id,
+        "plan_key": plan.plan_key,
+        "rule_id": plan.rule_id,
+        "rule_name": plan.rule_name,
+        "client_id": plan.client_id,
+        "client_name": plan.client_name,
+        "client_email": plan.client_email,
+        "opportunity_id": plan.opportunity_id,
+        "opportunity_reference": plan.opportunity_reference,
+        "opportunity_title": plan.opportunity_title,
+        "assigned_user_id": plan.assigned_user_id,
+        "assigned_user_name": plan.assigned_user_name,
+        "template_id": plan.template_id,
+        "stage_snapshot": plan.stage_snapshot,
+        "due_at": plan.due_at,
+        "status": plan.status,
+        "cancelled_reason": plan.cancelled_reason,
+        "sent_delivery_id": plan.sent_delivery_id,
+        "created_at": plan.created_at,
+        "updated_at": plan.updated_at,
+    }
+
+
 @router.get(
     "/crm/reminder-templates",
     response_model=List[schemas.CRMReminderTemplateResponse],
@@ -727,6 +765,160 @@ def list_crm_reminder_templates(db: Session = Depends(get_db)):
     )
 
 
+@router.get(
+    "/crm/reminder-rules",
+    response_model=List[schemas.CRMReminderRuleResponse],
+)
+def list_crm_reminder_rules(db: Session = Depends(get_db)):
+    ensure_default_rules(db)
+    return (
+        db.query(models.CRMReminderRule)
+        .order_by(models.CRMReminderRule.id.asc())
+        .all()
+    )
+
+
+@router.patch(
+    "/crm/reminder-rules/{rule_id}",
+    response_model=schemas.CRMReminderRuleResponse,
+)
+def update_crm_reminder_rule(
+    rule_id: int,
+    item: schemas.CRMReminderRuleUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "SALES_EDIT")
+    ensure_default_rules(db)
+    rule = (
+        db.query(models.CRMReminderRule)
+        .filter(models.CRMReminderRule.id == rule_id)
+        .first()
+    )
+    if not rule:
+        raise HTTPException(404, "Règle de relance introuvable")
+    payload = item.model_dump(exclude_unset=True)
+    if "template_id" in payload and payload["template_id"] is not None:
+        template = (
+            db.query(models.CRMReminderTemplate)
+            .filter(
+                models.CRMReminderTemplate.id == payload["template_id"],
+                models.CRMReminderTemplate.is_active.is_(True),
+            )
+            .first()
+        )
+        if not template:
+            raise HTTPException(422, "Modèle de relance actif introuvable")
+    final_strategy = payload.get("assignment_strategy", rule.assignment_strategy)
+    final_user_id = payload.get("fixed_user_id", rule.fixed_user_id)
+    if final_strategy == "FIXED_USER":
+        owner = (
+            db.query(models.User)
+            .filter(
+                models.User.id == final_user_id,
+                models.User.is_active.is_(True),
+            )
+            .first()
+        )
+        if not owner:
+            raise HTTPException(422, "Sélectionnez un responsable actif")
+    else:
+        payload["fixed_user_id"] = None
+    for field, value in payload.items():
+        setattr(rule, field, value)
+    db.flush()
+
+    pending_plans = (
+        db.query(models.CRMReminderPlan)
+        .filter(
+            models.CRMReminderPlan.rule_id == rule.id,
+            models.CRMReminderPlan.status == "PENDING",
+        )
+        .all()
+    )
+    for plan in pending_plans:
+        opportunity = plan.opportunity
+        entered_at = opportunity.stage_entered_at or opportunity.created_at or utcnow()
+        plan.due_at = entered_at + timedelta(days=rule.delay_days)
+        plan.assigned_user_id = (
+            rule.fixed_user_id
+            if rule.assignment_strategy == "FIXED_USER"
+            else opportunity.owner_user_id
+        )
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.post(
+    "/crm/reminder-plans/sync",
+    response_model=schemas.CRMReminderSyncResponse,
+)
+def synchronize_crm_reminder_plans(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    return sync_reminder_plans(
+        db,
+        created_by=current_user.get("sub", "Système"),
+        now=utcnow(),
+    )
+
+
+@router.get(
+    "/crm/reminder-plans",
+    response_model=List[schemas.CRMReminderPlanResponse],
+)
+def list_crm_reminder_plans(
+    status: Optional[str] = "PENDING",
+    assigned_user_id: Optional[int] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    if not 1 <= limit <= 300:
+        raise HTTPException(422, "La limite doit être comprise entre 1 et 300")
+    query = db.query(models.CRMReminderPlan)
+    if status:
+        query = query.filter(
+            models.CRMReminderPlan.status == status.strip().upper()
+        )
+    if assigned_user_id is not None:
+        query = query.filter(
+            models.CRMReminderPlan.assigned_user_id == assigned_user_id
+        )
+    return [
+        _serialize_crm_plan(plan)
+        for plan in query.order_by(
+            models.CRMReminderPlan.due_at.asc(),
+            models.CRMReminderPlan.id.asc(),
+        )
+        .limit(limit)
+        .all()
+    ]
+
+
+@router.post(
+    "/crm/reminder-plans/{plan_id}/cancel",
+    response_model=schemas.CRMReminderPlanResponse,
+)
+def cancel_crm_reminder_plan(
+    plan_id: int,
+    item: schemas.CRMReminderPlanCancel,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    plan = _get_reminder_plan_or_404(db, plan_id)
+    if plan.status != "PENDING":
+        raise HTTPException(409, "Seule une relance en attente peut être ignorée")
+    plan.status = "CANCELLED"
+    plan.cancelled_reason = (
+        f"{item.reason.strip()} · {current_user.get('sub', 'Système')}"
+    )
+    db.commit()
+    db.refresh(plan)
+    return _serialize_crm_plan(plan)
+
+
 @router.post(
     "/crm/reminders/preview",
     response_model=schemas.CRMReminderPreviewResponse,
@@ -736,6 +928,13 @@ def preview_crm_reminder(
     db: Session = Depends(get_db),
     current_user: dict = Depends(security.get_current_user),
 ):
+    plan = None
+    if item.plan_id is not None:
+        plan = _get_reminder_plan_or_404(db, item.plan_id)
+        if plan.status != "PENDING":
+            raise HTTPException(409, "Cette relance planifiée n'est plus en attente")
+        if plan.client_id != item.client_id or plan.opportunity_id != item.opportunity_id:
+            raise HTTPException(409, "Le contexte ne correspond pas à la relance planifiée")
     client, opportunity = _crm_reminder_context(
         db,
         item.client_id,
@@ -743,7 +942,7 @@ def preview_crm_reminder(
     )
     template = _crm_reminder_template(
         db,
-        item.template_id,
+        item.template_id or (plan.template_id if plan else None),
         item.reminder_kind,
     )
     context = build_template_context(
@@ -757,6 +956,7 @@ def preview_crm_reminder(
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {
+        "plan_id": plan.id if plan else None,
         "template_id": template.id,
         "template_code": template.code,
         "template_name": template.name,
@@ -784,6 +984,13 @@ def send_crm_reminder(
     recipient = item.recipient.strip()
     if "@" not in recipient or recipient.startswith("@") or recipient.endswith("@"):
         raise HTTPException(422, "Adresse email destinataire invalide")
+    plan = None
+    if item.plan_id is not None:
+        plan = _get_reminder_plan_or_404(db, item.plan_id)
+        if plan.status != "PENDING":
+            raise HTTPException(409, "Cette relance planifiée n'est plus en attente")
+        if plan.client_id != item.client_id or plan.opportunity_id != item.opportunity_id:
+            raise HTTPException(409, "Le contexte ne correspond pas à la relance planifiée")
     client, opportunity = _crm_reminder_context(
         db,
         item.client_id,
@@ -835,6 +1042,9 @@ def send_crm_reminder(
             db.add(activity)
             db.flush()
             delivery.activity_id = activity.id
+            if plan:
+                plan.status = "SENT"
+                plan.sent_delivery_id = delivery.id
             notification = f"Relance envoyée à {recipient}."
         else:
             delivery.status = "SKIPPED"
@@ -993,7 +1203,8 @@ def update_crm_opportunity(
     payload = item.model_dump(exclude_unset=True)
     target_stage = payload.get("stage")
     target_stage = target_stage.value if target_stage is not None else opportunity.stage
-    if target_stage != opportunity.stage:
+    stage_changed = target_stage != opportunity.stage
+    if stage_changed:
         if target_stage not in OPPORTUNITY_TRANSITIONS.get(opportunity.stage, set()):
             raise HTTPException(
                 409,
@@ -1018,6 +1229,22 @@ def update_crm_opportunity(
         if hasattr(value, "value"):
             value = value.value
         setattr(opportunity, field, value)
+    if stage_changed:
+        opportunity.stage_entered_at = utcnow()
+        (
+            db.query(models.CRMReminderPlan)
+            .filter(
+                models.CRMReminderPlan.opportunity_id == opportunity.id,
+                models.CRMReminderPlan.status == "PENDING",
+            )
+            .update(
+                {
+                    models.CRMReminderPlan.status: "CANCELLED",
+                    models.CRMReminderPlan.cancelled_reason: "Étape commerciale modifiée",
+                },
+                synchronize_session=False,
+            )
+        )
     if target_stage == models.CRMOpportunityStage.WON.value and opportunity.won_at is None:
         opportunity.won_at = utcnow()
     if target_stage == models.CRMOpportunityStage.LOST.value and opportunity.lost_at is None:

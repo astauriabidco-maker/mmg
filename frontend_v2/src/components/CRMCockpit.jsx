@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
     AlertTriangle,
@@ -12,6 +12,7 @@ import {
     Mail,
     RefreshCw,
     Send,
+    Settings2,
     Target,
     TrendingUp,
     UserRound,
@@ -76,6 +77,8 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
     const [emailComposer, setEmailComposer] = useState(null);
     const [sendConfirmed, setSendConfirmed] = useState(false);
     const [notification, setNotification] = useState(null);
+    const [showRules, setShowRules] = useState(false);
+    const [savingRuleId, setSavingRuleId] = useState(null);
 
     const cockpitQuery = useQuery({
         queryKey: ['crm-cockpit', horizonDays],
@@ -97,6 +100,28 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
         queryFn: async () => (
             await api.get('/v2/mmg/crm/reminders/history', { params: { limit: 8 } })
         ).data,
+    });
+
+    const rulesQuery = useQuery({
+        queryKey: ['crm-reminder-rules'],
+        queryFn: async () => (await api.get('/v2/mmg/crm/reminder-rules')).data,
+    });
+
+    const plansQuery = useQuery({
+        queryKey: ['crm-reminder-plans'],
+        queryFn: async () => {
+            await api.post('/v2/mmg/crm/reminder-plans/sync');
+            return (
+                await api.get('/v2/mmg/crm/reminder-plans', {
+                    params: { status: 'PENDING', limit: 100 },
+                })
+            ).data;
+        },
+    });
+
+    const usersQuery = useQuery({
+        queryKey: ['crm-reminder-users'],
+        queryFn: async () => (await api.get('/v2/config/users')).data,
     });
 
     const data = cockpitQuery.data;
@@ -147,6 +172,7 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
         setSendConfirmed(false);
         try {
             const response = await api.post('/v2/mmg/crm/reminders/preview', {
+                plan_id: reminder.plan_id || null,
                 client_id: reminder.client_id,
                 opportunity_id: reminder.opportunity_id,
                 template_id: templateId,
@@ -175,6 +201,7 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
         setActionError('');
         try {
             const response = await api.post('/v2/mmg/crm/reminders/send', {
+                plan_id: emailComposer.reminder.plan_id || null,
                 reminder_key: emailComposer.reminder.key,
                 client_id: emailComposer.reminder.client_id,
                 opportunity_id: emailComposer.reminder.opportunity_id,
@@ -189,7 +216,7 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                 tone: delivery.status === 'SENT' ? 'success' : delivery.status === 'FAILED' ? 'error' : 'warning',
                 message: delivery.notification,
             });
-            await Promise.all([historyQuery.refetch(), cockpitQuery.refetch()]);
+            await Promise.all([historyQuery.refetch(), cockpitQuery.refetch(), plansQuery.refetch()]);
             setEmailComposer(null);
             setSendConfirmed(false);
         } catch (error) {
@@ -198,6 +225,54 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
             setNotification({ tone: 'error', message });
         } finally {
             setWorkingKey('');
+        }
+    };
+
+    const previewPlannedReminder = plan => previewEmail({
+        key: plan.plan_key,
+        plan_id: plan.id,
+        kind: 'PLANNED_RULE',
+        client_id: plan.client_id,
+        client_name: plan.client_name,
+        client_email: plan.client_email,
+        opportunity_id: plan.opportunity_id,
+        reference: plan.opportunity_reference,
+        title: plan.opportunity_title,
+        due_at: plan.due_at,
+    }, plan.template_id);
+
+    const cancelPlannedReminder = async plan => {
+        if (!window.confirm(`Ignorer cette relance pour ${plan.client_name} ?`)) return;
+        setWorkingKey(plan.plan_key);
+        setActionError('');
+        try {
+            await api.post(`/v2/mmg/crm/reminder-plans/${plan.id}/cancel`, {
+                reason: 'Relance ignorée après validation humaine',
+            });
+            await plansQuery.refetch();
+            setNotification({
+                tone: 'success',
+                message: `La relance de ${plan.client_name} a été retirée de la file.`,
+            });
+        } catch (error) {
+            setActionError(error?.response?.data?.detail || "La relance n'a pas pu être ignorée.");
+        } finally {
+            setWorkingKey('');
+        }
+    };
+
+    const saveReminderRule = async (ruleId, patch) => {
+        setSavingRuleId(ruleId);
+        setActionError('');
+        try {
+            await api.patch(`/v2/mmg/crm/reminder-rules/${ruleId}`, patch);
+            await Promise.all([rulesQuery.refetch(), plansQuery.refetch()]);
+            setNotification({ tone: 'success', message: 'Règle de relance mise à jour.' });
+        } catch (error) {
+            setActionError(error?.response?.data?.detail || "La règle n'a pas pu être enregistrée.");
+            throw error;
+        } finally {
+            setSavingRuleId(null);
         }
     };
 
@@ -393,6 +468,69 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                 </div>
 
                 <section className="border-y border-slate-200 bg-white">
+                    <div className="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                        <div className="flex items-start gap-3">
+                            <BellRing className="mt-1 h-5 w-5 text-blue-600" />
+                            <div>
+                                <p className="text-[9px] font-black uppercase tracking-widest text-blue-600">Planification semi-automatique</p>
+                                <h4 className="mt-1 text-lg font-black text-slate-950">Relances planifiées</h4>
+                                <p className="mt-1 text-xs font-semibold text-slate-500">
+                                    La règle propose une échéance et un responsable. Aucun email ne part sans validation humaine.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="bg-slate-100 px-3 py-2 text-xs font-black text-slate-700">
+                                {(plansQuery.data || []).length} en attente
+                            </span>
+                            <button
+                                onClick={() => setShowRules(value => !value)}
+                                className={`inline-flex items-center gap-2 border px-3 py-2 text-xs font-black ${
+                                    showRules
+                                        ? 'border-slate-950 bg-slate-950 text-white'
+                                        : 'border-slate-200 bg-white text-slate-700'
+                                }`}
+                            >
+                                <Settings2 className="h-4 w-4" />
+                                Règles
+                            </button>
+                        </div>
+                    </div>
+
+                    {showRules && (
+                        <ReminderRulesPanel
+                            rules={rulesQuery.data || []}
+                            templates={templatesQuery.data || []}
+                            users={(usersQuery.data || []).filter(user => user.is_active)}
+                            savingRuleId={savingRuleId}
+                            onSave={saveReminderRule}
+                        />
+                    )}
+
+                    <div className="divide-y divide-slate-100">
+                        {(plansQuery.data || []).map(plan => (
+                            <PlannedReminderRow
+                                key={plan.id}
+                                plan={plan}
+                                working={workingKey === plan.plan_key}
+                                onOpenClient={onOpenClient}
+                                onPreview={previewPlannedReminder}
+                                onCancel={cancelPlannedReminder}
+                            />
+                        ))}
+                        {plansQuery.isLoading && (
+                            <div className="flex items-center justify-center gap-2 px-5 py-10 text-sm font-bold text-slate-500">
+                                <RefreshCw className="h-4 w-4 animate-spin" />
+                                Calcul des prochaines relances
+                            </div>
+                        )}
+                        {!plansQuery.isLoading && !(plansQuery.data || []).length && (
+                            <EmptyState title="Aucune relance planifiée" detail="La file se remplira selon les étapes et délais configurés." />
+                        )}
+                    </div>
+                </section>
+
+                <section className="border-y border-slate-200 bg-white">
                     <SectionHeader
                         icon={History}
                         eyebrow="Traçabilité commerciale"
@@ -446,6 +584,216 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                     onSend={sendEmailReminder}
                 />
             )}
+        </div>
+    );
+}
+
+function PlannedReminderRow({ plan, working, onOpenClient, onPreview, onCancel }) {
+    const overdue = new Date(plan.due_at).getTime() < Date.now();
+    return (
+        <div className="grid gap-4 px-5 py-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(180px,0.65fr)_minmax(180px,0.65fr)_auto] lg:items-center">
+            <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className={`px-2 py-1 text-[9px] font-black uppercase tracking-wide ${
+                        overdue ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                    }`}>
+                        {overdue ? 'En retard' : STAGE_LABELS[plan.stage_snapshot] || plan.stage_snapshot}
+                    </span>
+                    <span className="text-[10px] font-black uppercase tracking-wide text-slate-400">
+                        {plan.opportunity_reference}
+                    </span>
+                </div>
+                <p className="mt-2 truncate text-sm font-black text-slate-950">
+                    {plan.client_name} · {plan.opportunity_title}
+                </p>
+                <p className="mt-1 text-xs font-semibold text-slate-500">{plan.rule_name}</p>
+            </div>
+            <div>
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Échéance</p>
+                <p className={`mt-1 text-xs font-black ${overdue ? 'text-red-700' : 'text-slate-800'}`}>
+                    {formatDateTime(plan.due_at)}
+                </p>
+            </div>
+            <div>
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Responsable</p>
+                <p className={`mt-1 text-xs font-black ${plan.assigned_user_name ? 'text-slate-800' : 'text-amber-700'}`}>
+                    {plan.assigned_user_name || 'À affecter'}
+                </p>
+            </div>
+            <div className="flex flex-wrap gap-2 lg:justify-end">
+                <button
+                    onClick={() => onOpenClient(plan.client_id)}
+                    className="inline-flex items-center gap-2 border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700"
+                >
+                    <UserRound className="h-4 w-4" />
+                    Client
+                </button>
+                {plan.client_email && (
+                    <button
+                        onClick={() => onPreview(plan)}
+                        disabled={working}
+                        className="inline-flex items-center gap-2 bg-blue-600 px-3 py-2 text-xs font-black text-white disabled:bg-slate-300"
+                    >
+                        {working ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                        Préparer
+                    </button>
+                )}
+                <button
+                    onClick={() => onCancel(plan)}
+                    disabled={working}
+                    title="Ignorer cette relance"
+                    className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 bg-white text-slate-400 hover:border-red-200 hover:text-red-600 disabled:opacity-50"
+                >
+                    <X className="h-4 w-4" />
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function ReminderRulesPanel({ rules, templates, users, savingRuleId, onSave }) {
+    return (
+        <div className="border-b border-slate-200 bg-slate-50">
+            <div className="grid gap-3 px-5 py-4 lg:grid-cols-2">
+                {rules.map(rule => (
+                    <ReminderRuleEditor
+                        key={rule.id}
+                        rule={rule}
+                        templates={templates}
+                        users={users}
+                        saving={savingRuleId === rule.id}
+                        onSave={onSave}
+                    />
+                ))}
+            </div>
+            {!rules.length && (
+                <div className="px-5 py-8 text-center text-sm font-bold text-slate-500">
+                    Chargement des règles de relance...
+                </div>
+            )}
+        </div>
+    );
+}
+
+function ReminderRuleEditor({ rule, templates, users, saving, onSave }) {
+    const [draft, setDraft] = useState({
+        delay_days: rule.delay_days,
+        template_id: rule.template_id || '',
+        assignment_strategy: rule.assignment_strategy,
+        fixed_user_id: rule.fixed_user_id || '',
+        is_active: rule.is_active,
+    });
+
+    useEffect(() => {
+        setDraft({
+            delay_days: rule.delay_days,
+            template_id: rule.template_id || '',
+            assignment_strategy: rule.assignment_strategy,
+            fixed_user_id: rule.fixed_user_id || '',
+            is_active: rule.is_active,
+        });
+    }, [rule]);
+
+    const save = async () => {
+        await onSave(rule.id, {
+            delay_days: Number(draft.delay_days),
+            template_id: draft.template_id ? Number(draft.template_id) : null,
+            assignment_strategy: draft.assignment_strategy,
+            fixed_user_id: draft.assignment_strategy === 'FIXED_USER' && draft.fixed_user_id
+                ? Number(draft.fixed_user_id)
+                : null,
+            is_active: draft.is_active,
+        });
+    };
+
+    return (
+        <div className="border border-slate-200 bg-white p-4">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <p className="text-sm font-black text-slate-950">{STAGE_LABELS[rule.stage] || rule.name}</p>
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{rule.name}</p>
+                </div>
+                <label className="flex items-center gap-2 text-xs font-black text-slate-600">
+                    <input
+                        type="checkbox"
+                        checked={draft.is_active}
+                        onChange={event => setDraft(current => ({ ...current, is_active: event.target.checked }))}
+                        className="h-4 w-4"
+                    />
+                    Active
+                </label>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Délai après entrée</span>
+                    <div className="mt-1 flex items-center border border-slate-200 bg-slate-50">
+                        <input
+                            type="number"
+                            min="0"
+                            max="90"
+                            value={draft.delay_days}
+                            onChange={event => setDraft(current => ({ ...current, delay_days: event.target.value }))}
+                            className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm font-black outline-none"
+                        />
+                        <span className="pr-3 text-xs font-bold text-slate-500">jours</span>
+                    </div>
+                </label>
+                <label>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Modèle email</span>
+                    <select
+                        value={draft.template_id}
+                        onChange={event => setDraft(current => ({ ...current, template_id: event.target.value }))}
+                        className="mt-1 w-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold outline-none"
+                    >
+                        <option value="">Modèle par défaut</option>
+                        {templates.map(template => (
+                            <option key={template.id} value={template.id}>{template.name}</option>
+                        ))}
+                    </select>
+                </label>
+                <label>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Affectation</span>
+                    <select
+                        value={draft.assignment_strategy}
+                        onChange={event => setDraft(current => ({
+                            ...current,
+                            assignment_strategy: event.target.value,
+                            fixed_user_id: event.target.value === 'FIXED_USER' ? current.fixed_user_id : '',
+                        }))}
+                        className="mt-1 w-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold outline-none"
+                    >
+                        <option value="OPPORTUNITY_OWNER">Responsable opportunité</option>
+                        <option value="FIXED_USER">Utilisateur fixe</option>
+                    </select>
+                </label>
+                {draft.assignment_strategy === 'FIXED_USER' && (
+                    <label>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Responsable fixe</span>
+                        <select
+                            value={draft.fixed_user_id}
+                            onChange={event => setDraft(current => ({ ...current, fixed_user_id: event.target.value }))}
+                            className="mt-1 w-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold outline-none"
+                        >
+                            <option value="">Sélectionner</option>
+                            {users.map(user => (
+                                <option key={user.id} value={user.id}>
+                                    {[user.first_name, user.last_name].filter(Boolean).join(' ') || user.username}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                )}
+            </div>
+            <div className="mt-4 flex justify-end">
+                <button
+                    onClick={save}
+                    disabled={saving || (draft.assignment_strategy === 'FIXED_USER' && !draft.fixed_user_id)}
+                    className="inline-flex items-center gap-2 bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:bg-slate-300"
+                >
+                    {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                    Enregistrer
+                </button>
+            </div>
         </div>
     );
 }
