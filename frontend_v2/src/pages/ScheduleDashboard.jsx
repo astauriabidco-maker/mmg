@@ -13,11 +13,16 @@ import {
     RefreshCw,
     Search,
     Save,
+    Sparkles,
+    Settings2,
     Trash2,
     UserRound,
     X,
 } from 'lucide-react';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import PersonalScheduleView from './PersonalScheduleView';
+import PlanningSettingsModal from '../components/PlanningSettingsModal';
 
 const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 const CATEGORY_META = {
@@ -161,11 +166,23 @@ const initialTask = (date = new Date()) => {
         assigned_user_id: '',
         client_id: '',
         sale_order_id: '',
+        location_label: '',
+        location_address: '',
+        latitude: null,
+        longitude: null,
+        required_headcount: 1,
+        buffer_minutes_before: 15,
+        buffer_minutes_after: 15,
+        travel_minutes_before: 0,
+        travel_minutes_after: 0,
+        skill_requirements: [],
+        resource_assignments: [],
     };
 };
 
 export default function ScheduleDashboard() {
     const queryClient = useQueryClient();
+    const { user: authUser } = useAuth();
     const [view, setView] = useState(() => (
         typeof window !== 'undefined' && window.innerWidth < 768 ? 'day' : 'week'
     ));
@@ -179,23 +196,61 @@ export default function ScheduleDashboard() {
     const [notice, setNotice] = useState(null);
     const [conflictRetry, setConflictRetry] = useState(null);
     const [availabilityOpen, setAvailabilityOpen] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [suggestions, setSuggestions] = useState([]);
     const period = useMemo(() => getPeriod(anchor, view), [anchor, view]);
 
     const metaQuery = useQuery({
         queryKey: ['schedule-meta'],
         queryFn: async () => (await api.get('/v2/schedule/meta')).data,
     });
+    const personalMode = metaQuery.data?.can_edit === false;
+    const currentUserRecord = (metaQuery.data?.users || []).find(
+        (user) => user.username === authUser?.username,
+    );
+    const eventPeriod = personalMode
+        ? { start: mondayOf(anchor), end: addDays(mondayOf(anchor), 7) }
+        : period;
+    const eventOwnerId = personalMode ? (currentUserRecord?.id || '') : ownerId;
     const eventsQuery = useQuery({
-        queryKey: ['schedule-events', period.start.toISOString(), period.end.toISOString(), ownerId, typeFilter],
+        queryKey: [
+            'schedule-events',
+            eventPeriod.start.toISOString(),
+            eventPeriod.end.toISOString(),
+            eventOwnerId,
+            typeFilter,
+        ],
         queryFn: async () => (await api.get('/v2/schedule/events', {
             params: {
-                start_at: period.start.toISOString(),
-                end_at: period.end.toISOString(),
-                owner_id: ownerId || undefined,
+                start_at: eventPeriod.start.toISOString(),
+                end_at: eventPeriod.end.toISOString(),
+                owner_id: eventOwnerId || undefined,
                 types: typeFilter === 'ALL' ? undefined : typeFilter,
                 include_unscheduled: true,
             },
         })).data,
+        enabled: !personalMode || Boolean(currentUserRecord?.id),
+    });
+    const notificationsQuery = useQuery({
+        queryKey: ['planning-notifications'],
+        queryFn: async () => (await api.get('/v2/schedule/notifications', {
+            params: { unread_only: true },
+        })).data,
+        enabled: personalMode,
+    });
+    const capacityQuery = useQuery({
+        queryKey: [
+            'planning-capacity',
+            period.start.toISOString(),
+            period.end.toISOString(),
+        ],
+        queryFn: async () => (await api.get('/v2/schedule/capacity', {
+            params: {
+                start_at: period.start.toISOString(),
+                end_at: period.end.toISOString(),
+            },
+        })).data,
+        enabled: metaQuery.data?.can_edit === true,
     });
 
     const refresh = () => queryClient.invalidateQueries({ queryKey: ['schedule-events'] });
@@ -214,6 +269,32 @@ export default function ScheduleDashboard() {
                 setNotice({ type: 'error', text: typeof detail === 'string' ? detail : 'La planification a échoué.' });
             }
         },
+    });
+    const suggestionMutation = useMutation({
+        mutationFn: async (form) => {
+            const start = new Date(form.start_at);
+            const end = new Date(form.end_at);
+            const durationMinutes = Math.max(Math.round((end - start) / 60000), 15);
+            return (await api.post('/v2/schedule/suggestions', {
+                title: form.title || 'Action à planifier',
+                duration_minutes: durationMinutes,
+                window_start: start.toISOString(),
+                window_end: addDays(start, 14).toISOString(),
+                required_skill_ids: (form.skill_requirements || []).map((item) => Number(item.skill_id)),
+                required_resource_ids: (form.resource_assignments || []).map((item) => Number(item.resource_id)),
+                location_label: form.location_label || null,
+                latitude: form.latitude ?? null,
+                longitude: form.longitude ?? null,
+                travel_margin_minutes: Math.max(Number(form.buffer_minutes_before || 0), 15),
+                step_minutes: 30,
+                limit: 8,
+            })).data;
+        },
+        onSuccess: setSuggestions,
+        onError: (error) => setNotice({
+            type: 'error',
+            text: error.response?.data?.detail || 'Aucune suggestion disponible.',
+        }),
     });
     const updateMutation = useMutation({
         mutationFn: async ({ event, payload }) => (
@@ -271,6 +352,7 @@ export default function ScheduleDashboard() {
             end_at: event.end_at ? toInputDateTime(event.end_at) : toInputDateTime(addHours(fallbackStart, 1)),
             assigned_user_id: event.owner_id || '',
             status: event.status || '',
+            change_reason: '',
         });
     };
     const dropOnDate = (dropEvent, targetDate) => {
@@ -289,6 +371,8 @@ export default function ScheduleDashboard() {
                 start_at: nextStart.toISOString(),
                 end_at: new Date(nextStart.getTime() + duration).toISOString(),
                 assigned_user_id: event.owner_id || undefined,
+                change_reason: 'Réorganisation par glisser-déposer',
+                source_screen: 'PLANNING_CALENDAR',
             },
         });
     };
@@ -309,6 +393,8 @@ export default function ScheduleDashboard() {
                 start_at: nextStart.toISOString(),
                 end_at: new Date(nextStart.getTime() + duration).toISOString(),
                 assigned_user_id: assignedUserId ? Number(assignedUserId) : null,
+                change_reason: 'Réaffectation depuis la vue équipe',
+                source_screen: 'PLANNING_TEAM',
             },
         });
     };
@@ -323,6 +409,8 @@ export default function ScheduleDashboard() {
         assigned_user_id: createForm.assigned_user_id ? Number(createForm.assigned_user_id) : null,
         client_id: createForm.client_id ? Number(createForm.client_id) : null,
         sale_order_id: createForm.sale_order_id ? Number(createForm.sale_order_id) : null,
+        latitude: createForm.latitude ?? null,
+        longitude: createForm.longitude ?? null,
     });
     const saveEvent = () => updateMutation.mutate({
         event: selectedEvent,
@@ -331,6 +419,8 @@ export default function ScheduleDashboard() {
             end_at: new Date(editForm.end_at).toISOString(),
             assigned_user_id: editForm.assigned_user_id ? Number(editForm.assigned_user_id) : null,
             status: selectedEvent.source_type === 'CALENDAR_TASK' ? editForm.status : undefined,
+            change_reason: editForm.change_reason || 'Mise à jour depuis la fiche planning',
+            source_screen: 'PLANNING_DETAIL',
         },
     });
 
@@ -339,6 +429,21 @@ export default function ScheduleDashboard() {
         : view === 'week' || view === 'team'
             ? `${new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(period.start)} au ${new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }).format(addDays(period.end, -1))}`
             : new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(anchor);
+
+    if (personalMode) {
+        return (
+            <PersonalScheduleView
+                events={events}
+                currentUser={{ ...authUser, ...currentUserRecord }}
+                loading={metaQuery.isLoading || eventsQuery.isLoading}
+                notifications={notificationsQuery.data || []}
+                onRefresh={() => eventsQuery.refetch()}
+                onOpenEvent={(event) => {
+                    if (event.source_url) window.location.assign(event.source_url);
+                }}
+            />
+        );
+    }
 
     return (
         <div className="min-h-[calc(100vh-88px)] bg-white">
@@ -353,16 +458,30 @@ export default function ScheduleDashboard() {
                     </div>
                     {metaQuery.data?.can_edit && (
                         <div className="flex flex-wrap gap-2">
+                            {metaQuery.data?.can_manage_availability && (
+                                <button
+                                    type="button"
+                                    onClick={() => setAvailabilityOpen(true)}
+                                    className="flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50"
+                                >
+                                    <CalendarClock className="h-4 w-4" /> Disponibilités
+                                </button>
+                            )}
+                            {metaQuery.data?.can_manage_resources && (
+                                <button
+                                    type="button"
+                                    onClick={() => setSettingsOpen(true)}
+                                    className="flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50"
+                                >
+                                    <Settings2 className="h-4 w-4" /> Ressources
+                                </button>
+                            )}
                             <button
                                 type="button"
-                                onClick={() => setAvailabilityOpen(true)}
-                                className="flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50"
-                            >
-                                <CalendarClock className="h-4 w-4" /> Disponibilités
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setCreateForm(initialTask(anchor))}
+                                onClick={() => {
+                                    setSuggestions([]);
+                                    setCreateForm(initialTask(anchor));
+                                }}
                                 className="flex h-10 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-black text-white hover:bg-blue-700"
                             >
                                 <Plus className="h-4 w-4" /> Planifier
@@ -428,6 +547,10 @@ export default function ScheduleDashboard() {
                                 users={metaQuery.data?.users || []}
                                 events={events}
                                 ownerId={ownerId}
+                            />
+                            <CapacityBreakdown
+                                data={capacityQuery.data}
+                                stations={metaQuery.data?.stations || []}
                             />
                             <TeamView
                                 date={anchor}
@@ -496,6 +619,44 @@ export default function ScheduleDashboard() {
                     </>}
                 >
                     <TaskForm form={createForm} setForm={setCreateForm} meta={metaQuery.data} />
+                    <div className="mt-5 rounded-md border border-blue-200 bg-blue-50 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <p className="font-black text-blue-950">Aide à l’affectation</p>
+                                <p className="text-xs font-semibold text-blue-700">Contrôle compétences, horaires, congés, ressources, trajets et charge.</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => suggestionMutation.mutate(createForm)}
+                                disabled={!createForm.title || suggestionMutation.isPending}
+                                className="flex h-10 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-black text-white disabled:opacity-40"
+                            >
+                                <Sparkles className="h-4 w-4" /> Suggérer
+                            </button>
+                        </div>
+                        {suggestions.length > 0 && (
+                            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                {suggestions.slice(0, 6).map((suggestion) => (
+                                    <button
+                                        key={`${suggestion.candidate_id}-${suggestion.start}`}
+                                        type="button"
+                                        onClick={() => {
+                                            setCreateForm((current) => ({
+                                                ...current,
+                                                assigned_user_id: suggestion.candidate_id,
+                                                start_at: toInputDateTime(suggestion.start),
+                                                end_at: toInputDateTime(suggestion.end),
+                                            }));
+                                        }}
+                                        className="rounded-md border border-blue-200 bg-white p-3 text-left hover:border-blue-500"
+                                    >
+                                        <span className="block text-sm font-black text-slate-900">{suggestion.candidate_name}</span>
+                                        <span className="mt-1 block text-xs font-bold text-slate-500">{new Date(suggestion.start).toLocaleString('fr-FR')} · score {suggestion.score}/100</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </ModalShell>
             )}
 
@@ -554,6 +715,16 @@ export default function ScheduleDashboard() {
                     onChanged={() => {
                         refresh();
                         metaQuery.refetch();
+                    }}
+                />
+            )}
+            {settingsOpen && (
+                <PlanningSettingsModal
+                    users={metaQuery.data?.users || []}
+                    onClose={() => setSettingsOpen(false)}
+                    onChanged={() => {
+                        metaQuery.refetch();
+                        refresh();
                     }}
                 />
             )}
@@ -664,11 +835,18 @@ function AvailabilityModal({ period, onClose, onChanged }) {
         mutationFn: async (absenceId) => api.delete(`/v2/schedule/availability/absences/${absenceId}`),
         onSuccess: refreshAvailability,
     });
+    const reviewAbsenceMutation = useMutation({
+        mutationFn: async ({ absenceId, status }) => api.patch(
+            `/v2/schedule/availability/absences/${absenceId}/review`,
+            { status },
+        ),
+        onSuccess: refreshAvailability,
+    });
     const setRow = (weekday, key, value) => setScheduleRows((current) => current.map((row) => (
         row.weekday === weekday ? { ...row, [key]: value } : row
     )));
     const applyPreset = (presetKey) => setScheduleRows(rowsFromSchedule(cloneSchedule(WORK_PRESETS[presetKey])));
-    const error = scheduleMutation.error || absenceMutation.error || deleteAbsenceMutation.error;
+    const error = scheduleMutation.error || absenceMutation.error || deleteAbsenceMutation.error || reviewAbsenceMutation.error;
 
     return (
         <ModalShell
@@ -737,7 +915,7 @@ function AvailabilityModal({ period, onClose, onChanged }) {
                     <section className="rounded-md border border-slate-200">
                         <div className="border-b border-slate-200 px-4 py-3">
                             <p className="font-black text-slate-900">Congés et indisponibilités</p>
-                            <p className="text-xs font-semibold text-slate-500">Une indisponibilité validée réduit la capacité et bloque les nouvelles affectations sur la période.</p>
+                            <p className="text-xs font-semibold text-slate-500">Toute demande reste en attente jusqu’à validation d’un responsable. Seules les absences validées réduisent la capacité.</p>
                         </div>
                         <div className="grid gap-3 bg-slate-50 p-4 md:grid-cols-[180px_1fr_1fr_1.4fr_auto]">
                             <select value={absenceForm.absence_type} onChange={(event) => setAbsenceForm((current) => ({ ...current, absence_type: event.target.value }))} className="field">
@@ -756,8 +934,15 @@ function AvailabilityModal({ period, onClose, onChanged }) {
                             {(selectedUser?.absences || []).map((absence) => (
                                 <div key={absence.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
                                     <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-600">{absence.absence_type}</span>
+                                    <span className={`rounded px-2 py-1 text-[10px] font-black uppercase ${absence.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : absence.status === 'REJECTED' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>{absence.status === 'APPROVED' ? 'Validée' : absence.status === 'REJECTED' ? 'Refusée' : 'À valider'}</span>
                                     <span className="text-sm font-black text-slate-800">{new Date(absence.start_at).toLocaleString('fr-FR')} → {new Date(absence.end_at).toLocaleString('fr-FR')}</span>
                                     <span className="min-w-0 flex-1 text-sm font-semibold text-slate-500">{absence.reason || 'Sans note'}</span>
+                                    {availabilityQuery.data?.can_approve && absence.status === 'PENDING' && (
+                                        <>
+                                            <button type="button" onClick={() => reviewAbsenceMutation.mutate({ absenceId: absence.id, status: 'APPROVED' })} className="h-9 rounded-md bg-emerald-600 px-3 text-xs font-black text-white">Valider</button>
+                                            <button type="button" onClick={() => reviewAbsenceMutation.mutate({ absenceId: absence.id, status: 'REJECTED' })} className="h-9 rounded-md border border-red-200 px-3 text-xs font-black text-red-700">Refuser</button>
+                                        </>
+                                    )}
                                     <button type="button" onClick={() => deleteAbsenceMutation.mutate(absence.id)} className="grid h-9 w-9 place-items-center rounded-md border border-red-200 text-red-700 hover:bg-red-50" title="Supprimer l’indisponibilité"><Trash2 className="h-4 w-4" /></button>
                                 </div>
                             ))}
@@ -777,6 +962,36 @@ function AvailabilityModal({ period, onClose, onChanged }) {
 
 function TaskForm({ form, setForm, meta }) {
     const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+    const selectClient = (clientId) => {
+        const client = (meta?.clients || []).find((item) => String(item.id) === String(clientId));
+        const site = client?.default_site;
+        setForm((current) => ({
+            ...current,
+            client_id: clientId,
+            location_label: site?.label || current.location_label,
+            location_address: site?.address || current.location_address,
+            latitude: site?.latitude ?? current.latitude,
+            longitude: site?.longitude ?? current.longitude,
+        }));
+    };
+    const toggleSkill = (skillId) => setForm((current) => {
+        const exists = (current.skill_requirements || []).some((item) => item.skill_id === skillId);
+        return {
+            ...current,
+            skill_requirements: exists
+                ? current.skill_requirements.filter((item) => item.skill_id !== skillId)
+                : [...(current.skill_requirements || []), { skill_id: skillId, minimum_level: 1, is_mandatory: true }],
+        };
+    });
+    const toggleResource = (resourceId) => setForm((current) => {
+        const exists = (current.resource_assignments || []).some((item) => item.resource_id === resourceId);
+        return {
+            ...current,
+            resource_assignments: exists
+                ? current.resource_assignments.filter((item) => item.resource_id !== resourceId)
+                : [...(current.resource_assignments || []), { resource_id: resourceId, quantity: 1, status: 'REQUIRED' }],
+        };
+    });
     return (
         <div className="grid gap-4 sm:grid-cols-2">
             <label className="sm:col-span-2"><FieldLabel text="Objet" /><input autoFocus value={form.title} onChange={(event) => set('title', event.target.value)} placeholder="Ex. Préparer la commande chantier Diderot" className="field" /></label>
@@ -786,7 +1001,34 @@ function TaskForm({ form, setForm, meta }) {
             <label><FieldLabel text="Fin" /><input type="datetime-local" value={form.end_at} onChange={(event) => set('end_at', event.target.value)} className="field" /></label>
             <label><FieldLabel text="Responsable" /><select value={form.assigned_user_id} onChange={(event) => set('assigned_user_id', event.target.value)} className="field"><option value="">Non affecté</option>{(meta?.users || []).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label>
             <label><FieldLabel text="Commande signée liée" /><select value={form.sale_order_id} onChange={(event) => set('sale_order_id', event.target.value)} className="field"><option value="">Aucune</option>{(meta?.sale_orders || []).map((order) => <option key={order.id} value={order.id}>{order.reference} · {order.client_name}</option>)}</select></label>
-            <label className="sm:col-span-2"><FieldLabel text="Client" /><select value={form.client_id} onChange={(event) => set('client_id', event.target.value)} className="field"><option value="">Aucun client</option>{(meta?.clients || []).map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
+            <label className="sm:col-span-2"><FieldLabel text="Client" /><select value={form.client_id} onChange={(event) => selectClient(event.target.value)} className="field"><option value="">Aucun client</option>{(meta?.clients || []).map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
+            <label><FieldLabel text="Lieu" /><input value={form.location_label || ''} onChange={(event) => set('location_label', event.target.value)} placeholder="Atelier, chantier, agence..." className="field" /></label>
+            <label><FieldLabel text="Adresse" /><input value={form.location_address || ''} onChange={(event) => setForm((current) => ({ ...current, location_address: event.target.value, latitude: null, longitude: null }))} placeholder="Adresse d’intervention" className="field" /></label>
+            <label><FieldLabel text="Effectif requis" /><input type="number" min="1" max="20" value={form.required_headcount || 1} onChange={(event) => set('required_headcount', Number(event.target.value))} className="field" /></label>
+            <div className="grid grid-cols-2 gap-2">
+                <label><FieldLabel text="Marge avant (min)" /><input type="number" min="0" value={form.buffer_minutes_before || 0} onChange={(event) => set('buffer_minutes_before', Number(event.target.value))} className="field" /></label>
+                <label><FieldLabel text="Marge après (min)" /><input type="number" min="0" value={form.buffer_minutes_after || 0} onChange={(event) => set('buffer_minutes_after', Number(event.target.value))} className="field" /></label>
+            </div>
+            <div className="sm:col-span-2">
+                <FieldLabel text="Compétences requises" />
+                <div className="flex flex-wrap gap-2 rounded-md border border-slate-200 p-3">
+                    {(meta?.skills || []).map((skill) => {
+                        const active = (form.skill_requirements || []).some((item) => item.skill_id === skill.id);
+                        return <button key={skill.id} type="button" onClick={() => toggleSkill(skill.id)} className={`rounded border px-3 py-2 text-xs font-black ${active ? 'border-blue-600 bg-blue-50 text-blue-800' : 'border-slate-200 text-slate-600'}`}>{skill.name}</button>;
+                    })}
+                    {!meta?.skills?.length && <span className="text-xs font-semibold text-slate-400">Aucune compétence configurée.</span>}
+                </div>
+            </div>
+            <div className="sm:col-span-2">
+                <FieldLabel text="Ressources nécessaires" />
+                <div className="flex flex-wrap gap-2 rounded-md border border-slate-200 p-3">
+                    {(meta?.resources || []).map((resource) => {
+                        const active = (form.resource_assignments || []).some((item) => item.resource_id === resource.id);
+                        return <button key={resource.id} type="button" onClick={() => toggleResource(resource.id)} className={`rounded border px-3 py-2 text-xs font-black ${active ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-200 text-slate-600'}`}>{resource.name}</button>;
+                    })}
+                    {!meta?.resources?.length && <span className="text-xs font-semibold text-slate-400">Aucune ressource configurée.</span>}
+                </div>
+            </div>
             <label className="sm:col-span-2"><FieldLabel text="Consignes" /><textarea value={form.description} onChange={(event) => set('description', event.target.value)} rows={3} placeholder="Informations utiles à l'équipe..." className="field resize-none" /></label>
         </div>
     );
@@ -794,6 +1036,11 @@ function TaskForm({ form, setForm, meta }) {
 
 function EventForm({ event, form, setForm, meta }) {
     const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+    const historyQuery = useQuery({
+        queryKey: ['planning-task-history', event.source_id],
+        queryFn: async () => (await api.get(`/v2/schedule/tasks/${event.source_id}/history`)).data,
+        enabled: event.source_type === 'CALENDAR_TASK',
+    });
     return (
         <div className="space-y-5">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -802,15 +1049,46 @@ function EventForm({ event, form, setForm, meta }) {
                 ))}
             </div>
             {event.subtitle && <p className="rounded-md bg-slate-50 p-3 text-sm font-medium text-slate-600">{event.subtitle}</p>}
+            {(event.required_skills?.length > 0 || event.resources?.length > 0) && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-md border border-blue-200 bg-blue-50 p-3">
+                        <FieldLabel text="Compétences requises" />
+                        <p className="text-sm font-bold text-blue-950">{event.required_skills?.map((item) => item.name).join(', ') || 'Aucune'}</p>
+                    </div>
+                    <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                        <FieldLabel text="Ressources réservées" />
+                        <p className="text-sm font-bold text-emerald-950">{event.resources?.map((item) => item.name).join(', ') || 'Aucune'}</p>
+                    </div>
+                </div>
+            )}
             {event.editable && form ? (
                 <div className="grid gap-4 sm:grid-cols-2">
                     <label><FieldLabel text="Début" /><input type="datetime-local" value={form.start_at} onChange={(e) => set('start_at', e.target.value)} className="field" /></label>
                     <label><FieldLabel text="Fin" /><input type="datetime-local" value={form.end_at} onChange={(e) => set('end_at', e.target.value)} className="field" /></label>
                     <label className={event.source_type === 'CALENDAR_TASK' ? '' : 'sm:col-span-2'}><FieldLabel text="Responsable" /><select value={form.assigned_user_id} onChange={(e) => set('assigned_user_id', e.target.value)} className="field"><option value="">Non affecté</option>{(meta?.users || []).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label>
                     {event.source_type === 'CALENDAR_TASK' && <label><FieldLabel text="Statut" /><select value={form.status} onChange={(e) => set('status', e.target.value)} className="field"><option value="TODO">À faire</option><option value="IN_PROGRESS">En cours</option><option value="DONE">Terminé</option></select></label>}
+                    {event.source_type === 'CALENDAR_TASK' && <label className="sm:col-span-2"><FieldLabel text="Motif de la modification" /><input value={form.change_reason || ''} onChange={(e) => set('change_reason', e.target.value)} placeholder="Pourquoi cette tâche est-elle déplacée ou réaffectée ?" className="field" /></label>}
                 </div>
             ) : (
                 <p className="text-sm font-semibold text-slate-500">Cette échéance se pilote depuis son dossier d’origine.</p>
+            )}
+            {event.source_type === 'CALENDAR_TASK' && (
+                <section className="rounded-md border border-slate-200">
+                    <div className="border-b border-slate-200 px-4 py-3"><p className="font-black text-slate-900">Historique des changements</p></div>
+                    <div className="divide-y divide-slate-100">
+                        {(historyQuery.data || []).map((item) => (
+                            <div key={item.id} className="px-4 py-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="text-xs font-black uppercase text-blue-700">{item.action}</span>
+                                    <span className="text-xs font-semibold text-slate-400">{new Date(item.created_at).toLocaleString('fr-FR')}</span>
+                                </div>
+                                <p className="mt-1 text-sm font-bold text-slate-800">{item.actor_name}</p>
+                                <p className="mt-0.5 text-xs font-semibold text-slate-500">{item.reason || 'Sans motif renseigné'} · {item.source_screen || 'Planning'}</p>
+                            </div>
+                        ))}
+                        {!historyQuery.isLoading && !historyQuery.data?.length && <p className="p-4 text-sm font-semibold text-slate-400">Aucun changement enregistré.</p>}
+                    </div>
+                </section>
             )}
         </div>
     );
@@ -963,6 +1241,70 @@ function normalizeScheduleAlerts(response, loads, events) {
     if (overdue) fallback.push({ id: 'fallback-overdue', title: 'Actions en retard', count: overdue, severity: 'medium' });
     if (unassigned) fallback.push({ id: 'fallback-unassigned', title: 'Actions non affectées', count: unassigned, severity: 'medium' });
     return fallback;
+}
+
+function CapacityBreakdown({ data, stations }) {
+    if (!data) return null;
+    const stationNames = Object.fromEntries(stations.map((station) => [String(station.id), station.name]));
+    const groups = [
+        {
+            key: 'by_profession',
+            label: 'Capacité par métier',
+            rows: Object.entries(data.by_profession || {}).map(([name, value]) => ({ name, ...value })),
+        },
+        {
+            key: 'by_station',
+            label: 'Capacité par station',
+            rows: Object.entries(data.by_station || {}).map(([id, value]) => ({
+                name: stationNames[id] || `Station ${id}`,
+                ...value,
+            })),
+        },
+    ].filter((group) => group.rows.length);
+    if (!groups.length) return null;
+
+    return (
+        <section className="border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
+            <div className="grid gap-4 xl:grid-cols-2">
+                {groups.map((group) => (
+                    <div key={group.key} className="min-w-0">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{group.label}</p>
+                        <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                            {group.rows.map((row) => {
+                                const utilization = Number(row.utilization_percent || 0);
+                                return (
+                                    <div key={row.name} className="w-44 shrink-0 rounded-md border border-slate-200 bg-slate-50 p-3">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <p className="line-clamp-2 text-xs font-black text-slate-900">{row.name}</p>
+                                            <span className={`rounded px-1.5 py-0.5 text-[9px] font-black ${
+                                                utilization > 100
+                                                    ? 'bg-red-100 text-red-700'
+                                                    : utilization >= 80
+                                                        ? 'bg-amber-100 text-amber-700'
+                                                        : 'bg-emerald-100 text-emerald-700'
+                                            }`}>{utilization} %</span>
+                                        </div>
+                                        <p className="mt-2 text-[10px] font-bold text-slate-500">
+                                            {row.planned_hours} h planifiées / {row.capacity_hours} h
+                                        </p>
+                                        <div className="mt-2 h-1.5 overflow-hidden rounded bg-slate-200">
+                                            <div className={`h-full ${
+                                                utilization > 100
+                                                    ? 'bg-red-500'
+                                                    : utilization >= 80
+                                                        ? 'bg-amber-500'
+                                                        : 'bg-emerald-500'
+                                            }`} style={{ width: `${Math.min(utilization, 100)}%` }} />
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </section>
+    );
 }
 
 function TeamLoadCockpit({ response, users, events, ownerId }) {

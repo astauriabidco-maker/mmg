@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 from .models import MaterialType, StationName, UserRole, PlanningStatus
 
@@ -56,6 +56,230 @@ class UserCreateResponse(BaseModel):
     invitation_sent: bool = False
     invitation_link: Optional[str] = None
     message: str
+
+
+class PlanningSkillBase(BaseModel):
+    code: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=255)
+    category: str = "TRADE"
+    description: Optional[str] = None
+    requires_expiry: bool = False
+    is_active: bool = True
+
+
+class PlanningSkillCreate(PlanningSkillBase):
+    pass
+
+
+class PlanningSkillResponse(PlanningSkillBase):
+    id: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserPlanningSkillBase(BaseModel):
+    skill_id: int
+    level: int = Field(default=1, ge=1, le=5)
+    is_certified: bool = False
+    certificate_reference: Optional[str] = None
+    acquired_at: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
+    notes: Optional[str] = None
+
+
+class UserPlanningSkillCreate(UserPlanningSkillBase):
+    user_id: int
+
+
+class UserPlanningSkillResponse(UserPlanningSkillBase):
+    id: int
+    user_id: int
+    skill: Optional[PlanningSkillResponse] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserAbsenceRequest(BaseModel):
+    user_id: int
+    start_at: datetime
+    end_at: datetime
+    absence_type: str = "LEAVE"
+    reason: Optional[str] = None
+
+
+class UserAbsenceReview(BaseModel):
+    status: str = Field(pattern="^(APPROVED|REJECTED)$")
+    review_note: Optional[str] = None
+
+
+class UserAbsenceResponse(BaseModel):
+    id: int
+    user_id: int
+    start_at: datetime
+    end_at: datetime
+    absence_type: str
+    status: str
+    reason: Optional[str] = None
+    created_by: str
+    created_at: datetime
+    requested_at: datetime
+    reviewed_by_user_id: Optional[int] = None
+    reviewed_at: Optional[datetime] = None
+    review_note: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PlanningResourceBase(BaseModel):
+    code: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=255)
+    resource_type: str
+    status: str = "ACTIVE"
+    station_id: Optional[int] = None
+    capacity: float = Field(default=1.0, gt=0)
+    timezone: str = "Europe/Paris"
+    details: Optional[Dict[str, Any]] = None
+    is_active: bool = True
+
+
+class PlanningResourceCreate(PlanningResourceBase):
+    pass
+
+
+class PlanningResourceMemberBase(BaseModel):
+    user_id: int
+    member_role: Optional[str] = None
+    is_lead: bool = False
+
+
+class PlanningResourceMemberResponse(PlanningResourceMemberBase):
+    id: int
+    resource_id: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PlanningResourceResponse(PlanningResourceBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    members: List[PlanningResourceMemberResponse] = Field(default_factory=list)
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PlanningResourceUnavailabilityCreate(BaseModel):
+    resource_id: int
+    start_at: datetime
+    end_at: datetime
+    reason: str = Field(min_length=1)
+    unavailability_type: str = "UNAVAILABLE"
+
+
+class PlanningResourceUnavailabilityResponse(PlanningResourceUnavailabilityCreate):
+    id: int
+    created_by: str
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PlanningClosureBase(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    closure_type: str = "PUBLIC_HOLIDAY"
+    start_at: datetime
+    end_at: datetime
+    all_day: bool = True
+    country_code: str = Field(default="FR", min_length=2, max_length=2)
+    scope_type: str = "GLOBAL"
+    team: Optional[str] = None
+    resource_id: Optional[int] = None
+    affects_capacity: bool = True
+    notes: Optional[str] = None
+
+
+class PlanningClosureCreate(PlanningClosureBase):
+    pass
+
+
+class PlanningClosureResponse(PlanningClosureBase):
+    id: int
+    created_by: str
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CalendarTaskSkillRequirementBase(BaseModel):
+    skill_id: int
+    minimum_level: int = Field(default=1, ge=1, le=5)
+    is_mandatory: bool = True
+    notes: Optional[str] = None
+
+
+class CalendarTaskSkillRequirementResponse(CalendarTaskSkillRequirementBase):
+    id: int
+    task_id: int
+    skill: Optional[PlanningSkillResponse] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CalendarTaskResourceAssignmentBase(BaseModel):
+    resource_id: int
+    quantity: float = Field(default=1.0, gt=0)
+    status: str = "REQUIRED"
+    notes: Optional[str] = None
+
+
+class CalendarTaskResourceAssignmentResponse(CalendarTaskResourceAssignmentBase):
+    id: int
+    task_id: int
+    assigned_by_user_id: Optional[int] = None
+    assigned_at: datetime
+    released_at: Optional[datetime] = None
+    resource: Optional[PlanningResourceResponse] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CalendarTaskIndustrialFields(BaseModel):
+    location_label: Optional[str] = None
+    location_address: Optional[str] = None
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    workload_minutes: Optional[int] = Field(default=None, ge=0)
+    required_headcount: int = Field(default=1, ge=1)
+    travel_minutes_before: int = Field(default=0, ge=0)
+    travel_minutes_after: int = Field(default=0, ge=0)
+    buffer_minutes_before: int = Field(default=0, ge=0)
+    buffer_minutes_after: int = Field(default=0, ge=0)
+    skill_requirements: List[CalendarTaskSkillRequirementBase] = Field(
+        default_factory=list
+    )
+    resource_assignments: List[CalendarTaskResourceAssignmentBase] = Field(
+        default_factory=list
+    )
+
+
+class PlanningChangeLogResponse(BaseModel):
+    id: int
+    task_id: int
+    action: str
+    changes: Optional[Dict[str, Any]] = None
+    reason: Optional[str] = None
+    source_screen: Optional[str] = None
+    actor_user_id: Optional[int] = None
+    actor_name: str
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PlanningNotificationResponse(BaseModel):
+    id: int
+    user_id: int
+    task_id: int
+    notification_type: str
+    title: str
+    message: Optional[str] = None
+    status: str
+    deduplication_key: Optional[str] = None
+    read_at: Optional[datetime] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
 class Token(BaseModel):
     access_token: str

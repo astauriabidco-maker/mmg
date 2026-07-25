@@ -48,6 +48,18 @@ def _worker_and_client(session_factory):
         db.close()
 
 
+def _planning_view_headers(username):
+    token = create_access_token(
+        {
+            "sub": username,
+            "role": "OPERATOR",
+            "roles": ["OPERATOR"],
+            "permissions": ["PLANNING_VIEW"],
+        }
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _create_worker(
     session_factory,
     username,
@@ -205,6 +217,55 @@ def test_schedule_allows_different_workers_on_same_slot(isolated_client):
     assert second_response.json()["owner_id"] == second_worker_id
 
 
+def test_operator_only_receives_personal_schedule(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    first_worker_id, _ = _worker_and_client(session_factory)
+    second_worker_id = _create_worker(
+        session_factory,
+        "poseur-personnel",
+        "Nora",
+        "Pose",
+        role="OPERATOR",
+    )
+    start = datetime(2026, 8, 5, 9, 0)
+    for worker_id, title in (
+        (first_worker_id, "Métré confidentiel"),
+        (second_worker_id, "Pose personnelle"),
+    ):
+        response = _post_task(
+            client,
+            headers,
+            title=title,
+            start_at=start,
+            end_at=start + timedelta(hours=2),
+            assigned_user_id=worker_id,
+        )
+        assert response.status_code == 201, response.text
+
+    personal_headers = _planning_view_headers("poseur-personnel")
+    meta = client.get("/v2/schedule/meta", headers=personal_headers)
+    assert meta.status_code == 200, meta.text
+    assert meta.json()["can_edit"] is False
+    assert [user["id"] for user in meta.json()["users"]] == [second_worker_id]
+    assert meta.json()["clients"] == []
+    assert meta.json()["sale_orders"] == []
+
+    response = client.get(
+        "/v2/schedule/events",
+        headers=personal_headers,
+        params={
+            "start_at": datetime(2026, 8, 5).isoformat(),
+            "end_at": datetime(2026, 8, 6).isoformat(),
+            "owner_id": first_worker_id,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert [event["title"] for event in response.json()["events"]] == [
+        "Pose personnelle"
+    ]
+
+
 def test_schedule_reports_team_load_and_manager_summary(isolated_client):
     client, session_factory = isolated_client
     headers = _admin_headers(session_factory)
@@ -349,6 +410,15 @@ def test_part_time_schedule_and_leave_reduce_capacity(isolated_client):
         },
     )
     assert absence.status_code == 201, absence.text
+    assert absence.json()["status"] == "PENDING"
+
+    review = client.patch(
+        f"/v2/schedule/availability/absences/{absence.json()['id']}/review",
+        headers=headers,
+        json={"status": "APPROVED", "review_note": "RTT validée"},
+    )
+    assert review.status_code == 200, review.text
+    assert review.json()["status"] == "APPROVED"
 
     response = client.get(
         "/v2/schedule/events",
@@ -626,3 +696,103 @@ def test_purchase_deadline_is_visible_but_read_only(isolated_client):
         json={"start_at": datetime(2026, 8, 13, 9, 0).isoformat()},
     )
     assert response.status_code == 409
+
+
+def test_planning_resources_members_and_unavailability(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id, _ = _worker_and_client(session_factory)
+
+    resource = client.post(
+        "/v2/schedule/resources",
+        headers=headers,
+        json={
+            "code": "VEH-METRE-01",
+            "name": "Fourgon métreur",
+            "resource_type": "VEHICLE",
+            "capacity": 1,
+        },
+    )
+    assert resource.status_code == 201, resource.text
+    resource_id = resource.json()["id"]
+
+    members = client.put(
+        f"/v2/schedule/resources/{resource_id}/members",
+        headers=headers,
+        json={
+            "members": [
+                {
+                    "user_id": worker_id,
+                    "member_role": "RESPONSABLE",
+                    "is_lead": True,
+                }
+            ]
+        },
+    )
+    assert members.status_code == 200, members.text
+    assert members.json()["members"][0]["user_id"] == worker_id
+    assert members.json()["members"][0]["is_lead"] is True
+
+    unavailable = client.post(
+        f"/v2/schedule/resources/{resource_id}/unavailabilities",
+        headers=headers,
+        json={
+            "resource_id": resource_id,
+            "start_at": "2026-08-03T08:00:00Z",
+            "end_at": "2026-08-03T12:00:00Z",
+            "reason": "Révision annuelle",
+            "unavailability_type": "MAINTENANCE",
+        },
+    )
+    assert unavailable.status_code == 201, unavailable.text
+
+    listed = client.get(
+        f"/v2/schedule/resources/{resource_id}/unavailabilities",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["reason"] == "Révision annuelle"
+
+    deleted = client.delete(
+        f"/v2/schedule/resources/unavailabilities/{unavailable.json()['id']}",
+        headers=headers,
+    )
+    assert deleted.status_code == 200, deleted.text
+
+
+def test_assignment_creates_notification_and_auditable_history(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id = _create_worker(
+        session_factory,
+        "planning-notified",
+        "Mila",
+        "Pose",
+        role="OPERATOR",
+    )
+    start = datetime(2026, 8, 6, 9, 0)
+    created = _post_task(
+        client,
+        headers,
+        title="Pose chantier République",
+        start_at=start,
+        end_at=start + timedelta(hours=2),
+        assigned_user_id=worker_id,
+    )
+    assert created.status_code == 201, created.text
+    task_id = created.json()["source_id"]
+
+    history = client.get(
+        f"/v2/schedule/tasks/{task_id}/history",
+        headers=headers,
+    )
+    assert history.status_code == 200, history.text
+    assert history.json()[0]["action"] == "CREATED"
+
+    personal_headers = _planning_view_headers("planning-notified")
+    notifications = client.get(
+        "/v2/schedule/notifications",
+        headers=personal_headers,
+    )
+    assert notifications.status_code == 200, notifications.text
+    assert notifications.json()[0]["notification_type"] == "ASSIGNMENT"

@@ -24,14 +24,14 @@ const ROLE_PRESETS = [
         label: 'Débit atelier',
         description: 'Confirme le débit réel depuis les réservations atelier.',
         scope: 'Atelier',
-        permissions: ['PROD_VIEW', 'planning:start', 'planning:pause', 'planning:stop', 'planning:consume_stock', 'workshop.consume_stock', 'planning:report_issue'],
+        permissions: ['PROD_VIEW', 'planning:start', 'planning:pause', 'planning:stop', 'planning:consume_stock', 'workshop.consume_stock', 'planning:report_issue', 'PLANNING_VIEW'],
     },
     {
         name: 'WORKSHOP_LEAD',
         label: 'Chef atelier',
         description: 'Pilote les postes, priorités, blocages et débits atelier.',
         scope: 'Atelier',
-        permissions: ['PROD_VIEW', 'PROD_EDIT', 'planning:start', 'planning:pause', 'planning:stop', 'planning:consume_stock', 'planning:reprioritize', 'planning:assign', 'planning:unblock', 'planning:report_issue', 'quality:reject', 'STOCK_VIEW', 'stock.receive', 'stock.transfer', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count', 'PLANNING_VIEW', 'PLANNING_EDIT'],
+        permissions: ['PROD_VIEW', 'PROD_EDIT', 'planning:start', 'planning:pause', 'planning:stop', 'planning:consume_stock', 'planning:reprioritize', 'planning:assign', 'planning:unblock', 'planning:report_issue', 'quality:reject', 'STOCK_VIEW', 'stock.receive', 'stock.transfer', 'workshop.reserve_stock', 'workshop.consume_stock', 'inventory.count', 'PLANNING_VIEW', 'PLANNING_EDIT', 'PLANNING_AVAILABILITY_MANAGE', 'PLANNING_ABSENCE_APPROVE', 'PLANNING_RESOURCE_MANAGE'],
     },
     {
         name: 'ACHATS',

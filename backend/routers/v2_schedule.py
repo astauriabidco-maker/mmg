@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,13 +7,14 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, selectinload
 
-from .. import models
+from .. import models, schemas
 from ..core.security import (
     require_permissions,
     roles_have_permission,
 )
 from ..core.time import utcnow
 from ..database import get_db
+from ..services.schedule_intelligence import calculate_capacity, suggest_assignments
 
 
 router = APIRouter(
@@ -84,6 +85,22 @@ class CalendarTaskCreate(BaseModel):
     client_id: Optional[int] = None
     opportunity_id: Optional[int] = None
     sale_order_id: Optional[int] = None
+    location_label: Optional[str] = Field(default=None, max_length=255)
+    location_address: Optional[str] = Field(default=None, max_length=1000)
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    workload_minutes: Optional[int] = Field(default=None, ge=0)
+    required_headcount: int = Field(default=1, ge=1, le=20)
+    travel_minutes_before: int = Field(default=0, ge=0, le=480)
+    travel_minutes_after: int = Field(default=0, ge=0, le=480)
+    buffer_minutes_before: int = Field(default=0, ge=0, le=240)
+    buffer_minutes_after: int = Field(default=0, ge=0, le=240)
+    skill_requirements: list[schemas.CalendarTaskSkillRequirementBase] = Field(
+        default_factory=list
+    )
+    resource_assignments: list[
+        schemas.CalendarTaskResourceAssignmentBase
+    ] = Field(default_factory=list)
     allow_conflict: bool = False
 
     @model_validator(mode="after")
@@ -106,6 +123,8 @@ class ScheduleEventUpdate(BaseModel):
     end_at: Optional[datetime] = None
     assigned_user_id: Optional[int] = None
     status: Optional[str] = None
+    change_reason: Optional[str] = Field(default=None, max_length=1000)
+    source_screen: Optional[str] = Field(default="PLANNING", max_length=120)
     allow_conflict: bool = False
 
     @model_validator(mode="after")
@@ -144,6 +163,39 @@ class UserAbsenceCreate(BaseModel):
         return self
 
 
+class PlanningSuggestionRequest(BaseModel):
+    title: str = Field(default="Action à planifier", min_length=2, max_length=180)
+    duration_minutes: int = Field(default=60, ge=15, le=1440)
+    window_start: datetime
+    window_end: datetime
+    required_skill_ids: list[int] = Field(default_factory=list)
+    required_resource_ids: list[int] = Field(default_factory=list)
+    location_label: Optional[str] = Field(default=None, max_length=255)
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    travel_margin_minutes: int = Field(default=15, ge=0, le=240)
+    step_minutes: int = Field(default=30, ge=15, le=240)
+    limit: int = Field(default=8, ge=1, le=30)
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        self.window_start = _naive_utc(self.window_start)
+        self.window_end = _naive_utc(self.window_end)
+        if self.window_end <= self.window_start:
+            raise ValueError("La fin de recherche doit être postérieure au début")
+        if self.window_end - self.window_start > timedelta(days=31):
+            raise ValueError("La recherche est limitée à 31 jours")
+        return self
+
+
+class UserSkillsUpdate(BaseModel):
+    skills: list[schemas.UserPlanningSkillBase] = Field(default_factory=list)
+
+
+class ResourceMembersUpdate(BaseModel):
+    members: list[schemas.PlanningResourceMemberBase] = Field(default_factory=list)
+
+
 def _display_user(user: Optional[models.User]) -> Optional[str]:
     if not user:
         return None
@@ -180,8 +232,9 @@ def _event(
     source_url: Optional[str] = None,
     subtitle: Optional[str] = None,
     editable: Optional[bool] = None,
+    **details: Any,
 ):
-    return {
+    event = {
         "id": f"{source_type}:{source_id}",
         "source_type": source_type,
         "source_id": source_id,
@@ -202,6 +255,8 @@ def _event(
         "source_url": source_url,
         "unscheduled": start_at is None,
     }
+    event.update(details)
+    return event
 
 
 def _serialize_event(event: dict) -> dict:
@@ -453,6 +508,12 @@ def _active_user_by_name(
         return None
     users = (
         db.query(models.User)
+        .options(
+            selectinload(models.User.planning_skills).selectinload(
+                models.UserPlanningSkill.skill
+            ),
+            selectinload(models.User.stations),
+        )
         .filter(models.User.is_active == True)  # noqa: E712
         .all()
     )
@@ -755,15 +816,37 @@ def _ensure_no_conflict(
         )
 
 
-def _has_edit_permission(db: Session, current_user: dict) -> bool:
+def _has_permission(
+    db: Session,
+    current_user: dict,
+    permission_code: str,
+) -> bool:
     permissions = current_user.get("permissions") or []
-    if "*" in permissions or "PLANNING_EDIT" in permissions:
+    if "*" in permissions or permission_code in permissions:
         return True
     role_names = current_user.get("roles") or [current_user.get("role")]
     return roles_have_permission(
         db,
         [role for role in role_names if role],
-        "PLANNING_EDIT",
+        permission_code,
+    )
+
+
+def _has_edit_permission(db: Session, current_user: dict) -> bool:
+    return _has_permission(db, current_user, "PLANNING_EDIT")
+
+
+def _current_user_record(
+    db: Session,
+    current_user: dict,
+) -> Optional[models.User]:
+    username = (current_user.get("sub") or "").strip()
+    if not username:
+        return None
+    return (
+        db.query(models.User)
+        .filter(models.User.username == username)
+        .first()
     )
 
 
@@ -782,6 +865,178 @@ def _serialize_absence(absence: models.UserAbsence) -> dict:
             if absence.created_at
             else None
         ),
+        "requested_at": (
+            f"{_naive_utc(absence.requested_at).isoformat()}Z"
+            if absence.requested_at
+            else None
+        ),
+        "reviewed_by_user_id": absence.reviewed_by_user_id,
+        "reviewed_at": (
+            f"{_naive_utc(absence.reviewed_at).isoformat()}Z"
+            if absence.reviewed_at
+            else None
+        ),
+        "review_note": absence.review_note,
+    }
+
+
+def _actor_identity(
+    db: Session,
+    current_user: dict,
+) -> tuple[Optional[int], str]:
+    user = _current_user_record(db, current_user)
+    return (
+        user.id if user else None,
+        _display_user(user) if user else current_user.get("sub") or "Système",
+    )
+
+
+def _record_task_change(
+    db: Session,
+    task: models.CalendarTask,
+    current_user: dict,
+    action: str,
+    *,
+    changes: Optional[dict] = None,
+    reason: Optional[str] = None,
+    source_screen: Optional[str] = "PLANNING",
+) -> None:
+    actor_id, actor_name = _actor_identity(db, current_user)
+    db.add(
+        models.PlanningChangeLog(
+            task_id=task.id,
+            action=action,
+            changes=changes or {},
+            reason=(reason or "").strip() or None,
+            source_screen=source_screen,
+            actor_user_id=actor_id,
+            actor_name=actor_name,
+        )
+    )
+
+
+def _notify_assignment(
+    db: Session,
+    task: models.CalendarTask,
+    user_id: Optional[int],
+    notification_type: str,
+) -> None:
+    if not user_id:
+        return
+    timestamp = utcnow().strftime("%Y%m%d%H%M%S%f")
+    db.add(
+        models.PlanningNotification(
+            user_id=user_id,
+            task_id=task.id,
+            notification_type=notification_type,
+            title=(
+                "Nouvelle affectation"
+                if notification_type == "ASSIGNMENT"
+                else "Planning modifié"
+            ),
+            message=(
+                f"{task.title} · "
+                f"{task.start_at.strftime('%d/%m/%Y %H:%M')}"
+            ),
+            deduplication_key=(
+                f"{notification_type}:{task.id}:{user_id}:{timestamp}"
+            ),
+        )
+    )
+
+
+def _sync_task_requirements(
+    db: Session,
+    task: models.CalendarTask,
+    payload: CalendarTaskCreate,
+    current_user: dict,
+) -> None:
+    skill_ids = [item.skill_id for item in payload.skill_requirements]
+    if len(skill_ids) != len(set(skill_ids)):
+        raise HTTPException(status_code=422, detail="Compétence requise en double")
+    if skill_ids:
+        known = {
+            item.id
+            for item in db.query(models.PlanningSkill)
+            .filter(
+                models.PlanningSkill.id.in_(skill_ids),
+                models.PlanningSkill.is_active == True,  # noqa: E712
+            )
+            .all()
+        }
+        if known != set(skill_ids):
+            raise HTTPException(status_code=422, detail="Compétence requise introuvable")
+    for item in payload.skill_requirements:
+        task.skill_requirements.append(
+            models.CalendarTaskSkillRequirement(
+                skill_id=item.skill_id,
+                minimum_level=item.minimum_level,
+                is_mandatory=item.is_mandatory,
+                notes=item.notes,
+            )
+        )
+
+    resource_ids = [item.resource_id for item in payload.resource_assignments]
+    if len(resource_ids) != len(set(resource_ids)):
+        raise HTTPException(status_code=422, detail="Ressource requise en double")
+    if resource_ids:
+        known = {
+            item.id
+            for item in db.query(models.PlanningResource)
+            .filter(
+                models.PlanningResource.id.in_(resource_ids),
+                models.PlanningResource.is_active == True,  # noqa: E712
+            )
+            .all()
+        }
+        if known != set(resource_ids):
+            raise HTTPException(status_code=422, detail="Ressource requise introuvable")
+    actor_id, _ = _actor_identity(db, current_user)
+    for item in payload.resource_assignments:
+        task.resource_assignments.append(
+            models.CalendarTaskResourceAssignment(
+                resource_id=item.resource_id,
+                quantity=item.quantity,
+                status=item.status,
+                notes=item.notes,
+                assigned_by_user_id=actor_id,
+            )
+        )
+
+
+def _serialize_skill(skill: models.PlanningSkill) -> dict:
+    return {
+        "id": skill.id,
+        "code": skill.code,
+        "name": skill.name,
+        "category": skill.category,
+        "description": skill.description,
+        "requires_expiry": skill.requires_expiry,
+        "is_active": skill.is_active,
+    }
+
+
+def _serialize_resource(resource: models.PlanningResource) -> dict:
+    return {
+        "id": resource.id,
+        "code": resource.code,
+        "name": resource.name,
+        "resource_type": resource.resource_type,
+        "status": resource.status,
+        "station_id": resource.station_id,
+        "capacity": resource.capacity,
+        "timezone": resource.timezone,
+        "details": resource.details,
+        "is_active": resource.is_active,
+        "members": [
+            {
+                "id": member.id,
+                "user_id": member.user_id,
+                "member_role": member.member_role,
+                "is_lead": member.is_lead,
+            }
+            for member in resource.members
+        ],
     }
 
 
@@ -794,15 +1049,27 @@ def get_team_availability(
 ):
     start_at = _naive_utc(start_at) if start_at else utcnow() - timedelta(days=90)
     end_at = _naive_utc(end_at) if end_at else utcnow() + timedelta(days=365)
-    users = (
-        db.query(models.User)
-        .filter(models.User.is_active == True)  # noqa: E712
-        .order_by(models.User.first_name, models.User.last_name, models.User.username)
-        .all()
+    can_manage = _has_permission(
+        db, current_user, "PLANNING_AVAILABILITY_MANAGE"
     )
+    can_approve = _has_permission(
+        db, current_user, "PLANNING_ABSENCE_APPROVE"
+    )
+    if can_manage or can_approve:
+        users = (
+            db.query(models.User)
+            .filter(models.User.is_active == True)  # noqa: E712
+            .order_by(models.User.first_name, models.User.last_name, models.User.username)
+            .all()
+        )
+    else:
+        user = _current_user_record(db, current_user)
+        users = [user] if user and user.is_active else []
+    visible_user_ids = [user.id for user in users]
     absences = (
         db.query(models.UserAbsence)
         .filter(
+            models.UserAbsence.user_id.in_(visible_user_ids or [-1]),
             models.UserAbsence.start_at < end_at,
             models.UserAbsence.end_at > start_at,
         )
@@ -827,7 +1094,8 @@ def get_team_availability(
             }
             for user in users
         ],
-        "can_edit": _has_edit_permission(db, current_user),
+        "can_edit": can_manage,
+        "can_approve": can_approve,
         "timezone": "Europe/Paris",
     }
 
@@ -837,7 +1105,9 @@ def update_user_availability(
     user_id: int,
     payload: WorkScheduleUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_permissions("PLANNING_EDIT")),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_AVAILABILITY_MANAGE")
+    ),
 ):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
@@ -862,16 +1132,25 @@ def create_user_absence(
     user_id: int,
     payload: UserAbsenceCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_permissions("PLANNING_EDIT")),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
 ):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    requester = _current_user_record(db, current_user)
+    can_approve = _has_permission(
+        db, current_user, "PLANNING_ABSENCE_APPROVE"
+    )
+    if not requester or (requester.id != user_id and not can_approve):
+        raise HTTPException(
+            status_code=403,
+            detail="Vous ne pouvez demander une absence que pour vous-même.",
+        )
     overlapping = (
         db.query(models.UserAbsence)
         .filter(
             models.UserAbsence.user_id == user_id,
-            models.UserAbsence.status == "APPROVED",
+            models.UserAbsence.status.in_(["PENDING", "APPROVED"]),
             models.UserAbsence.start_at < payload.end_at,
             models.UserAbsence.end_at > payload.start_at,
         )
@@ -887,7 +1166,7 @@ def create_user_absence(
         start_at=payload.start_at,
         end_at=payload.end_at,
         absence_type=payload.absence_type,
-        status="APPROVED",
+        status="PENDING",
         reason=payload.reason,
         created_by=current_user.get("sub") or "planning",
     )
@@ -897,11 +1176,52 @@ def create_user_absence(
     return _serialize_absence(absence)
 
 
+@router.patch("/availability/absences/{absence_id}/review")
+def review_user_absence(
+    absence_id: int,
+    payload: schemas.UserAbsenceReview,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_ABSENCE_APPROVE")
+    ),
+):
+    absence = db.get(models.UserAbsence, absence_id)
+    if not absence:
+        raise HTTPException(status_code=404, detail="Demande d'absence introuvable")
+    if absence.status != "PENDING":
+        raise HTTPException(status_code=409, detail="Cette demande a déjà été traitée")
+    if payload.status == "APPROVED":
+        overlapping = (
+            db.query(models.UserAbsence)
+            .filter(
+                models.UserAbsence.id != absence.id,
+                models.UserAbsence.user_id == absence.user_id,
+                models.UserAbsence.status == "APPROVED",
+                models.UserAbsence.start_at < absence.end_at,
+                models.UserAbsence.end_at > absence.start_at,
+            )
+            .first()
+        )
+        if overlapping:
+            raise HTTPException(
+                status_code=409,
+                detail="Une absence validée existe déjà sur cette période.",
+            )
+    reviewer = _current_user_record(db, current_user)
+    absence.status = payload.status
+    absence.reviewed_by_user_id = reviewer.id if reviewer else None
+    absence.reviewed_at = utcnow()
+    absence.review_note = (payload.review_note or "").strip() or None
+    db.commit()
+    db.refresh(absence)
+    return _serialize_absence(absence)
+
+
 @router.delete("/availability/absences/{absence_id}")
 def delete_user_absence(
     absence_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_permissions("PLANNING_EDIT")),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
 ):
     absence = (
         db.query(models.UserAbsence)
@@ -910,7 +1230,353 @@ def delete_user_absence(
     )
     if not absence:
         raise HTTPException(status_code=404, detail="Indisponibilité introuvable")
+    requester = _current_user_record(db, current_user)
+    can_approve = _has_permission(
+        db, current_user, "PLANNING_ABSENCE_APPROVE"
+    )
+    if not requester or (requester.id != absence.user_id and not can_approve):
+        raise HTTPException(status_code=403, detail="Suppression non autorisée")
+    if absence.status == "APPROVED" and not can_approve:
+        raise HTTPException(
+            status_code=409,
+            detail="Une absence validée doit être annulée par un responsable.",
+        )
     db.delete(absence)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@router.get("/skills")
+def list_planning_skills(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    skills = (
+        db.query(models.PlanningSkill)
+        .filter(models.PlanningSkill.is_active == True)  # noqa: E712
+        .order_by(models.PlanningSkill.category, models.PlanningSkill.name)
+        .all()
+    )
+    return [_serialize_skill(skill) for skill in skills]
+
+
+@router.post("/skills", status_code=status.HTTP_201_CREATED)
+def create_planning_skill(
+    payload: schemas.PlanningSkillCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_RESOURCE_MANAGE")
+    ),
+):
+    code = payload.code.strip().upper().replace(" ", "_")
+    if db.query(models.PlanningSkill).filter(models.PlanningSkill.code == code).first():
+        raise HTTPException(status_code=409, detail="Ce code de compétence existe déjà")
+    skill = models.PlanningSkill(
+        code=code,
+        name=payload.name.strip(),
+        category=payload.category.strip().upper(),
+        description=(payload.description or "").strip() or None,
+        requires_expiry=payload.requires_expiry,
+        is_active=payload.is_active,
+    )
+    db.add(skill)
+    db.commit()
+    db.refresh(skill)
+    return _serialize_skill(skill)
+
+
+@router.get("/users/{user_id}/skills")
+def get_user_planning_skills(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    requester = _current_user_record(db, current_user)
+    if (
+        not _has_edit_permission(db, current_user)
+        and (not requester or requester.id != user_id)
+    ):
+        raise HTTPException(status_code=403, detail="Compétences non accessibles")
+    rows = (
+        db.query(models.UserPlanningSkill)
+        .options(selectinload(models.UserPlanningSkill.skill))
+        .filter(models.UserPlanningSkill.user_id == user_id)
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "user_id": row.user_id,
+            "skill_id": row.skill_id,
+            "level": row.level,
+            "is_certified": row.is_certified,
+            "certificate_reference": row.certificate_reference,
+            "acquired_at": row.acquired_at,
+            "valid_until": row.valid_until,
+            "notes": row.notes,
+            "skill": _serialize_skill(row.skill),
+        }
+        for row in rows
+    ]
+
+
+@router.put("/users/{user_id}/skills")
+def replace_user_planning_skills(
+    user_id: int,
+    payload: UserSkillsUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_RESOURCE_MANAGE")
+    ),
+):
+    if not db.get(models.User, user_id):
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    skill_ids = [item.skill_id for item in payload.skills]
+    if len(skill_ids) != len(set(skill_ids)):
+        raise HTTPException(status_code=422, detail="Compétence en double")
+    known = {
+        item.id
+        for item in db.query(models.PlanningSkill)
+        .filter(models.PlanningSkill.id.in_(skill_ids or [-1]))
+        .all()
+    }
+    if known != set(skill_ids):
+        raise HTTPException(status_code=422, detail="Compétence introuvable")
+    db.query(models.UserPlanningSkill).filter(
+        models.UserPlanningSkill.user_id == user_id
+    ).delete(synchronize_session=False)
+    for item in payload.skills:
+        db.add(
+            models.UserPlanningSkill(
+                user_id=user_id,
+                skill_id=item.skill_id,
+                level=item.level,
+                is_certified=item.is_certified,
+                certificate_reference=item.certificate_reference,
+                acquired_at=item.acquired_at,
+                valid_until=item.valid_until,
+                notes=item.notes,
+            )
+        )
+    db.commit()
+    return get_user_planning_skills(user_id, db, current_user)
+
+
+@router.get("/resources")
+def list_planning_resources(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    resources = (
+        db.query(models.PlanningResource)
+        .options(selectinload(models.PlanningResource.members))
+        .order_by(models.PlanningResource.resource_type, models.PlanningResource.name)
+        .all()
+    )
+    return [_serialize_resource(resource) for resource in resources]
+
+
+@router.post("/resources", status_code=status.HTTP_201_CREATED)
+def create_planning_resource(
+    payload: schemas.PlanningResourceCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_RESOURCE_MANAGE")
+    ),
+):
+    code = payload.code.strip().upper().replace(" ", "_")
+    if db.query(models.PlanningResource).filter(models.PlanningResource.code == code).first():
+        raise HTTPException(status_code=409, detail="Ce code ressource existe déjà")
+    if payload.station_id and not db.get(models.Station, payload.station_id):
+        raise HTTPException(status_code=422, detail="Station introuvable")
+    resource = models.PlanningResource(
+        code=code,
+        name=payload.name.strip(),
+        resource_type=payload.resource_type.strip().upper(),
+        status=payload.status.strip().upper(),
+        station_id=payload.station_id,
+        capacity=payload.capacity,
+        timezone=payload.timezone,
+        details=payload.details,
+        is_active=payload.is_active,
+    )
+    db.add(resource)
+    db.commit()
+    db.refresh(resource)
+    return _serialize_resource(resource)
+
+
+@router.put("/resources/{resource_id}/members")
+def replace_planning_resource_members(
+    resource_id: int,
+    payload: ResourceMembersUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_RESOURCE_MANAGE")
+    ),
+):
+    resource = db.get(models.PlanningResource, resource_id)
+    if not resource:
+        raise HTTPException(status_code=404, detail="Ressource introuvable")
+    user_ids = [item.user_id for item in payload.members]
+    if len(user_ids) != len(set(user_ids)):
+        raise HTTPException(status_code=422, detail="Collaborateur en double")
+    known_users = {
+        user.id
+        for user in db.query(models.User)
+        .filter(
+            models.User.id.in_(user_ids or [-1]),
+            models.User.is_active == True,  # noqa: E712
+        )
+        .all()
+    }
+    if known_users != set(user_ids):
+        raise HTTPException(status_code=422, detail="Collaborateur introuvable")
+    db.query(models.PlanningResourceMember).filter(
+        models.PlanningResourceMember.resource_id == resource_id
+    ).delete(synchronize_session=False)
+    for item in payload.members:
+        db.add(
+            models.PlanningResourceMember(
+                resource_id=resource_id,
+                user_id=item.user_id,
+                member_role=(item.member_role or "").strip() or None,
+                is_lead=item.is_lead,
+            )
+        )
+    db.commit()
+    refreshed = (
+        db.query(models.PlanningResource)
+        .options(selectinload(models.PlanningResource.members))
+        .filter(models.PlanningResource.id == resource_id)
+        .one()
+    )
+    return _serialize_resource(refreshed)
+
+
+@router.get("/resources/{resource_id}/unavailabilities")
+def list_planning_resource_unavailabilities(
+    resource_id: int,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    if not db.get(models.PlanningResource, resource_id):
+        raise HTTPException(status_code=404, detail="Ressource introuvable")
+    query = db.query(models.PlanningResourceUnavailability).filter(
+        models.PlanningResourceUnavailability.resource_id == resource_id
+    )
+    if start_at:
+        query = query.filter(
+            models.PlanningResourceUnavailability.end_at > _naive_utc(start_at)
+        )
+    if end_at:
+        query = query.filter(
+            models.PlanningResourceUnavailability.start_at < _naive_utc(end_at)
+        )
+    return query.order_by(models.PlanningResourceUnavailability.start_at).all()
+
+
+@router.post(
+    "/resources/{resource_id}/unavailabilities",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_planning_resource_unavailability(
+    resource_id: int,
+    payload: schemas.PlanningResourceUnavailabilityCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_RESOURCE_MANAGE")
+    ),
+):
+    if payload.resource_id != resource_id:
+        raise HTTPException(status_code=422, detail="Ressource incohérente")
+    if not db.get(models.PlanningResource, resource_id):
+        raise HTTPException(status_code=404, detail="Ressource introuvable")
+    start_at = _naive_utc(payload.start_at)
+    end_at = _naive_utc(payload.end_at)
+    if end_at <= start_at:
+        raise HTTPException(status_code=422, detail="Période indisponible invalide")
+    unavailability = models.PlanningResourceUnavailability(
+        resource_id=resource_id,
+        start_at=start_at,
+        end_at=end_at,
+        reason=payload.reason.strip(),
+        unavailability_type=payload.unavailability_type.strip().upper(),
+        created_by=current_user.get("sub") or "planning",
+    )
+    db.add(unavailability)
+    db.commit()
+    db.refresh(unavailability)
+    return unavailability
+
+
+@router.delete("/resources/unavailabilities/{unavailability_id}")
+def delete_planning_resource_unavailability(
+    unavailability_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_RESOURCE_MANAGE")
+    ),
+):
+    unavailability = db.get(
+        models.PlanningResourceUnavailability, unavailability_id
+    )
+    if not unavailability:
+        raise HTTPException(status_code=404, detail="Indisponibilité introuvable")
+    db.delete(unavailability)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@router.get("/closures")
+def list_planning_closures(
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    query = db.query(models.PlanningClosure)
+    if start_at:
+        query = query.filter(models.PlanningClosure.end_at > _naive_utc(start_at))
+    if end_at:
+        query = query.filter(models.PlanningClosure.start_at < _naive_utc(end_at))
+    return query.order_by(models.PlanningClosure.start_at).all()
+
+
+@router.post("/closures", status_code=status.HTTP_201_CREATED)
+def create_planning_closure(
+    payload: schemas.PlanningClosureCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_AVAILABILITY_MANAGE")
+    ),
+):
+    if payload.end_at <= payload.start_at:
+        raise HTTPException(status_code=422, detail="Période de fermeture invalide")
+    closure = models.PlanningClosure(
+        **payload.model_dump(),
+        created_by=current_user.get("sub") or "planning",
+    )
+    db.add(closure)
+    db.commit()
+    db.refresh(closure)
+    return closure
+
+
+@router.delete("/closures/{closure_id}")
+def delete_planning_closure(
+    closure_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_AVAILABILITY_MANAGE")
+    ),
+):
+    closure = db.get(models.PlanningClosure, closure_id)
+    if not closure:
+        raise HTTPException(status_code=404, detail="Fermeture introuvable")
+    db.delete(closure)
     db.commit()
     return {"status": "deleted"}
 
@@ -1117,30 +1783,62 @@ def get_schedule_meta(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
 ):
-    users = (
-        db.query(models.User)
-        .filter(models.User.is_active == True)  # noqa: E712
-        .order_by(models.User.first_name, models.User.last_name, models.User.username)
-        .all()
-    )
-    clients = (
-        db.query(models.Client)
-        .filter(models.Client.is_active == True)  # noqa: E712
-        .order_by(models.Client.name)
-        .limit(500)
-        .all()
-    )
-    signed_orders = (
-        db.query(models.SaleOrder)
-        .filter(
-            or_(
-                models.SaleOrder.signed_at.is_not(None),
-                models.SaleOrder.status.in_(["VALIDATED", "DELIVERED"]),
+    can_edit = _has_edit_permission(db, current_user)
+    if can_edit:
+        users = (
+            db.query(models.User)
+            .filter(models.User.is_active == True)  # noqa: E712
+            .order_by(
+                models.User.first_name,
+                models.User.last_name,
+                models.User.username,
             )
+            .all()
         )
-        .order_by(models.SaleOrder.created_at.desc())
-        .limit(300)
+        clients = (
+            db.query(models.Client)
+            .options(selectinload(models.Client.site_addresses))
+            .filter(models.Client.is_active == True)  # noqa: E712
+            .order_by(models.Client.name)
+            .limit(500)
+            .all()
+        )
+        signed_orders = (
+            db.query(models.SaleOrder)
+            .filter(
+                or_(
+                    models.SaleOrder.signed_at.is_not(None),
+                    models.SaleOrder.status.in_(["VALIDATED", "DELIVERED"]),
+                )
+            )
+            .order_by(models.SaleOrder.created_at.desc())
+            .limit(300)
+            .all()
+        )
+    else:
+        user = _current_user_record(db, current_user)
+        users = [user] if user and user.is_active else []
+        clients = []
+        signed_orders = []
+    skills = (
+        db.query(models.PlanningSkill)
+        .filter(models.PlanningSkill.is_active == True)  # noqa: E712
+        .order_by(models.PlanningSkill.category, models.PlanningSkill.name)
         .all()
+    )
+    resources = (
+        db.query(models.PlanningResource)
+        .options(selectinload(models.PlanningResource.members))
+        .filter(models.PlanningResource.is_active == True)  # noqa: E712
+        .order_by(models.PlanningResource.resource_type, models.PlanningResource.name)
+        .all()
+    )
+    stations = (
+        db.query(models.Station)
+        .order_by(models.Station.name)
+        .all()
+        if can_edit
+        else []
     )
     return {
         "users": [
@@ -1154,7 +1852,35 @@ def get_schedule_meta(
             }
             for user in users
         ],
-        "clients": [{"id": client.id, "name": client.name} for client in clients],
+        "clients": [
+            {
+                "id": client.id,
+                "name": client.name,
+                "default_site": (
+                    {
+                        "id": site.id,
+                        "label": site.label,
+                        "address": site.formatted_address,
+                        "latitude": site.latitude,
+                        "longitude": site.longitude,
+                    }
+                    if (
+                        site := next(
+                            (
+                                item
+                                for item in client.site_addresses
+                                if item.is_default
+                            ),
+                            client.site_addresses[0]
+                            if client.site_addresses
+                            else None,
+                        )
+                    )
+                    else None
+                ),
+            }
+            for client in clients
+        ],
         "sale_orders": [
             {
                 "id": order.id,
@@ -1165,8 +1891,341 @@ def get_schedule_meta(
             for order in signed_orders
         ],
         "categories": sorted(TASK_CATEGORIES),
-        "can_edit": _has_edit_permission(db, current_user),
+        "skills": [_serialize_skill(skill) for skill in skills],
+        "resources": [_serialize_resource(resource) for resource in resources],
+        "stations": [
+            {"id": station.id, "name": station.name}
+            for station in stations
+        ],
+        "can_edit": can_edit,
+        "can_manage_availability": _has_permission(
+            db,
+            current_user,
+            "PLANNING_AVAILABILITY_MANAGE",
+        ),
+        "can_approve_absences": _has_permission(
+            db,
+            current_user,
+            "PLANNING_ABSENCE_APPROVE",
+        ),
+        "can_manage_resources": _has_permission(
+            db,
+            current_user,
+            "PLANNING_RESOURCE_MANAGE",
+        ),
     }
+
+
+def _candidate_working_intervals(
+    user: models.User,
+    start_at: datetime,
+    end_at: datetime,
+) -> list[dict]:
+    intervals = []
+    local_day = (
+        start_at.replace(tzinfo=timezone.utc)
+        .astimezone(PARIS_TIMEZONE)
+        .date()
+    )
+    last_day = (
+        (end_at - timedelta(microseconds=1))
+        .replace(tzinfo=timezone.utc)
+        .astimezone(PARIS_TIMEZONE)
+        .date()
+    )
+    schedule = _user_work_schedule(user)
+    while local_day <= last_day:
+        for start_value, end_value in schedule.get(str(local_day.weekday()), []):
+            interval_start, interval_end = _local_schedule_interval(
+                local_day, start_value, end_value
+            )
+            intervals.append({"start": interval_start, "end": interval_end})
+        local_day += timedelta(days=1)
+    return intervals
+
+
+@router.post("/suggestions")
+def suggest_schedule_assignments(
+    payload: PlanningSuggestionRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_EDIT")),
+):
+    users = (
+        db.query(models.User)
+        .options(
+            selectinload(models.User.planning_skills)
+            .selectinload(models.UserPlanningSkill.skill),
+            selectinload(models.User.stations),
+        )
+        .filter(models.User.is_active == True)  # noqa: E712
+        .all()
+    )
+    required_skills = {
+        skill.id: skill.code
+        for skill in db.query(models.PlanningSkill)
+        .filter(models.PlanningSkill.id.in_(payload.required_skill_ids or [-1]))
+        .all()
+    }
+    if set(required_skills) != set(payload.required_skill_ids):
+        raise HTTPException(status_code=422, detail="Compétence requise introuvable")
+
+    resources = (
+        db.query(models.PlanningResource)
+        .options(selectinload(models.PlanningResource.unavailabilities))
+        .filter(models.PlanningResource.id.in_(payload.required_resource_ids or [-1]))
+        .all()
+    )
+    if {resource.id for resource in resources} != set(payload.required_resource_ids):
+        raise HTTPException(status_code=422, detail="Ressource requise introuvable")
+
+    absences = (
+        db.query(models.UserAbsence)
+        .filter(
+            models.UserAbsence.status == "APPROVED",
+            models.UserAbsence.start_at < payload.window_end,
+            models.UserAbsence.end_at > payload.window_start,
+        )
+        .all()
+    )
+    closures = (
+        db.query(models.PlanningClosure)
+        .filter(
+            models.PlanningClosure.affects_capacity == True,  # noqa: E712
+            models.PlanningClosure.start_at < payload.window_end,
+            models.PlanningClosure.end_at > payload.window_start,
+        )
+        .all()
+    )
+    tasks = (
+        db.query(models.CalendarTask)
+        .options(selectinload(models.CalendarTask.resource_assignments))
+        .filter(
+            models.CalendarTask.status != "CANCELLED",
+            _overlaps(
+                models.CalendarTask.start_at,
+                models.CalendarTask.end_at,
+                payload.window_start,
+                payload.window_end,
+            ),
+        )
+        .all()
+    )
+
+    candidates = []
+    for user in users:
+        valid_skills = [
+            row.skill.code
+            for row in user.planning_skills
+            if row.skill
+            and row.skill.is_active
+            and (
+                row.valid_until is None
+                or row.valid_until >= payload.window_start
+            )
+        ]
+        candidates.append(
+            {
+                "id": user.id,
+                "skills": valid_skills,
+                "capacity_hours": user.weekly_hours or 35.0,
+                "profession": user.job_title or user.role or "NON RENSEIGNÉ",
+                "station_ids": [station.id for station in user.stations],
+                "working_intervals": _candidate_working_intervals(
+                    user, payload.window_start, payload.window_end
+                ),
+            }
+        )
+    engine_resources = [
+        {
+            "id": resource.id,
+            "active": resource.is_active and resource.status == "ACTIVE",
+            "unavailable_intervals": [
+                {
+                    "start": item.start_at,
+                    "end": item.end_at,
+                }
+                for item in resource.unavailabilities
+            ],
+        }
+        for resource in resources
+    ]
+    bookings = [
+        {
+            "id": task.id,
+            "user_id": task.assigned_user_id,
+            "resource_ids": [
+                item.resource_id for item in task.resource_assignments
+            ],
+            "start": task.start_at,
+            "end": _default_end(task.start_at, task.end_at),
+            "location": {
+                "id": task.location_label or task.location_address,
+                "lat": task.latitude,
+                "lon": task.longitude,
+            },
+        }
+        for task in tasks
+    ]
+    engine_absences = [
+        {
+            "id": absence.id,
+            "user_id": absence.user_id,
+            "type": absence.absence_type,
+            "start": absence.start_at,
+            "end": absence.end_at,
+        }
+        for absence in absences
+    ]
+    engine_closures = [
+        {
+            "id": closure.id,
+            "label": closure.name,
+            "station_id": (
+                closure.resource.station_id
+                if closure.resource_id and closure.resource
+                else None
+            ),
+            "start": closure.start_at,
+            "end": closure.end_at,
+        }
+        for closure in closures
+    ]
+    task = {
+        "duration_minutes": payload.duration_minutes,
+        "required_skills": list(required_skills.values()),
+        "required_resource_ids": payload.required_resource_ids,
+        "location": {
+            "id": payload.location_label,
+            "lat": payload.latitude,
+            "lon": payload.longitude,
+        },
+        "travel_margin_minutes": payload.travel_margin_minutes,
+    }
+    suggestions = suggest_assignments(
+        task,
+        candidates,
+        payload.window_start,
+        payload.window_end,
+        step_minutes=payload.step_minutes,
+        limit=payload.limit,
+        bookings=bookings,
+        resources=engine_resources,
+        closures=engine_closures,
+        absences=engine_absences,
+    )
+    users_by_id = {str(user.id): user for user in users}
+    return [
+        {
+            **suggestion,
+            "candidate_id": int(suggestion["candidate_id"]),
+            "candidate_name": _display_user(
+                users_by_id.get(str(suggestion["candidate_id"]))
+            ),
+        }
+        for suggestion in suggestions
+    ]
+
+
+@router.get("/capacity")
+def get_schedule_capacity(
+    start_at: datetime,
+    end_at: datetime,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    start_at = _naive_utc(start_at)
+    end_at = _naive_utc(end_at)
+    users = (
+        db.query(models.User)
+        .options(
+            selectinload(models.User.planning_skills)
+            .selectinload(models.UserPlanningSkill.skill),
+            selectinload(models.User.stations),
+        )
+        .filter(models.User.is_active == True)  # noqa: E712
+        .all()
+    )
+    approved_absences = (
+        db.query(models.UserAbsence)
+        .filter(
+            models.UserAbsence.status == "APPROVED",
+            models.UserAbsence.start_at < end_at,
+            models.UserAbsence.end_at > start_at,
+        )
+        .all()
+    )
+    tasks = (
+        db.query(models.CalendarTask)
+        .options(selectinload(models.CalendarTask.resource_assignments))
+        .filter(
+            models.CalendarTask.status != "CANCELLED",
+            _overlaps(
+                models.CalendarTask.start_at,
+                models.CalendarTask.end_at,
+                start_at,
+                end_at,
+            ),
+        )
+        .all()
+    )
+    candidates = []
+    for user in users:
+        capacity, _ = _working_capacity_hours(
+            user, start_at, end_at, approved_absences
+        )
+        trade_skills = sorted(
+            row.skill.name
+            for row in user.planning_skills
+            if row.skill
+            and row.skill.category == "TRADE"
+            and (not row.valid_until or row.valid_until >= utcnow())
+        )
+        candidates.append(
+            {
+                "id": user.id,
+                "profession": (
+                    " / ".join(trade_skills)
+                    or user.job_title
+                    or user.role
+                    or "NON RENSEIGNÉ"
+                ),
+                "capacity_hours": capacity,
+                "station_ids": [station.id for station in user.stations],
+            }
+        )
+    stations = [
+        {
+            "id": station.id,
+            "name": station.name,
+            "capacity_hours": round(
+                sum(
+                    candidate["capacity_hours"]
+                    for candidate in candidates
+                    if station.id in candidate["station_ids"]
+                ),
+                2,
+            ),
+        }
+        for station in db.query(models.Station).all()
+    ]
+    assignments = [
+        {
+            "user_id": task.assigned_user_id,
+            "station_id": next(
+                (
+                    assignment.resource.station_id
+                    for assignment in task.resource_assignments
+                    if assignment.resource
+                    and assignment.resource.station_id
+                ),
+                None,
+            ),
+            "start": max(task.start_at, start_at),
+            "end": min(_default_end(task.start_at, task.end_at), end_at),
+        }
+        for task in tasks
+    ]
+    return calculate_capacity(candidates, stations, assignments)
 
 
 @router.get("/events")
@@ -1185,6 +2244,14 @@ def get_schedule_events(
         raise HTTPException(status_code=422, detail="Période invalide")
     if end_at - start_at > timedelta(days=124):
         raise HTTPException(status_code=422, detail="La période est limitée à 124 jours")
+    if not _has_edit_permission(db, current_user):
+        user = _current_user_record(db, current_user)
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=403,
+                detail="Profil planning personnel introuvable",
+            )
+        owner_id = user.id
 
     events = []
     unscheduled = []
@@ -1209,6 +2276,10 @@ def get_schedule_events(
             selectinload(models.CalendarTask.assigned_user),
             selectinload(models.CalendarTask.client),
             selectinload(models.CalendarTask.sale_order),
+            selectinload(models.CalendarTask.skill_requirements)
+            .selectinload(models.CalendarTaskSkillRequirement.skill),
+            selectinload(models.CalendarTask.resource_assignments)
+            .selectinload(models.CalendarTaskResourceAssignment.resource),
         )
         .filter(
             models.CalendarTask.status != "CANCELLED",
@@ -1245,6 +2316,38 @@ def get_schedule_events(
                     else None
                 ),
                 subtitle=task.description,
+                location=task.location_label or task.location_address,
+                location_address=task.location_address,
+                latitude=task.latitude,
+                longitude=task.longitude,
+                workload_minutes=task.workload_minutes,
+                required_headcount=task.required_headcount,
+                travel_minutes_before=task.travel_minutes_before,
+                travel_minutes_after=task.travel_minutes_after,
+                buffer_minutes_before=task.buffer_minutes_before,
+                buffer_minutes_after=task.buffer_minutes_after,
+                required_skills=[
+                    {
+                        "id": requirement.skill_id,
+                        "code": requirement.skill.code,
+                        "name": requirement.skill.name,
+                        "minimum_level": requirement.minimum_level,
+                        "mandatory": requirement.is_mandatory,
+                    }
+                    for requirement in task.skill_requirements
+                    if requirement.skill
+                ],
+                resources=[
+                    {
+                        "id": assignment.resource_id,
+                        "code": assignment.resource.code,
+                        "name": assignment.resource.name,
+                        "type": assignment.resource.resource_type,
+                        "status": assignment.status,
+                    }
+                    for assignment in task.resource_assignments
+                    if assignment.resource
+                ],
             )
         )
 
@@ -1682,9 +2785,39 @@ def create_calendar_task(
         client_id=payload.client_id,
         opportunity_id=payload.opportunity_id,
         sale_order_id=payload.sale_order_id,
+        location_label=(payload.location_label or "").strip() or None,
+        location_address=(payload.location_address or "").strip() or None,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        workload_minutes=payload.workload_minutes,
+        required_headcount=payload.required_headcount,
+        travel_minutes_before=payload.travel_minutes_before,
+        travel_minutes_after=payload.travel_minutes_after,
+        buffer_minutes_before=payload.buffer_minutes_before,
+        buffer_minutes_after=payload.buffer_minutes_after,
         created_by=current_user.get("sub") or "Système",
     )
     db.add(task)
+    db.flush()
+    _sync_task_requirements(db, task, payload, current_user)
+    _record_task_change(
+        db,
+        task,
+        current_user,
+        "CREATED",
+        changes={
+            "assigned_user_id": task.assigned_user_id,
+            "start_at": task.start_at.isoformat(),
+            "end_at": task.end_at.isoformat(),
+            "skill_ids": [
+                item.skill_id for item in task.skill_requirements
+            ],
+            "resource_ids": [
+                item.resource_id for item in task.resource_assignments
+            ],
+        },
+    )
+    _notify_assignment(db, task, task.assigned_user_id, "ASSIGNMENT")
     db.commit()
     db.refresh(task)
     return _serialize_event(_event(
@@ -1699,8 +2832,27 @@ def create_calendar_task(
         owner_name=_display_user(assigned_user),
         reference=sale_order.reference if sale_order else f"PLN-{task.id:05d}",
         client_name=sale_order.client_name if sale_order else None,
+        location=task.location_label or task.location_address,
         priority=task.priority,
         subtitle=task.description,
+        required_skills=[
+            {
+                "id": item.skill_id,
+                "code": item.skill.code,
+                "name": item.skill.name,
+            }
+            for item in task.skill_requirements
+            if item.skill
+        ],
+        resources=[
+            {
+                "id": item.resource_id,
+                "code": item.resource.code,
+                "name": item.resource.name,
+            }
+            for item in task.resource_assignments
+            if item.resource
+        ],
     ))
 
 
@@ -1724,6 +2876,12 @@ def update_schedule_event(
         record = db.get(models.CalendarTask, source_id)
         if not record:
             raise HTTPException(status_code=404, detail="Tâche introuvable")
+        previous = {
+            "start_at": record.start_at.isoformat() if record.start_at else None,
+            "end_at": record.end_at.isoformat() if record.end_at else None,
+            "assigned_user_id": record.assigned_user_id,
+            "status": record.status,
+        }
         start_at = payload.start_at or record.start_at
         end_at = payload.end_at or record.end_at or start_at + timedelta(hours=1)
         owner_id = (
@@ -1749,6 +2907,37 @@ def update_schedule_event(
             if status not in TASK_STATUSES:
                 raise HTTPException(status_code=422, detail="Statut de tâche invalide")
             record.status = status
+        changes = {
+            key: {"before": previous[key], "after": value}
+            for key, value in {
+                "start_at": record.start_at.isoformat() if record.start_at else None,
+                "end_at": record.end_at.isoformat() if record.end_at else None,
+                "assigned_user_id": record.assigned_user_id,
+                "status": record.status,
+            }.items()
+            if previous[key] != value
+        }
+        if changes:
+            _record_task_change(
+                db,
+                record,
+                current_user,
+                "UPDATED",
+                changes=changes,
+                reason=payload.change_reason or "Réorganisation du planning",
+                source_screen=payload.source_screen,
+            )
+            if (
+                previous["assigned_user_id"] != record.assigned_user_id
+                or "start_at" in changes
+                or "end_at" in changes
+            ):
+                _notify_assignment(
+                    db,
+                    record,
+                    record.assigned_user_id,
+                    "UPDATED",
+                )
 
     elif source_type == "MEASURE_MISSION":
         record = db.get(models.MeasureMission, source_id)
@@ -1929,5 +3118,64 @@ def cancel_calendar_task(
     if not task:
         raise HTTPException(status_code=404, detail="Tâche introuvable")
     task.status = "CANCELLED"
+    _record_task_change(
+        db,
+        task,
+        current_user,
+        "CANCELLED",
+        reason="Annulation depuis le planning",
+    )
+    _notify_assignment(db, task, task.assigned_user_id, "UPDATED")
     db.commit()
     return None
+
+
+@router.get("/tasks/{task_id}/history")
+def get_calendar_task_history(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    if not db.get(models.CalendarTask, task_id):
+        raise HTTPException(status_code=404, detail="Tâche introuvable")
+    return (
+        db.query(models.PlanningChangeLog)
+        .filter(models.PlanningChangeLog.task_id == task_id)
+        .order_by(models.PlanningChangeLog.created_at.desc())
+        .all()
+    )
+
+
+@router.get("/notifications")
+def get_planning_notifications(
+    unread_only: bool = False,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    user = _current_user_record(db, current_user)
+    if not user:
+        raise HTTPException(status_code=403, detail="Utilisateur introuvable")
+    query = db.query(models.PlanningNotification).filter(
+        models.PlanningNotification.user_id == user.id
+    )
+    if unread_only:
+        query = query.filter(models.PlanningNotification.status == "UNREAD")
+    return query.order_by(models.PlanningNotification.created_at.desc()).limit(100).all()
+
+
+@router.patch("/notifications/{notification_id}/read")
+def mark_planning_notification_read(
+    notification_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    user = _current_user_record(db, current_user)
+    notification = db.get(models.PlanningNotification, notification_id)
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification introuvable")
+    if not user or notification.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Notification non accessible")
+    notification.status = "READ"
+    notification.read_at = utcnow()
+    db.commit()
+    return {"status": "read"}

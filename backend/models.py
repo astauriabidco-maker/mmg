@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text, UniqueConstraint, Numeric, JSON
+from sqlalchemy import Column, Integer, String, Enum as SAEnum, DateTime, ForeignKey, Float, Boolean, Text, UniqueConstraint, Numeric, JSON, Index
 from sqlalchemy.orm import relationship
 from .database import Base
 from .core.time import utcnow
@@ -67,6 +67,22 @@ class User(Base):
         "UserAbsence",
         back_populates="user",
         cascade="all, delete-orphan",
+        foreign_keys="UserAbsence.user_id",
+    )
+    planning_skills = relationship(
+        "UserPlanningSkill",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    planning_resource_memberships = relationship(
+        "PlanningResourceMember",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    planning_notifications = relationship(
+        "PlanningNotification",
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
 
     @property
@@ -93,12 +109,22 @@ class UserAbsence(Base):
     start_at = Column(DateTime, nullable=False, index=True)
     end_at = Column(DateTime, nullable=False, index=True)
     absence_type = Column(String, nullable=False, default="LEAVE")
-    status = Column(String, nullable=False, default="APPROVED")
+    status = Column(String, nullable=False, default="PENDING", index=True)
     reason = Column(Text, nullable=True)
     created_by = Column(String, nullable=False)
     created_at = Column(DateTime, default=utcnow, nullable=False)
+    requested_at = Column(DateTime, default=utcnow, nullable=False)
+    reviewed_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    reviewed_at = Column(DateTime, nullable=True)
+    review_note = Column(Text, nullable=True)
 
-    user = relationship("User", back_populates="absences")
+    user = relationship("User", back_populates="absences", foreign_keys=[user_id])
+    reviewed_by = relationship("User", foreign_keys=[reviewed_by_user_id])
 
 class UserStation(Base):
     __tablename__ = "user_stations"
@@ -109,6 +135,188 @@ class UserSecondaryRole(Base):
     __tablename__ = "user_secondary_roles"
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+
+
+class PlanningSkill(Base):
+    __tablename__ = "planning_skills"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, nullable=False, unique=True, index=True)
+    name = Column(String, nullable=False)
+    category = Column(String, nullable=False, default="TRADE", index=True)
+    description = Column(Text, nullable=True)
+    requires_expiry = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+    users = relationship(
+        "UserPlanningSkill",
+        back_populates="skill",
+        cascade="all, delete-orphan",
+    )
+    task_requirements = relationship(
+        "CalendarTaskSkillRequirement",
+        back_populates="skill",
+        cascade="all, delete-orphan",
+    )
+
+
+class UserPlanningSkill(Base):
+    __tablename__ = "user_planning_skills"
+    __table_args__ = (
+        UniqueConstraint("user_id", "skill_id", name="uq_user_planning_skills_user_skill"),
+        Index("ix_user_planning_skills_valid_until", "valid_until"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    skill_id = Column(
+        Integer,
+        ForeignKey("planning_skills.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    level = Column(Integer, nullable=False, default=1)
+    is_certified = Column(Boolean, nullable=False, default=False)
+    certificate_reference = Column(String, nullable=True)
+    acquired_at = Column(DateTime, nullable=True)
+    valid_until = Column(DateTime, nullable=True)
+    notes = Column(Text, nullable=True)
+
+    user = relationship("User", back_populates="planning_skills")
+    skill = relationship("PlanningSkill", back_populates="users")
+
+
+class PlanningResource(Base):
+    __tablename__ = "planning_resources"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, nullable=False, unique=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    resource_type = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, default="ACTIVE", index=True)
+    station_id = Column(
+        Integer,
+        ForeignKey("stations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    capacity = Column(Float, nullable=False, default=1.0)
+    timezone = Column(String, nullable=False, default="Europe/Paris")
+    details = Column("metadata", JSON, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    station = relationship("Station")
+    members = relationship(
+        "PlanningResourceMember",
+        back_populates="resource",
+        cascade="all, delete-orphan",
+    )
+    unavailabilities = relationship(
+        "PlanningResourceUnavailability",
+        back_populates="resource",
+        cascade="all, delete-orphan",
+    )
+    task_assignments = relationship(
+        "CalendarTaskResourceAssignment",
+        back_populates="resource",
+        cascade="all, delete-orphan",
+    )
+
+
+class PlanningResourceMember(Base):
+    __tablename__ = "planning_resource_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "resource_id",
+            "user_id",
+            name="uq_planning_resource_members_resource_user",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    resource_id = Column(
+        Integer,
+        ForeignKey("planning_resources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    member_role = Column(String, nullable=True)
+    is_lead = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+    resource = relationship("PlanningResource", back_populates="members")
+    user = relationship("User", back_populates="planning_resource_memberships")
+
+
+class PlanningResourceUnavailability(Base):
+    __tablename__ = "planning_resource_unavailabilities"
+    __table_args__ = (
+        Index(
+            "ix_planning_resource_unavailability_window",
+            "resource_id",
+            "start_at",
+            "end_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    resource_id = Column(
+        Integer,
+        ForeignKey("planning_resources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    start_at = Column(DateTime, nullable=False, index=True)
+    end_at = Column(DateTime, nullable=False, index=True)
+    reason = Column(Text, nullable=False)
+    unavailability_type = Column(String, nullable=False, default="UNAVAILABLE", index=True)
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+    resource = relationship("PlanningResource", back_populates="unavailabilities")
+
+
+class PlanningClosure(Base):
+    __tablename__ = "planning_closures"
+    __table_args__ = (
+        Index("ix_planning_closures_window", "start_at", "end_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    closure_type = Column(String, nullable=False, default="PUBLIC_HOLIDAY", index=True)
+    start_at = Column(DateTime, nullable=False, index=True)
+    end_at = Column(DateTime, nullable=False, index=True)
+    all_day = Column(Boolean, nullable=False, default=True)
+    country_code = Column(String(2), nullable=False, default="FR")
+    scope_type = Column(String, nullable=False, default="GLOBAL", index=True)
+    team = Column(String, nullable=True, index=True)
+    resource_id = Column(
+        Integer,
+        ForeignKey("planning_resources.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    affects_capacity = Column(Boolean, nullable=False, default=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+    resource = relationship("PlanningResource")
 
 class Planning(Base):
     __tablename__ = "planning"
@@ -166,6 +374,16 @@ class CalendarTask(Base):
         nullable=True,
         index=True,
     )
+    location_label = Column(String, nullable=True)
+    location_address = Column(Text, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    workload_minutes = Column(Integer, nullable=True)
+    required_headcount = Column(Integer, nullable=False, default=1)
+    travel_minutes_before = Column(Integer, nullable=False, default=0)
+    travel_minutes_after = Column(Integer, nullable=False, default=0)
+    buffer_minutes_before = Column(Integer, nullable=False, default=0)
+    buffer_minutes_after = Column(Integer, nullable=False, default=0)
     created_by = Column(String, nullable=False)
     created_at = Column(DateTime, default=utcnow, nullable=False)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
@@ -174,6 +392,168 @@ class CalendarTask(Base):
     client = relationship("Client")
     opportunity = relationship("CRMOpportunity")
     sale_order = relationship("SaleOrder")
+    skill_requirements = relationship(
+        "CalendarTaskSkillRequirement",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    resource_assignments = relationship(
+        "CalendarTaskResourceAssignment",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    change_logs = relationship(
+        "PlanningChangeLog",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    notifications = relationship(
+        "PlanningNotification",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+
+
+class CalendarTaskSkillRequirement(Base):
+    __tablename__ = "calendar_task_skill_requirements"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "skill_id",
+            name="uq_calendar_task_skill_requirements_task_skill",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    task_id = Column(
+        Integer,
+        ForeignKey("calendar_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    skill_id = Column(
+        Integer,
+        ForeignKey("planning_skills.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    minimum_level = Column(Integer, nullable=False, default=1)
+    is_mandatory = Column(Boolean, nullable=False, default=True)
+    notes = Column(Text, nullable=True)
+
+    task = relationship("CalendarTask", back_populates="skill_requirements")
+    skill = relationship("PlanningSkill", back_populates="task_requirements")
+
+
+class CalendarTaskResourceAssignment(Base):
+    __tablename__ = "calendar_task_resource_assignments"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "resource_id",
+            name="uq_calendar_task_resource_assignments_task_resource",
+        ),
+        Index(
+            "ix_calendar_task_resource_assignments_resource_status",
+            "resource_id",
+            "status",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    task_id = Column(
+        Integer,
+        ForeignKey("calendar_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    resource_id = Column(
+        Integer,
+        ForeignKey("planning_resources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    quantity = Column(Float, nullable=False, default=1.0)
+    status = Column(String, nullable=False, default="REQUIRED", index=True)
+    assigned_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    assigned_at = Column(DateTime, default=utcnow, nullable=False)
+    released_at = Column(DateTime, nullable=True)
+    notes = Column(Text, nullable=True)
+
+    task = relationship("CalendarTask", back_populates="resource_assignments")
+    resource = relationship("PlanningResource", back_populates="task_assignments")
+    assigned_by = relationship("User")
+
+
+class PlanningChangeLog(Base):
+    __tablename__ = "planning_change_logs"
+    __table_args__ = (
+        Index("ix_planning_change_logs_task_created", "task_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(
+        Integer,
+        ForeignKey("calendar_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    action = Column(String, nullable=False, index=True)
+    changes = Column(JSON, nullable=True)
+    reason = Column(Text, nullable=True)
+    source_screen = Column(String, nullable=True)
+    actor_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    actor_name = Column(String, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False, index=True)
+
+    task = relationship("CalendarTask", back_populates="change_logs")
+    actor = relationship("User")
+
+
+class PlanningNotification(Base):
+    __tablename__ = "planning_notifications"
+    __table_args__ = (
+        Index(
+            "ix_planning_notifications_inbox",
+            "user_id",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    task_id = Column(
+        Integer,
+        ForeignKey("calendar_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    notification_type = Column(String, nullable=False, default="ASSIGNMENT", index=True)
+    title = Column(String, nullable=False)
+    message = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default="UNREAD", index=True)
+    deduplication_key = Column(String, nullable=True, unique=True, index=True)
+    read_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False, index=True)
+
+    user = relationship("User", back_populates="planning_notifications")
+    task = relationship("CalendarTask", back_populates="notifications")
 
 class Order(Base):
     __tablename__ = "orders"

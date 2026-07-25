@@ -37,6 +37,9 @@ def seed_permissions():
             # Planning transverse
             {"code": "PLANNING_VIEW", "module": "Planning & Agenda", "description": "Voir le planning transverse de l'entreprise"},
             {"code": "PLANNING_EDIT", "module": "Planning & Agenda", "description": "Planifier, affecter et déplacer les actions"},
+            {"code": "PLANNING_AVAILABILITY_MANAGE", "module": "Planning & Agenda", "description": "Gérer les horaires individuels et les temps partiels"},
+            {"code": "PLANNING_ABSENCE_APPROVE", "module": "Planning & Agenda", "description": "Approuver ou refuser les congés et indisponibilités"},
+            {"code": "PLANNING_RESOURCE_MANAGE", "module": "Planning & Agenda", "description": "Gérer les compétences et les ressources planifiables"},
             # Stocks
             {"code": "STOCK_VIEW", "module": "Stocks & Logistique", "description": "Voir l'état des stocks"},
             {"code": "STOCK_EDIT", "module": "Stocks & Logistique", "description": "Gérer les approvisionnements"},
@@ -83,6 +86,7 @@ def seed_permissions():
                 "planning:pause",
                 "planning:stop",
                 "planning:report_issue",
+                "PLANNING_VIEW",
             ],
             "MANAGER": [
                 "PROD_VIEW",
@@ -113,6 +117,9 @@ def seed_permissions():
                 "purchases.receive",
                 "PLANNING_VIEW",
                 "PLANNING_EDIT",
+                "PLANNING_AVAILABILITY_MANAGE",
+                "PLANNING_ABSENCE_APPROVE",
+                "PLANNING_RESOURCE_MANAGE",
             ],
             "DEBIT_OPERATOR": [
                 "PROD_VIEW",
@@ -122,6 +129,7 @@ def seed_permissions():
                 "planning:consume_stock",
                 "workshop.consume_stock",
                 "planning:report_issue",
+                "PLANNING_VIEW",
             ],
             "MAGASINIER": [
                 "STOCK_VIEW",
@@ -166,6 +174,7 @@ def seed_permissions():
                 "planning:stop",
                 "planning:report_issue",
                 "quality:reject",
+                "PLANNING_VIEW",
             ],
             "WORKSHOP_LEAD": [
                 "PROD_VIEW",
@@ -187,6 +196,9 @@ def seed_permissions():
                 "inventory.count",
                 "PLANNING_VIEW",
                 "PLANNING_EDIT",
+                "PLANNING_AVAILABILITY_MANAGE",
+                "PLANNING_ABSENCE_APPROVE",
+                "PLANNING_RESOURCE_MANAGE",
             ],
             "SALES": [
                 "SALES_VIEW",
