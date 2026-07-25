@@ -1,15 +1,24 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Menu, Sparkles } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import ScheduleDashboard from './ScheduleDashboard';
 
 export default function SchedulePage() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const [searchParams, setSearchParams] = useSearchParams();
+    const settingsTab = searchParams.get('settings');
+
+    const closeSettings = useCallback(() => {
+        const next = new URLSearchParams(searchParams);
+        next.delete('settings');
+        setSearchParams(next, { replace: true });
+    }, [searchParams, setSearchParams]);
 
     return (
         <div className="flex min-h-screen overflow-x-hidden bg-slate-50">
             <Sidebar
-                activeView="schedule"
+                activeView={settingsTab ? 'planning_resources' : 'schedule'}
                 isOpen={isSidebarOpen}
                 setIsOpen={setIsSidebarOpen}
             />
@@ -51,7 +60,10 @@ export default function SchedulePage() {
                 </header>
 
                 <div className="manager-view-shell p-0 sm:p-4 xl:p-8">
-                    <ScheduleDashboard />
+                    <ScheduleDashboard
+                        initialSettingsTab={settingsTab}
+                        onSettingsClosed={closeSettings}
+                    />
                 </div>
             </main>
         </div>

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart, Truck, Users, UserCircle, FileText, BarChart3, CalendarDays } from 'lucide-react';
+import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart, Truck, Users, UserCircle, FileText, BarChart3, CalendarDays, UserRoundCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }) {
@@ -26,6 +26,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
             title: 'Pilotage',
             items: [
                 { id: 'schedule', label: 'Planning & Agenda', icon: CalendarDays, type: 'external', path: '/planning', permission: 'PLANNING_VIEW' },
+                { id: 'planning_resources', label: 'Compétences & ressources', icon: UserRoundCheck, type: 'external', path: '/planning?settings=skills', permission: 'PLANNING_RESOURCE_MANAGE' },
             ]
         },
         {

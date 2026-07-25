@@ -180,7 +180,7 @@ const initialTask = (date = new Date()) => {
     };
 };
 
-export default function ScheduleDashboard() {
+export default function ScheduleDashboard({ initialSettingsTab = null, onSettingsClosed }) {
     const queryClient = useQueryClient();
     const { user: authUser } = useAuth();
     const [view, setView] = useState(() => (
@@ -197,6 +197,7 @@ export default function ScheduleDashboard() {
     const [conflictRetry, setConflictRetry] = useState(null);
     const [availabilityOpen, setAvailabilityOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [settingsTab, setSettingsTab] = useState(initialSettingsTab || 'skills');
     const [suggestions, setSuggestions] = useState([]);
     const period = useMemo(() => getPeriod(anchor, view), [anchor, view]);
 
@@ -204,6 +205,25 @@ export default function ScheduleDashboard() {
         queryKey: ['schedule-meta'],
         queryFn: async () => (await api.get('/v2/schedule/meta')).data,
     });
+
+    useEffect(() => {
+        if (!initialSettingsTab || metaQuery.isLoading) return;
+        if (!metaQuery.data?.can_manage_resources) {
+            setNotice({
+                type: 'error',
+                text: "Votre profil ne peut pas gérer les compétences et ressources du planning.",
+            });
+            if (onSettingsClosed) onSettingsClosed();
+            return;
+        }
+        setSettingsTab(['skills', 'resources', 'closures'].includes(initialSettingsTab) ? initialSettingsTab : 'skills');
+        setSettingsOpen(true);
+    }, [
+        initialSettingsTab,
+        metaQuery.data?.can_manage_resources,
+        metaQuery.isLoading,
+        onSettingsClosed,
+    ]);
     const personalMode = metaQuery.data?.can_edit === false;
     const currentUserRecord = (metaQuery.data?.users || []).find(
         (user) => user.username === authUser?.username,
@@ -470,10 +490,13 @@ export default function ScheduleDashboard() {
                             {metaQuery.data?.can_manage_resources && (
                                 <button
                                     type="button"
-                                    onClick={() => setSettingsOpen(true)}
+                                    onClick={() => {
+                                        setSettingsTab('skills');
+                                        setSettingsOpen(true);
+                                    }}
                                     className="flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50"
                                 >
-                                    <Settings2 className="h-4 w-4" /> Ressources
+                                    <Settings2 className="h-4 w-4" /> Compétences & ressources
                                 </button>
                             )}
                             <button
@@ -721,7 +744,11 @@ export default function ScheduleDashboard() {
             {settingsOpen && (
                 <PlanningSettingsModal
                     users={metaQuery.data?.users || []}
-                    onClose={() => setSettingsOpen(false)}
+                    initialTab={settingsTab}
+                    onClose={() => {
+                        setSettingsOpen(false);
+                        if (onSettingsClosed) onSettingsClosed();
+                    }}
                     onChanged={() => {
                         metaQuery.refetch();
                         refresh();

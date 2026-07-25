@@ -69,9 +69,14 @@ function FieldLabel({ children }) {
     return <span className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-500">{children}</span>;
 }
 
-export default function PlanningSettingsModal({ users = [], onClose, onChanged }) {
+export default function PlanningSettingsModal({
+    users = [],
+    initialTab = 'skills',
+    onClose,
+    onChanged,
+}) {
     const queryClient = useQueryClient();
-    const [tab, setTab] = useState('skills');
+    const [tab, setTab] = useState(initialTab);
     const [selectedUserId, setSelectedUserId] = useState(users[0]?.id ? String(users[0].id) : '');
     const [selectedSkills, setSelectedSkills] = useState({});
     const [resourceForm, setResourceForm] = useState(initialResource);
