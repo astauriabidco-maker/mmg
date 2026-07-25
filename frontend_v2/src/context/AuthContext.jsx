@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
+    const queryClient = useQueryClient();
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -23,11 +25,12 @@ export const AuthProvider = ({ children }) => {
 
     useEffect(() => {
         const handleAuthExpired = () => {
+            queryClient.clear();
             setUser(null);
         };
         window.addEventListener('mmg-auth-expired', handleAuthExpired);
         return () => window.removeEventListener('mmg-auth-expired', handleAuthExpired);
-    }, []);
+    }, [queryClient]);
 
     const login = async (username, pin) => {
         try {
@@ -39,6 +42,7 @@ export const AuthProvider = ({ children }) => {
 
             const { access_token, role, roles, stations, permissions } = res.data;
             if (access_token) {
+                queryClient.clear();
                 const loggedInUser = { username, role, roles: roles || [role], stations: stations || [], permissions: permissions || [] };
                 localStorage.setItem('token', access_token);
                 localStorage.setItem('username', username);
@@ -58,6 +62,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     const logout = () => {
+        queryClient.clear();
         localStorage.removeItem('token');
         localStorage.removeItem('username');
         localStorage.removeItem('role');

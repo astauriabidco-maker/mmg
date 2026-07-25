@@ -202,7 +202,7 @@ export default function ScheduleDashboard({ initialSettingsTab = null, onSetting
     const period = useMemo(() => getPeriod(anchor, view), [anchor, view]);
 
     const metaQuery = useQuery({
-        queryKey: ['schedule-meta'],
+        queryKey: ['schedule-meta', authUser?.username],
         queryFn: async () => (await api.get('/v2/schedule/meta')).data,
     });
 
