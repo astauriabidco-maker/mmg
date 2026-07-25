@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
     AlertTriangle,
     ArrowRight,
+    BarChart3,
     BellRing,
     CalendarClock,
     Check,
@@ -15,6 +16,7 @@ import {
     Settings2,
     Target,
     TrendingUp,
+    Users,
     UserRound,
     X,
 } from 'lucide-react';
@@ -72,6 +74,7 @@ const isToday = value => {
 
 export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
     const [horizonDays, setHorizonDays] = useState(14);
+    const [selectedOwnerId, setSelectedOwnerId] = useState('');
     const [workingKey, setWorkingKey] = useState('');
     const [actionError, setActionError] = useState('');
     const [emailComposer, setEmailComposer] = useState(null);
@@ -81,10 +84,15 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
     const [savingRuleId, setSavingRuleId] = useState(null);
 
     const cockpitQuery = useQuery({
-        queryKey: ['crm-cockpit', horizonDays],
+        queryKey: ['crm-cockpit', horizonDays, selectedOwnerId],
         queryFn: async () => {
+            await api.post('/v2/mmg/crm/reminder-plans/sync');
             const response = await api.get('/v2/mmg/crm/cockpit', {
-                params: { horizon_days: horizonDays, stale_days: 7 },
+                params: {
+                    horizon_days: horizonDays,
+                    stale_days: 7,
+                    owner_user_id: selectedOwnerId ? Number(selectedOwnerId) : undefined,
+                },
             });
             return response.data;
         },
@@ -108,15 +116,19 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
     });
 
     const plansQuery = useQuery({
-        queryKey: ['crm-reminder-plans'],
+        queryKey: ['crm-reminder-plans', selectedOwnerId],
         queryFn: async () => {
-            await api.post('/v2/mmg/crm/reminder-plans/sync');
             return (
                 await api.get('/v2/mmg/crm/reminder-plans', {
-                    params: { status: 'PENDING', limit: 100 },
+                    params: {
+                        status: 'PENDING',
+                        assigned_user_id: selectedOwnerId ? Number(selectedOwnerId) : undefined,
+                        limit: 100,
+                    },
                 })
             ).data;
         },
+        enabled: cockpitQuery.isSuccess,
     });
 
     const usersQuery = useQuery({
@@ -308,7 +320,23 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                             Une seule file de travail pour savoir quoi traiter, quand et pour quel client.
                         </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <label className="flex h-10 items-center gap-2 border border-slate-200 bg-white px-3">
+                            <UserRound className="h-4 w-4 text-slate-400" />
+                            <select
+                                value={selectedOwnerId}
+                                onChange={event => setSelectedOwnerId(event.target.value)}
+                                className="max-w-48 bg-transparent text-xs font-black text-slate-700 outline-none"
+                                aria-label="Filtrer par responsable"
+                            >
+                                <option value="">Toute l'équipe</option>
+                                {(usersQuery.data || []).filter(user => user.is_active).map(user => (
+                                    <option key={user.id} value={user.id}>
+                                        {[user.first_name, user.last_name].filter(Boolean).join(' ') || user.username}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
                         <div className="inline-flex border border-slate-200 bg-slate-50 p-1">
                             {[7, 14, 30].map(days => (
                                 <button
@@ -330,13 +358,53 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                     </div>
                 </header>
 
-                <section className="grid border-y border-slate-200 bg-white sm:grid-cols-2 xl:grid-cols-6">
+                <section className="grid border-y border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                     <Metric icon={Target} label="Opportunités" value={metrics.open_opportunities} />
-                    <Metric icon={TrendingUp} label="Pipeline brut" value={formatMoney(metrics.pipeline_amount)} />
                     <Metric icon={TrendingUp} label="Pipeline pondéré" value={formatMoney(metrics.weighted_pipeline_amount)} tone="blue" />
-                    <Metric icon={Clock3} label="Actions en retard" value={metrics.overdue_actions} tone={metrics.overdue_actions ? 'red' : 'slate'} />
+                    <Metric icon={CalendarClock} label="Relances aujourd'hui" value={metrics.reminders_today} tone={metrics.reminders_today ? 'blue' : 'slate'} />
+                    <Metric icon={Clock3} label="Relances en retard" value={metrics.overdue_reminders} tone={metrics.overdue_reminders ? 'red' : 'slate'} />
+                    <Metric icon={AlertTriangle} label="Sans prochaine action" value={metrics.opportunities_without_action} tone={metrics.opportunities_without_action ? 'amber' : 'slate'} />
                     <Metric icon={ClipboardList} label="Métrés à planifier" value={metrics.measures_to_schedule} tone={metrics.measures_to_schedule ? 'amber' : 'slate'} />
-                    <Metric icon={AlertTriangle} label="Relances détectées" value={metrics.automatic_reminders} tone={metrics.automatic_reminders ? 'amber' : 'slate'} />
+                </section>
+
+                <section className="grid gap-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)]">
+                    <div className="border-y border-slate-200 bg-white">
+                        <SectionHeader
+                            icon={Users}
+                            eyebrow="Charge commerciale"
+                            title="Retards et portefeuille par responsable"
+                            detail="Les dossiers non affectés restent visibles et doivent être attribués."
+                        />
+                        <OwnerPerformanceTable
+                            owners={data.owners || []}
+                            onSelectOwner={ownerId => setSelectedOwnerId(ownerId ? String(ownerId) : '')}
+                        />
+                    </div>
+
+                    <div className="border-y border-slate-200 bg-white">
+                        <SectionHeader
+                            icon={CalendarClock}
+                            eyebrow="Priorités du jour"
+                            title="À traiter avant de prospecter"
+                            detail="Relances arrivées à échéance et dossiers sans prochaine action."
+                        />
+                        <DailyCommercialFocus
+                            today={data.reminders_today || []}
+                            overdue={data.overdue_reminders || []}
+                            withoutAction={data.opportunities_without_action || []}
+                            onOpenClient={onOpenClient}
+                        />
+                    </div>
+                </section>
+
+                <section className="border-y border-slate-200 bg-white">
+                    <SectionHeader
+                        icon={BarChart3}
+                        eyebrow="Conversion mesurée"
+                        title="Taux de passage par étape"
+                        detail="Calculé uniquement sur les sorties d'étape réellement historisées ; les dossiers encore ouverts ne faussent pas le taux."
+                    />
+                    <StageConversionTable conversions={data.stage_conversions || []} />
                 </section>
 
                 <section className="border-y border-slate-200 bg-white">
@@ -584,6 +652,126 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                     onSend={sendEmailReminder}
                 />
             )}
+        </div>
+    );
+}
+
+function OwnerPerformanceTable({ owners, onSelectOwner }) {
+    if (!owners.length) {
+        return <EmptyState title="Aucun portefeuille actif" detail="Les responsables apparaîtront dès qu'une opportunité leur sera affectée." />;
+    }
+    return (
+        <div className="overflow-x-auto">
+            <table className="w-full min-w-[680px] text-left">
+                <thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-400">
+                    <tr>
+                        <th className="px-5 py-3">Responsable</th>
+                        <th className="px-3 py-3 text-right">Dossiers</th>
+                        <th className="px-3 py-3 text-right">Pipeline</th>
+                        <th className="px-3 py-3 text-right">Aujourd'hui</th>
+                        <th className="px-3 py-3 text-right">Retards</th>
+                        <th className="px-3 py-3 text-right">Sans action</th>
+                        <th className="w-12 px-3 py-3" />
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                    {owners.map(owner => (
+                        <tr key={owner.owner_user_id || 'unassigned'} className="hover:bg-slate-50">
+                            <td className="px-5 py-3 text-sm font-black text-slate-900">{owner.owner_name}</td>
+                            <td className="px-3 py-3 text-right text-sm font-black text-slate-700">{owner.open_opportunities}</td>
+                            <td className="px-3 py-3 text-right text-sm font-black text-slate-900">{formatMoney(owner.pipeline_amount)}</td>
+                            <td className="px-3 py-3 text-right text-sm font-black text-blue-700">{owner.reminders_today}</td>
+                            <td className={`px-3 py-3 text-right text-sm font-black ${owner.overdue_reminders ? 'text-red-700' : 'text-slate-400'}`}>
+                                {owner.overdue_reminders}
+                            </td>
+                            <td className={`px-3 py-3 text-right text-sm font-black ${owner.opportunities_without_action ? 'text-amber-700' : 'text-slate-400'}`}>
+                                {owner.opportunities_without_action}
+                            </td>
+                            <td className="px-3 py-3 text-right">
+                                {owner.owner_user_id && (
+                                    <button
+                                        onClick={() => onSelectOwner(owner.owner_user_id)}
+                                        title={`Filtrer sur ${owner.owner_name}`}
+                                        className="inline-flex h-8 w-8 items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-blue-700"
+                                    >
+                                        <ArrowRight className="h-4 w-4" />
+                                    </button>
+                                )}
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+function DailyCommercialFocus({ today, overdue, withoutAction, onOpenClient }) {
+    const items = [
+        ...overdue.map(item => ({ ...item, focusTone: 'red', focusLabel: 'En retard' })),
+        ...today.map(item => ({ ...item, focusTone: 'blue', focusLabel: "Aujourd'hui" })),
+        ...withoutAction.map(item => ({
+            ...item,
+            key: `without-action-${item.id}`,
+            focusTone: 'amber',
+            focusLabel: 'Sans action',
+            reason: STAGE_LABELS[item.stage] || item.stage,
+        })),
+    ].slice(0, 8);
+    const tones = {
+        red: 'bg-red-100 text-red-700',
+        blue: 'bg-blue-100 text-blue-700',
+        amber: 'bg-amber-100 text-amber-800',
+    };
+    if (!items.length) {
+        return <EmptyState title="Aucune urgence commerciale" detail="Les relances et prochaines actions sont à jour." />;
+    }
+    return (
+        <div className="divide-y divide-slate-100">
+            {items.map(item => (
+                <button
+                    key={item.key}
+                    onClick={() => onOpenClient(item.client_id)}
+                    className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-slate-50"
+                >
+                    <span className={`shrink-0 px-2 py-1 text-[9px] font-black uppercase tracking-wide ${tones[item.focusTone]}`}>
+                        {item.focusLabel}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-black text-slate-900">{item.client_name} · {item.title}</p>
+                        <p className="mt-1 truncate text-xs font-semibold text-slate-500">{item.reason || item.reference}</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" />
+                </button>
+            ))}
+            {(overdue.length + today.length + withoutAction.length) > items.length && (
+                <p className="px-5 py-3 text-xs font-bold text-slate-500">
+                    {(overdue.length + today.length + withoutAction.length) - items.length} autre(s) priorité(s) dans les sections détaillées.
+                </p>
+            )}
+        </div>
+    );
+}
+
+function StageConversionTable({ conversions }) {
+    if (!conversions.length) {
+        return <EmptyState title="Historique en cours de constitution" detail="Les taux apparaîtront après les premiers changements d'étape." />;
+    }
+    return (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
+            {conversions.map(item => (
+                <div key={item.stage} className="border-b border-r border-slate-100 px-4 py-4 last:border-r-0">
+                    <p className="min-h-8 text-xs font-black text-slate-700">{STAGE_LABELS[item.stage] || item.stage}</p>
+                    <p className={`mt-3 text-2xl font-black ${item.conversion_rate === null ? 'text-slate-300' : 'text-emerald-700'}`}>
+                        {item.conversion_rate === null ? '—' : `${item.conversion_rate}%`}
+                    </p>
+                    <p className="mt-1 text-[10px] font-bold text-slate-500">
+                        {item.decided_count
+                            ? `${item.advanced_count} avancée(s) · ${item.lost_count} perdue(s)`
+                            : `${item.entered_count} entrée(s) · aucune sortie`}
+                    </p>
+                </div>
+            ))}
         </div>
     );
 }

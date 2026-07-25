@@ -22,6 +22,7 @@ STAGE_ORDER = (
     "proposition_envoyee",
     "negociation",
 )
+STAGE_POSITION = {stage: index for index, stage in enumerate(STAGE_ORDER)}
 
 OPEN_MEASURE_STATUSES = {
     "DRAFT",
@@ -87,18 +88,35 @@ def _assigned_name(mission):
     return full_name or getattr(user, "username", None)
 
 
+def _user_name(user):
+    if not user:
+        return None
+    full_name = " ".join(
+        value
+        for value in [getattr(user, "first_name", None), getattr(user, "last_name", None)]
+        if value
+    )
+    return full_name or getattr(user, "username", None)
+
+
 def build_crm_cockpit(
     opportunities,
     activities,
     missions,
     *,
+    reminder_plans=None,
+    stage_history=None,
     now=None,
     horizon_days=14,
     stale_days=7,
 ):
+    reminder_plans = reminder_plans or []
+    stage_history = stage_history or []
     now = _naive_utc(now or datetime.utcnow())
     horizon = now + timedelta(days=horizon_days)
     stale_before = now - timedelta(days=stale_days)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start = today_start + timedelta(days=1)
 
     open_opportunities = [
         item for item in opportunities if str(getattr(item, "stage", "")) in OPEN_OPPORTUNITY_STAGES
@@ -187,6 +205,31 @@ def build_crm_cockpit(
     for activity in open_activities:
         if getattr(activity, "opportunity_id", None):
             open_activity_by_opportunity[activity.opportunity_id].append(activity)
+
+    opportunities_without_action = []
+    for opportunity in open_opportunities:
+        milestone_at = _naive_utc(getattr(opportunity, "next_milestone_at", None))
+        if open_activity_by_opportunity.get(opportunity.id) or (
+            milestone_at is not None and milestone_at > now
+        ):
+            continue
+        opportunities_without_action.append(
+            {
+                "id": opportunity.id,
+                "reference": opportunity.reference,
+                "client_id": opportunity.client_id,
+                "client_name": _client_name(opportunity),
+                "title": opportunity.title,
+                "stage": opportunity.stage,
+                "owner_user_id": getattr(opportunity, "owner_user_id", None),
+                "owner_name": _owner_name(opportunity),
+                "amount": round(_number(getattr(opportunity, "estimated_amount", 0)), 2),
+                "updated_at": _naive_utc(getattr(opportunity, "updated_at", None)),
+            }
+        )
+    opportunities_without_action.sort(
+        key=lambda item: (item["updated_at"] or datetime.min, item["reference"])
+    )
 
     reminders = []
     seen_keys = set()
@@ -317,6 +360,138 @@ def build_crm_cockpit(
         )
     )
 
+    planned_today = []
+    planned_overdue = []
+    for plan in reminder_plans:
+        if str(getattr(plan, "status", "")) != "PENDING":
+            continue
+        due_at = _naive_utc(getattr(plan, "due_at", None))
+        if due_at is None or due_at >= tomorrow_start:
+            continue
+        opportunity = getattr(plan, "opportunity", None)
+        client = getattr(plan, "client", None) or getattr(opportunity, "client", None)
+        payload = {
+            "key": getattr(plan, "plan_key", f"planned-{getattr(plan, 'id', 0)}"),
+            "kind": "PLANNED_REMINDER",
+            "severity": "CRITICAL" if due_at < today_start else "HIGH",
+            "client_id": getattr(plan, "client_id", 0),
+            "client_name": getattr(client, "name", None) or _client_name(opportunity),
+            "client_email": getattr(client, "email", None),
+            "target_id": getattr(plan, "id", None),
+            "opportunity_id": getattr(plan, "opportunity_id", None),
+            "reference": getattr(opportunity, "reference", None),
+            "title": getattr(opportunity, "title", None) or "Relance commerciale",
+            "reason": (
+                "La relance planifiée est en retard."
+                if due_at < today_start
+                else "La relance planifiée doit être validée aujourd'hui."
+            ),
+            "suggested_subject": getattr(getattr(plan, "rule", None), "name", None)
+            or "Relancer le client",
+            "due_at": due_at,
+            "existing_activity_id": None,
+        }
+        if due_at < today_start:
+            planned_overdue.append(payload)
+        else:
+            planned_today.append(payload)
+    planned_today.sort(key=lambda item: item["due_at"])
+    planned_overdue.sort(key=lambda item: item["due_at"])
+
+    owner_rows = {}
+
+    def owner_row(user_id, name):
+        key = user_id if user_id is not None else "unassigned"
+        if key not in owner_rows:
+            owner_rows[key] = {
+                "owner_user_id": user_id,
+                "owner_name": name or "Non affecté",
+                "open_opportunities": 0,
+                "pipeline_amount": 0.0,
+                "reminders_today": 0,
+                "overdue_reminders": 0,
+                "opportunities_without_action": 0,
+            }
+        return owner_rows[key]
+
+    without_action_ids = {item["id"] for item in opportunities_without_action}
+    for opportunity in open_opportunities:
+        row = owner_row(
+            getattr(opportunity, "owner_user_id", None),
+            _owner_name(opportunity),
+        )
+        row["open_opportunities"] += 1
+        row["pipeline_amount"] += _number(getattr(opportunity, "estimated_amount", 0))
+        if opportunity.id in without_action_ids:
+            row["opportunities_without_action"] += 1
+
+    for plan in reminder_plans:
+        if str(getattr(plan, "status", "")) != "PENDING":
+            continue
+        due_at = _naive_utc(getattr(plan, "due_at", None))
+        if due_at is None or due_at >= tomorrow_start:
+            continue
+        row = owner_row(
+            getattr(plan, "assigned_user_id", None),
+            _user_name(getattr(plan, "assigned_user", None)),
+        )
+        if due_at < today_start:
+            row["overdue_reminders"] += 1
+        else:
+            row["reminders_today"] += 1
+
+    owners = []
+    for row in owner_rows.values():
+        row["pipeline_amount"] = round(row["pipeline_amount"], 2)
+        owners.append(row)
+    owners.sort(
+        key=lambda item: (
+            -item["overdue_reminders"],
+            -item["opportunities_without_action"],
+            item["owner_name"],
+        )
+    )
+
+    entered_by_stage = defaultdict(set)
+    advanced_by_stage = defaultdict(set)
+    lost_by_stage = defaultdict(set)
+    for event in stage_history:
+        opportunity_id = getattr(event, "opportunity_id", None)
+        to_stage = str(getattr(event, "to_stage", "") or "")
+        from_stage = str(getattr(event, "from_stage", "") or "")
+        if opportunity_id is None:
+            continue
+        if to_stage in STAGE_ORDER:
+            entered_by_stage[to_stage].add(opportunity_id)
+        if from_stage in STAGE_ORDER:
+            if to_stage == "perdu":
+                lost_by_stage[from_stage].add(opportunity_id)
+            elif to_stage == "gagne" or (
+                to_stage in STAGE_POSITION
+                and STAGE_POSITION[to_stage] > STAGE_POSITION[from_stage]
+            ):
+                advanced_by_stage[from_stage].add(opportunity_id)
+
+    stage_conversions = []
+    for stage in STAGE_ORDER:
+        advanced_count = len(advanced_by_stage[stage])
+        lost_count = len(lost_by_stage[stage])
+        decided_count = advanced_count + lost_count
+        stage_conversions.append(
+            {
+                "stage": stage,
+                "entered_count": len(entered_by_stage[stage]),
+                "advanced_count": advanced_count,
+                "lost_count": lost_count,
+                "decided_count": decided_count,
+                "conversion_rate": (
+                    round(advanced_count * 100 / decided_count, 1)
+                    if decided_count
+                    else None
+                ),
+            }
+        )
+
     total_pipeline = sum(_number(item.estimated_amount) for item in open_opportunities)
     weighted_pipeline = sum(
         _number(item.estimated_amount) * max(0, min(100, int(item.probability or 0))) / 100
@@ -340,10 +515,18 @@ def build_crm_cockpit(
             "pipeline_amount": round(total_pipeline, 2),
             "weighted_pipeline_amount": round(weighted_pipeline, 2),
             "overdue_actions": overdue_actions,
+            "reminders_today": len(planned_today),
+            "overdue_reminders": len(planned_overdue),
+            "opportunities_without_action": len(opportunities_without_action),
             "measures_to_schedule": measures_to_schedule,
             "automatic_reminders": len(reminders),
         },
         "stages": stages,
         "agenda": agenda,
         "reminders": reminders,
+        "reminders_today": planned_today,
+        "overdue_reminders": planned_overdue,
+        "opportunities_without_action": opportunities_without_action,
+        "owners": owners,
+        "stage_conversions": stage_conversions,
     }

@@ -286,6 +286,45 @@ def test_opportunity_rejects_unknown_stage_and_terminal_regression(crm_api):
     assert regression.status_code == 409, regression.text
 
 
+def test_opportunity_stage_changes_are_recorded_for_conversion_reporting(
+    crm_api,
+    isolated_client,
+):
+    client, headers, user_id = crm_api
+    _, session_factory = isolated_client
+    crm_client = _create_client(client, headers, "Client Historique Étapes")
+    site = _create_site(client, headers, crm_client["id"])
+    opportunity = _create_opportunity(
+        client,
+        headers,
+        _opportunity_payload(crm_client["id"], site["id"], user_id),
+    )
+
+    transitioned = client.patch(
+        f"/v2/mmg/opportunities/{opportunity['id']}",
+        json={"stage": "qualifie"},
+        headers=headers,
+    )
+    assert transitioned.status_code == 200, transitioned.text
+
+    with session_factory() as db:
+        events = (
+            db.query(models.CRMOpportunityStageHistory)
+            .filter(
+                models.CRMOpportunityStageHistory.opportunity_id
+                == opportunity["id"]
+            )
+            .order_by(models.CRMOpportunityStageHistory.changed_at.asc())
+            .all()
+        )
+
+    assert [(event.from_stage, event.to_stage) for event in events] == [
+        (None, "nouveau"),
+        ("nouveau", "qualifie"),
+    ]
+    assert all(event.changed_by == "crm-contract-admin" for event in events)
+
+
 def test_activity_todo_update_completion_and_filters(crm_api):
     client, headers, user_id = crm_api
     crm_client = _create_client(client, headers, "Client Activités")

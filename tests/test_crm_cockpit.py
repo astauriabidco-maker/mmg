@@ -20,6 +20,8 @@ def opportunity(
     milestone="Valider le besoin",
     milestone_at=None,
     updated_at=None,
+    owner_user_id=1,
+    owner_name="Commercial",
 ):
     return SimpleNamespace(
         id=item_id,
@@ -34,7 +36,8 @@ def opportunity(
         updated_at=updated_at or NOW,
         title=f"Projet {item_id}",
         owner=None,
-        owner_name="Commercial",
+        owner_user_id=owner_user_id,
+        owner_name=owner_name,
     )
 
 
@@ -64,6 +67,47 @@ def mission(item_id, *, scheduled_start=None, status="TO_SCHEDULE"):
         scheduled_end=scheduled_start + timedelta(hours=2) if scheduled_start else None,
         status=status,
         assigned_user=None,
+    )
+
+
+def reminder_plan(
+    item_id,
+    *,
+    opportunity_id=1,
+    due_at=None,
+    assigned_user_id=1,
+    assigned_user_name="Commercial",
+):
+    first_name, *last_name = assigned_user_name.split(" ")
+    opportunity_item = opportunity(
+        opportunity_id,
+        owner_user_id=assigned_user_id,
+        owner_name=assigned_user_name,
+    )
+    return SimpleNamespace(
+        id=item_id,
+        plan_key=f"CRM-PLAN-{item_id}",
+        opportunity_id=opportunity_id,
+        opportunity=opportunity_item,
+        client_id=opportunity_id,
+        client=opportunity_item.client,
+        assigned_user_id=assigned_user_id,
+        assigned_user=SimpleNamespace(
+            first_name=first_name,
+            last_name=" ".join(last_name) or None,
+            username=assigned_user_name.lower(),
+        ),
+        rule=SimpleNamespace(name="Relancer la proposition"),
+        due_at=due_at,
+        status="PENDING",
+    )
+
+
+def stage_event(item_id, from_stage, to_stage):
+    return SimpleNamespace(
+        opportunity_id=item_id,
+        from_stage=from_stage,
+        to_stage=to_stage,
     )
 
 
@@ -143,3 +187,86 @@ def test_open_activity_prevents_duplicate_stale_reminder():
     )
 
     assert not any(item["kind"] == "STALE_OPPORTUNITY" for item in result["reminders"])
+
+
+def test_cockpit_groups_today_overdue_and_missing_actions_by_owner():
+    result = build_crm_cockpit(
+        [
+            opportunity(1, milestone=None, milestone_at=None),
+            opportunity(
+                2,
+                milestone_at=NOW + timedelta(days=2),
+                owner_user_id=2,
+                owner_name="Alice Martin",
+            ),
+            opportunity(
+                3,
+                milestone_at=NOW - timedelta(days=2),
+                updated_at=NOW - timedelta(days=1),
+                owner_user_id=2,
+                owner_name="Alice Martin",
+            ),
+        ],
+        [],
+        [],
+        reminder_plans=[
+            reminder_plan(1, due_at=NOW.replace(hour=15)),
+            reminder_plan(
+                2,
+                opportunity_id=2,
+                due_at=NOW - timedelta(days=2),
+                assigned_user_id=2,
+                assigned_user_name="Alice Martin",
+            ),
+        ],
+        now=NOW,
+    )
+
+    assert result["metrics"]["reminders_today"] == 1
+    assert result["metrics"]["overdue_reminders"] == 1
+    assert result["metrics"]["opportunities_without_action"] == 2
+    assert [item["id"] for item in result["opportunities_without_action"]] == [3, 1]
+    commercial = next(item for item in result["owners"] if item["owner_user_id"] == 1)
+    alice = next(item for item in result["owners"] if item["owner_user_id"] == 2)
+    assert commercial["reminders_today"] == 1
+    assert commercial["opportunities_without_action"] == 1
+    assert alice["overdue_reminders"] == 1
+    assert alice["opportunities_without_action"] == 1
+
+
+def test_cockpit_conversion_rates_use_real_stage_transitions():
+    result = build_crm_cockpit(
+        [],
+        [],
+        [],
+        stage_history=[
+            stage_event(1, None, "nouveau"),
+            stage_event(1, "nouveau", "qualifie"),
+            stage_event(2, None, "nouveau"),
+            stage_event(2, "nouveau", "perdu"),
+            stage_event(3, None, "qualifie"),
+            stage_event(4, None, "negociation"),
+            stage_event(4, "negociation", "proposition_envoyee"),
+        ],
+        now=NOW,
+    )
+
+    new_stage = next(item for item in result["stage_conversions"] if item["stage"] == "nouveau")
+    qualified = next(item for item in result["stage_conversions"] if item["stage"] == "qualifie")
+    assert new_stage == {
+        "stage": "nouveau",
+        "entered_count": 2,
+        "advanced_count": 1,
+        "lost_count": 1,
+        "decided_count": 2,
+        "conversion_rate": 50.0,
+    }
+    assert qualified["entered_count"] == 2
+    assert qualified["conversion_rate"] is None
+    negotiation = next(
+        item for item in result["stage_conversions"]
+        if item["stage"] == "negociation"
+    )
+    assert negotiation["entered_count"] == 1
+    assert negotiation["advanced_count"] == 0
+    assert negotiation["conversion_rate"] is None

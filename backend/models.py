@@ -790,6 +790,13 @@ class CRMOpportunity(Base):
         back_populates="opportunity",
         passive_deletes=True,
     )
+    stage_history = relationship(
+        "CRMOpportunityStageHistory",
+        back_populates="opportunity",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="CRMOpportunityStageHistory.changed_at",
+    )
 
     @property
     def client_name(self):
@@ -807,6 +814,24 @@ class CRMOpportunity(Base):
             part for part in [self.owner.first_name, self.owner.last_name] if part
         )
         return full_name or self.owner.username
+
+
+class CRMOpportunityStageHistory(Base):
+    __tablename__ = "crm_opportunity_stage_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    opportunity_id = Column(
+        Integer,
+        ForeignKey("crm_opportunities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    from_stage = Column(String, nullable=True, index=True)
+    to_stage = Column(String, nullable=False, index=True)
+    changed_by = Column(String, nullable=False)
+    changed_at = Column(DateTime, default=utcnow, nullable=False, index=True)
+
+    opportunity = relationship("CRMOpportunity", back_populates="stage_history")
 
 
 class CRMActivity(Base):

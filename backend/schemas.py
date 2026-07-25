@@ -422,6 +422,9 @@ class CRMCockpitMetrics(BaseModel):
     pipeline_amount: float
     weighted_pipeline_amount: float
     overdue_actions: int
+    reminders_today: int = 0
+    overdue_reminders: int = 0
+    opportunities_without_action: int = 0
     measures_to_schedule: int
     automatic_reminders: int
 
@@ -465,6 +468,38 @@ class CRMCockpitReminder(BaseModel):
     existing_activity_id: Optional[int] = None
 
 
+class CRMCockpitOpportunitySummary(BaseModel):
+    id: int
+    reference: str
+    client_id: int
+    client_name: str
+    title: str
+    stage: CRMOpportunityStage
+    owner_user_id: Optional[int] = None
+    owner_name: Optional[str] = None
+    amount: float = 0
+    updated_at: Optional[datetime] = None
+
+
+class CRMCockpitOwnerPerformance(BaseModel):
+    owner_user_id: Optional[int] = None
+    owner_name: str
+    open_opportunities: int = 0
+    pipeline_amount: float = 0
+    reminders_today: int = 0
+    overdue_reminders: int = 0
+    opportunities_without_action: int = 0
+
+
+class CRMCockpitStageConversion(BaseModel):
+    stage: CRMOpportunityStage
+    entered_count: int = 0
+    advanced_count: int = 0
+    lost_count: int = 0
+    decided_count: int = 0
+    conversion_rate: Optional[float] = None
+
+
 class CRMCockpitResponse(BaseModel):
     generated_at: datetime
     horizon_days: int
@@ -472,6 +507,11 @@ class CRMCockpitResponse(BaseModel):
     stages: List[CRMCockpitStage]
     agenda: List[CRMCockpitAgendaItem]
     reminders: List[CRMCockpitReminder]
+    reminders_today: List[CRMCockpitReminder] = Field(default_factory=list)
+    overdue_reminders: List[CRMCockpitReminder] = Field(default_factory=list)
+    opportunities_without_action: List[CRMCockpitOpportunitySummary] = Field(default_factory=list)
+    owners: List[CRMCockpitOwnerPerformance] = Field(default_factory=list)
+    stage_conversions: List[CRMCockpitStageConversion] = Field(default_factory=list)
 
 
 class CRMReminderTemplateUpdate(BaseModel):

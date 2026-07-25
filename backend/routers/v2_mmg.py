@@ -639,17 +639,29 @@ def get_crm_cockpit(
     opportunities = opportunities_query.all()
     opportunity_ids = [item.id for item in opportunities]
     activities_query = db.query(models.CRMActivity)
+    reminder_plans_query = db.query(models.CRMReminderPlan)
+    stage_history_query = db.query(models.CRMOpportunityStageHistory)
     if owner_user_id is not None:
         activities_query = activities_query.filter(
             models.CRMActivity.opportunity_id.in_(opportunity_ids)
             if opportunity_ids
             else models.CRMActivity.id == -1
         )
+        reminder_plans_query = reminder_plans_query.filter(
+            models.CRMReminderPlan.assigned_user_id == owner_user_id
+        )
+        stage_history_query = stage_history_query.filter(
+            models.CRMOpportunityStageHistory.opportunity_id.in_(opportunity_ids)
+            if opportunity_ids
+            else models.CRMOpportunityStageHistory.id == -1
+        )
 
     return build_crm_cockpit(
         opportunities,
         activities_query.all(),
         missions_query.all(),
+        reminder_plans=reminder_plans_query.all(),
+        stage_history=stage_history_query.all(),
         now=utcnow(),
         horizon_days=horizon_days,
         stale_days=stale_days,
@@ -1177,6 +1189,15 @@ def create_crm_opportunity(
     db.add(opportunity)
     db.flush()
     opportunity.reference = f"OPP-{now.year}-{opportunity.id:05d}"
+    db.add(
+        models.CRMOpportunityStageHistory(
+            opportunity_id=opportunity.id,
+            from_stage=None,
+            to_stage=opportunity.stage,
+            changed_by=current_user.get("sub", "Système"),
+            changed_at=now,
+        )
+    )
     db.commit()
     db.refresh(opportunity)
     return opportunity
@@ -1198,8 +1219,10 @@ def update_crm_opportunity(
     opportunity_id: int,
     item: schemas.CRMOpportunityUpdate,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
 ):
     opportunity = _get_opportunity_or_404(db, opportunity_id)
+    previous_stage = opportunity.stage
     payload = item.model_dump(exclude_unset=True)
     target_stage = payload.get("stage")
     target_stage = target_stage.value if target_stage is not None else opportunity.stage
@@ -1230,7 +1253,17 @@ def update_crm_opportunity(
             value = value.value
         setattr(opportunity, field, value)
     if stage_changed:
-        opportunity.stage_entered_at = utcnow()
+        stage_changed_at = utcnow()
+        opportunity.stage_entered_at = stage_changed_at
+        db.add(
+            models.CRMOpportunityStageHistory(
+                opportunity_id=opportunity.id,
+                from_stage=previous_stage,
+                to_stage=target_stage,
+                changed_by=current_user.get("sub", "Système"),
+                changed_at=stage_changed_at,
+            )
+        )
         (
             db.query(models.CRMReminderPlan)
             .filter(

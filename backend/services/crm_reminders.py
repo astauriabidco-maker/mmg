@@ -2,6 +2,8 @@ import re
 from datetime import datetime, timedelta
 from html import escape
 
+from sqlalchemy.exc import IntegrityError
+
 from .. import models
 from ..core.time import utcnow
 
@@ -108,10 +110,11 @@ _ALLOWED_VARIABLES = {
 
 
 def ensure_default_templates(db):
+    expected_codes = {item["code"] for item in DEFAULT_TEMPLATES}
     existing_codes = {
         row[0]
         for row in db.query(models.CRMReminderTemplate.code)
-        .filter(models.CRMReminderTemplate.code.in_([item["code"] for item in DEFAULT_TEMPLATES]))
+        .filter(models.CRMReminderTemplate.code.in_(expected_codes))
         .all()
     }
     created = False
@@ -127,7 +130,18 @@ def ensure_default_templates(db):
         )
         created = True
     if created:
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            persisted_codes = {
+                row[0]
+                for row in db.query(models.CRMReminderTemplate.code)
+                .filter(models.CRMReminderTemplate.code.in_(expected_codes))
+                .all()
+            }
+            if not expected_codes.issubset(persisted_codes):
+                raise
 
 
 def ensure_default_rules(db):
@@ -138,10 +152,11 @@ def ensure_default_rules(db):
         .filter(models.CRMReminderTemplate.is_active.is_(True))
         .all()
     }
+    expected_stages = {item["stage"] for item in DEFAULT_RULES}
     existing_stages = {
         row[0]
         for row in db.query(models.CRMReminderRule.stage)
-        .filter(models.CRMReminderRule.stage.in_([item["stage"] for item in DEFAULT_RULES]))
+        .filter(models.CRMReminderRule.stage.in_(expected_stages))
         .all()
     }
     created = False
@@ -161,7 +176,18 @@ def ensure_default_rules(db):
         )
         created = True
     if created:
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            persisted_stages = {
+                row[0]
+                for row in db.query(models.CRMReminderRule.stage)
+                .filter(models.CRMReminderRule.stage.in_(expected_stages))
+                .all()
+            }
+            if not expected_stages.issubset(persisted_stages):
+                raise
 
 
 def reminder_plan_key(opportunity, rule):

@@ -105,6 +105,39 @@ def test_rules_generate_one_idempotent_plan_per_stage(db, crm_records):
     assert plan.status == "PENDING"
 
 
+def test_default_rule_initialization_tolerates_concurrent_first_load(
+    tmp_path,
+    monkeypatch,
+):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'crm-reminder-race.sqlite'}",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine)
+    first = session_factory()
+    second = session_factory()
+    original_commit = first.commit
+    concurrent_load_started = False
+
+    def commit_after_concurrent_load():
+        nonlocal concurrent_load_started
+        if not concurrent_load_started:
+            concurrent_load_started = True
+            ensure_default_rules(second)
+        original_commit()
+
+    monkeypatch.setattr(first, "commit", commit_after_concurrent_load)
+    try:
+        ensure_default_rules(first)
+        assert first.query(models.CRMReminderTemplate).count() == 3
+        assert first.query(models.CRMReminderRule).count() == 7
+    finally:
+        first.close()
+        second.close()
+        engine.dispose()
+
+
 def test_stage_change_cancels_previous_plan_and_schedules_next(db, crm_records):
     _, opportunity = crm_records
     opportunity.stage_entered_at = datetime(2026, 7, 20, 9, 0)
