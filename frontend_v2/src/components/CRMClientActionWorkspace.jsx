@@ -190,8 +190,8 @@ export default function CRMClientActionWorkspace({
                     client_id: client.id,
                     site_address_id: opportunityDraft.site_address_id ? Number(opportunityDraft.site_address_id) : null,
                     title: opportunityDraft.title.trim(),
-                    stage: opportunityDraft.stage,
-                    probability: Number(opportunityDraft.probability || 0),
+                    stage: 'nouveau',
+                    probability: 10,
                     estimated_amount: Number(opportunityDraft.amount || 0),
                     need_type: 'autre',
                     next_milestone: opportunityDraft.next_milestone.trim() || null,
@@ -714,20 +714,10 @@ function ActionDialog({
                         <Field label="Nom de l'opportunité" wide>
                             <input value={opportunityDraft.title} onChange={event => setOpportunityDraft(current => ({ ...current, title: event.target.value }))} placeholder="Ex. Menuiseries chantier Bonapriso" className={inputClass} />
                         </Field>
-                        <Field label="Étape">
-                            <select value={opportunityDraft.stage} onChange={event => setOpportunityDraft(current => ({ ...current, stage: event.target.value }))} className={inputClass}>
-                                <option value="nouveau">Nouveau</option>
-                                <option value="qualifie">Besoin qualifié</option>
-                                <option value="metre_a_planifier">Métré à planifier</option>
-                                <option value="metre_en_cours">Métré en cours</option>
-                                <option value="proposition_a_preparer">Chiffrage</option>
-                                <option value="proposition_a_valider">Proposition à valider</option>
-                                <option value="proposition_envoyee">Proposition envoyée</option>
-                                <option value="negociation">Négociation</option>
-                            </select>
-                        </Field>
-                        <Field label="Probabilité (%)">
-                            <input type="number" min="0" max="100" value={opportunityDraft.probability} onChange={event => setOpportunityDraft(current => ({ ...current, probability: event.target.value }))} className={inputClass} />
+                        <Field label="Entrée dans le pipeline">
+                            <div className={`${inputClass} flex items-center bg-slate-50 font-black text-slate-700`}>
+                                Nouveau besoin à qualifier
+                            </div>
                         </Field>
                         <Field label="Montant estimé HT">
                             <input type="number" min="0" step="0.01" value={opportunityDraft.amount} onChange={event => setOpportunityDraft(current => ({ ...current, amount: event.target.value }))} className={inputClass} />

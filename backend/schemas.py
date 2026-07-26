@@ -580,6 +580,28 @@ class CRMOpportunityUpdate(BaseModel):
     loss_reason: Optional[str] = None
 
 
+class CRMStudyRoute(str, enum.Enum):
+    SITE_VISIT = "SITE_VISIT"
+    CLIENT_DOCUMENTS = "CLIENT_DOCUMENTS"
+    AGENCY_ASSISTED = "AGENCY_ASSISTED"
+    DIRECT_QUOTE = "DIRECT_QUOTE"
+
+
+class CRMProjectScope(str, enum.Enum):
+    SUPPLY_ONLY = "SUPPLY_ONLY"
+    SUPPLY_AND_INSTALL = "SUPPLY_AND_INSTALL"
+
+
+class CRMOpportunityQualificationRequest(BaseModel):
+    need_type: CRMNeedType
+    study_route: CRMStudyRoute
+    project_scope: CRMProjectScope
+    site_address_id: Optional[int] = None
+    estimated_amount: Optional[float] = Field(default=None, ge=0)
+    expected_close_date: Optional[datetime] = None
+    qualification_note: str = Field(min_length=3)
+
+
 class CRMOpportunityResponse(BaseModel):
     id: int
     reference: str
@@ -607,6 +629,12 @@ class CRMOpportunityResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class CRMOpportunityQualificationResponse(BaseModel):
+    opportunity: CRMOpportunityResponse
+    mission_id: Optional[int] = None
+    study_route: CRMStudyRoute
 
 
 class CRMActivityCreate(BaseModel):

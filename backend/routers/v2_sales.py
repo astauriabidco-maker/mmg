@@ -22,6 +22,7 @@ from ..services.stock_reservations import (
     create_reservation,
     return_commercial_reservation,
 )
+from ..services.crm_opportunity_workflow import sync_opportunity_from_sale
 from scripts.import_workshop_debits import parse_file
 
 import io
@@ -1010,6 +1011,7 @@ def update_sale_status(
         except ValueError as exc:
             db.rollback()
             raise HTTPException(status_code=400, detail=str(exc))
+    sync_opportunity_from_sale(db, order, role)
     db.commit()
     
     # Generate portal link
@@ -1112,6 +1114,7 @@ def sign_quote(token: str, request: Request, background_tasks: BackgroundTasks, 
         raise HTTPException(status_code=400, detail=str(exc))
     
     invoice = _create_signature_invoice(db, order)
+    sync_opportunity_from_sale(db, order, "Portail client")
     
     db.commit()
 

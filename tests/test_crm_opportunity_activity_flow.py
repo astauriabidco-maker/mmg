@@ -196,20 +196,23 @@ def test_opportunity_crud_list_and_client_filter(crm_api):
     assert filtered.status_code == 200, filtered.text
     assert [item["id"] for item in filtered.json()] == [opportunity["id"]]
 
-    updated = client.patch(
-        f"/v2/mmg/opportunities/{opportunity['id']}",
+    updated = client.post(
+        f"/v2/mmg/opportunities/{opportunity['id']}/qualify",
         json={
-            "stage": "qualifie",
-            "probability": 40,
-            "next_milestone": "Planifier le métré",
-            "next_milestone_at": "2026-08-05T08:00:00Z",
+            "need_type": "fourniture_seule",
+            "study_route": "DIRECT_QUOTE",
+            "project_scope": "SUPPLY_ONLY",
+            "estimated_amount": 18000,
+            "expected_close_date": "2026-08-05T08:00:00Z",
+            "qualification_note": "Besoin confirmé pour une fourniture catalogue.",
         },
         headers=headers,
     )
     assert updated.status_code == 200, updated.text
-    assert updated.json()["stage"] == "qualifie"
-    assert updated.json()["probability"] == 40
-    assert updated.json()["next_milestone"] == "Planifier le métré"
+    assert updated.json()["opportunity"]["stage"] == "qualifie"
+    assert updated.json()["opportunity"]["probability"] == 30
+    assert updated.json()["mission_id"] is None
+    assert updated.json()["study_route"] == "DIRECT_QUOTE"
 
     deleted = client.delete(
         f"/v2/mmg/opportunities/{second_opportunity['id']}",
@@ -244,6 +247,88 @@ def test_opportunity_rejects_site_owned_by_another_client(crm_api):
     assert "chantier" in response.text.lower() or "site" in response.text.lower()
 
 
+def test_qualification_creates_site_measure_mission_and_drives_pipeline(
+    crm_api,
+    isolated_client,
+):
+    client, headers, user_id = crm_api
+    _, session_factory = isolated_client
+    crm_client = _create_client(client, headers, "Client Qualification Métré")
+    site = _create_site(client, headers, crm_client["id"], "Chantier Lyon")
+    opportunity = _create_opportunity(
+        client,
+        headers,
+        _opportunity_payload(crm_client["id"], site["id"], user_id),
+    )
+
+    qualified = client.post(
+        f"/v2/mmg/opportunities/{opportunity['id']}/qualify",
+        json={
+            "need_type": "fourniture_pose",
+            "study_route": "SITE_VISIT",
+            "project_scope": "SUPPLY_AND_INSTALL",
+            "site_address_id": site["id"],
+            "estimated_amount": 24000,
+            "qualification_note": (
+                "Remplacement complet avec pose, accès chantier confirmé."
+            ),
+        },
+        headers=headers,
+    )
+
+    assert qualified.status_code == 200, qualified.text
+    result = qualified.json()
+    assert result["study_route"] == "SITE_VISIT"
+    assert result["mission_id"] is not None
+    assert result["opportunity"]["stage"] == "metre_a_planifier"
+    assert result["opportunity"]["probability"] == 40
+    assert "Planifier" in result["opportunity"]["next_milestone"]
+
+    with session_factory() as db:
+        mission = db.get(models.MeasureMission, result["mission_id"])
+        activity = (
+            db.query(models.CRMActivity)
+            .filter(
+                models.CRMActivity.opportunity_id == opportunity["id"],
+                models.CRMActivity.subject
+                == "Qualification commerciale validée",
+            )
+            .one()
+        )
+        assert mission.client_id == crm_client["id"]
+        assert mission.site_address_id == site["id"]
+        assert mission.opportunity_id == opportunity["id"]
+        assert mission.source_type == "SITE_VISIT"
+        assert mission.project_scope == "SUPPLY_AND_INSTALL"
+        assert mission.status == models.MeasureMissionStatus.TO_SCHEDULE.value
+        assert activity.status == models.CRMActivityStatus.COMPLETED.value
+        assert "accès chantier confirmé" in activity.note
+
+
+def test_installation_qualification_requires_a_client_site(crm_api):
+    client, headers, user_id = crm_api
+    crm_client = _create_client(client, headers, "Client Sans Chantier")
+    opportunity = _create_opportunity(
+        client,
+        headers,
+        _opportunity_payload(crm_client["id"], None, user_id),
+    )
+
+    response = client.post(
+        f"/v2/mmg/opportunities/{opportunity['id']}/qualify",
+        json={
+            "need_type": "fourniture_pose",
+            "study_route": "SITE_VISIT",
+            "project_scope": "SUPPLY_AND_INSTALL",
+            "qualification_note": "Pose souhaitée, chantier encore à créer.",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 422, response.text
+    assert "adresse chantier" in response.text.lower()
+
+
 def test_opportunity_rejects_unknown_stage_and_terminal_regression(crm_api):
     client, headers, user_id = crm_api
     crm_client = _create_client(client, headers, "Client Transitions")
@@ -261,26 +346,58 @@ def test_opportunity_rejects_unknown_stage_and_terminal_regression(crm_api):
     )
     assert invalid_create.status_code == 422, invalid_create.text
 
+    bypass_create = client.post(
+        "/v2/mmg/opportunities",
+        json=_opportunity_payload(
+            crm_client["id"],
+            site["id"],
+            user_id,
+            stage="qualifie",
+        ),
+        headers=headers,
+    )
+    assert bypass_create.status_code == 409, bypass_create.text
+    assert "actions métier" in bypass_create.text
+
     opportunity = _create_opportunity(
         client,
         headers,
         _opportunity_payload(crm_client["id"], site["id"], user_id),
     )
-    for stage in (
-        "qualifie",
-        "proposition_a_preparer",
-        "proposition_a_valider",
-        "proposition_envoyee",
-        "negociation",
-        "gagne",
-    ):
-        transitioned = client.patch(
-            f"/v2/mmg/opportunities/{opportunity['id']}",
-            json={"stage": stage},
-            headers=headers,
-        )
-        assert transitioned.status_code == 200, transitioned.text
-        assert transitioned.json()["stage"] == stage
+    derived_transition = client.patch(
+        f"/v2/mmg/opportunities/{opportunity['id']}",
+        json={"stage": "qualifie"},
+        headers=headers,
+    )
+    assert derived_transition.status_code == 409, derived_transition.text
+
+    qualified = client.post(
+        f"/v2/mmg/opportunities/{opportunity['id']}/qualify",
+        json={
+            "need_type": "fourniture_seule",
+            "study_route": "DIRECT_QUOTE",
+            "project_scope": "SUPPLY_ONLY",
+            "qualification_note": "Vente catalogue qualifiée sans métré.",
+        },
+        headers=headers,
+    )
+    assert qualified.status_code == 200, qualified.text
+    assert qualified.json()["opportunity"]["stage"] == "qualifie"
+
+    won_without_sale = client.patch(
+        f"/v2/mmg/opportunities/{opportunity['id']}",
+        json={"stage": "gagne"},
+        headers=headers,
+    )
+    assert won_without_sale.status_code == 409, won_without_sale.text
+
+    lost = client.patch(
+        f"/v2/mmg/opportunities/{opportunity['id']}",
+        json={"stage": "perdu", "loss_reason": "Projet reporté"},
+        headers=headers,
+    )
+    assert lost.status_code == 200, lost.text
+    assert lost.json()["stage"] == "perdu"
 
     regression = client.patch(
         f"/v2/mmg/opportunities/{opportunity['id']}",
@@ -304,9 +421,14 @@ def test_opportunity_stage_changes_are_recorded_for_conversion_reporting(
         _opportunity_payload(crm_client["id"], site["id"], user_id),
     )
 
-    transitioned = client.patch(
-        f"/v2/mmg/opportunities/{opportunity['id']}",
-        json={"stage": "qualifie"},
+    transitioned = client.post(
+        f"/v2/mmg/opportunities/{opportunity['id']}/qualify",
+        json={
+            "need_type": "fourniture_seule",
+            "study_route": "DIRECT_QUOTE",
+            "project_scope": "SUPPLY_ONLY",
+            "qualification_note": "Besoin confirmé pour vente directe.",
+        },
         headers=headers,
     )
     assert transitioned.status_code == 200, transitioned.text
@@ -327,6 +449,98 @@ def test_opportunity_stage_changes_are_recorded_for_conversion_reporting(
         ("nouveau", "qualifie"),
     ]
     assert all(event.changed_by == "crm-contract-admin" for event in events)
+
+
+def test_linked_sale_send_and_signature_drive_the_opportunity(
+    crm_api,
+    isolated_client,
+):
+    client, headers, user_id = crm_api
+    _, session_factory = isolated_client
+    crm_client = _create_client(client, headers, "Client Devis Raccordé")
+    opportunity = _create_opportunity(
+        client,
+        headers,
+        _opportunity_payload(
+            crm_client["id"],
+            None,
+            user_id,
+            need_type="fourniture_seule",
+        ),
+    )
+    qualified = client.post(
+        f"/v2/mmg/opportunities/{opportunity['id']}/qualify",
+        json={
+            "need_type": "fourniture_seule",
+            "study_route": "DIRECT_QUOTE",
+            "project_scope": "SUPPLY_ONLY",
+            "qualification_note": "Vente directe qualifiée et chiffrée.",
+        },
+        headers=headers,
+    )
+    assert qualified.status_code == 200, qualified.text
+
+    with session_factory() as db:
+        sale = models.SaleOrder(
+            reference="DEV-RACCORDE-0001",
+            client_name=crm_client["name"],
+            client_contact=crm_client["phone"],
+            client_email=crm_client["email"],
+            client_address=crm_client["address"],
+            status="DRAFT",
+            workflow_type="FREE_SALE",
+            tax_rate=20,
+            currency="EUR",
+            author="crm-contract-admin",
+        )
+        db.add(sale)
+        db.flush()
+        db.add(
+            models.SaleOrderLine(
+                order_id=sale.id,
+                line_type="SERVICE",
+                description="Prestation commerciale raccordée",
+                quantity=1,
+                unit_price=500,
+                discount_pct=0,
+            )
+        )
+        linked_opportunity = db.get(models.CRMOpportunity, opportunity["id"])
+        linked_opportunity.sale_order_id = sale.id
+        db.commit()
+        sale_id = sale.id
+
+    sent = client.put(
+        f"/v2/sales/{sale_id}/status",
+        params={"status": "SENT"},
+        headers=headers,
+    )
+    assert sent.status_code == 200, sent.text
+    portal_link = sent.json()["portal_link"]
+    assert portal_link
+
+    after_send = client.get(
+        f"/v2/mmg/opportunities/{opportunity['id']}",
+        headers=headers,
+    )
+    assert after_send.status_code == 200, after_send.text
+    assert after_send.json()["stage"] == "proposition_envoyee"
+    assert after_send.json()["probability"] == 70
+
+    with session_factory() as db:
+        signature_token = db.get(models.SaleOrder, sale_id).signature_token
+
+    signed = client.post(f"/v2/sales/portal/{signature_token}/sign")
+    assert signed.status_code == 200, signed.text
+
+    after_signature = client.get(
+        f"/v2/mmg/opportunities/{opportunity['id']}",
+        headers=headers,
+    )
+    assert after_signature.status_code == 200, after_signature.text
+    assert after_signature.json()["stage"] == "gagne"
+    assert after_signature.json()["probability"] == 100
+    assert after_signature.json()["won_at"] is not None
 
 
 def test_activity_todo_update_completion_and_filters(crm_api):
@@ -515,8 +729,12 @@ def test_cockpit_assigns_active_owner(crm_api):
     assert response.json()["owner_name"] == "crm-contract-admin"
 
 
-def test_cockpit_rejects_scheduling_action_on_terminal_opportunity(crm_api):
+def test_cockpit_rejects_scheduling_action_on_terminal_opportunity(
+    crm_api,
+    isolated_client,
+):
     client, headers, user_id = crm_api
+    _, session_factory = isolated_client
     crm_client = _create_client(client, headers, "Client Opportunité Gagnée")
     site = _create_site(client, headers, crm_client["id"])
     opportunity = _create_opportunity(
@@ -526,10 +744,12 @@ def test_cockpit_rejects_scheduling_action_on_terminal_opportunity(crm_api):
             crm_client["id"],
             site["id"],
             user_id,
-            stage="gagne",
-            sale_order_id=None,
         ),
     )
+    with session_factory() as db:
+        terminal = db.get(models.CRMOpportunity, opportunity["id"])
+        terminal.stage = models.CRMOpportunityStage.WON.value
+        db.commit()
 
     response = client.post(
         f"/v2/mmg/crm/cockpit/opportunities/{opportunity['id']}/schedule-action",

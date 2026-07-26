@@ -26,6 +26,11 @@ from ..services.crm_reminders import (
     render_email,
     sync_reminder_plans,
 )
+from ..services.crm_opportunity_workflow import (
+    set_opportunity_stage,
+    sync_opportunity_from_mission,
+    sync_opportunity_from_sale,
+)
 from ..services.technical_dossier_governance import (
     build_document_matrix,
     compare_material_versions,
@@ -531,6 +536,16 @@ OPPORTUNITY_TRANSITIONS = {
         models.CRMOpportunityStage.QUALIFIED.value,
     },
     models.CRMOpportunityStage.WON.value: set(),
+}
+
+OPPORTUNITY_DERIVED_STAGES = {
+    models.CRMOpportunityStage.QUALIFIED.value,
+    models.CRMOpportunityStage.MEASURE_TO_SCHEDULE.value,
+    models.CRMOpportunityStage.MEASURE_IN_PROGRESS.value,
+    models.CRMOpportunityStage.PROPOSAL_TO_PREPARE.value,
+    models.CRMOpportunityStage.PROPOSAL_TO_VALIDATE.value,
+    models.CRMOpportunityStage.PROPOSAL_SENT.value,
+    models.CRMOpportunityStage.WON.value,
 }
 
 ACTIVITY_TRANSITIONS = {
@@ -1159,6 +1174,14 @@ def create_crm_opportunity(
     db: Session = Depends(get_db),
     current_user: dict = Depends(security.get_current_user),
 ):
+    if item.stage != schemas.CRMOpportunityStage.NEW:
+        raise HTTPException(
+            409,
+            (
+                "Une opportunité entre toujours par « Nouveau besoin ». "
+                "Les étapes suivantes sont calculées depuis les actions métier."
+            ),
+        )
     _validate_opportunity_links(
         db,
         item.client_id,
@@ -1233,6 +1256,14 @@ def update_crm_opportunity(
     target_stage = target_stage.value if target_stage is not None else opportunity.stage
     stage_changed = target_stage != opportunity.stage
     if stage_changed:
+        if target_stage in OPPORTUNITY_DERIVED_STAGES:
+            raise HTTPException(
+                409,
+                (
+                    "Cette étape dépend d'une action métier. Utilisez la qualification, "
+                    "la mission de métré, le dossier technique ou le devis lié."
+                ),
+            )
         if target_stage not in OPPORTUNITY_TRANSITIONS.get(opportunity.stage, set()):
             raise HTTPException(
                 409,
@@ -1293,6 +1324,131 @@ def update_crm_opportunity(
     db.commit()
     db.refresh(opportunity)
     return opportunity
+
+
+@router.post(
+    "/opportunities/{opportunity_id}/qualify",
+    response_model=schemas.CRMOpportunityQualificationResponse,
+)
+def qualify_crm_opportunity(
+    opportunity_id: int,
+    item: schemas.CRMOpportunityQualificationRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    opportunity = _get_opportunity_or_404(db, opportunity_id)
+    if opportunity.stage not in {
+        models.CRMOpportunityStage.NEW.value,
+        models.CRMOpportunityStage.LOST.value,
+    }:
+        raise HTTPException(409, "Cette opportunité a déjà été qualifiée")
+
+    site = None
+    if item.site_address_id:
+        site = (
+            db.query(models.ClientSiteAddress)
+            .filter(models.ClientSiteAddress.id == item.site_address_id)
+            .first()
+        )
+        if not site or site.client_id != opportunity.client_id:
+            raise HTTPException(400, "Le chantier sélectionné n'appartient pas au client")
+    if (
+        item.project_scope == schemas.CRMProjectScope.SUPPLY_AND_INSTALL
+        and not site
+    ):
+        raise HTTPException(422, "Sélectionnez une adresse chantier pour une fourniture avec pose")
+    if (
+        item.study_route == schemas.CRMStudyRoute.DIRECT_QUOTE
+        and item.project_scope == schemas.CRMProjectScope.SUPPLY_AND_INSTALL
+    ):
+        raise HTTPException(
+            422,
+            "Une fourniture avec pose doit passer par un dossier de cotes et un contrôle BE",
+        )
+
+    actor = current_user.get("sub", "Système")
+    opportunity.need_type = item.need_type.value
+    opportunity.site_address_id = site.id if site else None
+    opportunity.estimated_amount = item.estimated_amount
+    opportunity.expected_close_date = item.expected_close_date
+    opportunity.lost_at = None
+    opportunity.loss_reason = None
+
+    mission = None
+    if item.study_route != schemas.CRMStudyRoute.DIRECT_QUOTE:
+        set_opportunity_stage(
+            db,
+            opportunity,
+            models.CRMOpportunityStage.QUALIFIED.value,
+            actor,
+            next_milestone="Créer et instruire le dossier de cotes",
+            allow_regression=True,
+        )
+        mission = (
+            db.query(models.MeasureMission)
+            .filter(
+                models.MeasureMission.opportunity_id == opportunity.id,
+                models.MeasureMission.status != models.MeasureMissionStatus.CANCELLED.value,
+            )
+            .order_by(models.MeasureMission.created_at.desc())
+            .first()
+        )
+        if not mission:
+            source_type = item.study_route.value
+            mission = models.MeasureMission(
+                reference=next_number(db, "measure_mission"),
+                client_id=opportunity.client_id,
+                site_address_id=site.id if site else None,
+                opportunity_id=opportunity.id,
+                status=(
+                    models.MeasureMissionStatus.TO_SCHEDULE.value
+                    if source_type == schemas.CRMStudyRoute.SITE_VISIT.value
+                    else models.MeasureMissionStatus.DRAFT.value
+                ),
+                source_type=source_type,
+                project_scope=item.project_scope.value,
+                verification_status=schemas.MeasureVerificationStatus.UNVERIFIED.value,
+                purpose=opportunity.title,
+                notes=item.qualification_note.strip(),
+                created_by=actor,
+            )
+            db.add(mission)
+            db.flush()
+        sync_opportunity_from_mission(db, mission, actor)
+    else:
+        set_opportunity_stage(
+            db,
+            opportunity,
+            models.CRMOpportunityStage.QUALIFIED.value,
+            actor,
+            next_milestone="Composer la proposition commerciale depuis la fiche client",
+            allow_regression=True,
+        )
+
+    db.add(
+        models.CRMActivity(
+            client_id=opportunity.client_id,
+            opportunity_id=opportunity.id,
+            assigned_user_id=opportunity.owner_user_id,
+            activity_type=models.CRMActivityType.NOTE.value,
+            subject="Qualification commerciale validée",
+            note=(
+                f"Parcours: {item.study_route.value}. "
+                f"Périmètre: {item.project_scope.value}. "
+                f"{item.qualification_note.strip()}"
+            ),
+            status=models.CRMActivityStatus.COMPLETED.value,
+            author=actor,
+            completed_at=utcnow(),
+        )
+    )
+    db.commit()
+    db.refresh(opportunity)
+    return {
+        "opportunity": opportunity,
+        "mission_id": mission.id if mission else None,
+        "study_route": item.study_route,
+    }
 
 
 @router.post(
@@ -1636,6 +1792,12 @@ def create_measure_mission(
         created_by=current_user.get("sub", "Système"),
     )
     db.add(mission)
+    db.flush()
+    sync_opportunity_from_mission(
+        db,
+        mission,
+        current_user.get("sub", "Système"),
+    )
     db.commit()
     db.refresh(mission)
     return _serialize_mission(mission)
@@ -1883,6 +2045,11 @@ def update_measure_mission_status(
                 if opening.status != schemas.MeasureOpeningStatus.VALIDATED.value:
                     opening.status = schemas.MeasureOpeningStatus.CORRECTION_REQUIRED.value
     mission.status = target
+    sync_opportunity_from_mission(
+        db,
+        mission,
+        current_user.get("sub", "Système"),
+    )
     db.commit()
     db.refresh(mission)
     return _serialize_mission(mission)
@@ -2216,6 +2383,11 @@ def submit_measure_technical_dossier(
     setattr(dossier, status_field, schemas.TechnicalDossierStatus.TO_REVIEW.value)
     setattr(dossier, f"{prefix}_submitted_at", utcnow())
     setattr(dossier, f"{prefix}_submitted_by", current_user.get("sub", "Système"))
+    sync_opportunity_from_mission(
+        db,
+        mission,
+        current_user.get("sub", "Système"),
+    )
     db.commit()
     db.refresh(dossier)
     return dossier
@@ -2281,6 +2453,7 @@ def review_measure_technical_dossier(
             dossier.launch_review_note = None
             dossier.launch_validated_at = None
             dossier.launch_validated_by = None
+    sync_opportunity_from_mission(db, mission, actor)
     db.commit()
     db.refresh(dossier)
     return dossier
@@ -2609,9 +2782,11 @@ def generate_measure_mission_quote(
     mission.status = models.MeasureMissionStatus.QUOTED.value
     if mission.opportunity:
         mission.opportunity.sale_order_id = sale.id
-        mission.opportunity.stage = models.CRMOpportunityStage.PROPOSAL_TO_PREPARE.value
-        mission.opportunity.next_milestone = "Compléter et envoyer le devis fabrication"
-        mission.opportunity.next_milestone_at = None
+        sync_opportunity_from_sale(
+            db,
+            sale,
+            current_user.get("sub", "Système"),
+        )
     db.commit()
     db.refresh(sale)
     return schemas.MeasureMissionQuoteResponse(

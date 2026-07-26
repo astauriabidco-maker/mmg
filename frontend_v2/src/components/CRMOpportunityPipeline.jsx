@@ -29,23 +29,16 @@ const STAGES = {
 const COLUMNS = [
     {
         key: 'new',
-        label: 'Demande reçue',
-        detail: 'À prendre en charge',
+        label: 'À qualifier',
+        detail: 'Besoin, chantier et parcours',
         stages: ['nouveau'],
         tone: 'slate',
     },
     {
         key: 'qualified',
-        label: 'À qualifier',
-        detail: 'Périmètre, délai et décision',
-        stages: ['qualifie'],
-        tone: 'blue',
-    },
-    {
-        key: 'study',
         label: 'Étude & chiffrage',
-        detail: 'Cotes, diagnostic et prix',
-        stages: ['metre_a_planifier', 'metre_en_cours', 'proposition_a_preparer'],
+        detail: 'Mission, BE et logiciel métier',
+        stages: ['qualifie', 'metre_a_planifier', 'metre_en_cours', 'proposition_a_preparer'],
         tone: 'emerald',
     },
     {
@@ -140,6 +133,7 @@ export default function CRMOpportunityPipeline({
     const [error, setError] = useState('');
     const [lossTarget, setLossTarget] = useState(null);
     const [lossReason, setLossReason] = useState('');
+    const [qualificationTarget, setQualificationTarget] = useState(null);
 
     const opportunitiesQuery = useQuery({
         queryKey: ['crm-opportunities', 'pipeline'],
@@ -252,19 +246,42 @@ export default function CRMOpportunityPipeline({
     };
 
     const planMeasure = (opportunity, source = 'SITE_VISIT') => {
-        const openMission = () => onPlanMeasure(
+        onPlanMeasure(
             opportunity,
             source,
             opportunity.measure_mission?.id || null,
         );
-        if (opportunity.stage === 'qualifie') {
-            updateStage(opportunity, 'metre_a_planifier', {
-                next_milestone: 'Planifier et réaliser le métré',
-                after: openMission,
-            });
-            return;
+    };
+
+    const qualifyOpportunity = async qualification => {
+        if (!qualificationTarget) return;
+        setWorkingId(qualificationTarget.id);
+        setError('');
+        try {
+            const response = await api.post(
+                `/v2/mmg/opportunities/${qualificationTarget.id}/qualify`,
+                qualification,
+            );
+            await Promise.all([
+                opportunitiesQuery.refetch(),
+                missionsQuery.refetch(),
+            ]);
+            const result = response.data;
+            setQualificationTarget(null);
+            if (result.mission_id) {
+                onPlanMeasure(
+                    result.opportunity,
+                    result.study_route,
+                    result.mission_id,
+                );
+            } else {
+                onOpenClient(result.opportunity.client_id);
+            }
+        } catch (requestError) {
+            setError(readableError(requestError));
+        } finally {
+            setWorkingId(null);
         }
-        openMission();
     };
 
     const closeAsLost = async event => {
@@ -341,7 +358,10 @@ export default function CRMOpportunityPipeline({
                         onOpenClient={onOpenClient}
                         onOpenOrder={onOpenOrder}
                         onPlanMeasure={planMeasure}
-                        onAdvance={(opportunity, stage, options) => updateStage(opportunity, stage, options)}
+                        onQualify={opportunity => {
+                            setError('');
+                            setQualificationTarget(opportunity);
+                        }}
                         onMarkLost={opportunity => {
                             setLossTarget(opportunity);
                             setLossReason('');
@@ -373,6 +393,19 @@ export default function CRMOpportunityPipeline({
                     onSubmit={closeAsLost}
                 />
             )}
+            {qualificationTarget && (
+                <QualificationDialog
+                    opportunity={qualificationTarget}
+                    saving={workingId === qualificationTarget.id}
+                    error={error}
+                    onManageClient={() => {
+                        setQualificationTarget(null);
+                        onOpenClient(qualificationTarget.client_id);
+                    }}
+                    onClose={() => setQualificationTarget(null)}
+                    onSubmit={qualifyOpportunity}
+                />
+            )}
         </div>
     );
 }
@@ -398,7 +431,7 @@ function PipelineColumn({
     onOpenClient,
     onOpenOrder,
     onPlanMeasure,
-    onAdvance,
+    onQualify,
     onMarkLost,
 }) {
     const amount = column.items.reduce((sum, item) => sum + Number(item.estimated_amount || 0), 0);
@@ -431,7 +464,7 @@ function PipelineColumn({
                         onOpenClient={() => onOpenClient(opportunity.client_id)}
                         onOpenOrder={() => onOpenOrder(opportunity.sale_order_id)}
                         onPlanMeasure={source => onPlanMeasure(opportunity, source)}
-                        onAdvance={(stage, options) => onAdvance(opportunity, stage, options)}
+                        onQualify={() => onQualify(opportunity)}
                         onMarkLost={() => onMarkLost(opportunity)}
                     />
                 ))}
@@ -451,33 +484,21 @@ function OpportunityCard({
     onOpenClient,
     onOpenOrder,
     onPlanMeasure,
-    onAdvance,
+    onQualify,
     onMarkLost,
 }) {
-    const isInstall = opportunity.need_type === 'fourniture_pose';
-    const [showStudyRoutes, setShowStudyRoutes] = useState(false);
     const isTerminal = ['gagne', 'perdu'].includes(opportunity.stage);
     const action = (() => {
         if (opportunity.stage === 'nouveau') {
             return {
                 label: 'Qualifier',
-                onClick: () => onAdvance('qualifie', { next_milestone: "Choisir le parcours d'étude" }),
-            };
-        }
-        if (opportunity.stage === 'qualifie' && isInstall) {
-            return {
-                label: "Choisir le parcours d'étude",
-                onClick: () => setShowStudyRoutes(current => !current),
-                icon: ClipboardList,
+                onClick: onQualify,
             };
         }
         if (opportunity.stage === 'qualifie') {
-            const nextMilestone = opportunity.need_type === 'sav'
-                ? 'Réaliser le diagnostic et préparer le chiffrage'
-                : 'Préparer le chiffrage commercial';
             return {
-                label: opportunity.need_type === 'sav' ? 'Démarrer le diagnostic' : 'Démarrer le chiffrage',
-                onClick: () => onAdvance('proposition_a_preparer', { next_milestone: nextMilestone }),
+                label: 'Composer la proposition',
+                onClick: onOpenClient,
             };
         }
         if (['metre_a_planifier', 'metre_en_cours'].includes(opportunity.stage)) {
@@ -489,24 +510,33 @@ function OpportunityCard({
         }
         if (opportunity.stage === 'proposition_a_preparer') {
             return {
-                label: 'Soumettre à validation',
-                onClick: () => onAdvance('proposition_a_valider', {
-                    next_milestone: 'Contrôler le prix et les documents avant envoi',
-                }),
+                label: opportunity.sale_order_id
+                    ? 'Ouvrir le devis à compléter'
+                    : 'Ouvrir le dossier technique',
+                onClick: opportunity.sale_order_id
+                    ? onOpenOrder
+                    : opportunity.measure_mission
+                        ? () => onPlanMeasure(opportunity.measure_mission.source_type)
+                        : onOpenClient,
+                icon: ClipboardList,
             };
         }
         if (opportunity.stage === 'proposition_a_valider') {
             return {
-                label: 'Marquer comme envoyée',
-                onClick: () => onAdvance('proposition_envoyee', {
-                    next_milestone: 'Relancer le client après envoi',
-                }),
+                label: 'Contrôler et envoyer le devis',
+                onClick: opportunity.sale_order_id ? onOpenOrder : onOpenClient,
             };
         }
         if (opportunity.stage === 'proposition_envoyee') {
             return {
-                label: 'Passer en négociation',
-                onClick: () => onAdvance('negociation', { next_milestone: 'Obtenir la décision du client' }),
+                label: opportunity.sale_order_id ? 'Ouvrir le devis envoyé' : 'Ouvrir la fiche client',
+                onClick: opportunity.sale_order_id ? onOpenOrder : onOpenClient,
+            };
+        }
+        if (opportunity.stage === 'negociation') {
+            return {
+                label: opportunity.sale_order_id ? 'Ouvrir la négociation' : 'Ouvrir la fiche client',
+                onClick: opportunity.sale_order_id ? onOpenOrder : onOpenClient,
             };
         }
         if (opportunity.stage === 'gagne') {
@@ -517,8 +547,8 @@ function OpportunityCard({
         }
         if (opportunity.stage === 'perdu') {
             return {
-                label: 'Réouvrir',
-                onClick: () => onAdvance('qualifie', { next_milestone: 'Requalifier le besoin client' }),
+                label: 'Requalifier',
+                onClick: onQualify,
             };
         }
         return { label: 'Ouvrir la fiche client', onClick: onOpenClient, icon: ArrowRight };
@@ -576,13 +606,6 @@ function OpportunityCard({
                 {busy ? 'Enregistrement…' : action.label}
                 {!busy && <ActionIcon className="h-4 w-4" />}
             </button>
-            {showStudyRoutes && (
-                <div className="mt-2 grid gap-2 border border-emerald-200 bg-emerald-50 p-2">
-                    <StudyRouteButton label="Visite chantier MMG" onClick={() => onPlanMeasure('SITE_VISIT')} />
-                    <StudyRouteButton label="Cotes fournies par le client" onClick={() => onPlanMeasure('CLIENT_DOCUMENTS')} />
-                    <StudyRouteButton label="Saisie accompagnée en agence" onClick={() => onPlanMeasure('AGENCY_ASSISTED')} />
-                </div>
-            )}
             {!isTerminal && (
                 <button
                     onClick={onMarkLost}
@@ -596,16 +619,187 @@ function OpportunityCard({
     );
 }
 
-function StudyRouteButton({ label, onClick }) {
+function QualificationDialog({
+    opportunity,
+    saving,
+    error,
+    onManageClient,
+    onClose,
+    onSubmit,
+}) {
+    const install = opportunity.need_type === 'fourniture_pose';
+    const [form, setForm] = useState({
+        need_type: opportunity.need_type || 'fourniture_pose',
+        study_route: install ? 'SITE_VISIT' : 'DIRECT_QUOTE',
+        project_scope: install ? 'SUPPLY_AND_INSTALL' : 'SUPPLY_ONLY',
+        site_address_id: opportunity.site_address_id ? String(opportunity.site_address_id) : '',
+        estimated_amount: opportunity.estimated_amount ?? '',
+        expected_close_date: opportunity.expected_close_date
+            ? String(opportunity.expected_close_date).slice(0, 10)
+            : '',
+        qualification_note: '',
+    });
+    const sitesQuery = useQuery({
+        queryKey: ['client-sites', opportunity.client_id, 'qualification'],
+        queryFn: async () => {
+            const response = await api.get('/v2/mmg/sites', {
+                params: { client_id: opportunity.client_id },
+            });
+            return Array.isArray(response.data) ? response.data : [];
+        },
+    });
+    const update = (field, value) => setForm(current => ({ ...current, [field]: value }));
+    const submit = event => {
+        event.preventDefault();
+        onSubmit({
+            ...form,
+            site_address_id: form.site_address_id ? Number(form.site_address_id) : null,
+            estimated_amount: form.estimated_amount === '' ? null : Number(form.estimated_amount),
+            expected_close_date: form.expected_close_date
+                ? new Date(`${form.expected_close_date}T12:00:00`).toISOString()
+                : null,
+        });
+    };
+    const requiresSite = form.project_scope === 'SUPPLY_AND_INSTALL';
+
     return (
-        <button
-            type="button"
-            onClick={onClick}
-            className="flex items-center justify-between bg-white px-3 py-2 text-left text-[11px] font-black text-emerald-900 hover:bg-emerald-100"
-        >
-            {label}
-            <ArrowRight className="h-3.5 w-3.5" />
-        </button>
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-4">
+            <form onSubmit={submit} className="max-h-[94vh] w-full max-w-4xl overflow-y-auto bg-white shadow-2xl">
+                <header className="flex items-start justify-between gap-4 bg-slate-900 px-6 py-5 text-white">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Qualification commerciale</p>
+                        <h2 className="mt-1 text-2xl font-black">{opportunity.title}</h2>
+                        <p className="mt-1 text-sm font-semibold text-slate-300">
+                            {opportunity.reference} · {opportunity.client_name}
+                        </p>
+                    </div>
+                    <button type="button" onClick={onClose} title="Fermer" className="p-2 text-slate-300 hover:text-white">
+                        <X className="h-5 w-5" />
+                    </button>
+                </header>
+
+                <div className="grid gap-6 p-6 lg:grid-cols-2">
+                    <section className="space-y-4 border border-blue-200 bg-blue-50 p-5">
+                        <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">1. Besoin et périmètre</p>
+                            <p className="mt-1 text-sm font-semibold text-blue-950">Ce choix détermine les contrôles imposés avant fabrication.</p>
+                        </div>
+                        <Field label="Nature du besoin">
+                            <select
+                                value={form.need_type}
+                                onChange={event => {
+                                    const needType = event.target.value;
+                                    const withInstallation = needType === 'fourniture_pose';
+                                    setForm(current => ({
+                                        ...current,
+                                        need_type: needType,
+                                        project_scope: withInstallation ? 'SUPPLY_AND_INSTALL' : 'SUPPLY_ONLY',
+                                        study_route: withInstallation && current.study_route === 'DIRECT_QUOTE'
+                                            ? 'SITE_VISIT'
+                                            : current.study_route,
+                                    }));
+                                }}
+                                className={inputClass}
+                            >
+                                {Object.entries(NEED_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                            </select>
+                        </Field>
+                        <Field label="Périmètre commercial">
+                            <select value={form.project_scope} onChange={event => update('project_scope', event.target.value)} className={inputClass}>
+                                <option value="SUPPLY_AND_INSTALL">Fourniture avec pose</option>
+                                <option value="SUPPLY_ONLY">Fourniture seule</option>
+                            </select>
+                        </Field>
+                        <Field label="Chantier">
+                            <select
+                                required={requiresSite}
+                                value={form.site_address_id}
+                                onChange={event => update('site_address_id', event.target.value)}
+                                className={inputClass}
+                            >
+                                <option value="">{requiresSite ? 'Sélectionner le chantier…' : 'Sans chantier pour le moment'}</option>
+                                {(sitesQuery.data || []).map(site => (
+                                    <option key={site.id} value={site.id}>
+                                        {site.reference} · {site.label} · {site.address_line1}, {site.postal_code} {site.city}
+                                    </option>
+                                ))}
+                            </select>
+                        </Field>
+                        {!sitesQuery.isLoading && !(sitesQuery.data || []).length && (
+                            <button type="button" onClick={onManageClient} className="text-left text-xs font-black text-blue-700 hover:text-blue-900">
+                                Aucun chantier enregistré · ouvrir la fiche client
+                            </button>
+                        )}
+                    </section>
+
+                    <section className="space-y-4 border border-emerald-200 bg-emerald-50 p-5">
+                        <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">2. Parcours d’étude</p>
+                            <p className="mt-1 text-sm font-semibold text-emerald-950">La mission et ses contrôles seront créés automatiquement.</p>
+                        </div>
+                        <Field label="Origine des cotes / étude">
+                            <select value={form.study_route} onChange={event => update('study_route', event.target.value)} className={inputClass}>
+                                <option value="SITE_VISIT">Métré MMG sur chantier</option>
+                                <option value="CLIENT_DOCUMENTS">Plans et cotes fournis par le client</option>
+                                <option value="AGENCY_ASSISTED">Saisie accompagnée en agence</option>
+                                <option value="DIRECT_QUOTE" disabled={requiresSite}>Proposition directe sans fabrication sur mesure</option>
+                            </select>
+                        </Field>
+                        <div className="border-l-4 border-emerald-500 bg-white px-4 py-3 text-xs font-bold leading-5 text-emerald-950">
+                            {form.study_route === 'SITE_VISIT' && 'Une mission à planifier sera créée avec adresse chantier obligatoire.'}
+                            {form.study_route === 'CLIENT_DOCUMENTS' && 'Les documents client et les ouvrages devront être contrôlés par le BE.'}
+                            {form.study_route === 'AGENCY_ASSISTED' && 'Les cotes seront saisies avec le client puis contrôlées par le BE.'}
+                            {form.study_route === 'DIRECT_QUOTE' && 'Aucune mission technique : la proposition sera composée depuis la fiche client.'}
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                            <Field label="Budget estimé HT">
+                                <input type="number" min="0" step="0.01" value={form.estimated_amount} onChange={event => update('estimated_amount', event.target.value)} className={inputClass} />
+                            </Field>
+                            <Field label="Décision attendue">
+                                <input type="date" value={form.expected_close_date} onChange={event => update('expected_close_date', event.target.value)} className={inputClass} />
+                            </Field>
+                        </div>
+                    </section>
+
+                    <section className="border border-slate-200 bg-white p-5 lg:col-span-2">
+                        <Field label="Compte rendu de qualification">
+                            <textarea
+                                required
+                                minLength="3"
+                                rows="4"
+                                value={form.qualification_note}
+                                onChange={event => update('qualification_note', event.target.value)}
+                                placeholder="Besoin confirmé, contraintes du chantier, délai souhaité, interlocuteur décisionnaire…"
+                                className={inputClass}
+                            />
+                        </Field>
+                        <p className="mt-2 text-xs font-semibold text-slate-500">
+                            Ce compte rendu sera conservé dans la timeline CRM.
+                        </p>
+                    </section>
+
+                    {error && (
+                        <div className="border-l-4 border-red-500 bg-red-50 px-4 py-3 text-sm font-bold text-red-800 lg:col-span-2">
+                            {error}
+                        </div>
+                    )}
+                </div>
+
+                <footer className="flex flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4 sm:flex-row sm:items-center sm:justify-end">
+                    <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 hover:bg-slate-100">
+                        Annuler
+                    </button>
+                    <button
+                        type="submit"
+                        disabled={saving || sitesQuery.isLoading || (requiresSite && !form.site_address_id)}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-black text-white hover:bg-emerald-500 disabled:bg-slate-300"
+                    >
+                        {saving ? 'Qualification…' : form.study_route === 'DIRECT_QUOTE' ? 'Valider et composer' : 'Valider et ouvrir la mission'}
+                        {!saving && <ArrowRight className="h-4 w-4" />}
+                    </button>
+                </footer>
+            </form>
+        </div>
     );
 }
 
