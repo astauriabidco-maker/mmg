@@ -9,6 +9,7 @@ OPEN_OPPORTUNITY_STAGES = {
     "metre_a_planifier",
     "metre_en_cours",
     "proposition_a_preparer",
+    "proposition_a_valider",
     "proposition_envoyee",
     "negociation",
 }
@@ -19,6 +20,7 @@ STAGE_ORDER = (
     "metre_a_planifier",
     "metre_en_cours",
     "proposition_a_preparer",
+    "proposition_a_valider",
     "proposition_envoyee",
     "negociation",
 )

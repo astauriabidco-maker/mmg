@@ -519,6 +519,7 @@ class CRMOpportunityStage(str, enum.Enum):
     MEASURE_TO_SCHEDULE = "metre_a_planifier"
     MEASURE_IN_PROGRESS = "metre_en_cours"
     PROPOSAL_TO_PREPARE = "proposition_a_preparer"
+    PROPOSAL_TO_VALIDATE = "proposition_a_valider"
     PROPOSAL_SENT = "proposition_envoyee"
     NEGOTIATION = "negociation"
     WON = "gagne"

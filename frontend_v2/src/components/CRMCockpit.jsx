@@ -30,6 +30,7 @@ const STAGE_LABELS = {
     metre_a_planifier: 'Métré à planifier',
     metre_en_cours: 'Métré en cours',
     proposition_a_preparer: 'Proposition à préparer',
+    proposition_a_valider: 'Proposition à valider',
     proposition_envoyee: 'Proposition envoyée',
     negociation: 'Négociation',
 };

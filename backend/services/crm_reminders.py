@@ -84,6 +84,12 @@ DEFAULT_RULES = (
         "template_code": "GENERAL_FOLLOW_UP",
     },
     {
+        "stage": models.CRMOpportunityStage.PROPOSAL_TO_VALIDATE.value,
+        "name": "Valider la proposition",
+        "delay_days": 1,
+        "template_code": "GENERAL_FOLLOW_UP",
+    },
+    {
         "stage": models.CRMOpportunityStage.PROPOSAL_SENT.value,
         "name": "Relancer la proposition",
         "delay_days": 3,

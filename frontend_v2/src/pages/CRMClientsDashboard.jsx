@@ -6,6 +6,7 @@ import api from '../services/api';
 import BusinessTimeline from '../components/BusinessTimeline';
 import CRMClientActionWorkspace from '../components/CRMClientActionWorkspace';
 import CRMCockpit from '../components/CRMCockpit';
+import CRMOpportunityPipeline from '../components/CRMOpportunityPipeline';
 import MeasureMissionBoard from '../components/MeasureMissionBoard';
 
 const saleAmount = (sale) => (sale.lines || []).reduce(
@@ -255,95 +256,6 @@ export default function CRMClientsDashboard() {
         if (linkedSiteId) params.set('siteId', String(linkedSiteId));
         navigate(`/measure-missions/new?${params.toString()}`);
     };
-
-    const allPresalesQuotes = useMemo(() => (
-        sales
-            .filter(sale => isPresalesStatus(sale.status))
-            .filter(sale => {
-                const needle = normalize(searchTerm);
-                if (!needle || crmView !== 'pipeline') return true;
-                return [
-                    sale.reference,
-                    sale.client_name,
-                    sale.client_contact,
-                    sale.client_email,
-                ].some(value => normalize(value).includes(needle));
-            })
-            .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
-    ), [sales, searchTerm, crmView]);
-
-    const filteredDossiers = useMemo(() => {
-        const needle = normalize(searchTerm);
-        return dossiers
-            .filter(dossier => {
-                if (!needle || crmView !== 'pipeline') return true;
-                return [
-                    dossier.reference,
-                    dossier.client_name,
-                    dossier.client_contact,
-                    dossier.client_email,
-                ].some(value => normalize(value).includes(needle));
-            })
-            .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-    }, [dossiers, searchTerm, crmView]);
-
-    const crmPipelineTotal = allPresalesQuotes.reduce((sum, sale) => sum + saleAmount(sale), 0);
-    const measurePending = filteredDossiers.filter(dossier => dossier.status !== 'VALIDATED');
-    const measureValidated = filteredDossiers.filter(dossier => dossier.status === 'VALIDATED');
-    const quoteDrafts = allPresalesQuotes.filter(sale => sale.status === 'DRAFT');
-    const quoteSent = allPresalesQuotes.filter(sale => sale.status === 'SENT');
-    const quoteLost = allPresalesQuotes.filter(sale => sale.status === 'CANCELLED');
-
-    const crmPipelineColumns = [
-        {
-            key: 'request',
-            label: 'Demande reçue',
-            detail: 'Créer un client, une proposition ou une prise de côte',
-            tone: 'slate',
-            items: [],
-            kind: 'empty',
-        },
-        {
-            key: 'measure_pending',
-            label: 'Métré à traiter',
-            detail: 'Prises de côte reçues, à contrôler',
-            tone: 'emerald',
-            items: measurePending,
-            kind: 'dossier',
-        },
-        {
-            key: 'measure_done',
-            label: 'Métré réalisé',
-            detail: 'Dossiers validés, prêts pour chiffrage',
-            tone: 'emerald',
-            items: measureValidated,
-            kind: 'dossier',
-        },
-        {
-            key: 'quote_draft',
-            label: 'Chiffrage / devis',
-            detail: 'Propositions en préparation',
-            tone: 'blue',
-            items: quoteDrafts,
-            kind: 'sale',
-        },
-        {
-            key: 'quote_sent',
-            label: 'Devis envoyé / relance',
-            detail: 'Client à suivre jusqu’à signature',
-            tone: 'amber',
-            items: quoteSent,
-            kind: 'sale',
-        },
-        {
-            key: 'lost',
-            label: 'Perdu / annulé',
-            detail: 'Opportunités clôturées sans commande',
-            tone: 'red',
-            items: quoteLost,
-            kind: 'sale',
-        },
-    ];
 
     const clientSales = useMemo(() => {
         if (!selectedClient) return [];
@@ -609,126 +521,28 @@ export default function CRMClientsDashboard() {
             )}
 
             {crmView === 'pipeline' && (
-                <div className="flex-1 min-h-0 overflow-y-auto p-6">
-                    <div className="mb-5 grid grid-cols-1 gap-4 lg:grid-cols-4">
-                        <CrmMetric label="Métrés ouverts" value={measurePending.length + measureValidated.length} detail={`${measurePending.length} à traiter · ${measureValidated.length} réalisés`} tone="emerald" />
-                        <CrmMetric label="Chiffrages en cours" value={quoteDrafts.length} detail="Devis à préparer" tone="slate" />
-                        <CrmMetric label="Relances client" value={quoteSent.length} detail="Devis envoyés" tone="amber" />
-                        <CrmMetric label="Montant pipeline" value={formatMoney(crmPipelineTotal)} detail="Avant-vente total" tone="emerald" />
-                    </div>
-
-                    <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
-                        <div className="relative w-full lg:max-w-md">
-                            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                            <input
-                                value={searchTerm}
-                                onChange={event => setSearchTerm(event.target.value)}
-                                placeholder="Rechercher opportunité, client, téléphone..."
-                                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
-                            />
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            <button
-                                onClick={() => setCrmView('clients')}
-                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 hover:bg-slate-50"
-                            >
-                                <Users className="w-4 h-4" />
-                                Ouvrir les fiches clients
-                            </button>
-                            <button
-                                onClick={planMeasureForClient}
-                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-500"
-                            >
-                                <ClipboardList className="w-4 h-4" />
-                                Nouvelle prise de côte
-                            </button>
-                            <button
-                                onClick={createQuoteForClient}
-                                disabled={!selectedClient}
-                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white shadow-md shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-200 disabled:text-slate-400"
-                            >
-                                <Plus className="w-4 h-4" />
-                                Créer une proposition
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="flex min-h-[520px] gap-5 overflow-x-auto pb-3">
-                        {crmPipelineColumns.map(column => {
-                            const columnAmount = column.kind === 'sale' ? column.items.reduce((sum, sale) => sum + saleAmount(sale), 0) : 0;
-                            return (
-                                <section key={column.key} className="flex min-h-0 w-80 shrink-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
-                                    <div className="border-b border-slate-100 p-4">
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                                <p className="text-sm font-black text-slate-900">{column.label}</p>
-                                                <p className="mt-1 text-xs font-bold text-slate-500">{column.detail}</p>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-lg font-black text-slate-900">{column.items.length}</p>
-                                                {column.kind === 'sale' && <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{formatMoney(columnAmount)}</p>}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50/70 p-4">
-                                        {column.kind === 'empty' && (
-                                            <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4">
-                                                <p className="text-sm font-black text-slate-700">Point d’entrée client</p>
-                                                <p className="mt-1 text-xs font-bold text-slate-500">
-                                                    Pour une fabrication : créez une prise de côte. Pour une vente simple : créez une proposition.
-                                                </p>
-                                                <div className="mt-4 grid gap-2">
-                                                    <button
-                                                        onClick={planMeasureForClient}
-                                                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-500"
-                                                    >
-                                                        <ClipboardList className="w-4 h-4" />
-                                                        Prise de côte
-                                                    </button>
-                                                    <button
-                                                        onClick={createQuoteForClient}
-                                                        disabled={!selectedClient}
-                                                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 hover:bg-blue-100 disabled:opacity-50"
-                                                    >
-                                                        <Plus className="w-4 h-4" />
-                                                        Proposition libre
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        )}
-                                        {column.kind === 'dossier' && column.items.map(dossier => (
-                                            <CrmDossierCard
-                                                key={dossier.id}
-                                                dossier={dossier}
-                                                formatDate={formatDate}
-                                                onOpen={() => dossier.measure_mission_id
-                                                    ? navigate(`/measure-missions/${dossier.measure_mission_id}`)
-                                                    : setCrmView('measures')}
-                                            />
-                                        ))}
-                                        {column.kind === 'sale' && column.items.map(sale => (
-                                            <CrmOpportunityCard
-                                                key={sale.id}
-                                                sale={sale}
-                                                total={saleAmount(sale)}
-                                                statusLabel={statusLabel(sale)}
-                                                statusClassName={statusClassName(sale.status)}
-                                                formatDate={formatDate}
-                                                formatMoney={formatMoney}
-                                                onOpen={() => openSale(sale.id)}
-                                            />
-                                        ))}
-                                        {column.kind !== 'empty' && column.items.length === 0 && (
-                                            <div className="flex h-36 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-center">
-                                                <p className="px-6 text-sm font-bold text-slate-400">Aucun élément dans cette étape.</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                </section>
-                            );
-                        })}
-                    </div>
-                </div>
+                <CRMOpportunityPipeline
+                    clients={clients}
+                    onOpenClient={clientId => {
+                        setSelectedClientId(clientId);
+                        setCrmView('clients');
+                    }}
+                    onOpenOrder={saleOrderId => openSale(saleOrderId)}
+                    onPlanMeasure={(opportunity, source = 'SITE_VISIT', missionId = null) => {
+                        if (missionId) {
+                            navigate(`/measure-missions/${missionId}`);
+                            return;
+                        }
+                        const params = new URLSearchParams({
+                            source,
+                            scope: source === 'SITE_VISIT' ? 'SUPPLY_AND_INSTALL' : 'SUPPLY_ONLY',
+                            clientId: String(opportunity.client_id),
+                            opportunityId: String(opportunity.id),
+                        });
+                        if (opportunity.site_address_id) params.set('siteId', String(opportunity.site_address_id));
+                        navigate(`/measure-missions/new?${params.toString()}`);
+                    }}
+                />
             )}
 
             {crmView === 'measures' && (
@@ -1780,92 +1594,6 @@ function MeasureFlowStarter({ client, onClose, onStart }) {
                 </div>
             </div>
         </div>
-    );
-}
-
-function CrmMetric({ label, value, detail, tone }) {
-    const toneClasses = {
-        blue: 'border-blue-100 bg-blue-50 text-blue-700',
-        emerald: 'border-emerald-100 bg-emerald-50 text-emerald-700',
-        amber: 'border-amber-100 bg-amber-50 text-amber-700',
-        slate: 'border-slate-200 bg-white text-slate-800',
-    };
-
-    return (
-        <div className={`rounded-2xl border p-5 shadow-sm ${toneClasses[tone] || toneClasses.slate}`}>
-            <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{label}</p>
-            <p className="mt-2 text-2xl font-black">{value}</p>
-            <p className="mt-1 text-xs font-bold opacity-75">{detail}</p>
-        </div>
-    );
-}
-
-function CrmOpportunityCard({ sale, total, statusLabel, statusClassName, formatDate, formatMoney, onOpen }) {
-    const lineCount = (sale.lines || []).length;
-
-    return (
-        <button
-            onClick={onOpen}
-            className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:border-blue-300 hover:shadow-md"
-        >
-            <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <p className="truncate text-base font-black text-slate-900">{sale.client_name || 'Client inconnu'}</p>
-                    <p className="mt-1 font-mono text-[10px] font-black uppercase tracking-widest text-slate-400">{sale.reference}</p>
-                </div>
-                <p className="whitespace-nowrap text-base font-black text-slate-900">{formatMoney(total)}</p>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className={`rounded-md border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${statusClassName}`}>
-                    {statusLabel}
-                </span>
-                <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                    {lineCount} ligne(s)
-                </span>
-            </div>
-            <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
-                <p className="text-xs font-bold text-slate-500">{formatDate(sale.updated_at || sale.created_at)}</p>
-                <span className="inline-flex items-center gap-1 text-xs font-black text-blue-700">
-                    Ouvrir
-                    <ArrowRight className="h-4 w-4" />
-                </span>
-            </div>
-        </button>
-    );
-}
-
-function CrmDossierCard({ dossier, formatDate, onOpen }) {
-    const statusLabel = dossier.status === 'VALIDATED' ? 'Métré réalisé' : 'À traiter';
-    const statusClass = dossier.status === 'VALIDATED'
-        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-        : 'border-amber-200 bg-amber-50 text-amber-700';
-
-    return (
-        <button
-            onClick={onOpen}
-            className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:border-emerald-300 hover:shadow-md"
-        >
-            <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <p className="truncate text-base font-black text-slate-900">{dossier.client_name || 'Client inconnu'}</p>
-                    <p className="mt-1 font-mono text-[10px] font-black uppercase tracking-widest text-slate-400">{dossier.reference}</p>
-                </div>
-                <span className={`shrink-0 rounded-md border px-2 py-1 text-[9px] font-black uppercase tracking-widest ${statusClass}`}>
-                    {statusLabel}
-                </span>
-            </div>
-            <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Chantier</p>
-                <p className="mt-1 text-xs font-bold text-slate-600">{dossier.client_address || 'Adresse à compléter'}</p>
-            </div>
-            <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
-                <p className="text-xs font-bold text-slate-500">{formatDate(dossier.created_at)}</p>
-                <span className="inline-flex items-center gap-1 text-xs font-black text-emerald-700">
-                    Ouvrir métrés
-                    <ArrowRight className="h-4 w-4" />
-                </span>
-            </div>
-        </button>
     );
 }
 

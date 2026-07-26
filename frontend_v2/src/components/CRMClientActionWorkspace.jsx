@@ -721,6 +721,7 @@ function ActionDialog({
                                 <option value="metre_a_planifier">Métré à planifier</option>
                                 <option value="metre_en_cours">Métré en cours</option>
                                 <option value="proposition_a_preparer">Chiffrage</option>
+                                <option value="proposition_a_valider">Proposition à valider</option>
                                 <option value="proposition_envoyee">Proposition envoyée</option>
                                 <option value="negociation">Négociation</option>
                             </select>
@@ -806,6 +807,7 @@ function opportunityLabel(stage) {
         metre_a_planifier: 'Métré à planifier',
         metre_en_cours: 'Métré en cours',
         proposition_a_preparer: 'Chiffrage',
+        proposition_a_valider: 'Proposition à valider',
         proposition_envoyee: 'Proposition envoyée',
         negociation: 'Négociation',
         gagne: 'Gagnée',

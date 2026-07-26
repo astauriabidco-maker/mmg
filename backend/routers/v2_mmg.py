@@ -509,6 +509,11 @@ OPPORTUNITY_TRANSITIONS = {
         models.CRMOpportunityStage.LOST.value,
     },
     models.CRMOpportunityStage.PROPOSAL_TO_PREPARE.value: {
+        models.CRMOpportunityStage.PROPOSAL_TO_VALIDATE.value,
+        models.CRMOpportunityStage.LOST.value,
+    },
+    models.CRMOpportunityStage.PROPOSAL_TO_VALIDATE.value: {
+        models.CRMOpportunityStage.PROPOSAL_TO_PREPARE.value,
         models.CRMOpportunityStage.PROPOSAL_SENT.value,
         models.CRMOpportunityStage.LOST.value,
     },
