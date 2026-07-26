@@ -115,6 +115,10 @@ def _add_alert_rule(
     code,
     threshold_minutes=0,
     recipient_mode="RESPONSIBLE",
+    severity="MEDIUM",
+    escalation_minutes=30,
+    notify_pwa=True,
+    notify_email=True,
 ):
     db = session_factory()
     try:
@@ -127,6 +131,10 @@ def _add_alert_rule(
             }[code],
             threshold_minutes=threshold_minutes,
             recipient_mode=recipient_mode,
+            severity=severity,
+            escalation_minutes=escalation_minutes,
+            notify_pwa=notify_pwa,
+            notify_email=notify_email,
             is_active=True,
         )
         db.add(rule)
@@ -915,6 +923,317 @@ def test_pause_and_duration_alerts_respect_thresholds_and_deduplicate(
             if alert.notification_type == "OPERATIONAL_DURATION_OVERRUN"
         )
         assert evaluate_operational_alerts(db, now=now) == 0
+    finally:
+        db.close()
+
+
+def test_planning_incident_lifecycle_and_history(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id = _create_worker(
+        session_factory,
+        "incident-worker",
+        "Nora",
+        "Débit",
+        role="OPERATOR",
+    )
+    manager_id = _create_worker(
+        session_factory,
+        "incident-manager",
+        "Marc",
+        "Atelier",
+        role="ADMIN",
+    )
+    _add_alert_rule(
+        session_factory,
+        code="BLOCKED",
+        severity="CRITICAL",
+        escalation_minutes=15,
+    )
+    start = datetime(2026, 8, 12, 8, 0)
+    created = _post_task(
+        client,
+        headers,
+        title="Découpe profils chantier",
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        assigned_user_id=worker_id,
+    )
+    task_id = created.json()["source_id"]
+    execution_url = f"/v2/schedule/events/CALENDAR_TASK/{task_id}/execute"
+    blocked = client.post(
+        execution_url,
+        headers=headers,
+        json={"action": "BLOCK", "reason": "Matière non disponible"},
+    )
+    assert blocked.status_code == 200, blocked.text
+
+    response = client.get(
+        "/v2/schedule/incidents",
+        headers=headers,
+        params={"incident_status": "OPEN"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["open"] == 1
+    incident = response.json()["incidents"][0]
+    assert incident["severity"] == "CRITICAL"
+    assert incident["responsible_user_id"] == worker_id
+
+    acknowledged = client.post(
+        f"/v2/schedule/incidents/{incident['id']}/acknowledge",
+        headers=headers,
+        json={
+            "comment": "Prise en charge par le chef d’atelier",
+            "assigned_manager_user_id": manager_id,
+        },
+    )
+    assert acknowledged.status_code == 200, acknowledged.text
+    assert acknowledged.json()["status"] == "ACKNOWLEDGED"
+    assert acknowledged.json()["assigned_manager_user_id"] == manager_id
+
+    commented = client.post(
+        f"/v2/schedule/incidents/{incident['id']}/comments",
+        headers=headers,
+        json={"comment": "Approvisionnement de secours identifié"},
+    )
+    assert commented.status_code == 200, commented.text
+
+    resolved = client.post(
+        f"/v2/schedule/incidents/{incident['id']}/resolve",
+        headers=headers,
+        json={"comment": "Profil livré au poste de débit"},
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["status"] == "RESOLVED"
+    actions = [entry["action"] for entry in resolved.json()["history"]]
+    assert actions == ["CREATED", "ACKNOWLEDGED", "COMMENTED", "RESOLVED"]
+
+
+def test_planning_incident_auto_resolves_when_task_restarts(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id = _create_worker(
+        session_factory,
+        "incident-resume-worker",
+        "Lina",
+        "PVC",
+        role="OPERATOR",
+    )
+    _add_alert_rule(session_factory, code="BLOCKED")
+    start = datetime(2026, 8, 13, 8, 0)
+    created = _post_task(
+        client,
+        headers,
+        title="Débit PVC",
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        assigned_user_id=worker_id,
+    )
+    task_id = created.json()["source_id"]
+    execution_url = f"/v2/schedule/events/CALENDAR_TASK/{task_id}/execute"
+    assert client.post(
+        execution_url,
+        headers=headers,
+        json={"action": "BLOCK", "reason": "Machine en réglage"},
+    ).status_code == 200
+    assert client.post(
+        execution_url,
+        headers=headers,
+        json={"action": "START"},
+    ).status_code == 200
+
+    response = client.get(
+        "/v2/schedule/incidents",
+        headers=headers,
+        params={"incident_status": "RESOLVED"},
+    )
+    assert response.status_code == 200, response.text
+    incident = response.json()["incidents"][0]
+    detail = client.get(
+        f"/v2/schedule/incidents/{incident['id']}",
+        headers=headers,
+    )
+    assert detail.json()["status"] == "RESOLVED"
+    assert detail.json()["history"][-1]["action"] == "AUTO_RESOLVED"
+
+
+def test_planning_incident_reassignment_updates_source_and_notifies(
+    isolated_client,
+):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    first_worker_id = _create_worker(
+        session_factory,
+        "incident-first-worker",
+        "Nora",
+        "PVC",
+        role="OPERATOR",
+    )
+    second_worker_id = _create_worker(
+        session_factory,
+        "incident-second-worker",
+        "Mila",
+        "ALU",
+        role="OPERATOR",
+    )
+    _add_alert_rule(session_factory, code="BLOCKED")
+    start = datetime(2026, 8, 13, 10, 0)
+    created = _post_task(
+        client,
+        headers,
+        title="Débit atelier à réaffecter",
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        assigned_user_id=first_worker_id,
+    )
+    task_id = created.json()["source_id"]
+    assert client.post(
+        f"/v2/schedule/events/CALENDAR_TASK/{task_id}/execute",
+        headers=headers,
+        json={"action": "BLOCK", "reason": "Poste indisponible"},
+    ).status_code == 200
+    incident_id = client.get(
+        "/v2/schedule/incidents",
+        headers=headers,
+    ).json()["incidents"][0]["id"]
+
+    reassigned = client.post(
+        f"/v2/schedule/incidents/{incident_id}/reassign",
+        headers=headers,
+        json={
+            "responsible_user_id": second_worker_id,
+            "comment": "Transfert vers le poste ALU",
+        },
+    )
+    assert reassigned.status_code == 200, reassigned.text
+    assert reassigned.json()["responsible_user_id"] == second_worker_id
+    assert reassigned.json()["history"][-1]["action"] == "REASSIGNED"
+
+    db = session_factory()
+    try:
+        assert db.get(models.CalendarTask, task_id).assigned_user_id == second_worker_id
+        state = db.query(models.ScheduleExecutionState).one()
+        assert state.assigned_user_id == second_worker_id
+        notification = (
+            db.query(models.PlanningNotification)
+            .filter(
+                models.PlanningNotification.user_id == second_worker_id,
+                models.PlanningNotification.notification_type
+                == "INCIDENT_REASSIGNED",
+            )
+            .one()
+        )
+        assert notification.incident_id == incident_id
+    finally:
+        db.close()
+
+
+def test_unacknowledged_planning_incident_escalates_once(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id = _create_worker(
+        session_factory,
+        "incident-escalation-worker",
+        "Samir",
+        "Pose",
+        role="OPERATOR",
+    )
+    _add_alert_rule(
+        session_factory,
+        code="BLOCKED",
+        severity="HIGH",
+        escalation_minutes=5,
+    )
+    start = datetime(2026, 8, 14, 8, 0)
+    created = _post_task(
+        client,
+        headers,
+        title="Pose chantier",
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        assigned_user_id=worker_id,
+    )
+    task_id = created.json()["source_id"]
+    assert client.post(
+        f"/v2/schedule/events/CALENDAR_TASK/{task_id}/execute",
+        headers=headers,
+        json={"action": "BLOCK", "reason": "Accès chantier impossible"},
+    ).status_code == 200
+
+    db = session_factory()
+    try:
+        incident = db.query(models.PlanningIncident).one()
+        incident.next_escalation_at = datetime(2026, 8, 14, 8, 5)
+        db.commit()
+        evaluate_operational_alerts(
+            db,
+            now=datetime(2026, 8, 14, 8, 6),
+        )
+        db.commit()
+        db.refresh(incident)
+        assert incident.escalation_level == 1
+        assert incident.next_escalation_at is None
+        assert (
+            db.query(models.PlanningIncidentHistory)
+            .filter(
+                models.PlanningIncidentHistory.incident_id == incident.id,
+                models.PlanningIncidentHistory.action == "ESCALATED",
+            )
+            .count()
+            == 1
+        )
+        evaluate_operational_alerts(
+            db,
+            now=datetime(2026, 8, 14, 9, 0),
+        )
+        db.commit()
+        db.refresh(incident)
+        assert incident.escalation_level == 1
+    finally:
+        db.close()
+
+
+def test_device_notifications_follow_alert_rule_toggle(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id = _create_worker(
+        session_factory,
+        "incident-no-device-worker",
+        "Lina",
+        "Pose",
+        role="OPERATOR",
+    )
+    _add_alert_rule(
+        session_factory,
+        code="BLOCKED",
+        severity="CRITICAL",
+        notify_pwa=False,
+        notify_email=False,
+    )
+    start = datetime(2026, 8, 14, 10, 0)
+    created = _post_task(
+        client,
+        headers,
+        title="Pose sans notification appareil",
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        assigned_user_id=worker_id,
+    )
+    task_id = created.json()["source_id"]
+    assert client.post(
+        f"/v2/schedule/events/CALENDAR_TASK/{task_id}/execute",
+        headers=headers,
+        json={"action": "BLOCK", "reason": "Accès impossible"},
+    ).status_code == 200
+
+    db = session_factory()
+    try:
+        notification_types = {
+            item.notification_type
+            for item in db.query(models.PlanningNotification).all()
+        }
+        assert "OPERATIONAL_BLOCKED" in notification_types
+        assert "INCIDENT_CRITICAL" not in notification_types
     finally:
         db.close()
 

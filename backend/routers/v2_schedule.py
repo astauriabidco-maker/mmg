@@ -15,9 +15,13 @@ from ..core.security import (
 from ..core.time import utcnow
 from ..database import get_db
 from ..services.planning_alerts import (
+    INCIDENT_SEVERITIES,
     RECIPIENT_MODES,
+    add_incident_history,
+    auto_resolve_incidents,
     evaluate_operational_alerts,
     serialize_alert_rule,
+    serialize_incident,
 )
 from ..services.schedule_intelligence import calculate_capacity, suggest_assignments
 
@@ -214,6 +218,10 @@ class PlanningExecutionReasonUpdate(BaseModel):
 class PlanningAlertRuleUpdate(BaseModel):
     threshold_minutes: Optional[int] = Field(default=None, ge=0, le=10080)
     recipient_mode: Optional[str] = None
+    severity: Optional[str] = None
+    escalation_minutes: Optional[int] = Field(default=None, ge=1, le=10080)
+    notify_pwa: Optional[bool] = None
+    notify_email: Optional[bool] = None
     is_active: Optional[bool] = None
 
     @model_validator(mode="after")
@@ -222,7 +230,39 @@ class PlanningAlertRuleUpdate(BaseModel):
             self.recipient_mode = self.recipient_mode.strip().upper()
             if self.recipient_mode not in RECIPIENT_MODES:
                 raise ValueError("Destinataires d’alerte invalides")
+        if self.severity is not None:
+            self.severity = self.severity.strip().upper()
+            if self.severity not in INCIDENT_SEVERITIES:
+                raise ValueError("Criticité d’incident invalide")
         return self
+
+
+class PlanningIncidentAcknowledge(BaseModel):
+    comment: Optional[str] = Field(default=None, max_length=2000)
+    assigned_manager_user_id: Optional[int] = None
+
+
+class PlanningIncidentReassign(BaseModel):
+    assigned_manager_user_id: Optional[int] = None
+    responsible_user_id: Optional[int] = None
+    comment: Optional[str] = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def require_assignment(self):
+        if (
+            self.assigned_manager_user_id is None
+            and self.responsible_user_id is None
+        ):
+            raise ValueError("Sélectionnez un responsable ou un manager")
+        return self
+
+
+class PlanningIncidentComment(BaseModel):
+    comment: str = Field(min_length=2, max_length=4000)
+
+
+class PlanningIncidentResolve(BaseModel):
+    comment: str = Field(min_length=2, max_length=4000)
 
 
 class WorkScheduleUpdate(BaseModel):
@@ -1814,6 +1854,327 @@ def evaluate_planning_alerts(
     created = evaluate_operational_alerts(db)
     db.commit()
     return {"created": created}
+
+
+def _incident_query(db: Session):
+    return db.query(models.PlanningIncident).options(
+        selectinload(models.PlanningIncident.responsible_user),
+        selectinload(models.PlanningIncident.assigned_manager),
+        selectinload(models.PlanningIncident.history),
+    )
+
+
+def _incident_payload(
+    db: Session,
+    incident: models.PlanningIncident,
+    *,
+    include_history: bool = False,
+) -> dict:
+    payload = serialize_incident(incident, include_history=include_history)
+    rule = (
+        db.query(models.PlanningAlertRule.notify_pwa)
+        .filter(models.PlanningAlertRule.code == incident.alert_code)
+        .first()
+    )
+    payload["notify_pwa"] = bool(rule[0]) if rule else True
+    return payload
+
+
+def _incident_for_user(
+    db: Session,
+    incident_id: int,
+    current_user: dict,
+) -> models.PlanningIncident:
+    incident = _incident_query(db).filter(
+        models.PlanningIncident.id == incident_id
+    ).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident introuvable")
+    if _has_edit_permission(db, current_user):
+        return incident
+    user = _current_user_record(db, current_user)
+    if not user or user.id != incident.responsible_user_id:
+        raise HTTPException(status_code=403, detail="Incident non accessible")
+    return incident
+
+
+@router.get("/incidents")
+def list_planning_incidents(
+    incident_status: Optional[str] = None,
+    severity: Optional[str] = None,
+    responsible_user_id: Optional[int] = None,
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    evaluate_operational_alerts(db)
+    db.commit()
+    query = _incident_query(db)
+    summary_query = db.query(models.PlanningIncident)
+    if not _has_edit_permission(db, current_user):
+        user = _current_user_record(db, current_user)
+        if not user:
+            raise HTTPException(status_code=403, detail="Utilisateur introuvable")
+        query = query.filter(
+            models.PlanningIncident.responsible_user_id == user.id
+        )
+        summary_query = summary_query.filter(
+            models.PlanningIncident.responsible_user_id == user.id
+        )
+    if incident_status:
+        statuses = {
+            value.strip().upper()
+            for value in incident_status.split(",")
+            if value.strip()
+        }
+        query = query.filter(models.PlanningIncident.status.in_(statuses))
+    if severity:
+        severities = {
+            value.strip().upper()
+            for value in severity.split(",")
+            if value.strip()
+        }
+        query = query.filter(models.PlanningIncident.severity.in_(severities))
+    if responsible_user_id:
+        query = query.filter(
+            models.PlanningIncident.responsible_user_id == responsible_user_id
+        )
+    incidents = query.order_by(
+        models.PlanningIncident.status,
+        models.PlanningIncident.triggered_at.desc(),
+    ).limit(min(max(limit, 1), 500)).all()
+    summary_incidents = summary_query.all()
+    summary = {
+        "open": sum(item.status == "OPEN" for item in summary_incidents),
+        "acknowledged": sum(
+            item.status == "ACKNOWLEDGED" for item in summary_incidents
+        ),
+        "resolved": sum(item.status == "RESOLVED" for item in summary_incidents),
+        "critical": sum(
+            item.status != "RESOLVED" and item.severity == "CRITICAL"
+            for item in summary_incidents
+        ),
+        "escalated": sum(
+            item.status != "RESOLVED" and item.escalation_level > 0
+            for item in summary_incidents
+        ),
+    }
+    return {
+        "summary": summary,
+        "incidents": [_incident_payload(db, item) for item in incidents],
+    }
+
+
+@router.get("/incidents/{incident_id}")
+def get_planning_incident(
+    incident_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    incident = _incident_for_user(db, incident_id, current_user)
+    return _incident_payload(db, incident, include_history=True)
+
+
+@router.post("/incidents/{incident_id}/acknowledge")
+def acknowledge_planning_incident(
+    incident_id: int,
+    payload: PlanningIncidentAcknowledge,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_EDIT")),
+):
+    incident = _incident_for_user(db, incident_id, current_user)
+    if incident.status == "RESOLVED":
+        raise HTTPException(status_code=409, detail="Cet incident est déjà résolu")
+    actor_id, actor_name = _actor_identity(db, current_user)
+    manager_id = payload.assigned_manager_user_id or actor_id
+    _active_user(db, manager_id)
+    previous_status = incident.status
+    incident.status = "ACKNOWLEDGED"
+    incident.acknowledged_at = utcnow()
+    incident.acknowledged_by_user_id = actor_id
+    incident.assigned_manager_user_id = manager_id
+    incident.next_escalation_at = None
+    add_incident_history(
+        db,
+        incident,
+        "ACKNOWLEDGED",
+        actor_user_id=actor_id,
+        actor_name=actor_name,
+        previous_status=previous_status,
+        comment=payload.comment,
+        changes={"assigned_manager_user_id": manager_id},
+    )
+    db.commit()
+    return _incident_payload(
+        db,
+        _incident_query(db).filter(
+            models.PlanningIncident.id == incident.id
+        ).one(),
+        include_history=True,
+    )
+
+
+@router.post("/incidents/{incident_id}/reassign")
+def reassign_planning_incident(
+    incident_id: int,
+    payload: PlanningIncidentReassign,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_EDIT")),
+):
+    incident = _incident_for_user(db, incident_id, current_user)
+    if incident.status == "RESOLVED":
+        raise HTTPException(status_code=409, detail="Cet incident est déjà résolu")
+    actor_id, actor_name = _actor_identity(db, current_user)
+    changes = {}
+    if payload.assigned_manager_user_id is not None:
+        target_manager = _active_user(db, payload.assigned_manager_user_id)
+        changes["assigned_manager_user_id"] = {
+            "from": incident.assigned_manager_user_id,
+            "to": payload.assigned_manager_user_id,
+        }
+        incident.assigned_manager_user_id = payload.assigned_manager_user_id
+        db.add(
+            models.PlanningNotification(
+                user_id=target_manager.id,
+                task_id=incident.task_id,
+                source_type=incident.source_type,
+                source_id=incident.source_id,
+                incident_id=incident.id,
+                notification_type="INCIDENT_REASSIGNED",
+                title="Pilotage d’incident affecté",
+                message=f"{incident.title} · par {actor_name}",
+                deduplication_key=(
+                    f"INCIDENT_MANAGER:{incident.id}:{target_manager.id}:"
+                    f"{utcnow().strftime('%Y%m%d%H%M%S%f')}"
+                ),
+            )
+        )
+    if payload.responsible_user_id is not None:
+        target_user = _active_user(db, payload.responsible_user_id)
+        changes["responsible_user_id"] = {
+            "from": incident.responsible_user_id,
+            "to": payload.responsible_user_id,
+        }
+        incident.responsible_user_id = payload.responsible_user_id
+        state = db.get(
+            models.ScheduleExecutionState,
+            incident.execution_state_id,
+        )
+        if state:
+            state.assigned_user_id = payload.responsible_user_id
+        source_record, _, source_title, _ = _execution_source(
+            db,
+            incident.source_type,
+            incident.source_id,
+        )
+        if source_record:
+            _assign_execution_source(
+                incident.source_type,
+                source_record,
+                target_user,
+            )
+        if incident.task_id:
+            task = db.get(models.CalendarTask, incident.task_id)
+            if task:
+                task.assigned_user_id = payload.responsible_user_id
+        db.add(
+            models.PlanningNotification(
+                user_id=target_user.id,
+                task_id=incident.task_id,
+                source_type=incident.source_type,
+                source_id=incident.source_id,
+                incident_id=incident.id,
+                notification_type="INCIDENT_REASSIGNED",
+                title="Incident planning réaffecté",
+                message=f"{source_title} · par {actor_name}",
+                deduplication_key=(
+                    f"INCIDENT_REASSIGNED:{incident.id}:{target_user.id}:"
+                    f"{utcnow().strftime('%Y%m%d%H%M%S%f')}"
+                ),
+            )
+        )
+    add_incident_history(
+        db,
+        incident,
+        "REASSIGNED",
+        actor_user_id=actor_id,
+        actor_name=actor_name,
+        previous_status=incident.status,
+        comment=payload.comment,
+        changes=changes,
+    )
+    db.commit()
+    return _incident_payload(
+        db,
+        _incident_query(db).filter(
+            models.PlanningIncident.id == incident.id
+        ).one(),
+        include_history=True,
+    )
+
+
+@router.post("/incidents/{incident_id}/comments")
+def comment_planning_incident(
+    incident_id: int,
+    payload: PlanningIncidentComment,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    incident = _incident_for_user(db, incident_id, current_user)
+    actor_id, actor_name = _actor_identity(db, current_user)
+    add_incident_history(
+        db,
+        incident,
+        "COMMENTED",
+        actor_user_id=actor_id,
+        actor_name=actor_name,
+        previous_status=incident.status,
+        comment=payload.comment,
+    )
+    db.commit()
+    return _incident_payload(
+        db,
+        _incident_query(db).filter(
+            models.PlanningIncident.id == incident.id
+        ).one(),
+        include_history=True,
+    )
+
+
+@router.post("/incidents/{incident_id}/resolve")
+def resolve_planning_incident(
+    incident_id: int,
+    payload: PlanningIncidentResolve,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_EDIT")),
+):
+    incident = _incident_for_user(db, incident_id, current_user)
+    if incident.status == "RESOLVED":
+        raise HTTPException(status_code=409, detail="Cet incident est déjà résolu")
+    actor_id, actor_name = _actor_identity(db, current_user)
+    previous_status = incident.status
+    incident.status = "RESOLVED"
+    incident.resolved_at = utcnow()
+    incident.resolved_by_user_id = actor_id
+    incident.resolution_note = payload.comment
+    incident.next_escalation_at = None
+    add_incident_history(
+        db,
+        incident,
+        "RESOLVED",
+        actor_user_id=actor_id,
+        actor_name=actor_name,
+        previous_status=previous_status,
+        comment=payload.comment,
+    )
+    db.commit()
+    return _incident_payload(
+        db,
+        _incident_query(db).filter(
+            models.PlanningIncident.id == incident.id
+        ).one(),
+        include_history=True,
+    )
 
 
 @router.get("/skills")
@@ -3919,6 +4280,15 @@ def transition_schedule_execution(
     if payload.action == "BLOCK":
         db.flush()
         evaluate_operational_alerts(db, now=now)
+    elif payload.action in {"START", "COMPLETE"}:
+        auto_resolve_incidents(
+            db,
+            source_type=source_type,
+            source_id=source_id,
+            action=payload.action,
+            actor_user_id=actor_id,
+            actor_name=actor_name,
+        )
     db.commit()
     db.refresh(state)
     history = (

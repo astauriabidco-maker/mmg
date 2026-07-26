@@ -551,6 +551,12 @@ class PlanningNotification(Base):
         index=True,
     )
     source_id = Column(Integer, nullable=True, index=True)
+    incident_id = Column(
+        Integer,
+        ForeignKey("planning_incidents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     notification_type = Column(String, nullable=False, default="ASSIGNMENT", index=True)
     title = Column(String, nullable=False)
     message = Column(Text, nullable=True)
@@ -561,6 +567,7 @@ class PlanningNotification(Base):
 
     user = relationship("User", back_populates="planning_notifications")
     task = relationship("CalendarTask", back_populates="notifications")
+    incident = relationship("PlanningIncident")
 
 
 class PlanningExecutionReason(Base):
@@ -601,9 +608,134 @@ class PlanningAlertRule(Base):
     description = Column(Text, nullable=True)
     threshold_minutes = Column(Integer, nullable=False, default=0)
     recipient_mode = Column(String, nullable=False, default="BOTH")
+    severity = Column(String, nullable=False, default="MEDIUM")
+    escalation_minutes = Column(Integer, nullable=False, default=30)
+    notify_pwa = Column(Boolean, nullable=False, default=True)
+    notify_email = Column(Boolean, nullable=False, default=True)
     is_active = Column(Boolean, nullable=False, default=True, index=True)
     created_at = Column(DateTime, default=utcnow, nullable=False)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class PlanningIncident(Base):
+    __tablename__ = "planning_incidents"
+    __table_args__ = (
+        Index(
+            "ix_planning_incidents_status_severity_triggered",
+            "status",
+            "severity",
+            "triggered_at",
+        ),
+        Index(
+            "ix_planning_incidents_source",
+            "source_type",
+            "source_id",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, nullable=False, unique=True, index=True)
+    incident_key = Column(String, nullable=False, unique=True, index=True)
+    alert_code = Column(String, nullable=False, index=True)
+    severity = Column(String, nullable=False, default="MEDIUM", index=True)
+    status = Column(String, nullable=False, default="OPEN", index=True)
+    source_type = Column(String, nullable=False, index=True)
+    source_id = Column(Integer, nullable=False, index=True)
+    source_url = Column(String, nullable=True)
+    execution_state_id = Column(
+        Integer,
+        ForeignKey("schedule_execution_states.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    task_id = Column(
+        Integer,
+        ForeignKey("calendar_tasks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    title = Column(String, nullable=False)
+    message = Column(Text, nullable=True)
+    responsible_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    assigned_manager_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    triggered_at = Column(DateTime, default=utcnow, nullable=False, index=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    acknowledged_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    resolution_note = Column(Text, nullable=True)
+    escalation_level = Column(Integer, nullable=False, default=0)
+    escalated_at = Column(DateTime, nullable=True)
+    next_escalation_at = Column(DateTime, nullable=True, index=True)
+    last_activity_at = Column(DateTime, default=utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    execution_state = relationship("ScheduleExecutionState", back_populates="incidents")
+    task = relationship("CalendarTask")
+    responsible_user = relationship("User", foreign_keys=[responsible_user_id])
+    assigned_manager = relationship("User", foreign_keys=[assigned_manager_user_id])
+    acknowledged_by = relationship("User", foreign_keys=[acknowledged_by_user_id])
+    resolved_by = relationship("User", foreign_keys=[resolved_by_user_id])
+    history = relationship(
+        "PlanningIncidentHistory",
+        back_populates="incident",
+        cascade="all, delete-orphan",
+        order_by="PlanningIncidentHistory.created_at",
+    )
+
+
+class PlanningIncidentHistory(Base):
+    __tablename__ = "planning_incident_history"
+    __table_args__ = (
+        Index(
+            "ix_planning_incident_history_incident_created",
+            "incident_id",
+            "created_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    incident_id = Column(
+        Integer,
+        ForeignKey("planning_incidents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    action = Column(String, nullable=False, index=True)
+    previous_status = Column(String, nullable=True)
+    current_status = Column(String, nullable=False)
+    actor_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    actor_name = Column(String, nullable=False, default="Système")
+    comment = Column(Text, nullable=True)
+    changes = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False, index=True)
+
+    incident = relationship("PlanningIncident", back_populates="history")
+    actor = relationship("User")
 
 
 class ScheduleExecutionState(Base):
@@ -654,6 +786,11 @@ class ScheduleExecutionState(Base):
     logs = relationship(
         "ScheduleExecutionLog",
         back_populates="state",
+        cascade="all, delete-orphan",
+    )
+    incidents = relationship(
+        "PlanningIncident",
+        back_populates="execution_state",
         cascade="all, delete-orphan",
     )
 

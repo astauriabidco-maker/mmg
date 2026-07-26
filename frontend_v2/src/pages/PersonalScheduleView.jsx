@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     AlertCircle,
     Bell,
@@ -11,6 +11,10 @@ import {
     RefreshCw,
     UserRound,
 } from 'lucide-react';
+import {
+    notifyPlanningInbox,
+    requestPlanningNotificationPermission,
+} from '../services/planningDeviceNotifications';
 
 const VIEW_OPTIONS = [
     { id: 'today', label: "Aujourd'hui" },
@@ -211,6 +215,9 @@ export default function PersonalScheduleView({
     notifications = [],
 }) {
     const [view, setView] = useState('today');
+    const [devicePermission, setDevicePermission] = useState(
+        typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
+    );
     const now = new Date();
     const todayStart = startOfDay(now);
     const todayEnd = addDays(todayStart, 1);
@@ -248,8 +255,19 @@ export default function PersonalScheduleView({
         || currentUser?.username
         || 'Mon planning';
     const operationalNotifications = notifications.filter(
-        (item) => item.notification_type?.startsWith('OPERATIONAL_'),
+        (item) => (
+            item.notification_type?.startsWith('OPERATIONAL_')
+            || item.notification_type?.startsWith('INCIDENT_')
+        ),
     );
+    useEffect(() => {
+        notifyPlanningInbox(notifications);
+    }, [notifications]);
+    const enableDeviceAlerts = async () => {
+        const permission = await requestPlanningNotificationPermission();
+        setDevicePermission(permission);
+        if (permission === 'granted') notifyPlanningInbox(notifications);
+    };
 
     return (
         <main className="min-h-[calc(100vh-64px)] bg-slate-50 pb-[max(1.5rem,env(safe-area-inset-bottom))] text-slate-950">
@@ -311,6 +329,19 @@ export default function PersonalScheduleView({
                         }`}>
                             {(operationalNotifications[0] || notifications[0])?.message}
                         </p>
+                        {operationalNotifications.some((item) => (
+                            ['INCIDENT_CRITICAL', 'INCIDENT_ESCALATED'].includes(
+                                item.notification_type,
+                            )
+                        )) && devicePermission !== 'granted' && devicePermission !== 'unsupported' && (
+                            <button
+                                type="button"
+                                onClick={enableDeviceAlerts}
+                                className="mt-2 inline-flex h-9 items-center gap-2 rounded-md border border-red-200 bg-white px-3 text-xs font-black text-red-800"
+                            >
+                                <Bell className="h-4 w-4" /> Activer les alertes appareil
+                            </button>
+                        )}
                     </section>
                 )}
                 {!loading && nextTask && (

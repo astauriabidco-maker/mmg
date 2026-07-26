@@ -58,6 +58,12 @@ const RECIPIENT_LABELS = {
     MANAGERS: 'Managers planning',
     BOTH: 'Responsable et managers',
 };
+const SEVERITY_LABELS = {
+    LOW: 'Faible',
+    MEDIUM: 'Modérée',
+    HIGH: 'Élevée',
+    CRITICAL: 'Critique',
+};
 
 const initialClosure = () => {
     const start = new Date();
@@ -797,6 +803,71 @@ export default function PlanningSettingsModal({
                                                 ))}
                                             </select>
                                         </label>
+                                        <label>
+                                            <FieldLabel>Criticité</FieldLabel>
+                                            <select
+                                                value={rule.severity}
+                                                onChange={(event) => updateAlertRuleMutation.mutate({
+                                                    id: rule.id,
+                                                    payload: { severity: event.target.value },
+                                                })}
+                                                className="field"
+                                            >
+                                                {Object.entries(SEVERITY_LABELS).map(([value, label]) => (
+                                                    <option key={value} value={value}>{label}</option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label>
+                                            <FieldLabel>Délai avant escalade</FieldLabel>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    key={`${rule.id}-${rule.escalation_minutes}-escalation`}
+                                                    type="number"
+                                                    min="1"
+                                                    max="10080"
+                                                    defaultValue={rule.escalation_minutes}
+                                                    onBlur={(event) => {
+                                                        const value = Number(event.target.value);
+                                                        if (value !== Number(rule.escalation_minutes)) {
+                                                            updateAlertRuleMutation.mutate({
+                                                                id: rule.id,
+                                                                payload: { escalation_minutes: value },
+                                                            });
+                                                        }
+                                                    }}
+                                                    className="field"
+                                                />
+                                                <span className="text-xs font-black text-slate-500">min</span>
+                                            </div>
+                                        </label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <label className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-3 text-xs font-black text-slate-600">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={Boolean(rule.notify_pwa)}
+                                                    onChange={(event) => updateAlertRuleMutation.mutate({
+                                                        id: rule.id,
+                                                        payload: { notify_pwa: event.target.checked },
+                                                    })}
+                                                />
+                                                Appareil / PWA
+                                            </label>
+                                            <label className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-3 text-xs font-black text-slate-600">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={Boolean(rule.notify_email)}
+                                                    onChange={(event) => updateAlertRuleMutation.mutate({
+                                                        id: rule.id,
+                                                        payload: { notify_email: event.target.checked },
+                                                    })}
+                                                />
+                                                Email
+                                            </label>
+                                        </div>
+                                        <p className="text-[11px] font-semibold leading-5 text-slate-500">
+                                            Les canaux externes sont utilisés uniquement à la création d’un incident critique ou lors de son escalade faute de prise en charge.
+                                        </p>
                                     </div>
                                 </section>
                             ))}

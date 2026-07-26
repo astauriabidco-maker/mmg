@@ -16,6 +16,7 @@ import {
     RefreshCw,
     Search,
     Save,
+    ShieldAlert,
     Sparkles,
     Settings2,
     Timer,
@@ -27,6 +28,8 @@ import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import PersonalScheduleView from './PersonalScheduleView';
 import PlanningSettingsModal from '../components/PlanningSettingsModal';
+import PlanningIncidentCenter from '../components/PlanningIncidentCenter';
+import { notifyPlanningIncidents } from '../services/planningDeviceNotifications';
 
 const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 const CATEGORY_META = {
@@ -232,6 +235,7 @@ export default function ScheduleDashboard({ initialSettingsTab = null, onSetting
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [settingsTab, setSettingsTab] = useState(initialSettingsTab || 'skills');
     const [suggestions, setSuggestions] = useState([]);
+    const [incidentCenterOpen, setIncidentCenterOpen] = useState(false);
     const period = useMemo(() => getPeriod(anchor, view), [anchor, view]);
 
     const metaQuery = useQuery({
@@ -296,6 +300,17 @@ export default function ScheduleDashboard({ initialSettingsTab = null, onSetting
         enabled: Boolean(metaQuery.data),
         refetchInterval: 60000,
     });
+    const incidentsQuery = useQuery({
+        queryKey: ['planning-incidents', 'dashboard'],
+        queryFn: async () => (await api.get('/v2/schedule/incidents', {
+            params: { incident_status: 'OPEN,ACKNOWLEDGED' },
+        })).data,
+        enabled: metaQuery.data?.can_edit === true,
+        refetchInterval: 60000,
+    });
+    useEffect(() => {
+        notifyPlanningIncidents(incidentsQuery.data?.incidents || []);
+    }, [incidentsQuery.data?.incidents]);
     const capacityQuery = useQuery({
         queryKey: [
             'planning-capacity',
@@ -552,6 +567,21 @@ export default function ScheduleDashboard({ initialSettingsTab = null, onSetting
                             )}
                             <button
                                 type="button"
+                                onClick={() => setIncidentCenterOpen(true)}
+                                className="flex h-10 items-center gap-2 rounded-md border border-red-200 bg-red-50 px-4 text-sm font-black text-red-700 hover:bg-red-100"
+                            >
+                                <ShieldAlert className="h-4 w-4" />
+                                Incidents
+                                {(incidentsQuery.data?.summary?.open || 0)
+                                    + (incidentsQuery.data?.summary?.acknowledged || 0) > 0 && (
+                                    <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] text-white">
+                                        {(incidentsQuery.data?.summary?.open || 0)
+                                            + (incidentsQuery.data?.summary?.acknowledged || 0)}
+                                    </span>
+                                )}
+                            </button>
+                            <button
+                                type="button"
                                 onClick={() => {
                                     setSuggestions([]);
                                     setCreateForm(initialTask(anchor));
@@ -603,35 +633,18 @@ export default function ScheduleDashboard({ initialSettingsTab = null, onSetting
                 </div>
             </section>
 
+            {incidentCenterOpen ? (
+                <PlanningIncidentCenter
+                    users={metaQuery.data?.users || []}
+                    onClose={() => setIncidentCenterOpen(false)}
+                />
+            ) : (
+                <>
             {notice && (
                 <div className={`mx-4 mt-3 flex items-center justify-between rounded-md border px-4 py-3 text-sm font-bold sm:mx-6 xl:mx-8 ${notice.type === 'error' ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
                     <span>{notice.text}</span>
                     <button type="button" onClick={() => setNotice(null)}><X className="h-4 w-4" /></button>
                 </div>
-            )}
-
-            {!personalMode && notificationsQuery.data?.some(
-                (item) => item.notification_type?.startsWith('OPERATIONAL_'),
-            ) && (
-                <section className="mx-4 mt-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 sm:mx-6 xl:mx-8">
-                    <div className="flex items-center gap-2 text-sm font-black text-red-900">
-                        <AlertTriangle className="h-4 w-4" />
-                        Alertes opérationnelles
-                    </div>
-                    <div className="mt-2 grid gap-2 lg:grid-cols-3">
-                        {notificationsQuery.data
-                            .filter((item) => item.notification_type?.startsWith('OPERATIONAL_'))
-                            .slice(0, 3)
-                            .map((item) => (
-                                <div key={item.id} className="rounded border border-red-200 bg-white px-3 py-2">
-                                    <p className="text-xs font-black text-red-800">{item.title}</p>
-                                    <p className="mt-1 line-clamp-2 text-xs font-semibold text-slate-600">
-                                        {item.message}
-                                    </p>
-                                </div>
-                            ))}
-                    </div>
-                </section>
             )}
 
             <div className="grid min-h-[650px] xl:grid-cols-[minmax(0,1fr)_300px]">
@@ -705,6 +718,8 @@ export default function ScheduleDashboard({ initialSettingsTab = null, onSetting
                     </div>
                 </aside>
             </div>
+                </>
+            )}
 
             {createForm && (
                 <ModalShell
