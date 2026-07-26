@@ -823,6 +823,72 @@ def test_schedule_execution_synchronizes_workshop_status(isolated_client):
         db.close()
 
 
+def test_schedule_resumes_crm_reminder_after_pause(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id, client_id = _worker_and_client(session_factory)
+    db = session_factory()
+    try:
+        opportunity = models.CRMOpportunity(
+            reference="OPP-EXEC-REMINDER",
+            client_id=client_id,
+            owner_user_id=worker_id,
+            title="Relance chantier ASTAURIA",
+        )
+        rule = models.CRMReminderRule(
+            name="Relance test planning",
+            stage=models.CRMOpportunityStage.NEW.value,
+            delay_days=2,
+            created_by="schedule-admin",
+        )
+        db.add_all([opportunity, rule])
+        db.flush()
+        reminder = models.CRMReminderPlan(
+            plan_key="REMINDER-EXEC-001",
+            rule_id=rule.id,
+            opportunity_id=opportunity.id,
+            client_id=client_id,
+            assigned_user_id=worker_id,
+            stage_snapshot=models.CRMOpportunityStage.NEW.value,
+            due_at=datetime(2026, 8, 13, 10, 0),
+            created_by="schedule-admin",
+        )
+        db.add(reminder)
+        db.commit()
+        reminder_id = reminder.id
+    finally:
+        db.close()
+
+    execution_url = f"/v2/schedule/events/CRM_REMINDER/{reminder_id}/execute"
+    started = client.post(
+        execution_url,
+        headers=headers,
+        json={"action": "START"},
+    )
+    assert started.status_code == 200, started.text
+
+    paused = client.post(
+        execution_url,
+        headers=headers,
+        json={"action": "PAUSE", "reason": "Pause déjeuner"},
+    )
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["status"] == "PAUSED"
+
+    resumed = client.post(
+        execution_url,
+        headers=headers,
+        json={"action": "START", "note": "Reprise de la relance"},
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["status"] == "IN_PROGRESS"
+    assert [item["action"] for item in resumed.json()["history"]] == [
+        "START",
+        "PAUSE",
+        "START",
+    ]
+
+
 def test_unscheduled_measure_mission_can_be_planned_from_calendar(isolated_client):
     client, session_factory = isolated_client
     headers = _admin_headers(session_factory)

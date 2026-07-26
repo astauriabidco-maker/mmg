@@ -1119,32 +1119,53 @@ function ExecutionPanel({ event, users = [] }) {
     const executionQuery = useQuery({
         queryKey: ['schedule-execution', event.source_type, event.source_id],
         queryFn: async () => (
-            await api.get(`/v2/schedule/events/${event.source_type}/${event.source_id}/execution`)
+            await api.get(
+                `/v2/schedule/events/${event.source_type}/${event.source_id}/execution`,
+                { timeout: 10000 },
+            )
         ).data,
         enabled: EXECUTABLE_SOURCES.has(event.source_type),
     });
     const execution = executionQuery.data;
+    const finishTransition = (data) => {
+        queryClient.setQueryData(
+            ['schedule-execution', event.source_type, event.source_id],
+            data,
+        );
+        queryClient.invalidateQueries({ queryKey: ['schedule-events'] });
+        queryClient.invalidateQueries({ queryKey: ['planning-notifications'] });
+        setPendingAction(null);
+        setTransitionForm({
+            reason: '',
+            note: '',
+            time_spent_minutes: '',
+            assigned_user_id: '',
+        });
+    };
     const transitionMutation = useMutation({
         mutationFn: async (payload) => (
             await api.post(
                 `/v2/schedule/events/${event.source_type}/${event.source_id}/execute`,
                 payload,
+                { timeout: 12000 },
             )
         ).data,
-        onSuccess: (data) => {
-            queryClient.setQueryData(
-                ['schedule-execution', event.source_type, event.source_id],
-                data,
-            );
-            queryClient.invalidateQueries({ queryKey: ['schedule-events'] });
-            queryClient.invalidateQueries({ queryKey: ['planning-notifications'] });
-            setPendingAction(null);
-            setTransitionForm({
-                reason: '',
-                note: '',
-                time_spent_minutes: '',
-                assigned_user_id: '',
-            });
+        onSuccess: finishTransition,
+        onError: async (_error, payload) => {
+            const expectedStatus = {
+                START: 'IN_PROGRESS',
+                PAUSE: 'PAUSED',
+                BLOCK: 'BLOCKED',
+                COMPLETE: 'DONE',
+            }[payload.action];
+            try {
+                const refreshed = await executionQuery.refetch();
+                if (refreshed.data?.status === expectedStatus) {
+                    finishTransition(refreshed.data);
+                }
+            } catch {
+                // The mutation error remains visible and the user can retry safely.
+            }
         },
     });
     const beginAction = (action) => {
@@ -1195,7 +1216,15 @@ function ExecutionPanel({ event, users = [] }) {
         { action: 'COMPLETE', label: 'Terminer', icon: CheckCircle2, tone: 'bg-emerald-600 text-white' },
     ].filter((item) => execution.allowed_actions.includes(item.action));
     const actionLabel = actionButtons.find((item) => item.action === pendingAction)?.label;
-    const errorDetail = transitionMutation.error?.response?.data?.detail;
+    const transitionError = transitionMutation.error;
+    const errorDetail = transitionError?.response?.data?.detail
+        || (
+            transitionError?.code === 'ECONNABORTED'
+                ? 'La confirmation a pris trop de temps. L’état serveur a été revérifié ; vous pouvez réessayer sans recharger la page.'
+                : transitionError
+                    ? 'Impossible de confirmer cette action. L’état serveur a été revérifié.'
+                    : null
+        );
 
     return (
         <section className="border-y border-slate-200 py-4">
