@@ -4,17 +4,21 @@ import {
     AlertTriangle,
     ArrowLeft,
     ArrowRight,
+    Ban,
     CalendarClock,
     CalendarDays,
     CheckCircle2,
     ExternalLink,
     Filter,
+    Pause,
+    Play,
     Plus,
     RefreshCw,
     Search,
     Save,
     Sparkles,
     Settings2,
+    Timer,
     Trash2,
     UserRound,
     X,
@@ -37,6 +41,22 @@ const CATEGORY_META = {
     DELIVERY: { label: 'Livraison', tone: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
     PURCHASE: { label: 'Achat', tone: 'bg-rose-50 text-rose-800 border-rose-200' },
     ABSENCE: { label: 'Indisponibilité', tone: 'bg-slate-100 text-slate-700 border-slate-300' },
+};
+const EXECUTABLE_SOURCES = new Set([
+    'CALENDAR_TASK',
+    'CRM_ACTIVITY',
+    'CRM_MILESTONE',
+    'CRM_REMINDER',
+    'MEASURE_MISSION',
+    'WORKSHOP',
+    'DELIVERY',
+]);
+const EXECUTION_STATUS_META = {
+    TODO: { label: 'À faire', tone: 'bg-slate-100 text-slate-700' },
+    IN_PROGRESS: { label: 'En cours', tone: 'bg-blue-50 text-blue-700' },
+    PAUSED: { label: 'En pause', tone: 'bg-amber-50 text-amber-700' },
+    BLOCKED: { label: 'Bloqué', tone: 'bg-red-50 text-red-700' },
+    DONE: { label: 'Terminé', tone: 'bg-emerald-50 text-emerald-700' },
 };
 
 const pad = (value) => String(value).padStart(2, '0');
@@ -75,6 +95,19 @@ const formatLongDate = (value) => new Intl.DateTimeFormat('fr-FR', {
     year: 'numeric',
 }).format(new Date(value));
 const roundHours = (value) => Math.round(value * 10) / 10;
+const formatExecutionDuration = (minutes = 0) => {
+    const total = Math.max(Number(minutes) || 0, 0);
+    const hours = Math.floor(total / 60);
+    const remainder = total % 60;
+    if (!hours) return `${remainder} min`;
+    return remainder ? `${hours} h ${remainder} min` : `${hours} h`;
+};
+const executionActionLabel = (action) => ({
+    START: 'Démarrage / reprise',
+    PAUSE: 'Mise en pause',
+    BLOCK: 'Blocage',
+    COMPLETE: 'Tâche terminée',
+}[action] || action);
 const eventDurationHours = (event) => {
     if (!event.start_at) return 0;
     const start = new Date(event.start_at);
@@ -438,7 +471,6 @@ export default function ScheduleDashboard({ initialSettingsTab = null, onSetting
             start_at: new Date(editForm.start_at).toISOString(),
             end_at: new Date(editForm.end_at).toISOString(),
             assigned_user_id: editForm.assigned_user_id ? Number(editForm.assigned_user_id) : null,
-            status: selectedEvent.source_type === 'CALENDAR_TASK' ? editForm.status : undefined,
             change_reason: editForm.change_reason || 'Mise à jour depuis la fiche planning',
             source_screen: 'PLANNING_DETAIL',
         },
@@ -452,16 +484,30 @@ export default function ScheduleDashboard({ initialSettingsTab = null, onSetting
 
     if (personalMode) {
         return (
-            <PersonalScheduleView
-                events={events}
-                currentUser={{ ...authUser, ...currentUserRecord }}
-                loading={metaQuery.isLoading || eventsQuery.isLoading}
-                notifications={notificationsQuery.data || []}
-                onRefresh={() => eventsQuery.refetch()}
-                onOpenEvent={(event) => {
-                    if (event.source_url) window.location.assign(event.source_url);
-                }}
-            />
+            <>
+                <PersonalScheduleView
+                    events={events}
+                    currentUser={{ ...authUser, ...currentUserRecord }}
+                    loading={metaQuery.isLoading || eventsQuery.isLoading}
+                    notifications={notificationsQuery.data || []}
+                    onRefresh={() => eventsQuery.refetch()}
+                    onOpenEvent={openEvent}
+                />
+                {selectedEvent && (
+                    <ModalShell
+                        eyebrow={CATEGORY_META[selectedEvent.category]?.label || 'Planning'}
+                        title={selectedEvent.title}
+                        onClose={() => { setSelectedEvent(null); setEditForm(null); }}
+                        footer={selectedEvent.source_url ? (
+                            <a href={selectedEvent.source_url} className="flex h-10 items-center gap-2 rounded-md border border-slate-200 px-4 text-sm font-black text-slate-700">
+                                <ExternalLink className="h-4 w-4" /> Ouvrir le dossier
+                            </a>
+                        ) : null}
+                    >
+                        <ExecutionPanel event={selectedEvent} />
+                    </ModalShell>
+                )}
+            </>
         );
     }
 
@@ -1061,6 +1107,242 @@ function TaskForm({ form, setForm, meta }) {
     );
 }
 
+function ExecutionPanel({ event, users = [] }) {
+    const queryClient = useQueryClient();
+    const [pendingAction, setPendingAction] = useState(null);
+    const [transitionForm, setTransitionForm] = useState({
+        reason: '',
+        note: '',
+        time_spent_minutes: '',
+        assigned_user_id: '',
+    });
+    const executionQuery = useQuery({
+        queryKey: ['schedule-execution', event.source_type, event.source_id],
+        queryFn: async () => (
+            await api.get(`/v2/schedule/events/${event.source_type}/${event.source_id}/execution`)
+        ).data,
+        enabled: EXECUTABLE_SOURCES.has(event.source_type),
+    });
+    const execution = executionQuery.data;
+    const transitionMutation = useMutation({
+        mutationFn: async (payload) => (
+            await api.post(
+                `/v2/schedule/events/${event.source_type}/${event.source_id}/execute`,
+                payload,
+            )
+        ).data,
+        onSuccess: (data) => {
+            queryClient.setQueryData(
+                ['schedule-execution', event.source_type, event.source_id],
+                data,
+            );
+            queryClient.invalidateQueries({ queryKey: ['schedule-events'] });
+            queryClient.invalidateQueries({ queryKey: ['planning-notifications'] });
+            setPendingAction(null);
+            setTransitionForm({
+                reason: '',
+                note: '',
+                time_spent_minutes: '',
+                assigned_user_id: '',
+            });
+        },
+    });
+    const beginAction = (action) => {
+        setPendingAction(action);
+        setTransitionForm({
+            reason: '',
+            note: '',
+            time_spent_minutes: action === 'COMPLETE'
+                ? String(execution?.elapsed_minutes || '')
+                : '',
+            assigned_user_id: execution?.assigned_user_id
+                ? String(execution.assigned_user_id)
+                : '',
+        });
+    };
+    const submitTransition = () => {
+        transitionMutation.mutate({
+            action: pendingAction,
+            reason: transitionForm.reason || null,
+            note: transitionForm.note || null,
+            time_spent_minutes: transitionForm.time_spent_minutes === ''
+                ? null
+                : Number(transitionForm.time_spent_minutes),
+            assigned_user_id: transitionForm.assigned_user_id
+                ? Number(transitionForm.assigned_user_id)
+                : null,
+            source_screen: 'PLANNING_EXECUTION',
+        });
+    };
+    if (executionQuery.isLoading) {
+        return <div className="h-24 animate-pulse rounded-md bg-slate-100" />;
+    }
+    if (executionQuery.isError) {
+        return (
+            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">
+                Impossible de charger l’exécution de cette tâche.
+            </div>
+        );
+    }
+    if (!execution) return null;
+
+    const statusMeta = EXECUTION_STATUS_META[execution.status]
+        || EXECUTION_STATUS_META.TODO;
+    const actionButtons = [
+        { action: 'START', label: execution.status === 'TODO' ? 'Démarrer' : 'Reprendre', icon: Play, tone: 'bg-blue-600 text-white' },
+        { action: 'PAUSE', label: 'Mettre en pause', icon: Pause, tone: 'border border-amber-300 bg-white text-amber-800' },
+        { action: 'BLOCK', label: 'Bloquer', icon: Ban, tone: 'border border-red-300 bg-white text-red-700' },
+        { action: 'COMPLETE', label: 'Terminer', icon: CheckCircle2, tone: 'bg-emerald-600 text-white' },
+    ].filter((item) => execution.allowed_actions.includes(item.action));
+    const actionLabel = actionButtons.find((item) => item.action === pendingAction)?.label;
+    const errorDetail = transitionMutation.error?.response?.data?.detail;
+
+    return (
+        <section className="border-y border-slate-200 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Exécution opérationnelle</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className={`inline-flex min-h-7 items-center rounded px-2.5 text-[10px] font-black uppercase ${statusMeta.tone}`}>
+                            {statusMeta.label}
+                        </span>
+                        <span className="inline-flex min-h-7 items-center gap-1.5 text-sm font-black text-slate-700">
+                            <Timer className="h-4 w-4 text-slate-400" />
+                            {formatExecutionDuration(execution.elapsed_minutes)}
+                        </span>
+                    </div>
+                    <p className="mt-2 text-xs font-semibold text-slate-500">
+                        Responsable : {execution.responsible_name || event.owner_name || 'Non affecté'}
+                    </p>
+                </div>
+                {execution.source_url && (
+                    <a href={execution.source_url} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 px-3 text-xs font-black text-slate-700">
+                        <ExternalLink className="h-3.5 w-3.5" /> Dossier lié
+                    </a>
+                )}
+            </div>
+
+            {execution.can_execute ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                    {actionButtons.map(({ action, label, icon: Icon, tone }) => (
+                        <button
+                            key={action}
+                            type="button"
+                            onClick={() => beginAction(action)}
+                            className={`inline-flex h-10 items-center gap-2 rounded-md px-4 text-sm font-black ${tone}`}
+                        >
+                            <Icon className="h-4 w-4" /> {label}
+                        </button>
+                    ))}
+                    {!actionButtons.length && (
+                        <p className="text-sm font-bold text-emerald-700">Cette tâche est terminée.</p>
+                    )}
+                </div>
+            ) : (
+                <p className="mt-4 text-sm font-semibold text-slate-500">
+                    Seul le responsable affecté ou un responsable planning peut exécuter cette tâche.
+                </p>
+            )}
+
+            {pendingAction && (
+                <div className="mt-4 border-l-4 border-blue-500 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                        <p className="font-black text-slate-900">{actionLabel}</p>
+                        <button type="button" onClick={() => setPendingAction(null)} className="text-xs font-black text-slate-500">Fermer</button>
+                    </div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        {execution.can_manage && (
+                            <label className="sm:col-span-2">
+                                <FieldLabel text="Responsable de l’exécution" />
+                                <select
+                                    value={transitionForm.assigned_user_id}
+                                    onChange={(e) => setTransitionForm((current) => ({ ...current, assigned_user_id: e.target.value }))}
+                                    className="field"
+                                >
+                                    <option value="">Responsable actuel</option>
+                                    {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                                </select>
+                            </label>
+                        )}
+                        {(pendingAction === 'PAUSE' || pendingAction === 'BLOCK') && (
+                            <label className="sm:col-span-2">
+                                <FieldLabel text="Motif obligatoire" />
+                                <input
+                                    value={transitionForm.reason}
+                                    onChange={(e) => setTransitionForm((current) => ({ ...current, reason: e.target.value }))}
+                                    placeholder={pendingAction === 'BLOCK' ? 'Pièce manquante, accès impossible…' : 'Pourquoi la tâche est-elle interrompue ?'}
+                                    className="field"
+                                />
+                            </label>
+                        )}
+                        {pendingAction === 'COMPLETE' && (
+                            <label>
+                                <FieldLabel text="Temps total passé (minutes)" />
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={transitionForm.time_spent_minutes}
+                                    onChange={(e) => setTransitionForm((current) => ({ ...current, time_spent_minutes: e.target.value }))}
+                                    className="field"
+                                />
+                            </label>
+                        )}
+                        <label className={pendingAction === 'COMPLETE' ? '' : 'sm:col-span-2'}>
+                            <FieldLabel text="Compte rendu" />
+                            <input
+                                value={transitionForm.note}
+                                onChange={(e) => setTransitionForm((current) => ({ ...current, note: e.target.value }))}
+                                placeholder="Travail réalisé, observation ou consigne…"
+                                className="field"
+                            />
+                        </label>
+                    </div>
+                    {errorDetail && (
+                        <p className="mt-3 text-sm font-bold text-red-700">
+                            {typeof errorDetail === 'string' ? errorDetail : 'La transition a échoué.'}
+                        </p>
+                    )}
+                    <button
+                        type="button"
+                        onClick={submitTransition}
+                        disabled={transitionMutation.isPending || (
+                            ['PAUSE', 'BLOCK'].includes(pendingAction)
+                            && !transitionForm.reason.trim()
+                        )}
+                        className="mt-3 h-10 rounded-md bg-slate-950 px-5 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                        {transitionMutation.isPending ? 'Enregistrement…' : `Confirmer : ${actionLabel}`}
+                    </button>
+                </div>
+            )}
+
+            {execution.history?.length > 0 && (
+                <div className="mt-4 divide-y divide-slate-100 border-t border-slate-200">
+                    {execution.history.slice(0, 8).map((item) => (
+                        <div key={item.id} className="flex flex-wrap items-start justify-between gap-2 py-3">
+                            <div>
+                                <p className="text-xs font-black uppercase text-blue-700">
+                                    {executionActionLabel(item.action)}
+                                </p>
+                                <p className="mt-1 text-sm font-bold text-slate-800">{item.actor_name}</p>
+                                {(item.reason || item.note) && (
+                                    <p className="mt-0.5 text-xs font-semibold text-slate-500">
+                                        {[item.reason, item.note].filter(Boolean).join(' · ')}
+                                    </p>
+                                )}
+                            </div>
+                            <div className="text-right">
+                                <p className="text-xs font-bold text-slate-400">{new Date(item.created_at).toLocaleString('fr-FR')}</p>
+                                <p className="mt-1 text-xs font-black text-slate-600">{formatExecutionDuration(item.elapsed_minutes)}</p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </section>
+    );
+}
+
 function EventForm({ event, form, setForm, meta }) {
     const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
     const historyQuery = useQuery({
@@ -1088,12 +1370,14 @@ function EventForm({ event, form, setForm, meta }) {
                     </div>
                 </div>
             )}
+            {EXECUTABLE_SOURCES.has(event.source_type) && (
+                <ExecutionPanel event={event} users={meta?.users || []} />
+            )}
             {event.editable && form ? (
                 <div className="grid gap-4 sm:grid-cols-2">
                     <label><FieldLabel text="Début" /><input type="datetime-local" value={form.start_at} onChange={(e) => set('start_at', e.target.value)} className="field" /></label>
                     <label><FieldLabel text="Fin" /><input type="datetime-local" value={form.end_at} onChange={(e) => set('end_at', e.target.value)} className="field" /></label>
-                    <label className={event.source_type === 'CALENDAR_TASK' ? '' : 'sm:col-span-2'}><FieldLabel text="Responsable" /><select value={form.assigned_user_id} onChange={(e) => set('assigned_user_id', e.target.value)} className="field"><option value="">Non affecté</option>{(meta?.users || []).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label>
-                    {event.source_type === 'CALENDAR_TASK' && <label><FieldLabel text="Statut" /><select value={form.status} onChange={(e) => set('status', e.target.value)} className="field"><option value="TODO">À faire</option><option value="IN_PROGRESS">En cours</option><option value="DONE">Terminé</option></select></label>}
+                    <label className="sm:col-span-2"><FieldLabel text="Responsable" /><select value={form.assigned_user_id} onChange={(e) => set('assigned_user_id', e.target.value)} className="field"><option value="">Non affecté</option>{(meta?.users || []).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label>
                     {event.source_type === 'CALENDAR_TASK' && <label className="sm:col-span-2"><FieldLabel text="Motif de la modification" /><input value={form.change_reason || ''} onChange={(e) => set('change_reason', e.target.value)} placeholder="Pourquoi cette tâche est-elle déplacée ou réaffectée ?" className="field" /></label>}
                 </div>
             ) : (

@@ -32,7 +32,21 @@ EDITABLE_SOURCES = {
     "DELIVERY",
 }
 TASK_CATEGORIES = {"TASK", "ORDER", "MEETING", "INSTALLATION"}
-TASK_STATUSES = {"TODO", "IN_PROGRESS", "DONE", "CANCELLED"}
+TASK_STATUSES = {
+    "TODO",
+    "IN_PROGRESS",
+    "PAUSED",
+    "BLOCKED",
+    "DONE",
+    "CANCELLED",
+}
+EXECUTION_ACTIONS = {"START", "PAUSE", "BLOCK", "COMPLETE"}
+EXECUTION_TRANSITIONS = {
+    "START": {"TODO", "PAUSED", "BLOCKED"},
+    "PAUSE": {"IN_PROGRESS"},
+    "BLOCK": {"TODO", "IN_PROGRESS", "PAUSED"},
+    "COMPLETE": {"IN_PROGRESS", "PAUSED", "BLOCKED"},
+}
 TASK_PRIORITIES = {"LOW", "NORMAL", "HIGH", "URGENT"}
 COMPLETED_STATUSES = {
     "CANCELLED",
@@ -133,6 +147,26 @@ class ScheduleEventUpdate(BaseModel):
         self.end_at = _naive_utc(self.end_at)
         if self.start_at and self.end_at and self.end_at <= self.start_at:
             raise ValueError("La fin doit être postérieure au début")
+        return self
+
+
+class ScheduleExecutionTransition(BaseModel):
+    action: str
+    reason: Optional[str] = Field(default=None, max_length=1000)
+    note: Optional[str] = Field(default=None, max_length=4000)
+    time_spent_minutes: Optional[int] = Field(default=None, ge=0, le=100000)
+    assigned_user_id: Optional[int] = None
+    source_screen: str = Field(default="PLANNING_EXECUTION", max_length=120)
+
+    @model_validator(mode="after")
+    def validate_transition(self):
+        self.action = self.action.strip().upper()
+        self.reason = (self.reason or "").strip() or None
+        self.note = (self.note or "").strip() or None
+        if self.action not in EXECUTION_ACTIONS:
+            raise ValueError("Action d'exécution invalide")
+        if self.action in {"PAUSE", "BLOCK"} and not self.reason:
+            raise ValueError("Un motif est requis pour mettre en pause ou bloquer")
         return self
 
 
@@ -928,6 +962,8 @@ def _notify_assignment(
         models.PlanningNotification(
             user_id=user_id,
             task_id=task.id,
+            source_type="CALENDAR_TASK",
+            source_id=task.id,
             notification_type=notification_type,
             title=(
                 "Nouvelle affectation"
@@ -940,6 +976,296 @@ def _notify_assignment(
             ),
             deduplication_key=(
                 f"{notification_type}:{task.id}:{user_id}:{timestamp}"
+            ),
+        )
+    )
+
+
+def _execution_source(
+    db: Session,
+    source_type: str,
+    source_id: int,
+) -> tuple[Any, Optional[int], str, Optional[str]]:
+    source_type = source_type.upper()
+    record = None
+    owner_id = None
+    title = f"{source_type} #{source_id}"
+    source_url = None
+
+    if source_type == "CALENDAR_TASK":
+        record = db.get(models.CalendarTask, source_id)
+        if record:
+            owner_id = record.assigned_user_id
+            title = record.title
+            source_url = (
+                f"/manager?view=sale-detail&id={record.sale_order_id}&from=sales"
+                if record.sale_order_id
+                else None
+            )
+    elif source_type == "CRM_ACTIVITY":
+        record = db.get(models.CRMActivity, source_id)
+        if record:
+            owner_id = record.assigned_user_id
+            title = record.subject
+            source_url = "/manager?view=crm"
+    elif source_type == "CRM_MILESTONE":
+        record = db.get(models.CRMOpportunity, source_id)
+        if record:
+            owner_id = record.owner_user_id
+            title = record.next_milestone or record.title
+            source_url = "/manager?view=crm"
+    elif source_type == "CRM_REMINDER":
+        record = db.get(models.CRMReminderPlan, source_id)
+        if record:
+            owner_id = record.assigned_user_id
+            title = f"Relance {record.opportunity_reference or record.client_name}"
+            source_url = "/manager?view=crm"
+    elif source_type == "MEASURE_MISSION":
+        record = db.get(models.MeasureMission, source_id)
+        if record:
+            owner_id = record.assigned_user_id
+            title = f"Métré {record.reference}"
+            source_url = f"/measure-missions/{record.id}"
+    elif source_type == "WORKSHOP":
+        record = db.get(models.Planning, source_id)
+        if record:
+            owner = _active_user_by_name(db, record.assigned_to)
+            owner_id = owner.id if owner else None
+            title = f"{record.station} · {record.order_reference}"
+            source_url = "/manager?view=orders"
+    elif source_type == "DELIVERY":
+        record = db.get(models.DeliveryRoute, source_id)
+        if record:
+            owner = _active_user_by_name(db, record.driver_name)
+            owner_id = owner.id if owner else None
+            title = f"Tournée {record.reference}"
+            source_url = "/manager?view=logistics"
+    if not record:
+        raise HTTPException(status_code=404, detail="Événement de planning introuvable")
+    return record, owner_id, title, source_url
+
+
+def _initial_execution_status(source_type: str, record: Any) -> str:
+    status_value = _status_value(getattr(record, "status", None))
+    if source_type == "CALENDAR_TASK" and status_value in TASK_STATUSES:
+        return status_value
+    if source_type == "CRM_ACTIVITY":
+        return "DONE" if status_value == "COMPLETED" else "TODO"
+    if source_type == "CRM_REMINDER":
+        if status_value in {"SENT", "SKIPPED"}:
+            return "DONE"
+        return "BLOCKED" if status_value == "FAILED" else "TODO"
+    if source_type == "MEASURE_MISSION":
+        if status_value in {"IN_CAPTURE", "ON_SITE"}:
+            return "IN_PROGRESS"
+        if status_value in {"TO_REVIEW", "VALIDATED", "QUOTED"}:
+            return "DONE"
+        if status_value == "CORRECTION_REQUIRED":
+            return "BLOCKED"
+        return "TODO"
+    if source_type == "WORKSHOP":
+        return {
+            "PENDING": "TODO",
+            "IN_PROGRESS": "IN_PROGRESS",
+            "PAUSED": "PAUSED",
+            "ISSUE": "BLOCKED",
+            "DEFECT": "BLOCKED",
+            "DONE": "DONE",
+        }.get(status_value, "TODO")
+    if source_type == "DELIVERY":
+        return {
+            "PLANNED": "TODO",
+            "IN_TRANSIT": "IN_PROGRESS",
+            "COMPLETED": "DONE",
+        }.get(status_value, "TODO")
+    return "TODO"
+
+
+def _execution_elapsed_minutes(
+    state: models.ScheduleExecutionState,
+    now: Optional[datetime] = None,
+) -> int:
+    elapsed = int(state.elapsed_minutes or 0)
+    if state.status == "IN_PROGRESS" and state.active_since:
+        current_time = now or utcnow()
+        elapsed += max(
+            0,
+            int((current_time - state.active_since).total_seconds() // 60),
+        )
+    return elapsed
+
+
+def _execution_allowed_actions(status_value: str) -> list[str]:
+    return [
+        action
+        for action, allowed_statuses in EXECUTION_TRANSITIONS.items()
+        if status_value in allowed_statuses
+    ]
+
+
+def _execution_payload(
+    state: Optional[models.ScheduleExecutionState],
+    *,
+    source_type: str,
+    source_id: int,
+    owner_id: Optional[int],
+    title: str,
+    source_url: Optional[str],
+    initial_status: str,
+    can_execute: bool,
+    can_manage: bool,
+    history: Optional[list[models.ScheduleExecutionLog]] = None,
+) -> dict:
+    status_value = state.status if state else initial_status
+    responsible_id = state.assigned_user_id if state else owner_id
+    return {
+        "id": state.id if state else None,
+        "source_type": source_type,
+        "source_id": source_id,
+        "title": title,
+        "source_url": source_url,
+        "status": status_value,
+        "assigned_user_id": responsible_id,
+        "responsible_name": (
+            _display_user(state.assigned_user)
+            if state and state.assigned_user
+            else None
+        ),
+        "started_at": state.started_at if state else None,
+        "completed_at": state.completed_at if state else None,
+        "elapsed_minutes": _execution_elapsed_minutes(state) if state else 0,
+        "last_reason": state.last_reason if state else None,
+        "last_note": state.last_note if state else None,
+        "can_execute": can_execute,
+        "can_manage": can_manage,
+        "allowed_actions": (
+            _execution_allowed_actions(status_value) if can_execute else []
+        ),
+        "history": [
+            {
+                "id": item.id,
+                "action": item.action,
+                "previous_status": item.previous_status,
+                "current_status": item.current_status,
+                "reason": item.reason,
+                "note": item.note,
+                "elapsed_minutes": item.elapsed_minutes,
+                "responsible_user_id": item.responsible_user_id,
+                "actor_name": item.actor_name,
+                "source_screen": item.source_screen,
+                "created_at": item.created_at,
+            }
+            for item in (history or [])
+        ],
+    }
+
+
+def _sync_execution_source(
+    db: Session,
+    source_type: str,
+    record: Any,
+    status_value: str,
+    reason: Optional[str],
+) -> None:
+    now = utcnow()
+    if source_type == "CALENDAR_TASK":
+        record.status = status_value
+    elif source_type == "CRM_ACTIVITY":
+        record.status = (
+            models.CRMActivityStatus.COMPLETED.value
+            if status_value == "DONE"
+            else models.CRMActivityStatus.TODO.value
+        )
+        record.completed_at = now if status_value == "DONE" else None
+    elif source_type == "MEASURE_MISSION":
+        if status_value == "IN_PROGRESS":
+            record.status = models.MeasureMissionStatus.IN_CAPTURE.value
+        elif status_value == "DONE":
+            record.status = models.MeasureMissionStatus.TO_REVIEW.value
+        elif status_value == "BLOCKED":
+            record.status = models.MeasureMissionStatus.CORRECTION_REQUIRED.value
+    elif source_type == "WORKSHOP":
+        record.status = {
+            "TODO": models.PlanningStatus.PENDING,
+            "IN_PROGRESS": models.PlanningStatus.IN_PROGRESS,
+            "PAUSED": models.PlanningStatus.PAUSED,
+            "BLOCKED": models.PlanningStatus.ISSUE,
+            "DONE": models.PlanningStatus.DONE,
+        }[status_value]
+        if status_value == "BLOCKED":
+            record.issue_notes = reason
+    elif source_type == "DELIVERY":
+        if status_value == "IN_PROGRESS":
+            record.status = "IN_TRANSIT"
+            for delivery_note in record.notes:
+                if delivery_note.status in {"READY", "ASSIGNED"}:
+                    delivery_note.status = "IN_TRANSIT"
+        elif status_value == "BLOCKED":
+            for delivery_note in record.notes:
+                if delivery_note.status != "DELIVERED":
+                    delivery_note.status = "ISSUE"
+                    if reason:
+                        delivery_note.delivery_notes = reason
+        elif status_value == "DONE":
+            record.status = "COMPLETED"
+            for delivery_note in record.notes:
+                if delivery_note.status in {"READY", "ASSIGNED", "IN_TRANSIT"}:
+                    delivery_note.status = "DELIVERED"
+
+
+def _assign_execution_source(
+    source_type: str,
+    record: Any,
+    user: Optional[models.User],
+) -> None:
+    user_id = user.id if user else None
+    if source_type == "CALENDAR_TASK":
+        record.assigned_user_id = user_id
+    elif source_type == "CRM_ACTIVITY":
+        record.assigned_user_id = user_id
+    elif source_type == "CRM_MILESTONE":
+        record.owner_user_id = user_id
+    elif source_type == "CRM_REMINDER":
+        record.assigned_user_id = user_id
+    elif source_type == "MEASURE_MISSION":
+        record.assigned_user_id = user_id
+    elif source_type == "WORKSHOP":
+        record.assigned_to = user.username if user else None
+    elif source_type == "DELIVERY":
+        record.driver_name = _display_user(user) if user else None
+
+
+def _notify_execution(
+    db: Session,
+    *,
+    source_type: str,
+    source_id: int,
+    task_id: Optional[int],
+    user_id: Optional[int],
+    title: str,
+    action: str,
+    actor_name: str,
+) -> None:
+    if not user_id:
+        return
+    action_labels = {
+        "START": "démarrée",
+        "PAUSE": "mise en pause",
+        "BLOCK": "bloquée",
+        "COMPLETE": "terminée",
+    }
+    timestamp = utcnow().strftime("%Y%m%d%H%M%S%f")
+    db.add(
+        models.PlanningNotification(
+            user_id=user_id,
+            task_id=task_id,
+            source_type=source_type,
+            source_id=source_id,
+            notification_type=f"EXECUTION_{action}",
+            title=f"Tâche {action_labels[action]}",
+            message=f"{title} · par {actor_name}",
+            deduplication_key=(
+                f"EXECUTION:{source_type}:{source_id}:{user_id}:{timestamp}"
             ),
         )
     )
@@ -1849,7 +2175,7 @@ def get_schedule_meta(
     )
     stations = (
         db.query(models.Station)
-        .order_by(models.Station.name)
+        .order_by(models.Station.order_index, models.Station.display_name)
         .all()
         if can_edit
         else []
@@ -1908,7 +2234,10 @@ def get_schedule_meta(
         "skills": [_serialize_skill(skill) for skill in skills],
         "resources": [_serialize_resource(resource) for resource in resources],
         "stations": [
-            {"id": station.id, "name": station.name}
+            {
+                "id": station.id,
+                "name": station.display_name or station.code,
+            }
             for station in stations
         ],
         "can_edit": can_edit,
@@ -2210,7 +2539,7 @@ def get_schedule_capacity(
     stations = [
         {
             "id": station.id,
-            "name": station.name,
+            "name": station.display_name or station.code,
             "capacity_hours": round(
                 sum(
                     candidate["capacity_hours"]
@@ -3120,6 +3449,229 @@ def update_schedule_event(
 
     db.commit()
     return {"status": "updated", "source_type": source_type, "source_id": source_id}
+
+
+@router.get("/events/{source_type}/{source_id}/execution")
+def get_schedule_execution(
+    source_type: str,
+    source_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    source_type = source_type.upper()
+    record, owner_id, title, source_url = _execution_source(
+        db,
+        source_type,
+        source_id,
+    )
+    state = (
+        db.query(models.ScheduleExecutionState)
+        .options(selectinload(models.ScheduleExecutionState.assigned_user))
+        .filter(
+            models.ScheduleExecutionState.source_type == source_type,
+            models.ScheduleExecutionState.source_id == source_id,
+        )
+        .first()
+    )
+    current_record = _current_user_record(db, current_user)
+    responsible_id = state.assigned_user_id if state else owner_id
+    can_manage = _has_edit_permission(db, current_user)
+    can_execute = bool(
+        can_manage
+        or (
+            current_record
+            and responsible_id
+            and current_record.id == responsible_id
+        )
+    )
+    history = []
+    if state:
+        history = (
+            db.query(models.ScheduleExecutionLog)
+            .filter(models.ScheduleExecutionLog.state_id == state.id)
+            .order_by(models.ScheduleExecutionLog.created_at.desc())
+            .limit(100)
+            .all()
+        )
+    return _execution_payload(
+        state,
+        source_type=source_type,
+        source_id=source_id,
+        owner_id=owner_id,
+        title=title,
+        source_url=source_url,
+        initial_status=_initial_execution_status(source_type, record),
+        can_execute=can_execute,
+        can_manage=can_manage,
+        history=history,
+    )
+
+
+@router.post("/events/{source_type}/{source_id}/execute")
+def transition_schedule_execution(
+    source_type: str,
+    source_id: int,
+    payload: ScheduleExecutionTransition,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    source_type = source_type.upper()
+    record, owner_id, title, source_url = _execution_source(
+        db,
+        source_type,
+        source_id,
+    )
+    current_record = _current_user_record(db, current_user)
+    can_manage = _has_edit_permission(db, current_user)
+    state = (
+        db.query(models.ScheduleExecutionState)
+        .options(selectinload(models.ScheduleExecutionState.assigned_user))
+        .filter(
+            models.ScheduleExecutionState.source_type == source_type,
+            models.ScheduleExecutionState.source_id == source_id,
+        )
+        .first()
+    )
+    responsible_id = state.assigned_user_id if state else owner_id
+    if not can_manage and (
+        not current_record
+        or not responsible_id
+        or current_record.id != responsible_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Cette tâche doit être exécutée par son responsable.",
+        )
+
+    target_user_id = (
+        payload.assigned_user_id
+        if payload.assigned_user_id is not None
+        else responsible_id
+    )
+    if payload.assigned_user_id is not None and not can_manage:
+        if not current_record or payload.assigned_user_id != current_record.id:
+            raise HTTPException(
+                status_code=403,
+                detail="La réaffectation nécessite le droit de modifier le planning.",
+            )
+    target_user = _active_user(db, target_user_id)
+
+    now = utcnow()
+    actor_id, actor_name = _actor_identity(db, current_user)
+    if not state:
+        state = models.ScheduleExecutionState(
+            source_type=source_type,
+            source_id=source_id,
+            status=_initial_execution_status(source_type, record),
+            assigned_user_id=target_user_id,
+            updated_by_user_id=actor_id,
+            updated_by_name=actor_name,
+        )
+        db.add(state)
+        db.flush()
+
+    previous_status = state.status
+    if previous_status not in EXECUTION_TRANSITIONS[payload.action]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Transition {payload.action} impossible depuis "
+                f"le statut {previous_status}."
+            ),
+        )
+
+    previous_responsible_id = state.assigned_user_id
+    state.elapsed_minutes = _execution_elapsed_minutes(state, now)
+    state.active_since = None
+    state.assigned_user_id = target_user_id
+    if payload.action == "START":
+        state.status = "IN_PROGRESS"
+        state.started_at = state.started_at or now
+        state.active_since = now
+        state.completed_at = None
+    elif payload.action == "PAUSE":
+        state.status = "PAUSED"
+    elif payload.action == "BLOCK":
+        state.status = "BLOCKED"
+    elif payload.action == "COMPLETE":
+        state.status = "DONE"
+        state.completed_at = now
+
+    if payload.time_spent_minutes is not None:
+        state.elapsed_minutes = payload.time_spent_minutes
+    state.last_reason = payload.reason
+    state.last_note = payload.note
+    state.updated_by_user_id = actor_id
+    state.updated_by_name = actor_name
+    _assign_execution_source(source_type, record, target_user)
+    _sync_execution_source(
+        db,
+        source_type,
+        record,
+        state.status,
+        payload.reason,
+    )
+    db.add(
+        models.ScheduleExecutionLog(
+            state_id=state.id,
+            action=payload.action,
+            previous_status=previous_status,
+            current_status=state.status,
+            reason=payload.reason,
+            note=payload.note,
+            elapsed_minutes=state.elapsed_minutes,
+            responsible_user_id=state.assigned_user_id,
+            actor_user_id=actor_id,
+            actor_name=actor_name,
+            source_screen=payload.source_screen,
+        )
+    )
+    task_id = source_id if source_type == "CALENDAR_TASK" else None
+    _notify_execution(
+        db,
+        source_type=source_type,
+        source_id=source_id,
+        task_id=task_id,
+        user_id=state.assigned_user_id,
+        title=title,
+        action=payload.action,
+        actor_name=actor_name,
+    )
+    if (
+        previous_responsible_id
+        and previous_responsible_id != state.assigned_user_id
+    ):
+        _notify_execution(
+            db,
+            source_type=source_type,
+            source_id=source_id,
+            task_id=task_id,
+            user_id=previous_responsible_id,
+            title=title,
+            action=payload.action,
+            actor_name=actor_name,
+        )
+    db.commit()
+    db.refresh(state)
+    history = (
+        db.query(models.ScheduleExecutionLog)
+        .filter(models.ScheduleExecutionLog.state_id == state.id)
+        .order_by(models.ScheduleExecutionLog.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    return _execution_payload(
+        state,
+        source_type=source_type,
+        source_id=source_id,
+        owner_id=owner_id,
+        title=title,
+        source_url=source_url,
+        initial_status=state.status,
+        can_execute=True,
+        can_manage=can_manage,
+        history=history,
+    )
 
 
 @router.delete("/tasks/{task_id}", status_code=204)

@@ -266,6 +266,32 @@ def test_operator_only_receives_personal_schedule(isolated_client):
     ]
 
 
+def test_schedule_meta_exposes_users_and_station_display_names(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id, _ = _worker_and_client(session_factory)
+    db = session_factory()
+    try:
+        station = models.Station(
+            code="ALU_DEBIT",
+            display_name="Débit aluminium",
+            order_index=2,
+        )
+        db.add(station)
+        db.commit()
+        station_id = station.id
+    finally:
+        db.close()
+
+    response = client.get("/v2/schedule/meta", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert worker_id in {user["id"] for user in response.json()["users"]}
+    assert response.json()["stations"] == [
+        {"id": station_id, "name": "Débit aluminium"}
+    ]
+
+
 def test_schedule_reports_team_load_and_manager_summary(isolated_client):
     client, session_factory = isolated_client
     headers = _admin_headers(session_factory)
@@ -597,6 +623,204 @@ def test_schedule_normalizes_offset_datetimes_to_utc(isolated_client):
     )
     assert event["start_at"] == "2026-08-07T07:00:00Z"
     assert event["end_at"] == "2026-08-07T08:00:00Z"
+
+
+def test_schedule_executes_task_with_time_history_and_notifications(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id, _ = _worker_and_client(session_factory)
+    start = datetime(2026, 8, 10, 9, 0)
+    created = _post_task(
+        client,
+        headers,
+        title="Préparer livraison client",
+        start_at=start,
+        end_at=start + timedelta(hours=2),
+        assigned_user_id=worker_id,
+    )
+    assert created.status_code == 201, created.text
+    task_id = created.json()["source_id"]
+    execution_url = f"/v2/schedule/events/CALENDAR_TASK/{task_id}"
+
+    detail = client.get(f"{execution_url}/execution", headers=headers)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["status"] == "TODO"
+    assert detail.json()["allowed_actions"] == ["START", "BLOCK"]
+
+    started = client.post(
+        f"{execution_url}/execute",
+        headers=headers,
+        json={"action": "START", "assigned_user_id": worker_id},
+    )
+    assert started.status_code == 200, started.text
+    assert started.json()["status"] == "IN_PROGRESS"
+
+    missing_reason = client.post(
+        f"{execution_url}/execute",
+        headers=headers,
+        json={"action": "PAUSE"},
+    )
+    assert missing_reason.status_code == 422
+
+    paused = client.post(
+        f"{execution_url}/execute",
+        headers=headers,
+        json={
+            "action": "PAUSE",
+            "reason": "Attente validation client",
+            "time_spent_minutes": 12,
+        },
+    )
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["status"] == "PAUSED"
+    assert paused.json()["elapsed_minutes"] == 12
+
+    resumed = client.post(
+        f"{execution_url}/execute",
+        headers=headers,
+        json={"action": "START"},
+    )
+    assert resumed.status_code == 200, resumed.text
+
+    completed = client.post(
+        f"{execution_url}/execute",
+        headers=headers,
+        json={
+            "action": "COMPLETE",
+            "note": "Commande préparée et contrôlée",
+            "time_spent_minutes": 45,
+        },
+    )
+    assert completed.status_code == 200, completed.text
+    payload = completed.json()
+    assert payload["status"] == "DONE"
+    assert payload["elapsed_minutes"] == 45
+    assert [item["action"] for item in payload["history"]] == [
+        "COMPLETE",
+        "START",
+        "PAUSE",
+        "START",
+    ]
+
+    db = session_factory()
+    try:
+        task = db.get(models.CalendarTask, task_id)
+        assert task.status == "DONE"
+        assert (
+            db.query(models.PlanningNotification)
+            .filter(
+                models.PlanningNotification.user_id == worker_id,
+                models.PlanningNotification.source_type == "CALENDAR_TASK",
+                models.PlanningNotification.source_id == task_id,
+            )
+            .count()
+            >= 5
+        )
+    finally:
+        db.close()
+
+
+def test_operator_executes_only_assigned_task(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id = _create_worker(
+        session_factory,
+        "planning-worker",
+        "Nina",
+        "Atelier",
+        role="OPERATOR",
+    )
+    other_worker_id = _create_worker(
+        session_factory,
+        "planning-other",
+        "Léo",
+        "Pose",
+        role="OPERATOR",
+    )
+    start = datetime(2026, 8, 11, 8, 0)
+    assigned = _post_task(
+        client,
+        headers,
+        title="Tâche affectée",
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        assigned_user_id=worker_id,
+    ).json()
+    other = _post_task(
+        client,
+        headers,
+        title="Tâche d'un collègue",
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        assigned_user_id=other_worker_id,
+    ).json()
+    worker_headers = _planning_view_headers("planning-worker")
+
+    own_response = client.post(
+        f"/v2/schedule/events/CALENDAR_TASK/{assigned['source_id']}/execute",
+        headers=worker_headers,
+        json={"action": "START"},
+    )
+    assert own_response.status_code == 200, own_response.text
+
+    forbidden = client.post(
+        f"/v2/schedule/events/CALENDAR_TASK/{other['source_id']}/execute",
+        headers=worker_headers,
+        json={"action": "START"},
+    )
+    assert forbidden.status_code == 403
+
+
+def test_schedule_execution_synchronizes_workshop_status(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id = _create_worker(
+        session_factory,
+        "debit-alu",
+        "Ali",
+        "Débit",
+        role="OPERATOR",
+    )
+    db = session_factory()
+    try:
+        order = models.Order(reference="CMD-EXEC-001", material="ALU")
+        db.add(order)
+        db.flush()
+        planning = models.Planning(
+            order_id=order.id,
+            station="ALU_DEBIT",
+            assigned_to="debit-alu",
+            scheduled_start=datetime(2026, 8, 12, 8, 0),
+            scheduled_end=datetime(2026, 8, 12, 10, 0),
+        )
+        db.add(planning)
+        db.commit()
+        planning_id = planning.id
+    finally:
+        db.close()
+
+    base_url = f"/v2/schedule/events/WORKSHOP/{planning_id}/execute"
+    started = client.post(
+        base_url,
+        headers=headers,
+        json={"action": "START", "assigned_user_id": worker_id},
+    )
+    assert started.status_code == 200, started.text
+    blocked = client.post(
+        base_url,
+        headers=headers,
+        json={"action": "BLOCK", "reason": "Profilé manquant"},
+    )
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json()["status"] == "BLOCKED"
+
+    db = session_factory()
+    try:
+        planning = db.get(models.Planning, planning_id)
+        assert planning.status == models.PlanningStatus.ISSUE
+        assert planning.issue_notes == "Profilé manquant"
+    finally:
+        db.close()
 
 
 def test_unscheduled_measure_mission_can_be_planned_from_calendar(isolated_client):

@@ -541,9 +541,16 @@ class PlanningNotification(Base):
     task_id = Column(
         Integer,
         ForeignKey("calendar_tasks.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    source_type = Column(
+        String,
+        nullable=False,
+        default="CALENDAR_TASK",
+        index=True,
+    )
+    source_id = Column(Integer, nullable=True, index=True)
     notification_type = Column(String, nullable=False, default="ASSIGNMENT", index=True)
     title = Column(String, nullable=False)
     message = Column(Text, nullable=True)
@@ -554,6 +561,101 @@ class PlanningNotification(Base):
 
     user = relationship("User", back_populates="planning_notifications")
     task = relationship("CalendarTask", back_populates="notifications")
+
+
+class ScheduleExecutionState(Base):
+    __tablename__ = "schedule_execution_states"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_type",
+            "source_id",
+            name="uq_schedule_execution_states_source",
+        ),
+        Index(
+            "ix_schedule_execution_states_status_assignee",
+            "status",
+            "assigned_user_id",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_type = Column(String, nullable=False, index=True)
+    source_id = Column(Integer, nullable=False, index=True)
+    status = Column(String, nullable=False, default="TODO", index=True)
+    assigned_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    started_at = Column(DateTime, nullable=True)
+    active_since = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    elapsed_minutes = Column(Integer, nullable=False, default=0)
+    last_reason = Column(Text, nullable=True)
+    last_note = Column(Text, nullable=True)
+    updated_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    updated_by_name = Column(String, nullable=False, default="Système")
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    assigned_user = relationship("User", foreign_keys=[assigned_user_id])
+    updated_by = relationship("User", foreign_keys=[updated_by_user_id])
+    logs = relationship(
+        "ScheduleExecutionLog",
+        back_populates="state",
+        cascade="all, delete-orphan",
+    )
+
+
+class ScheduleExecutionLog(Base):
+    __tablename__ = "schedule_execution_logs"
+    __table_args__ = (
+        Index(
+            "ix_schedule_execution_logs_state_created",
+            "state_id",
+            "created_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    state_id = Column(
+        Integer,
+        ForeignKey("schedule_execution_states.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    action = Column(String, nullable=False, index=True)
+    previous_status = Column(String, nullable=False)
+    current_status = Column(String, nullable=False)
+    reason = Column(Text, nullable=True)
+    note = Column(Text, nullable=True)
+    elapsed_minutes = Column(Integer, nullable=False, default=0)
+    responsible_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    actor_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    actor_name = Column(String, nullable=False)
+    source_screen = Column(String, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False, index=True)
+
+    state = relationship("ScheduleExecutionState", back_populates="logs")
+    responsible = relationship("User", foreign_keys=[responsible_user_id])
+    actor = relationship("User", foreign_keys=[actor_user_id])
+
 
 class Order(Base):
     __tablename__ = "orders"
