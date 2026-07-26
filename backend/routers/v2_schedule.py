@@ -14,6 +14,11 @@ from ..core.security import (
 )
 from ..core.time import utcnow
 from ..database import get_db
+from ..services.planning_alerts import (
+    RECIPIENT_MODES,
+    evaluate_operational_alerts,
+    serialize_alert_rule,
+)
 from ..services.schedule_intelligence import calculate_capacity, suggest_assignments
 
 
@@ -203,6 +208,20 @@ class PlanningExecutionReasonUpdate(BaseModel):
             self.label = self.label.strip()
         if self.description is not None:
             self.description = self.description.strip() or None
+        return self
+
+
+class PlanningAlertRuleUpdate(BaseModel):
+    threshold_minutes: Optional[int] = Field(default=None, ge=0, le=10080)
+    recipient_mode: Optional[str] = None
+    is_active: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def normalize_values(self):
+        if self.recipient_mode is not None:
+            self.recipient_mode = self.recipient_mode.strip().upper()
+            if self.recipient_mode not in RECIPIENT_MODES:
+                raise ValueError("Destinataires d’alerte invalides")
         return self
 
 
@@ -1753,6 +1772,48 @@ def update_planning_execution_reason(
     db.commit()
     db.refresh(reason)
     return _serialize_execution_reason(reason)
+
+
+@router.get("/alert-rules")
+def list_planning_alert_rules(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    rules = (
+        db.query(models.PlanningAlertRule)
+        .order_by(models.PlanningAlertRule.id)
+        .all()
+    )
+    return [serialize_alert_rule(rule) for rule in rules]
+
+
+@router.patch("/alert-rules/{rule_id}")
+def update_planning_alert_rule(
+    rule_id: int,
+    payload: PlanningAlertRuleUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_RESOURCE_MANAGE")
+    ),
+):
+    rule = db.get(models.PlanningAlertRule, rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Règle d’alerte introuvable")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(rule, field, value)
+    db.commit()
+    db.refresh(rule)
+    return serialize_alert_rule(rule)
+
+
+@router.post("/alerts/evaluate")
+def evaluate_planning_alerts(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_EDIT")),
+):
+    created = evaluate_operational_alerts(db)
+    db.commit()
+    return {"created": created}
 
 
 @router.get("/skills")
@@ -3855,6 +3916,9 @@ def transition_schedule_execution(
             action=payload.action,
             actor_name=actor_name,
         )
+    if payload.action == "BLOCK":
+        db.flush()
+        evaluate_operational_alerts(db, now=now)
     db.commit()
     db.refresh(state)
     history = (
@@ -3925,6 +3989,8 @@ def get_planning_notifications(
     user = _current_user_record(db, current_user)
     if not user:
         raise HTTPException(status_code=403, detail="Utilisateur introuvable")
+    evaluate_operational_alerts(db)
+    db.commit()
     query = db.query(models.PlanningNotification).filter(
         models.PlanningNotification.user_id == user.id
     )

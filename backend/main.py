@@ -1,7 +1,8 @@
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+import asyncio
 import os
 import time
 import uuid
@@ -24,6 +25,31 @@ from sqlalchemy.orm import Session
 get_db = database.get_db
 
 
+async def _planning_alert_worker():
+    interval_seconds = max(
+        15,
+        int(os.environ.get("PLANNING_ALERT_INTERVAL_SECONDS", "60")),
+    )
+    from .services.planning_alerts import evaluate_operational_alerts
+
+    while True:
+        await asyncio.sleep(interval_seconds)
+        db = database.SessionLocal()
+        try:
+            created = evaluate_operational_alerts(db)
+            db.commit()
+            if created:
+                logger.info(
+                    "planning_operational_alerts_created count=%s",
+                    created,
+                )
+        except Exception:
+            db.rollback()
+            logger.exception("planning_operational_alert_evaluation_failed")
+        finally:
+            db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialisation DB au démarrage (jamais à l'import du module).
@@ -41,7 +67,13 @@ async def lifespan(app: FastAPI):
     ensure_default_stations()
     from .seed_permissions import seed_permissions
     seed_permissions()
-    yield
+    alert_worker = asyncio.create_task(_planning_alert_worker())
+    try:
+        yield
+    finally:
+        alert_worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await alert_worker
 
 
 app = FastAPI(title="Atelier Menuiserie V1 Pro", lifespan=lifespan)

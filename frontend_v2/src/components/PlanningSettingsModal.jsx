@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+    BellRing,
     CalendarOff,
     Check,
     PauseCircle,
@@ -44,6 +45,18 @@ const initialExecutionReason = {
     requires_comment: false,
     sort_order: 100,
     is_active: true,
+};
+
+const ALERT_RULE_LABELS = {
+    BLOCKED: 'Tâche bloquée',
+    PAUSE_TOO_LONG: 'Pause prolongée',
+    DURATION_OVERRUN: 'Durée prévue dépassée',
+};
+
+const RECIPIENT_LABELS = {
+    RESPONSIBLE: 'Responsable de la tâche',
+    MANAGERS: 'Managers planning',
+    BOTH: 'Responsable et managers',
 };
 
 const initialClosure = () => {
@@ -117,6 +130,10 @@ export default function PlanningSettingsModal({
             })
         ).data,
     });
+    const alertRulesQuery = useQuery({
+        queryKey: ['planning-alert-rules'],
+        queryFn: async () => (await api.get('/v2/schedule/alert-rules')).data,
+    });
     const resourceUnavailabilitiesQuery = useQuery({
         queryKey: ['planning-resource-unavailabilities', selectedResourceId],
         queryFn: async () => (
@@ -167,6 +184,7 @@ export default function PlanningSettingsModal({
             queryClient.invalidateQueries({ queryKey: ['planning-closures'] }),
             queryClient.invalidateQueries({ queryKey: ['planning-execution-reasons'] }),
             queryClient.invalidateQueries({ queryKey: ['planning-execution-reasons-admin'] }),
+            queryClient.invalidateQueries({ queryKey: ['planning-alert-rules'] }),
             queryClient.invalidateQueries({ queryKey: ['schedule-meta'] }),
         ]);
         onChanged?.();
@@ -275,6 +293,13 @@ export default function PlanningSettingsModal({
         ),
         onSuccess: refresh,
     });
+    const updateAlertRuleMutation = useMutation({
+        mutationFn: async ({ id, payload }) => api.patch(
+            `/v2/schedule/alert-rules/${id}`,
+            payload,
+        ),
+        onSuccess: refresh,
+    });
     const error = skillsMutation.error
         || resourceMutation.error
         || resourceMembersMutation.error
@@ -283,7 +308,8 @@ export default function PlanningSettingsModal({
         || closureMutation.error
         || deleteClosureMutation.error
         || executionReasonMutation.error
-        || updateExecutionReasonMutation.error;
+        || updateExecutionReasonMutation.error
+        || updateAlertRuleMutation.error;
 
     const toggleSkill = (skill) => setSelectedSkills((current) => ({
         ...current,
@@ -338,6 +364,7 @@ export default function PlanningSettingsModal({
                         ['resources', Truck, 'Ressources'],
                         ['closures', CalendarOff, 'Fermetures'],
                         ['reasons', PauseCircle, 'Motifs d’arrêt'],
+                        ['alerts', BellRing, 'Alertes opérationnelles'],
                     ].map(([key, Icon, label]) => (
                         <button key={key} type="button" onClick={() => setTab(key)} className={`flex h-10 shrink-0 items-center gap-2 rounded-md px-4 text-sm font-black ${tab === key ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-white'}`}>
                             <Icon className="h-4 w-4" /> {label}
@@ -687,6 +714,97 @@ export default function PlanningSettingsModal({
                                     );
                                 })}
                             </section>
+                        </div>
+                    )}
+
+                    {tab === 'alerts' && (
+                        <div className="grid gap-4 lg:grid-cols-3">
+                            {(alertRulesQuery.data || []).map((rule) => (
+                                <section
+                                    key={rule.id}
+                                    className={`rounded-md border p-4 ${
+                                        rule.is_active
+                                            ? 'border-blue-200 bg-blue-50/40'
+                                            : 'border-slate-200 bg-slate-50'
+                                    }`}
+                                >
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div>
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">
+                                                {rule.code}
+                                            </p>
+                                            <h3 className="mt-1 font-black text-slate-950">
+                                                {ALERT_RULE_LABELS[rule.code] || rule.label}
+                                            </h3>
+                                        </div>
+                                        <label className="flex items-center gap-2 text-xs font-black text-slate-600">
+                                            <input
+                                                type="checkbox"
+                                                checked={Boolean(rule.is_active)}
+                                                onChange={(event) => updateAlertRuleMutation.mutate({
+                                                    id: rule.id,
+                                                    payload: { is_active: event.target.checked },
+                                                })}
+                                            />
+                                            Active
+                                        </label>
+                                    </div>
+                                    <p className="mt-2 min-h-10 text-xs font-semibold leading-5 text-slate-500">
+                                        {rule.description}
+                                    </p>
+                                    <div className="mt-4 grid gap-3">
+                                        {rule.code !== 'BLOCKED' && (
+                                            <label>
+                                                <FieldLabel>
+                                                    {rule.code === 'DURATION_OVERRUN'
+                                                        ? 'Tolérance après durée prévue'
+                                                        : 'Durée maximale de pause'}
+                                                </FieldLabel>
+                                                <div className="flex items-center gap-2">
+                                                    <input
+                                                        key={`${rule.id}-${rule.threshold_minutes}`}
+                                                        type="number"
+                                                        min="0"
+                                                        max="10080"
+                                                        defaultValue={rule.threshold_minutes}
+                                                        onBlur={(event) => {
+                                                            const value = Number(event.target.value);
+                                                            if (value !== Number(rule.threshold_minutes)) {
+                                                                updateAlertRuleMutation.mutate({
+                                                                    id: rule.id,
+                                                                    payload: { threshold_minutes: value },
+                                                                });
+                                                            }
+                                                        }}
+                                                        className="field"
+                                                    />
+                                                    <span className="text-xs font-black text-slate-500">min</span>
+                                                </div>
+                                            </label>
+                                        )}
+                                        <label>
+                                            <FieldLabel>Destinataires</FieldLabel>
+                                            <select
+                                                value={rule.recipient_mode}
+                                                onChange={(event) => updateAlertRuleMutation.mutate({
+                                                    id: rule.id,
+                                                    payload: { recipient_mode: event.target.value },
+                                                })}
+                                                className="field"
+                                            >
+                                                {Object.entries(RECIPIENT_LABELS).map(([value, label]) => (
+                                                    <option key={value} value={value}>{label}</option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                    </div>
+                                </section>
+                            ))}
+                            {!alertRulesQuery.data?.length && (
+                                <div className="col-span-full rounded-md border border-dashed border-slate-300 p-10 text-center text-sm font-bold text-slate-400">
+                                    Aucune règle d’alerte configurée.
+                                </div>
+                            )}
                         </div>
                     )}
 

@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from backend import models
 from backend.core.security import create_access_token
+from backend.services.planning_alerts import evaluate_operational_alerts
 
 
 def _admin_headers(session_factory):
@@ -106,6 +107,33 @@ def _post_task(
             "allow_conflict": allow_conflict,
         },
     )
+
+
+def _add_alert_rule(
+    session_factory,
+    *,
+    code,
+    threshold_minutes=0,
+    recipient_mode="RESPONSIBLE",
+):
+    db = session_factory()
+    try:
+        rule = models.PlanningAlertRule(
+            code=code,
+            label={
+                "BLOCKED": "Tâche bloquée",
+                "PAUSE_TOO_LONG": "Pause prolongée",
+                "DURATION_OVERRUN": "Durée prévue dépassée",
+            }[code],
+            threshold_minutes=threshold_minutes,
+            recipient_mode=recipient_mode,
+            is_active=True,
+        )
+        db.add(rule)
+        db.commit()
+        return rule.id
+    finally:
+        db.close()
 
 
 def test_schedule_creates_lists_and_cancels_task(isolated_client):
@@ -718,6 +746,201 @@ def test_schedule_executes_task_with_time_history_and_notifications(isolated_cli
         )
     finally:
         db.close()
+
+
+def test_blocked_task_alerts_responsible_once(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id = _create_worker(
+        session_factory,
+        "planning-blocked-worker",
+        "Nina",
+        "Atelier",
+        role="OPERATOR",
+    )
+    _add_alert_rule(session_factory, code="BLOCKED")
+    start = datetime(2026, 8, 10, 13, 0)
+    created = _post_task(
+        client,
+        headers,
+        title="Débit aluminium urgent",
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        assigned_user_id=worker_id,
+    )
+    assert created.status_code == 201, created.text
+    task_id = created.json()["source_id"]
+    execution_url = f"/v2/schedule/events/CALENDAR_TASK/{task_id}/execute"
+
+    blocked = client.post(
+        execution_url,
+        headers=headers,
+        json={
+            "action": "BLOCK",
+            "reason": "Profil fournisseur manquant",
+        },
+    )
+    assert blocked.status_code == 200, blocked.text
+
+    db = session_factory()
+    try:
+        alert = (
+            db.query(models.PlanningNotification)
+            .filter(
+                models.PlanningNotification.user_id == worker_id,
+                models.PlanningNotification.notification_type
+                == "OPERATIONAL_BLOCKED",
+            )
+            .one()
+        )
+        assert "Débit aluminium urgent" in alert.message
+        assert "Profil fournisseur manquant" in alert.message
+        assert evaluate_operational_alerts(db) == 0
+        db.commit()
+        assert (
+            db.query(models.PlanningNotification)
+            .filter(
+                models.PlanningNotification.user_id == worker_id,
+                models.PlanningNotification.notification_type
+                == "OPERATIONAL_BLOCKED",
+            )
+            .count()
+            == 1
+        )
+    finally:
+        db.close()
+
+
+def test_pause_and_duration_alerts_respect_thresholds_and_deduplicate(
+    isolated_client,
+):
+    _, session_factory = isolated_client
+    worker_id = _create_worker(
+        session_factory,
+        "planning-threshold-worker",
+        "Malo",
+        "Pose",
+        role="OPERATOR",
+    )
+    _add_alert_rule(
+        session_factory,
+        code="PAUSE_TOO_LONG",
+        threshold_minutes=30,
+    )
+    _add_alert_rule(
+        session_factory,
+        code="DURATION_OVERRUN",
+        threshold_minutes=15,
+    )
+    now = datetime(2026, 8, 11, 12, 0)
+
+    db = session_factory()
+    try:
+        paused_task = models.CalendarTask(
+            title="Préparer les vitrages",
+            start_at=now - timedelta(hours=2),
+            end_at=now - timedelta(hours=1),
+            assigned_user_id=worker_id,
+            created_by="test",
+        )
+        overrun_task = models.CalendarTask(
+            title="Pose chantier République",
+            start_at=now - timedelta(hours=2),
+            end_at=now - timedelta(hours=1),
+            assigned_user_id=worker_id,
+            created_by="test",
+        )
+        db.add_all([paused_task, overrun_task])
+        db.flush()
+        paused_state = models.ScheduleExecutionState(
+            source_type="CALENDAR_TASK",
+            source_id=paused_task.id,
+            status="PAUSED",
+            assigned_user_id=worker_id,
+            elapsed_minutes=20,
+            updated_by_name="test",
+        )
+        overrun_state = models.ScheduleExecutionState(
+            source_type="CALENDAR_TASK",
+            source_id=overrun_task.id,
+            status="IN_PROGRESS",
+            assigned_user_id=worker_id,
+            started_at=now - timedelta(minutes=90),
+            active_since=now - timedelta(minutes=90),
+            elapsed_minutes=0,
+            updated_by_name="test",
+        )
+        db.add_all([paused_state, overrun_state])
+        db.flush()
+        db.add(
+            models.ScheduleExecutionLog(
+                state_id=paused_state.id,
+                action="PAUSE",
+                previous_status="IN_PROGRESS",
+                current_status="PAUSED",
+                reason="Pause repas",
+                elapsed_minutes=20,
+                responsible_user_id=worker_id,
+                actor_name="test",
+                created_at=now - timedelta(minutes=40),
+            )
+        )
+        db.commit()
+
+        assert evaluate_operational_alerts(db, now=now) == 2
+        db.commit()
+        alerts = (
+            db.query(models.PlanningNotification)
+            .filter(
+                models.PlanningNotification.user_id == worker_id,
+                models.PlanningNotification.notification_type.in_(
+                    [
+                        "OPERATIONAL_PAUSE_TOO_LONG",
+                        "OPERATIONAL_DURATION_OVERRUN",
+                    ]
+                ),
+            )
+            .order_by(models.PlanningNotification.notification_type)
+            .all()
+        )
+        assert len(alerts) == 2
+        assert "40 min" in next(
+            alert.message
+            for alert in alerts
+            if alert.notification_type == "OPERATIONAL_PAUSE_TOO_LONG"
+        )
+        assert "90 min" in next(
+            alert.message
+            for alert in alerts
+            if alert.notification_type == "OPERATIONAL_DURATION_OVERRUN"
+        )
+        assert evaluate_operational_alerts(db, now=now) == 0
+    finally:
+        db.close()
+
+
+def test_admin_updates_operational_alert_rule(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    rule_id = _add_alert_rule(
+        session_factory,
+        code="PAUSE_TOO_LONG",
+        threshold_minutes=30,
+    )
+
+    response = client.patch(
+        f"/v2/schedule/alert-rules/{rule_id}",
+        headers=headers,
+        json={
+            "threshold_minutes": 45,
+            "recipient_mode": "managers",
+            "is_active": False,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["threshold_minutes"] == 45
+    assert response.json()["recipient_mode"] == "MANAGERS"
+    assert response.json()["is_active"] is False
 
 
 def test_admin_manages_dynamic_execution_reasons(isolated_client):

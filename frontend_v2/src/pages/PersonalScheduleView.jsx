@@ -247,6 +247,9 @@ export default function PersonalScheduleView({
         || currentUser?.name
         || currentUser?.username
         || 'Mon planning';
+    const operationalNotifications = notifications.filter(
+        (item) => item.notification_type?.startsWith('OPERATIONAL_'),
+    );
 
     return (
         <main className="min-h-[calc(100vh-64px)] bg-slate-50 pb-[max(1.5rem,env(safe-area-inset-bottom))] text-slate-950">
@@ -290,12 +293,24 @@ export default function PersonalScheduleView({
 
             <div className="mx-auto max-w-5xl">
                 {notifications.length > 0 && (
-                    <section className="border-b border-amber-200 bg-amber-50 px-4 py-3 sm:px-6 lg:px-8">
-                        <p className="flex items-center gap-2 text-xs font-black text-amber-900">
+                    <section className={`border-b px-4 py-3 sm:px-6 lg:px-8 ${
+                        operationalNotifications.length
+                            ? 'border-red-200 bg-red-50'
+                            : 'border-amber-200 bg-amber-50'
+                    }`}>
+                        <p className={`flex items-center gap-2 text-xs font-black ${
+                            operationalNotifications.length ? 'text-red-900' : 'text-amber-900'
+                        }`}>
                             <Bell className="h-4 w-4" />
-                            {notifications.length} nouvelle{notifications.length > 1 ? 's' : ''} affectation{notifications.length > 1 ? 's' : ''} ou modification{notifications.length > 1 ? 's' : ''}
+                            {operationalNotifications.length
+                                ? `${operationalNotifications.length} alerte${operationalNotifications.length > 1 ? 's' : ''} opérationnelle${operationalNotifications.length > 1 ? 's' : ''}`
+                                : `${notifications.length} nouvelle${notifications.length > 1 ? 's' : ''} affectation${notifications.length > 1 ? 's' : ''} ou modification${notifications.length > 1 ? 's' : ''}`}
                         </p>
-                        <p className="mt-1 line-clamp-2 text-xs font-semibold text-amber-800">{notifications[0]?.message}</p>
+                        <p className={`mt-1 line-clamp-2 text-xs font-semibold ${
+                            operationalNotifications.length ? 'text-red-800' : 'text-amber-800'
+                        }`}>
+                            {(operationalNotifications[0] || notifications[0])?.message}
+                        </p>
                     </section>
                 )}
                 {!loading && nextTask && (

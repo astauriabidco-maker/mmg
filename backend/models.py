@@ -592,6 +592,20 @@ class PlanningExecutionReason(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
 
+class PlanningAlertRule(Base):
+    __tablename__ = "planning_alert_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, nullable=False, unique=True, index=True)
+    label = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    threshold_minutes = Column(Integer, nullable=False, default=0)
+    recipient_mode = Column(String, nullable=False, default="BOTH")
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class ScheduleExecutionState(Base):
     __tablename__ = "schedule_execution_states"
     __table_args__ = (
