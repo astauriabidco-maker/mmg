@@ -720,6 +720,116 @@ def test_schedule_executes_task_with_time_history_and_notifications(isolated_cli
         db.close()
 
 
+def test_admin_manages_dynamic_execution_reasons(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+
+    created = client.post(
+        "/v2/schedule/execution-reasons",
+        headers=headers,
+        json={
+            "action": "PAUSE",
+            "code": "WAITING_MANAGER",
+            "label": "Attente responsable",
+            "description": "Validation du responsable nécessaire avant reprise.",
+            "requires_comment": True,
+            "sort_order": 25,
+        },
+    )
+    assert created.status_code == 201, created.text
+    reason_id = created.json()["id"]
+    assert created.json()["code"] == "WAITING_MANAGER"
+    assert created.json()["requires_comment"] is True
+
+    active = client.get(
+        "/v2/schedule/execution-reasons",
+        headers=headers,
+    )
+    assert active.status_code == 200, active.text
+    assert [reason["id"] for reason in active.json()] == [reason_id]
+
+    deactivated = client.patch(
+        f"/v2/schedule/execution-reasons/{reason_id}",
+        headers=headers,
+        json={"is_active": False, "label": "Attente validation responsable"},
+    )
+    assert deactivated.status_code == 200, deactivated.text
+    assert deactivated.json()["is_active"] is False
+
+    active = client.get(
+        "/v2/schedule/execution-reasons",
+        headers=headers,
+    )
+    assert active.json() == []
+
+    all_reasons = client.get(
+        "/v2/schedule/execution-reasons",
+        headers=headers,
+        params={"include_inactive": True},
+    )
+    assert all_reasons.status_code == 200, all_reasons.text
+    assert all_reasons.json()[0]["label"] == "Attente validation responsable"
+
+
+def test_execution_uses_dynamic_reason_and_requires_detail(isolated_client):
+    client, session_factory = isolated_client
+    headers = _admin_headers(session_factory)
+    worker_id, _ = _worker_and_client(session_factory)
+    start = datetime(2026, 8, 10, 14, 0)
+    task = _post_task(
+        client,
+        headers,
+        title="Contrôler dossier technique",
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        assigned_user_id=worker_id,
+    ).json()
+    execution_url = (
+        f"/v2/schedule/events/CALENDAR_TASK/{task['source_id']}/execute"
+    )
+    reason = client.post(
+        "/v2/schedule/execution-reasons",
+        headers=headers,
+        json={
+            "action": "PAUSE",
+            "code": "OTHER",
+            "label": "Autre motif",
+            "requires_comment": True,
+        },
+    )
+    assert reason.status_code == 201, reason.text
+    assert client.post(
+        execution_url,
+        headers=headers,
+        json={"action": "START"},
+    ).status_code == 200
+
+    missing_detail = client.post(
+        execution_url,
+        headers=headers,
+        json={"action": "PAUSE", "reason_code": "OTHER"},
+    )
+    assert missing_detail.status_code == 422
+
+    paused = client.post(
+        execution_url,
+        headers=headers,
+        json={
+            "action": "PAUSE",
+            "reason_code": "OTHER",
+            "reason": "Réunion sécurité imprévue",
+        },
+    )
+    assert paused.status_code == 200, paused.text
+    payload = paused.json()
+    assert payload["status"] == "PAUSED"
+    assert payload["last_reason_code"] == "OTHER"
+    assert payload["last_reason_label"] == "Autre motif"
+    assert payload["history"][0]["reason_code"] == "OTHER"
+    assert payload["history"][0]["reason_label"] == "Autre motif"
+    assert payload["history"][0]["reason"] == "Réunion sécurité imprévue"
+
+
 def test_operator_executes_only_assigned_task(isolated_client):
     client, session_factory = isolated_client
     headers = _admin_headers(session_factory)

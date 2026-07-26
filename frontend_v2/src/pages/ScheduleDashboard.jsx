@@ -249,7 +249,11 @@ export default function ScheduleDashboard({ initialSettingsTab = null, onSetting
             if (onSettingsClosed) onSettingsClosed();
             return;
         }
-        setSettingsTab(['skills', 'resources', 'closures'].includes(initialSettingsTab) ? initialSettingsTab : 'skills');
+        setSettingsTab(
+            ['skills', 'resources', 'closures', 'reasons'].includes(initialSettingsTab)
+                ? initialSettingsTab
+                : 'skills',
+        );
         setSettingsOpen(true);
     }, [
         initialSettingsTab,
@@ -542,7 +546,7 @@ export default function ScheduleDashboard({ initialSettingsTab = null, onSetting
                                     }}
                                     className="flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50"
                                 >
-                                    <Settings2 className="h-4 w-4" /> Compétences & ressources
+                                    <Settings2 className="h-4 w-4" /> Référentiels planning
                                 </button>
                             )}
                             <button
@@ -1111,6 +1115,7 @@ function ExecutionPanel({ event, users = [] }) {
     const queryClient = useQueryClient();
     const [pendingAction, setPendingAction] = useState(null);
     const [transitionForm, setTransitionForm] = useState({
+        reason_code: '',
         reason: '',
         note: '',
         time_spent_minutes: '',
@@ -1126,6 +1131,14 @@ function ExecutionPanel({ event, users = [] }) {
         ).data,
         enabled: EXECUTABLE_SOURCES.has(event.source_type),
     });
+    const reasonsQuery = useQuery({
+        queryKey: ['planning-execution-reasons'],
+        queryFn: async () => (
+            await api.get('/v2/schedule/execution-reasons', { timeout: 10000 })
+        ).data,
+        enabled: EXECUTABLE_SOURCES.has(event.source_type),
+        staleTime: 5 * 60 * 1000,
+    });
     const execution = executionQuery.data;
     const finishTransition = (data) => {
         queryClient.setQueryData(
@@ -1136,6 +1149,7 @@ function ExecutionPanel({ event, users = [] }) {
         queryClient.invalidateQueries({ queryKey: ['planning-notifications'] });
         setPendingAction(null);
         setTransitionForm({
+            reason_code: '',
             reason: '',
             note: '',
             time_spent_minutes: '',
@@ -1171,6 +1185,7 @@ function ExecutionPanel({ event, users = [] }) {
     const beginAction = (action) => {
         setPendingAction(action);
         setTransitionForm({
+            reason_code: '',
             reason: '',
             note: '',
             time_spent_minutes: action === 'COMPLETE'
@@ -1184,6 +1199,7 @@ function ExecutionPanel({ event, users = [] }) {
     const submitTransition = () => {
         transitionMutation.mutate({
             action: pendingAction,
+            reason_code: transitionForm.reason_code || null,
             reason: transitionForm.reason || null,
             note: transitionForm.note || null,
             time_spent_minutes: transitionForm.time_spent_minutes === ''
@@ -1216,6 +1232,12 @@ function ExecutionPanel({ event, users = [] }) {
         { action: 'COMPLETE', label: 'Terminer', icon: CheckCircle2, tone: 'bg-emerald-600 text-white' },
     ].filter((item) => execution.allowed_actions.includes(item.action));
     const actionLabel = actionButtons.find((item) => item.action === pendingAction)?.label;
+    const availableReasons = (reasonsQuery.data || []).filter(
+        (reason) => reason.action === pendingAction,
+    );
+    const selectedReason = availableReasons.find(
+        (reason) => reason.code === transitionForm.reason_code,
+    );
     const transitionError = transitionMutation.error;
     const errorDetail = transitionError?.response?.data?.detail
         || (
@@ -1294,15 +1316,61 @@ function ExecutionPanel({ event, users = [] }) {
                             </label>
                         )}
                         {(pendingAction === 'PAUSE' || pendingAction === 'BLOCK') && (
-                            <label className="sm:col-span-2">
-                                <FieldLabel text="Motif obligatoire" />
-                                <input
-                                    value={transitionForm.reason}
-                                    onChange={(e) => setTransitionForm((current) => ({ ...current, reason: e.target.value }))}
-                                    placeholder={pendingAction === 'BLOCK' ? 'Pièce manquante, accès impossible…' : 'Pourquoi la tâche est-elle interrompue ?'}
-                                    className="field"
-                                />
-                            </label>
+                            <>
+                                <label className="sm:col-span-2">
+                                    <FieldLabel text={pendingAction === 'BLOCK' ? 'Motif du blocage' : 'Motif de la pause'} />
+                                    <select
+                                        value={transitionForm.reason_code}
+                                        onChange={(e) => setTransitionForm((current) => ({
+                                            ...current,
+                                            reason_code: e.target.value,
+                                            reason: '',
+                                        }))}
+                                        className="field"
+                                        disabled={reasonsQuery.isLoading || reasonsQuery.isError}
+                                    >
+                                        <option value="">
+                                            {reasonsQuery.isLoading
+                                                ? 'Chargement des motifs…'
+                                                : 'Sélectionner un motif…'}
+                                        </option>
+                                        {availableReasons.map((reason) => (
+                                            <option key={reason.id} value={reason.code}>
+                                                {reason.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {selectedReason?.description && (
+                                        <span className="mt-1.5 block text-xs font-semibold text-slate-500">
+                                            {selectedReason.description}
+                                        </span>
+                                    )}
+                                    {reasonsQuery.isError && (
+                                        <button
+                                            type="button"
+                                            onClick={() => reasonsQuery.refetch()}
+                                            className="mt-2 text-xs font-black text-red-700 underline"
+                                        >
+                                            Impossible de charger les motifs. Réessayer
+                                        </button>
+                                    )}
+                                </label>
+                                {selectedReason && (
+                                    <label className="sm:col-span-2">
+                                        <FieldLabel
+                                            text={selectedReason.requires_comment
+                                                ? 'Précision obligatoire'
+                                                : 'Précision facultative'}
+                                        />
+                                        <input
+                                            value={transitionForm.reason}
+                                            onChange={(e) => setTransitionForm((current) => ({ ...current, reason: e.target.value }))}
+                                            placeholder="Contexte utile pour la reprise et la traçabilité…"
+                                            className="field"
+                                        />
+                                    </label>
+                                )}
+                            </>
                         )}
                         {pendingAction === 'COMPLETE' && (
                             <label>
@@ -1336,7 +1404,13 @@ function ExecutionPanel({ event, users = [] }) {
                         onClick={submitTransition}
                         disabled={transitionMutation.isPending || (
                             ['PAUSE', 'BLOCK'].includes(pendingAction)
-                            && !transitionForm.reason.trim()
+                            && (
+                                !transitionForm.reason_code
+                                || (
+                                    selectedReason?.requires_comment
+                                    && !transitionForm.reason.trim()
+                                )
+                            )
                         )}
                         className="mt-3 h-10 rounded-md bg-slate-950 px-5 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -1354,9 +1428,9 @@ function ExecutionPanel({ event, users = [] }) {
                                     {executionActionLabel(item.action)}
                                 </p>
                                 <p className="mt-1 text-sm font-bold text-slate-800">{item.actor_name}</p>
-                                {(item.reason || item.note) && (
+                                {(item.reason_label || item.reason || item.note) && (
                                     <p className="mt-0.5 text-xs font-semibold text-slate-500">
-                                        {[item.reason, item.note].filter(Boolean).join(' · ')}
+                                        {[item.reason_label, item.reason, item.note].filter(Boolean).join(' · ')}
                                     </p>
                                 )}
                             </div>

@@ -152,6 +152,7 @@ class ScheduleEventUpdate(BaseModel):
 
 class ScheduleExecutionTransition(BaseModel):
     action: str
+    reason_code: Optional[str] = Field(default=None, max_length=80)
     reason: Optional[str] = Field(default=None, max_length=1000)
     note: Optional[str] = Field(default=None, max_length=4000)
     time_spent_minutes: Optional[int] = Field(default=None, ge=0, le=100000)
@@ -161,12 +162,47 @@ class ScheduleExecutionTransition(BaseModel):
     @model_validator(mode="after")
     def validate_transition(self):
         self.action = self.action.strip().upper()
+        self.reason_code = (self.reason_code or "").strip().upper() or None
         self.reason = (self.reason or "").strip() or None
         self.note = (self.note or "").strip() or None
         if self.action not in EXECUTION_ACTIONS:
             raise ValueError("Action d'exécution invalide")
-        if self.action in {"PAUSE", "BLOCK"} and not self.reason:
-            raise ValueError("Un motif est requis pour mettre en pause ou bloquer")
+        return self
+
+
+class PlanningExecutionReasonCreate(BaseModel):
+    action: str
+    code: str = Field(min_length=2, max_length=80)
+    label: str = Field(min_length=2, max_length=160)
+    description: Optional[str] = Field(default=None, max_length=1000)
+    requires_comment: bool = False
+    sort_order: int = Field(default=100, ge=0, le=10000)
+    is_active: bool = True
+
+    @model_validator(mode="after")
+    def normalize_values(self):
+        self.action = self.action.strip().upper()
+        self.code = self.code.strip().upper().replace(" ", "_")
+        self.label = self.label.strip()
+        self.description = (self.description or "").strip() or None
+        if self.action not in {"PAUSE", "BLOCK"}:
+            raise ValueError("Le motif doit concerner une pause ou un blocage")
+        return self
+
+
+class PlanningExecutionReasonUpdate(BaseModel):
+    label: Optional[str] = Field(default=None, min_length=2, max_length=160)
+    description: Optional[str] = Field(default=None, max_length=1000)
+    requires_comment: Optional[bool] = None
+    sort_order: Optional[int] = Field(default=None, ge=0, le=10000)
+    is_active: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def normalize_values(self):
+        if self.label is not None:
+            self.label = self.label.strip()
+        if self.description is not None:
+            self.description = self.description.strip() or None
         return self
 
 
@@ -1103,6 +1139,45 @@ def _execution_allowed_actions(status_value: str) -> list[str]:
     ]
 
 
+def _resolve_execution_reason(
+    db: Session,
+    *,
+    action: str,
+    reason_code: Optional[str],
+    comment: Optional[str],
+) -> Optional[models.PlanningExecutionReason]:
+    if action not in {"PAUSE", "BLOCK"}:
+        return None
+    if not reason_code:
+        # Compatibility with clients deployed before the dynamic reason catalog.
+        if comment:
+            return None
+        raise HTTPException(
+            status_code=422,
+            detail="Sélectionnez un motif de pause ou de blocage.",
+        )
+    reason = (
+        db.query(models.PlanningExecutionReason)
+        .filter(
+            models.PlanningExecutionReason.action == action,
+            models.PlanningExecutionReason.code == reason_code,
+            models.PlanningExecutionReason.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+    if not reason:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce motif n’existe pas ou n’est plus actif.",
+        )
+    if reason.requires_comment and not comment:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Une précision est obligatoire pour « {reason.label} ».",
+        )
+    return reason
+
+
 def _execution_payload(
     state: Optional[models.ScheduleExecutionState],
     *,
@@ -1134,6 +1209,8 @@ def _execution_payload(
         "started_at": state.started_at if state else None,
         "completed_at": state.completed_at if state else None,
         "elapsed_minutes": _execution_elapsed_minutes(state) if state else 0,
+        "last_reason_code": state.last_reason_code if state else None,
+        "last_reason_label": state.last_reason_label if state else None,
         "last_reason": state.last_reason if state else None,
         "last_note": state.last_note if state else None,
         "can_execute": can_execute,
@@ -1147,6 +1224,8 @@ def _execution_payload(
                 "action": item.action,
                 "previous_status": item.previous_status,
                 "current_status": item.current_status,
+                "reason_code": item.reason_code,
+                "reason_label": item.reason_label,
                 "reason": item.reason,
                 "note": item.note,
                 "elapsed_minutes": item.elapsed_minutes,
@@ -1339,6 +1418,24 @@ def _serialize_skill(skill: models.PlanningSkill) -> dict:
         "description": skill.description,
         "requires_expiry": skill.requires_expiry,
         "is_active": skill.is_active,
+    }
+
+
+def _serialize_execution_reason(
+    reason: models.PlanningExecutionReason,
+) -> dict:
+    return {
+        "id": reason.id,
+        "action": reason.action,
+        "code": reason.code,
+        "label": reason.label,
+        "description": reason.description,
+        "requires_comment": reason.requires_comment,
+        "sort_order": reason.sort_order,
+        "is_active": reason.is_active,
+        "created_by": reason.created_by,
+        "created_at": reason.created_at,
+        "updated_at": reason.updated_at,
     }
 
 
@@ -1570,6 +1667,92 @@ def delete_user_absence(
     db.delete(absence)
     db.commit()
     return {"status": "deleted"}
+
+
+@router.get("/execution-reasons")
+def list_planning_execution_reasons(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permissions("PLANNING_VIEW")),
+):
+    if include_inactive and not _has_permission(
+        db,
+        current_user,
+        "PLANNING_RESOURCE_MANAGE",
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Les motifs inactifs sont réservés aux responsables planning.",
+        )
+    query = db.query(models.PlanningExecutionReason)
+    if not include_inactive:
+        query = query.filter(
+            models.PlanningExecutionReason.is_active == True  # noqa: E712
+        )
+    reasons = query.order_by(
+        models.PlanningExecutionReason.action,
+        models.PlanningExecutionReason.sort_order,
+        models.PlanningExecutionReason.label,
+    ).all()
+    return [_serialize_execution_reason(reason) for reason in reasons]
+
+
+@router.post("/execution-reasons", status_code=status.HTTP_201_CREATED)
+def create_planning_execution_reason(
+    payload: PlanningExecutionReasonCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_RESOURCE_MANAGE")
+    ),
+):
+    existing = (
+        db.query(models.PlanningExecutionReason)
+        .filter(
+            models.PlanningExecutionReason.action == payload.action,
+            models.PlanningExecutionReason.code == payload.code,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="Ce code de motif existe déjà pour cette action.",
+        )
+    _, actor_name = _actor_identity(db, current_user)
+    reason = models.PlanningExecutionReason(
+        action=payload.action,
+        code=payload.code,
+        label=payload.label,
+        description=payload.description,
+        requires_comment=payload.requires_comment,
+        sort_order=payload.sort_order,
+        is_active=payload.is_active,
+        created_by=actor_name,
+    )
+    db.add(reason)
+    db.commit()
+    db.refresh(reason)
+    return _serialize_execution_reason(reason)
+
+
+@router.patch("/execution-reasons/{reason_id}")
+def update_planning_execution_reason(
+    reason_id: int,
+    payload: PlanningExecutionReasonUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(
+        require_permissions("PLANNING_RESOURCE_MANAGE")
+    ),
+):
+    reason = db.get(models.PlanningExecutionReason, reason_id)
+    if not reason:
+        raise HTTPException(status_code=404, detail="Motif introuvable")
+    changes = payload.model_dump(exclude_unset=True)
+    for field, value in changes.items():
+        setattr(reason, field, value)
+    db.commit()
+    db.refresh(reason)
+    return _serialize_execution_reason(reason)
 
 
 @router.get("/skills")
@@ -3555,6 +3738,23 @@ def transition_schedule_execution(
                 detail="La réaffectation nécessite le droit de modifier le planning.",
             )
     target_user = _active_user(db, target_user_id)
+    execution_reason = _resolve_execution_reason(
+        db,
+        action=payload.action,
+        reason_code=payload.reason_code,
+        comment=payload.reason,
+    )
+    synchronized_reason = (
+        " · ".join(
+            part
+            for part in [
+                execution_reason.label if execution_reason else None,
+                payload.reason,
+            ]
+            if part
+        )
+        or None
+    )
 
     now = utcnow()
     actor_id, actor_name = _actor_identity(db, current_user)
@@ -3599,6 +3799,8 @@ def transition_schedule_execution(
 
     if payload.time_spent_minutes is not None:
         state.elapsed_minutes = payload.time_spent_minutes
+    state.last_reason_code = execution_reason.code if execution_reason else None
+    state.last_reason_label = execution_reason.label if execution_reason else None
     state.last_reason = payload.reason
     state.last_note = payload.note
     state.updated_by_user_id = actor_id
@@ -3609,7 +3811,7 @@ def transition_schedule_execution(
         source_type,
         record,
         state.status,
-        payload.reason,
+        synchronized_reason,
     )
     db.add(
         models.ScheduleExecutionLog(
@@ -3617,6 +3819,8 @@ def transition_schedule_execution(
             action=payload.action,
             previous_status=previous_status,
             current_status=state.status,
+            reason_code=execution_reason.code if execution_reason else None,
+            reason_label=execution_reason.label if execution_reason else None,
             reason=payload.reason,
             note=payload.note,
             elapsed_minutes=state.elapsed_minutes,

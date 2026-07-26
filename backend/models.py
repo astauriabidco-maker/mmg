@@ -563,6 +563,35 @@ class PlanningNotification(Base):
     task = relationship("CalendarTask", back_populates="notifications")
 
 
+class PlanningExecutionReason(Base):
+    __tablename__ = "planning_execution_reasons"
+    __table_args__ = (
+        UniqueConstraint(
+            "action",
+            "code",
+            name="uq_planning_execution_reasons_action_code",
+        ),
+        Index(
+            "ix_planning_execution_reasons_action_active_order",
+            "action",
+            "is_active",
+            "sort_order",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    action = Column(String, nullable=False, index=True)
+    code = Column(String, nullable=False, index=True)
+    label = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    requires_comment = Column(Boolean, nullable=False, default=False)
+    sort_order = Column(Integer, nullable=False, default=100)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_by = Column(String, nullable=False, default="Système")
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class ScheduleExecutionState(Base):
     __tablename__ = "schedule_execution_states"
     __table_args__ = (
@@ -592,6 +621,8 @@ class ScheduleExecutionState(Base):
     active_since = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     elapsed_minutes = Column(Integer, nullable=False, default=0)
+    last_reason_code = Column(String, nullable=True)
+    last_reason_label = Column(String, nullable=True)
     last_reason = Column(Text, nullable=True)
     last_note = Column(Text, nullable=True)
     updated_by_user_id = Column(
@@ -633,6 +664,8 @@ class ScheduleExecutionLog(Base):
     action = Column(String, nullable=False, index=True)
     previous_status = Column(String, nullable=False)
     current_status = Column(String, nullable=False)
+    reason_code = Column(String, nullable=True)
+    reason_label = Column(String, nullable=True)
     reason = Column(Text, nullable=True)
     note = Column(Text, nullable=True)
     elapsed_minutes = Column(Integer, nullable=False, default=0)

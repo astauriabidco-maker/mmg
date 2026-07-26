@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
     CalendarOff,
     Check,
+    PauseCircle,
     Plus,
     Save,
     Settings2,
@@ -32,6 +33,16 @@ const initialResource = {
     capacity: 1,
     status: 'ACTIVE',
     timezone: 'Europe/Paris',
+    is_active: true,
+};
+
+const initialExecutionReason = {
+    action: 'PAUSE',
+    code: '',
+    label: '',
+    description: '',
+    requires_comment: false,
+    sort_order: 100,
     is_active: true,
 };
 
@@ -84,6 +95,7 @@ export default function PlanningSettingsModal({
     const [selectedResourceMembers, setSelectedResourceMembers] = useState({});
     const [unavailabilityForm, setUnavailabilityForm] = useState(initialUnavailability);
     const [closureForm, setClosureForm] = useState(initialClosure);
+    const [executionReasonForm, setExecutionReasonForm] = useState(initialExecutionReason);
 
     const skillsQuery = useQuery({
         queryKey: ['planning-skills'],
@@ -96,6 +108,14 @@ export default function PlanningSettingsModal({
     const closuresQuery = useQuery({
         queryKey: ['planning-closures'],
         queryFn: async () => (await api.get('/v2/schedule/closures')).data,
+    });
+    const executionReasonsQuery = useQuery({
+        queryKey: ['planning-execution-reasons-admin'],
+        queryFn: async () => (
+            await api.get('/v2/schedule/execution-reasons', {
+                params: { include_inactive: true },
+            })
+        ).data,
     });
     const resourceUnavailabilitiesQuery = useQuery({
         queryKey: ['planning-resource-unavailabilities', selectedResourceId],
@@ -145,6 +165,8 @@ export default function PlanningSettingsModal({
             queryClient.invalidateQueries({ queryKey: ['planning-skills'] }),
             queryClient.invalidateQueries({ queryKey: ['planning-resources'] }),
             queryClient.invalidateQueries({ queryKey: ['planning-closures'] }),
+            queryClient.invalidateQueries({ queryKey: ['planning-execution-reasons'] }),
+            queryClient.invalidateQueries({ queryKey: ['planning-execution-reasons-admin'] }),
             queryClient.invalidateQueries({ queryKey: ['schedule-meta'] }),
         ]);
         onChanged?.();
@@ -230,13 +252,38 @@ export default function PlanningSettingsModal({
         mutationFn: async (id) => api.delete(`/v2/schedule/closures/${id}`),
         onSuccess: refresh,
     });
+    const executionReasonMutation = useMutation({
+        mutationFn: async () => api.post(
+            '/v2/schedule/execution-reasons',
+            {
+                ...executionReasonForm,
+                code: executionReasonForm.code.trim(),
+                label: executionReasonForm.label.trim(),
+                description: executionReasonForm.description.trim() || null,
+                sort_order: Number(executionReasonForm.sort_order),
+            },
+        ),
+        onSuccess: async () => {
+            setExecutionReasonForm(initialExecutionReason);
+            await refresh();
+        },
+    });
+    const updateExecutionReasonMutation = useMutation({
+        mutationFn: async ({ id, payload }) => api.patch(
+            `/v2/schedule/execution-reasons/${id}`,
+            payload,
+        ),
+        onSuccess: refresh,
+    });
     const error = skillsMutation.error
         || resourceMutation.error
         || resourceMembersMutation.error
         || unavailabilityMutation.error
         || deleteUnavailabilityMutation.error
         || closureMutation.error
-        || deleteClosureMutation.error;
+        || deleteClosureMutation.error
+        || executionReasonMutation.error
+        || updateExecutionReasonMutation.error;
 
     const toggleSkill = (skill) => setSelectedSkills((current) => ({
         ...current,
@@ -280,7 +327,7 @@ export default function PlanningSettingsModal({
                 <header className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
                     <div>
                         <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-blue-600"><Settings2 className="h-4 w-4" /> Paramètres planning</p>
-                        <h2 className="mt-1 text-xl font-black text-slate-950">Compétences, ressources et fermetures</h2>
+                        <h2 className="mt-1 text-xl font-black text-slate-950">Référentiels du planning</h2>
                     </div>
                     <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-md hover:bg-slate-100" title="Fermer"><X className="h-5 w-5" /></button>
                 </header>
@@ -290,6 +337,7 @@ export default function PlanningSettingsModal({
                         ['skills', UserRoundCheck, 'Compétences équipes'],
                         ['resources', Truck, 'Ressources'],
                         ['closures', CalendarOff, 'Fermetures'],
+                        ['reasons', PauseCircle, 'Motifs d’arrêt'],
                     ].map(([key, Icon, label]) => (
                         <button key={key} type="button" onClick={() => setTab(key)} className={`flex h-10 shrink-0 items-center gap-2 rounded-md px-4 text-sm font-black ${tab === key ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-white'}`}>
                             <Icon className="h-4 w-4" /> {label}
@@ -455,6 +503,189 @@ export default function PlanningSettingsModal({
                                     ))}
                                     {!closuresQuery.data?.length && <p className="p-8 text-center text-sm font-bold text-slate-400">Aucune fermeture enregistrée.</p>}
                                 </div>
+                            </section>
+                        </div>
+                    )}
+
+                    {tab === 'reasons' && (
+                        <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
+                            <section className="rounded-md border border-slate-200 bg-slate-50 p-4">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">
+                                    Nouveau motif
+                                </p>
+                                <h3 className="mt-1 font-black text-slate-900">
+                                    Ajouter un choix opérateur
+                                </h3>
+                                <div className="mt-4 grid gap-3">
+                                    <label>
+                                        <FieldLabel>Action concernée</FieldLabel>
+                                        <select
+                                            value={executionReasonForm.action}
+                                            onChange={(event) => setExecutionReasonForm((current) => ({
+                                                ...current,
+                                                action: event.target.value,
+                                            }))}
+                                            className="field"
+                                        >
+                                            <option value="PAUSE">Mise en pause</option>
+                                            <option value="BLOCK">Blocage</option>
+                                        </select>
+                                    </label>
+                                    <label>
+                                        <FieldLabel>Libellé visible</FieldLabel>
+                                        <input
+                                            value={executionReasonForm.label}
+                                            onChange={(event) => setExecutionReasonForm((current) => ({
+                                                ...current,
+                                                label: event.target.value,
+                                                code: current.code || event.target.value
+                                                    .normalize('NFD')
+                                                    .replace(/[\u0300-\u036f]/g, '')
+                                                    .replace(/[^A-Za-z0-9]+/g, '_')
+                                                    .replace(/^_|_$/g, '')
+                                                    .toUpperCase(),
+                                            }))}
+                                            placeholder="Attente validation client"
+                                            className="field"
+                                        />
+                                    </label>
+                                    <label>
+                                        <FieldLabel>Code interne</FieldLabel>
+                                        <input
+                                            value={executionReasonForm.code}
+                                            onChange={(event) => setExecutionReasonForm((current) => ({
+                                                ...current,
+                                                code: event.target.value.toUpperCase(),
+                                            }))}
+                                            placeholder="WAITING_CLIENT"
+                                            className="field font-mono"
+                                        />
+                                    </label>
+                                    <label>
+                                        <FieldLabel>Description opérateur</FieldLabel>
+                                        <textarea
+                                            value={executionReasonForm.description}
+                                            onChange={(event) => setExecutionReasonForm((current) => ({
+                                                ...current,
+                                                description: event.target.value,
+                                            }))}
+                                            rows="3"
+                                            placeholder="Quand utiliser ce motif ?"
+                                            className="field min-h-24 py-3"
+                                        />
+                                    </label>
+                                    <label>
+                                        <FieldLabel>Ordre d’affichage</FieldLabel>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            value={executionReasonForm.sort_order}
+                                            onChange={(event) => setExecutionReasonForm((current) => ({
+                                                ...current,
+                                                sort_order: event.target.value,
+                                            }))}
+                                            className="field"
+                                        />
+                                    </label>
+                                    <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-white p-3 text-sm font-bold text-slate-700">
+                                        <input
+                                            type="checkbox"
+                                            checked={executionReasonForm.requires_comment}
+                                            onChange={(event) => setExecutionReasonForm((current) => ({
+                                                ...current,
+                                                requires_comment: event.target.checked,
+                                            }))}
+                                            className="mt-0.5"
+                                        />
+                                        <span>
+                                            Exiger une précision
+                                            <span className="mt-0.5 block text-xs font-semibold text-slate-500">
+                                                Utile pour « Autre » ou un cas nécessitant une justification.
+                                            </span>
+                                        </span>
+                                    </label>
+                                    <button
+                                        type="button"
+                                        onClick={() => executionReasonMutation.mutate()}
+                                        disabled={
+                                            !executionReasonForm.code.trim()
+                                            || !executionReasonForm.label.trim()
+                                            || executionReasonMutation.isPending
+                                        }
+                                        className="flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-black text-white disabled:opacity-40"
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        Ajouter le motif
+                                    </button>
+                                </div>
+                            </section>
+
+                            <section className="rounded-md border border-slate-200">
+                                <div className="border-b border-slate-200 px-4 py-3">
+                                    <h3 className="font-black text-slate-900">Motifs proposés aux équipes</h3>
+                                    <p className="mt-1 text-xs font-semibold text-slate-500">
+                                        Les motifs inactifs restent dans l’historique mais ne sont plus proposés.
+                                    </p>
+                                </div>
+                                {['PAUSE', 'BLOCK'].map((action) => {
+                                    const rows = (executionReasonsQuery.data || []).filter(
+                                        (reason) => reason.action === action,
+                                    );
+                                    return (
+                                        <div key={action} className="border-b border-slate-100 last:border-b-0">
+                                            <div className="bg-slate-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                                {action === 'PAUSE' ? 'Mise en pause' : 'Blocage'}
+                                            </div>
+                                            <div className="divide-y divide-slate-100">
+                                                {rows.map((reason) => (
+                                                    <div key={reason.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <p className="font-black text-slate-900">{reason.label}</p>
+                                                                <span className="rounded bg-slate-100 px-2 py-1 font-mono text-[10px] font-bold text-slate-500">
+                                                                    {reason.code}
+                                                                </span>
+                                                                {reason.requires_comment && (
+                                                                    <span className="rounded bg-amber-50 px-2 py-1 text-[10px] font-black text-amber-700">
+                                                                        Précision requise
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            {reason.description && (
+                                                                <p className="mt-1 text-xs font-semibold text-slate-500">
+                                                                    {reason.description}
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                        <span className="text-xs font-black text-slate-400">
+                                                            Ordre {reason.sort_order}
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => updateExecutionReasonMutation.mutate({
+                                                                id: reason.id,
+                                                                payload: { is_active: !reason.is_active },
+                                                            })}
+                                                            disabled={updateExecutionReasonMutation.isPending}
+                                                            className={`h-9 rounded-md border px-3 text-xs font-black ${
+                                                                reason.is_active
+                                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                                    : 'border-slate-200 bg-white text-slate-500'
+                                                            }`}
+                                                        >
+                                                {reason.is_active ? 'Désactiver' : 'Réactiver'}
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                                {!rows.length && (
+                                                    <p className="p-6 text-center text-sm font-bold text-slate-400">
+                                                        Aucun motif configuré.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </section>
                         </div>
                     )}
