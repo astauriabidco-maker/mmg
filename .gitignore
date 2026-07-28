@@ -23,6 +23,8 @@ backups/
 node_modules/
 dist/
 dist-ssr/
+frontend_v2/playwright-report/
+frontend_v2/test-results/
 *.local
 
 # IDE

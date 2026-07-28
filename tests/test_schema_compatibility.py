@@ -1,9 +1,6 @@
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.orm import sessionmaker
-
-from backend import models
 
 
 def test_legacy_stock_and_delivery_schema_is_patched(tmp_path):
@@ -70,12 +67,12 @@ def test_legacy_stock_and_delivery_schema_is_patched(tmp_path):
         )
 
     # La base legacy n'a pas de suivi Alembic : on la marque au dernier head
-    # structurel, puis la migration de rattrapage finale (e5c9f2a8d417) rejoue
-    # les correctifs historiques d'ensure_schema_compatibility.
+    # structurel, puis on cible la migration de rattrapage (e5c9f2a8d417) qui
+    # rejoue les correctifs historiques d'ensure_schema_compatibility.
     alembic_cfg = Config("backend/alembic.ini")
     alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     command.stamp(alembic_cfg, "d1f3a5b7c924")
-    command.upgrade(alembic_cfg, "head")
+    command.upgrade(alembic_cfg, "e5c9f2a8d417")
 
     inspector = inspect(engine)
     product_columns = {column["name"] for column in inspector.get_columns("products")}
@@ -85,10 +82,16 @@ def test_legacy_stock_and_delivery_schema_is_patched(tmp_path):
     assert "delivery_notes" in delivery_columns
     assert "sale_order_id" in delivery_columns
 
-    Session = sessionmaker(bind=engine)
-    with Session() as session:
-        product = session.query(models.Product).one()
-        note = session.query(models.DeliveryNote).one()
+    with engine.connect() as connection:
+        product = connection.execute(
+            text(
+                "SELECT technical_doc_url, compatible_series, catalog_status "
+                "FROM products"
+            )
+        ).one()
+        note = connection.execute(
+            text("SELECT delivery_notes FROM delivery_notes")
+        ).one()
 
     assert product.technical_doc_url is None
     assert product.compatible_series is None

@@ -7,6 +7,8 @@ import { getDefaultPathForUser, userHasAnyRole } from './utils/roleNavigation';
 const Login = lazy(() => import('./pages/Login'));
 const OperatorDashboard = lazy(() => import('./pages/OperatorDashboard'));
 const ManagerDashboard = lazy(() => import('./pages/ManagerDashboard'));
+const CRMWorkspacePage = lazy(() => import('./pages/CRMWorkspacePage'));
+const SaleDetailPage = lazy(() => import('./pages/SaleDetailPage'));
 const ManualUpload = lazy(() => import('./pages/ManualUpload'));
 const MMGDossiers = lazy(() => import('./pages/MMGDossiers'));
 const MeasureMissionPage = lazy(() => import('./pages/MeasureMissionPage'));
@@ -48,7 +50,7 @@ const PermissionRoute = ({ children, permission }) => {
 
 const SaleDetailRedirect = () => {
     const { saleId } = useParams();
-    return <Navigate to={`/manager?view=sale-detail&id=${saleId}`} replace />;
+    return <SaleDetailPage saleId={saleId} />;
 };
 
 const DefaultDashboardRedirect = () => {
@@ -93,9 +95,17 @@ export default function App() {
                             <Route
                                 path="/sales/:saleId"
                                 element={
-                                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER', 'SALES']}>
                                         <SaleDetailRedirect />
                                     </RoleRoute>
+                                }
+                            />
+                            <Route
+                                path="/crm"
+                                element={
+                                    <PermissionRoute permission="SALES_VIEW">
+                                        <CRMWorkspacePage />
+                                    </PermissionRoute>
                                 }
                             />
                             <Route

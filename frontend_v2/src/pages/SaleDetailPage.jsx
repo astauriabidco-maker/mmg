@@ -247,7 +247,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
         <div className={pageShellClass}>
             <div className="w-full px-6 py-6 space-y-6">
                 <div className="flex items-center justify-between">
-                    <button onClick={() => navigate(`/manager?view=${returnView}`)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-black hover:bg-slate-50">
+                    <button onClick={() => navigate(sourceView === 'crm' ? '/crm' : `/manager?view=${returnView}`)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-black hover:bg-slate-50">
                         <ArrowLeft className="w-4 h-4" /> {returnLabel}
                     </button>
                     <div className="flex gap-2">

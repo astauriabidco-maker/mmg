@@ -8,6 +8,7 @@ from backend import models, schemas
 from backend.database import Base
 from backend.routers import v2_mmg
 from backend.services.crm_reminders import (
+    DEFAULT_RULES,
     build_template_context,
     ensure_default_rules,
     ensure_default_templates,
@@ -96,7 +97,7 @@ def test_rules_generate_one_idempotent_plan_per_stage(db, crm_records):
     first = sync_reminder_plans(db, created_by="alice", now=datetime(2026, 7, 25))
     second = sync_reminder_plans(db, created_by="alice", now=datetime(2026, 7, 25))
 
-    assert db.query(models.CRMReminderRule).count() == 7
+    assert db.query(models.CRMReminderRule).count() == len(DEFAULT_RULES)
     assert first == {"created": 1, "cancelled": 0}
     assert second == {"created": 0, "cancelled": 0}
     plan = db.query(models.CRMReminderPlan).one()
@@ -131,7 +132,7 @@ def test_default_rule_initialization_tolerates_concurrent_first_load(
     try:
         ensure_default_rules(first)
         assert first.query(models.CRMReminderTemplate).count() == 3
-        assert first.query(models.CRMReminderRule).count() == 7
+        assert first.query(models.CRMReminderRule).count() == len(DEFAULT_RULES)
     finally:
         first.close()
         second.close()

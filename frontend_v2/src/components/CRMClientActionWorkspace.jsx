@@ -17,7 +17,11 @@ import {
     PhoneCall,
     Plus,
     RefreshCw,
+    Star,
+    Tags,
     Target,
+    Trash2,
+    UserPlus,
     X,
 } from 'lucide-react';
 import api from '../services/api';
@@ -81,10 +85,25 @@ export default function CRMClientActionWorkspace({
     onPlanMeasureForOpportunity,
     onOpenSale,
     onOpenMeasures,
+    onClientChanged,
 }) {
     const [actionMode, setActionMode] = useState(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
+    const [showContactForm, setShowContactForm] = useState(false);
+    const [showSegmentationForm, setShowSegmentationForm] = useState(false);
+    const [segmentationDraft, setSegmentationDraft] = useState({
+        segment: '',
+        tags: '',
+    });
+    const [contactDraft, setContactDraft] = useState({
+        name: '',
+        role: '',
+        email: '',
+        phone: '',
+        is_primary: false,
+        notes: '',
+    });
     const [opportunityDraft, setOpportunityDraft] = useState({
         title: '',
         stage: 'nouveau',
@@ -117,8 +136,17 @@ export default function CRMClientActionWorkspace({
         },
     });
 
+    const contactsQuery = useQuery({
+        queryKey: ['crm-client-contacts', client.id],
+        queryFn: async () => {
+            const response = await api.get(`/v2/partners/clients/${client.id}/contacts`);
+            return asList(response.data);
+        },
+    });
+
     const opportunities = opportunitiesQuery.data || [];
     const activities = activitiesQuery.data || [];
+    const contacts = contactsQuery.data || [];
     const openOpportunities = useMemo(
         () => opportunities.filter(isOpenOpportunity).sort((a, b) => new Date(a.nextDate || '2999-12-31') - new Date(b.nextDate || '2999-12-31')),
         [opportunities],
@@ -240,6 +268,99 @@ export default function CRMClientActionWorkspace({
         }
     };
 
+    const createContact = async (event) => {
+        event.preventDefault();
+        if (!contactDraft.name.trim()) return;
+        setSubmitError('');
+        setIsSubmitting(true);
+        try {
+            await api.post(`/v2/partners/clients/${client.id}/contacts`, {
+                name: contactDraft.name.trim(),
+                role: contactDraft.role.trim() || null,
+                email: contactDraft.email.trim() || null,
+                phone: contactDraft.phone.trim() || null,
+                is_primary: contactDraft.is_primary,
+                notes: contactDraft.notes.trim() || null,
+            });
+            await Promise.all([contactsQuery.refetch(), onClientChanged?.()]);
+            setContactDraft({
+                name: '',
+                role: '',
+                email: '',
+                phone: '',
+                is_primary: false,
+                notes: '',
+            });
+            setShowContactForm(false);
+        } catch (error) {
+            setSubmitError(readableError(error));
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const setPrimaryContact = async (contact) => {
+        setSubmitError('');
+        try {
+            await api.patch(
+                `/v2/partners/clients/${client.id}/contacts/${contact.id}`,
+                { is_primary: true },
+            );
+            await Promise.all([contactsQuery.refetch(), onClientChanged?.()]);
+        } catch (error) {
+            setSubmitError(readableError(error));
+        }
+    };
+
+    const deleteContact = async (contact) => {
+        if (!window.confirm(`Supprimer le contact « ${contact.name} » ?`)) return;
+        setSubmitError('');
+        try {
+            await api.delete(`/v2/partners/clients/${client.id}/contacts/${contact.id}`);
+            await Promise.all([contactsQuery.refetch(), onClientChanged?.()]);
+        } catch (error) {
+            setSubmitError(readableError(error));
+        }
+    };
+
+    const openSegmentationForm = () => {
+        setSegmentationDraft({
+            segment: client.segment || '',
+            tags: (client.tags || []).join(', '),
+        });
+        setShowSegmentationForm(true);
+    };
+
+    const saveSegmentation = async (event) => {
+        event.preventDefault();
+        setSubmitError('');
+        setIsSubmitting(true);
+        try {
+            await api.put(`/v2/partners/clients/${client.id}`, {
+                name: client.name,
+                contact_name: client.contact_name || null,
+                email: client.email || null,
+                phone: client.phone || null,
+                address: client.address || null,
+                country: client.country || 'FR',
+                tax_id: client.tax_id || null,
+                customer_type: client.customer_type || 'B2B',
+                segment: segmentationDraft.segment.trim() || null,
+                tags: segmentationDraft.tags
+                    .split(',')
+                    .map(tag => tag.trim())
+                    .filter(Boolean),
+                is_active: client.is_active !== false,
+            });
+            await onClientChanged?.();
+            setShowSegmentationForm(false);
+        } catch (error) {
+            setSubmitError(readableError(error));
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
     return (
         <div className="mx-auto w-full max-w-[1680px] space-y-5">
             <header className="border-l-4 border-blue-500 bg-blue-50/70 px-5 py-5">
@@ -248,6 +369,12 @@ export default function CRMClientActionWorkspace({
                         <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Fiche client CRM</p>
                         <h3 className="mt-1 truncate text-2xl font-black tracking-tight text-slate-950 lg:text-3xl">{client.name}</h3>
                         <p className="mt-1 text-sm font-bold text-slate-500">{client.contact_name || 'Contact principal à renseigner'}</p>
+                        {(client.segment || client.tags?.length) && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                {client.segment && <span className="rounded-full bg-blue-100 px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-blue-800">{client.segment}</span>}
+                                {(client.tags || []).map(tag => <span key={tag} className="rounded-full bg-white px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-slate-600">{tag}</span>)}
+                            </div>
+                        )}
                         <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs font-bold text-slate-600">
                             {client.phone && <a href={`tel:${client.phone}`} className="inline-flex items-center gap-2 hover:text-blue-700"><Phone className="h-4 w-4" />{client.phone}</a>}
                             {client.email && <a href={`mailto:${client.email}`} className="inline-flex items-center gap-2 hover:text-blue-700"><Mail className="h-4 w-4" />{client.email}</a>}
@@ -258,6 +385,7 @@ export default function CRMClientActionWorkspace({
                         <ActionButton icon={Target} label="Nouvelle opportunité" onClick={() => resetAndOpen('opportunity')} primary />
                         <ActionButton icon={CalendarClock} label="Planifier une relance" onClick={() => resetAndOpen('follow-up')} />
                         <ActionButton icon={PhoneCall} label="Noter un appel" onClick={() => resetAndOpen('call')} />
+                        <ActionButton icon={Tags} label="Segmenter" onClick={openSegmentationForm} />
                         <ActionButton icon={ClipboardList} label="Planifier un métré" onClick={onPlanMeasure} accent />
                     </div>
                 </div>
@@ -281,6 +409,107 @@ export default function CRMClientActionWorkspace({
                     <MiniMetric label="À faire" value={pendingActivities.length} />
                     <MiniMetric label="CA signé" value={formatMoney(totals.orderAmount)} />
                 </div>
+            </section>
+
+            <section className="border-y border-l-4 border-slate-200 border-l-blue-500 bg-white">
+                <SectionHeading
+                    eyebrow="Interlocuteurs"
+                    title={`Contacts du compte (${contacts.length})`}
+                    detail="Un contact principal alimente les devis et relances ; les autres interlocuteurs restent disponibles sur la fiche."
+                    tone="cyan"
+                    action={(
+                        <button
+                            onClick={() => setShowContactForm(current => !current)}
+                            className="inline-flex items-center gap-2 text-xs font-black text-blue-700 hover:text-blue-900"
+                        >
+                            <UserPlus className="h-4 w-4" />
+                            Ajouter un contact
+                        </button>
+                    )}
+                />
+                {showContactForm && (
+                    <form onSubmit={createContact} className="grid gap-3 border-b border-slate-200 bg-blue-50/40 p-4 md:grid-cols-2 xl:grid-cols-4">
+                        <input
+                            required
+                            value={contactDraft.name}
+                            onChange={event => setContactDraft(current => ({ ...current, name: event.target.value }))}
+                            placeholder="Nom du contact"
+                            className={inputClass}
+                        />
+                        <input
+                            value={contactDraft.role}
+                            onChange={event => setContactDraft(current => ({ ...current, role: event.target.value }))}
+                            placeholder="Fonction / rôle"
+                            className={inputClass}
+                        />
+                        <input
+                            type="email"
+                            value={contactDraft.email}
+                            onChange={event => setContactDraft(current => ({ ...current, email: event.target.value }))}
+                            placeholder="Email"
+                            className={inputClass}
+                        />
+                        <input
+                            value={contactDraft.phone}
+                            onChange={event => setContactDraft(current => ({ ...current, phone: event.target.value }))}
+                            placeholder="Téléphone"
+                            className={inputClass}
+                        />
+                        <label className="inline-flex items-center gap-2 text-xs font-black text-slate-700">
+                            <input
+                                type="checkbox"
+                                checked={contactDraft.is_primary}
+                                onChange={event => setContactDraft(current => ({ ...current, is_primary: event.target.checked }))}
+                            />
+                            Contact principal
+                        </label>
+                        <input
+                            value={contactDraft.notes}
+                            onChange={event => setContactDraft(current => ({ ...current, notes: event.target.value }))}
+                            placeholder="Notes"
+                            className={`${inputClass} md:col-span-1 xl:col-span-2`}
+                        />
+                        <div className="flex justify-end gap-2">
+                            <button type="button" onClick={() => setShowContactForm(false)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600">Annuler</button>
+                            <button type="submit" disabled={isSubmitting} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-black text-white disabled:bg-slate-300">Enregistrer</button>
+                        </div>
+                    </form>
+                )}
+                <AsyncBlock
+                    loading={contactsQuery.isLoading}
+                    error={contactsQuery.error}
+                    onRetry={() => contactsQuery.refetch()}
+                    empty={!contacts.length}
+                    emptyIcon={UserPlus}
+                    emptyTitle="Aucun contact enregistré"
+                    emptyDetail="Ajoutez les décideurs, prescripteurs et interlocuteurs chantier."
+                >
+                    <div className="grid gap-px bg-slate-100 md:grid-cols-2 xl:grid-cols-3">
+                        {contacts.map(contact => (
+                            <div key={contact.id} className="bg-white p-4">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <p className="truncate text-sm font-black text-slate-900">{contact.name}</p>
+                                            {contact.is_primary && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-amber-800">Principal</span>}
+                                        </div>
+                                        <p className="mt-1 truncate text-xs font-semibold text-slate-500">{contact.role || 'Interlocuteur'}</p>
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-1">
+                                        {!contact.is_primary && (
+                                            <button type="button" onClick={() => setPrimaryContact(contact)} title="Définir comme principal" className="rounded-md p-1.5 text-slate-400 hover:bg-amber-50 hover:text-amber-700"><Star className="h-4 w-4" /></button>
+                                        )}
+                                        <button type="button" onClick={() => deleteContact(contact)} title="Supprimer" className="rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-700"><Trash2 className="h-4 w-4" /></button>
+                                    </div>
+                                </div>
+                                <div className="mt-3 space-y-1 text-xs font-semibold text-slate-600">
+                                    {contact.email && <a href={`mailto:${contact.email}`} className="flex items-center gap-2 hover:text-blue-700"><Mail className="h-3.5 w-3.5" />{contact.email}</a>}
+                                    {contact.phone && <a href={`tel:${contact.phone}`} className="flex items-center gap-2 hover:text-blue-700"><Phone className="h-3.5 w-3.5" />{contact.phone}</a>}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </AsyncBlock>
             </section>
 
             <section className="border-y border-l-4 border-slate-200 border-l-indigo-500 bg-white">
@@ -488,6 +717,32 @@ export default function CRMClientActionWorkspace({
                     onClose={() => setActionMode(null)}
                     onSubmit={submitAction}
                 />
+            )}
+
+            {showSegmentationForm && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+                    <form onSubmit={saveSegmentation} className="w-full max-w-lg overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
+                        <div className="flex items-start justify-between bg-slate-900 px-6 py-5 text-white">
+                            <div>
+                                <p className="text-[9px] font-black uppercase tracking-widest text-blue-200">Segmentation CRM</p>
+                                <h3 className="mt-2 text-xl font-black">{client.name}</h3>
+                            </div>
+                            <button type="button" onClick={() => setShowSegmentationForm(false)} className="rounded-full p-2 text-slate-300 hover:bg-white/10"><X className="h-5 w-5" /></button>
+                        </div>
+                        <div className="space-y-4 p-6">
+                            <Field label="Segment">
+                                <input value={segmentationDraft.segment} onChange={event => setSegmentationDraft(current => ({ ...current, segment: event.target.value }))} placeholder="Ex. Architectes, Grands comptes, Particuliers" className={inputClass} />
+                            </Field>
+                            <Field label="Tags">
+                                <input value={segmentationDraft.tags} onChange={event => setSegmentationDraft(current => ({ ...current, tags: event.target.value }))} placeholder="Prioritaire, Prescription, Relance Q4" className={inputClass} />
+                            </Field>
+                        </div>
+                        <div className="flex justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
+                            <button type="button" onClick={() => setShowSegmentationForm(false)} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-600">Annuler</button>
+                            <button type="submit" disabled={isSubmitting} className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-black text-white disabled:bg-slate-300">Enregistrer</button>
+                        </div>
+                    </form>
+                </div>
             )}
         </div>
     );

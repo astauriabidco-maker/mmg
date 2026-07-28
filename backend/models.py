@@ -1368,8 +1368,16 @@ class Client(Base):
     country = Column(String, default="FR")
     tax_id = Column(String, nullable=True) # NIU
     customer_type = Column(String, default="B2B") # B2B, B2C
+    segment = Column(String, nullable=True, index=True)
+    tags = Column(JSON, default=list, nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=utcnow)
+    contacts = relationship(
+        "ClientContact",
+        back_populates="client",
+        cascade="all, delete-orphan",
+        order_by="ClientContact.is_primary.desc(), ClientContact.name.asc()",
+    )
     site_addresses = relationship(
         "ClientSiteAddress",
         back_populates="client",
@@ -1386,6 +1394,28 @@ class Client(Base):
         back_populates="client",
         cascade="all, delete-orphan",
     )
+
+
+class ClientContact(Base):
+    __tablename__ = "client_contacts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name = Column(String, nullable=False)
+    role = Column(String, nullable=True)
+    email = Column(String, nullable=True, index=True)
+    phone = Column(String, nullable=True, index=True)
+    is_primary = Column(Boolean, default=False, nullable=False, index=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    client = relationship("Client", back_populates="contacts")
 
 
 class ClientSiteAddress(Base):

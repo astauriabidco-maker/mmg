@@ -37,6 +37,7 @@ export function shouldUseStockMobile() {
 export function getDefaultPathForUser(user) {
     const roles = getUserRoles(user);
     if (roles.some(role => role === 'ADMIN' || role === 'MANAGER')) return '/manager';
+    if (roles.includes('SALES')) return '/crm';
     if (roles.some(role => STOCK_HOME_ROLES.has(role))) return shouldUseStockMobile() ? '/stock-mobile' : '/stock';
     if (roles.some(role => ATELIER_HOME_ROLES.has(role))) {
         const firstStation = Array.isArray(user?.stations) && user.stations.length > 0 ? user.stations[0] : null;

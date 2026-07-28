@@ -44,6 +44,12 @@ router = APIRouter(
     tags=["mmg"],
     dependencies=[Depends(security.get_current_user)],
 )
+CRM_VIEW_DEPENDENCIES = [
+    Depends(security.require_permissions("SALES_VIEW")),
+]
+CRM_EDIT_DEPENDENCIES = [
+    Depends(security.require_permissions("SALES_EDIT")),
+]
 
 # Helper to save base64 image
 def save_base64_image(base64_str: str, folder: str, prefix: str):
@@ -627,7 +633,11 @@ def _validate_activity_links(
     return opportunity
 
 
-@router.get("/crm/cockpit", response_model=schemas.CRMCockpitResponse)
+@router.get(
+    "/crm/cockpit",
+    response_model=schemas.CRMCockpitResponse,
+    dependencies=CRM_VIEW_DEPENDENCIES,
+)
 def get_crm_cockpit(
     owner_user_id: Optional[int] = None,
     horizon_days: int = 14,
@@ -786,6 +796,7 @@ def _serialize_crm_plan(plan):
 @router.get(
     "/crm/reminder-templates",
     response_model=List[schemas.CRMReminderTemplateResponse],
+    dependencies=CRM_VIEW_DEPENDENCIES,
 )
 def list_crm_reminder_templates(db: Session = Depends(get_db)):
     ensure_default_templates(db)
@@ -800,6 +811,7 @@ def list_crm_reminder_templates(db: Session = Depends(get_db)):
 @router.get(
     "/crm/reminder-rules",
     response_model=List[schemas.CRMReminderRuleResponse],
+    dependencies=CRM_VIEW_DEPENDENCIES,
 )
 def list_crm_reminder_rules(db: Session = Depends(get_db)):
     ensure_default_rules(db)
@@ -813,6 +825,7 @@ def list_crm_reminder_rules(db: Session = Depends(get_db)):
 @router.patch(
     "/crm/reminder-rules/{rule_id}",
     response_model=schemas.CRMReminderRuleResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def update_crm_reminder_rule(
     rule_id: int,
@@ -885,6 +898,7 @@ def update_crm_reminder_rule(
 @router.post(
     "/crm/reminder-plans/sync",
     response_model=schemas.CRMReminderSyncResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def synchronize_crm_reminder_plans(
     db: Session = Depends(get_db),
@@ -900,6 +914,7 @@ def synchronize_crm_reminder_plans(
 @router.get(
     "/crm/reminder-plans",
     response_model=List[schemas.CRMReminderPlanResponse],
+    dependencies=CRM_VIEW_DEPENDENCIES,
 )
 def list_crm_reminder_plans(
     status: Optional[str] = "PENDING",
@@ -932,6 +947,7 @@ def list_crm_reminder_plans(
 @router.post(
     "/crm/reminder-plans/{plan_id}/cancel",
     response_model=schemas.CRMReminderPlanResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def cancel_crm_reminder_plan(
     plan_id: int,
@@ -954,6 +970,7 @@ def cancel_crm_reminder_plan(
 @router.post(
     "/crm/reminders/preview",
     response_model=schemas.CRMReminderPreviewResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def preview_crm_reminder(
     item: schemas.CRMReminderPreviewRequest,
@@ -1002,6 +1019,7 @@ def preview_crm_reminder(
 @router.post(
     "/crm/reminders/send",
     response_model=schemas.CRMReminderDeliveryResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def send_crm_reminder(
     item: schemas.CRMReminderSendRequest,
@@ -1097,6 +1115,7 @@ def send_crm_reminder(
 @router.get(
     "/crm/reminders/history",
     response_model=List[schemas.CRMReminderDeliveryResponse],
+    dependencies=CRM_VIEW_DEPENDENCIES,
 )
 def list_crm_reminder_history(
     client_id: Optional[int] = None,
@@ -1126,7 +1145,11 @@ def list_crm_reminder_history(
     ]
 
 
-@router.get("/opportunities", response_model=List[schemas.CRMOpportunityResponse])
+@router.get(
+    "/opportunities",
+    response_model=List[schemas.CRMOpportunityResponse],
+    dependencies=CRM_VIEW_DEPENDENCIES,
+)
 def list_crm_opportunities(
     client_id: Optional[int] = None,
     site_address_id: Optional[int] = None,
@@ -1168,6 +1191,7 @@ def list_crm_opportunities(
     "/opportunities",
     response_model=schemas.CRMOpportunityResponse,
     status_code=201,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def create_crm_opportunity(
     item: schemas.CRMOpportunityCreate,
@@ -1234,6 +1258,7 @@ def create_crm_opportunity(
 @router.get(
     "/opportunities/{opportunity_id}",
     response_model=schemas.CRMOpportunityResponse,
+    dependencies=CRM_VIEW_DEPENDENCIES,
 )
 def get_crm_opportunity(opportunity_id: int, db: Session = Depends(get_db)):
     return _get_opportunity_or_404(db, opportunity_id)
@@ -1242,6 +1267,7 @@ def get_crm_opportunity(opportunity_id: int, db: Session = Depends(get_db)):
 @router.patch(
     "/opportunities/{opportunity_id}",
     response_model=schemas.CRMOpportunityResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def update_crm_opportunity(
     opportunity_id: int,
@@ -1329,6 +1355,7 @@ def update_crm_opportunity(
 @router.post(
     "/opportunities/{opportunity_id}/qualify",
     response_model=schemas.CRMOpportunityQualificationResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def qualify_crm_opportunity(
     opportunity_id: int,
@@ -1454,6 +1481,7 @@ def qualify_crm_opportunity(
 @router.post(
     "/crm/cockpit/opportunities/{opportunity_id}/assign-owner",
     response_model=schemas.CRMOpportunityResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def assign_crm_opportunity_owner(
     opportunity_id: int,
@@ -1489,6 +1517,7 @@ def assign_crm_opportunity_owner(
     "/crm/cockpit/opportunities/{opportunity_id}/schedule-action",
     response_model=schemas.CRMActivityResponse,
     status_code=201,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def schedule_crm_opportunity_action(
     opportunity_id: int,
@@ -1539,14 +1568,22 @@ def schedule_crm_opportunity_action(
     return activity
 
 
-@router.delete("/opportunities/{opportunity_id}", status_code=204)
+@router.delete(
+    "/opportunities/{opportunity_id}",
+    status_code=204,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def delete_crm_opportunity(opportunity_id: int, db: Session = Depends(get_db)):
     opportunity = _get_opportunity_or_404(db, opportunity_id)
     db.delete(opportunity)
     db.commit()
 
 
-@router.get("/activities", response_model=List[schemas.CRMActivityResponse])
+@router.get(
+    "/activities",
+    response_model=List[schemas.CRMActivityResponse],
+    dependencies=CRM_VIEW_DEPENDENCIES,
+)
 def list_crm_activities(
     client_id: Optional[int] = None,
     opportunity_id: Optional[int] = None,
@@ -1584,7 +1621,12 @@ def list_crm_activities(
     return query.order_by(models.CRMActivity.created_at.desc()).all()
 
 
-@router.post("/activities", response_model=schemas.CRMActivityResponse, status_code=201)
+@router.post(
+    "/activities",
+    response_model=schemas.CRMActivityResponse,
+    status_code=201,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def create_crm_activity(
     item: schemas.CRMActivityCreate,
     db: Session = Depends(get_db),
@@ -1608,12 +1650,20 @@ def create_crm_activity(
     return activity
 
 
-@router.get("/activities/{activity_id}", response_model=schemas.CRMActivityResponse)
+@router.get(
+    "/activities/{activity_id}",
+    response_model=schemas.CRMActivityResponse,
+    dependencies=CRM_VIEW_DEPENDENCIES,
+)
 def get_crm_activity(activity_id: int, db: Session = Depends(get_db)):
     return _get_activity_or_404(db, activity_id)
 
 
-@router.patch("/activities/{activity_id}", response_model=schemas.CRMActivityResponse)
+@router.patch(
+    "/activities/{activity_id}",
+    response_model=schemas.CRMActivityResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def update_crm_activity(
     activity_id: int,
     item: schemas.CRMActivityUpdate,
@@ -1644,14 +1694,22 @@ def update_crm_activity(
     return activity
 
 
-@router.delete("/activities/{activity_id}", status_code=204)
+@router.delete(
+    "/activities/{activity_id}",
+    status_code=204,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def delete_crm_activity(activity_id: int, db: Session = Depends(get_db)):
     activity = _get_activity_or_404(db, activity_id)
     db.delete(activity)
     db.commit()
 
 
-@router.get("/sites", response_model=List[schemas.ClientSiteAddressResponse])
+@router.get(
+    "/sites",
+    response_model=List[schemas.ClientSiteAddressResponse],
+    dependencies=CRM_VIEW_DEPENDENCIES,
+)
 def list_client_sites(client_id: int, db: Session = Depends(get_db)):
     client = db.query(models.Client).filter(models.Client.id == client_id).first()
     if not client:
@@ -1664,7 +1722,11 @@ def list_client_sites(client_id: int, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/sites", response_model=schemas.ClientSiteAddressResponse)
+@router.post(
+    "/sites",
+    response_model=schemas.ClientSiteAddressResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def create_client_site(item: schemas.ClientSiteAddressCreate, db: Session = Depends(get_db)):
     if not item.client_id:
         raise HTTPException(422, "client_id est obligatoire")
@@ -1677,7 +1739,11 @@ def create_client_site(item: schemas.ClientSiteAddressCreate, db: Session = Depe
     return site
 
 
-@router.put("/sites/{site_id}", response_model=schemas.ClientSiteAddressResponse)
+@router.put(
+    "/sites/{site_id}",
+    response_model=schemas.ClientSiteAddressResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def update_client_site(
     site_id: int,
     item: schemas.ClientSiteAddressCreate,

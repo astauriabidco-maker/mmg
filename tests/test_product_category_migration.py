@@ -37,7 +37,7 @@ def test_product_category_migration_preserves_legacy_classification(tmp_path):
     alembic_cfg = Config("backend/alembic.ini")
     alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     command.stamp(alembic_cfg, "c3f8a1d4e720")
-    command.upgrade(alembic_cfg, "head")
+    command.upgrade(alembic_cfg, "f6a2c4d8e901")
 
     columns = {column["name"] for column in inspect(engine).get_columns("products")}
     assert "category" in columns

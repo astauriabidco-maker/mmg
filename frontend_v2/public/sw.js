@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mmg-pwa-shell-v2';
+const CACHE_NAME = 'mmg-pwa-shell-v3';
 const STATIC_ASSETS = [
     '/',
     '/index.html',
@@ -38,7 +38,7 @@ self.addEventListener('fetch', (event) => {
 
     if (request.mode === 'navigate') {
         event.respondWith(
-            fetch(request)
+            fetch(request, { cache: 'no-store' })
                 .then((response) => {
                     const copy = response.clone();
                     caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
