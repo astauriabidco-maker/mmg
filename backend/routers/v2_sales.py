@@ -11,7 +11,7 @@ import os
 
 from ..database import get_db
 from .. import models, schemas
-from ..core.security import get_current_user, require_roles
+from ..core.security import assert_permission, get_current_user, require_permissions, require_roles
 from ..services.stock_reservations import (
     InsufficientStockAtConsumptionError,
     annotate_sale_availability,
@@ -37,6 +37,12 @@ router = APIRouter(
 )
 
 AUTH_DEPENDENCIES = [Depends(get_current_user)]
+SALES_VIEW_DEPENDENCIES = [
+    Depends(require_permissions("SALES_VIEW")),
+]
+SALES_EDIT_DEPENDENCIES = [
+    Depends(require_permissions("SALES_EDIT")),
+]
 SALE_WORKFLOW_TYPES = {"FREE_SALE", "FABRICATION_ESTIMATE", "FABRICATION_FROM_MEASURE"}
 SALE_LINE_TYPES = {"STOCK_ITEM", "SERVICE"}
 FABRICATION_DEPOSIT_RATE = 0.50
@@ -521,7 +527,11 @@ async def _parse_workshop_uploads(files: List[UploadFile]):
             tmp_path.unlink(missing_ok=True)
     return records, issues, source_names
 
-@router.get("/", response_model=List[schemas.SaleOrderSchema], dependencies=AUTH_DEPENDENCIES)
+@router.get(
+    "/",
+    response_model=List[schemas.SaleOrderSchema],
+    dependencies=SALES_VIEW_DEPENDENCIES,
+)
 def list_sales(db: Session = Depends(get_db)):
     sales = (
         db.query(models.SaleOrder)
@@ -538,7 +548,7 @@ class AIQuoteRequest(BaseModel):
 
 import urllib.request
 
-@router.post("/ai-quote", dependencies=AUTH_DEPENDENCIES)
+@router.post("/ai-quote", dependencies=SALES_EDIT_DEPENDENCIES)
 def generate_ai_quote(req: AIQuoteRequest, db: Session = Depends(get_db)):
     """
     Copilote Commercial (IA). Zero UI Approach.
@@ -719,7 +729,7 @@ class PipelineStagePayload(BaseModel):
     title: str
 
 
-@router.get("/stages", dependencies=AUTH_DEPENDENCIES)
+@router.get("/stages", dependencies=SALES_VIEW_DEPENDENCIES)
 def get_pipeline_stages(db: Session = Depends(get_db)):
     config = db.query(models.AppConfig).filter(models.AppConfig.category == "PIPELINE_STAGES").first()
     if config:
@@ -767,7 +777,11 @@ def save_pipeline_stages(
     return cleaned
 
 
-@router.post("/", response_model=schemas.SaleOrderSchema, dependencies=AUTH_DEPENDENCIES)
+@router.post(
+    "/",
+    response_model=schemas.SaleOrderSchema,
+    dependencies=SALES_EDIT_DEPENDENCIES,
+)
 def create_sale_order(
     order_req: schemas.SaleOrderCreate,
     db: Session = Depends(get_db),
@@ -814,7 +828,11 @@ def create_sale_order(
     annotate_sale_availability(db, order)
     return order
 
-@router.get("/{order_id}", response_model=schemas.SaleOrderSchema, dependencies=AUTH_DEPENDENCIES)
+@router.get(
+    "/{order_id}",
+    response_model=schemas.SaleOrderSchema,
+    dependencies=SALES_VIEW_DEPENDENCIES,
+)
 def get_sale_order(order_id: int, db: Session = Depends(get_db)):
     order = _load_sale(db, order_id)
     if not order:
@@ -936,13 +954,15 @@ SALE_ALLOWED_TRANSITIONS = {
 SALE_WORKSHOP_GUARDED_STATUSES = {"READY_FOR_PROD"}
 
 
-@router.put("/{order_id}/status", dependencies=AUTH_DEPENDENCIES)
+@router.put(
+    "/{order_id}/status",
+)
 def update_sale_status(
     order_id: int,
     status: str,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    role: str = Depends(require_roles("ADMIN", "MANAGER")),
+    current_user: dict = Depends(get_current_user),
 ):
     from ..core.events import EventBus
     order = _load_sale(db, order_id)
@@ -978,6 +998,21 @@ def update_sale_status(
             ),
         )
 
+    roles = set(current_user.get("roles") or [])
+    if current_user.get("role"):
+        roles.add(current_user["role"])
+    if (
+        order.status == "IN_PRODUCTION"
+        and status == "CANCELLED"
+        and not (roles & {"ADMIN", "SUPER_ADMIN"})
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Seul un administrateur peut annuler un devis en production.",
+        )
+
+    assert_permission(db, current_user, "SALES_EDIT")
+
     if status in SALE_WORKSHOP_GUARDED_STATUSES:
         active_workshop_reservations = _active_workshop_reservations_for_sale(db, order.id).count()
         if active_workshop_reservations == 0:
@@ -989,12 +1024,6 @@ def update_sale_status(
                     "la réservation fait passer le devis automatiquement."
                 ),
             )
-
-    if order.status == "IN_PRODUCTION" and status == "CANCELLED" and role != "ADMIN":
-        raise HTTPException(
-            status_code=403,
-            detail="Seul un administrateur peut annuler un devis en production.",
-        )
 
     import uuid
     if status == "SENT" and not order.signature_token:
@@ -1011,7 +1040,11 @@ def update_sale_status(
         except ValueError as exc:
             db.rollback()
             raise HTTPException(status_code=400, detail=str(exc))
-    sync_opportunity_from_sale(db, order, role)
+    sync_opportunity_from_sale(
+        db,
+        order,
+        current_user.get("sub", "Système"),
+    )
     db.commit()
     
     # Generate portal link

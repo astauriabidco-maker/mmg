@@ -129,6 +129,9 @@ supprime, puis la recrée via `alembic upgrade head` + `init_db.py` +
 | `APP_ENV` | `development` ou `production` | `development` |
 | `CORS_ORIGINS` | Origines autorisées | localhost:5000/5173/7000 |
 | `OPENAI_API_KEY`, `WHATSAPP_*` | Intégrations optionnelles | désactivées |
+| `CRM_REMINDERS_ENABLED` | Worker autonome de génération des relances CRM | `true` |
+| `CRM_REMINDER_SYNC_INTERVAL_SECONDS` | Fréquence du worker CRM | `300` |
+| `CRM_SMTP_REQUIRED` | Refuse le démarrage production sans SMTP quand les relances sont actives | `true` |
 
 **Garde-fous production** (`APP_ENV=production`) : le démarrage **refuse** un
 `SECRET_KEY` par défaut, un `ADMIN_PASSWORD` par défaut (`1234` ou
@@ -138,11 +141,16 @@ supprime, puis la recrée via `alembic upgrade head` + `init_db.py` +
 
 ```bash
 python -m pytest tests/ -q
+cd frontend_v2
+npm run build
+npm run test:e2e
 ```
 
 Couvre : santé de l'API, flux de production, flux ventes/signature, achats et
 stock, inventaires, dossiers MMG, compatibilité de schéma, durcissement
-sécurité, numérotation/scellement NF525.
+sécurité, numérotation/scellement NF525, RBAC et fonctions CRM avancées. Le
+test Playwright simule les API de façon déterministe et vérifie dans un vrai
+navigateur le parcours client → contact → opportunité → fusion de doublon.
 
 ## Déploiement (Docker / Coolify)
 

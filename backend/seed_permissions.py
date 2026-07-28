@@ -89,6 +89,8 @@ def seed_permissions():
                 "PLANNING_VIEW",
             ],
             "MANAGER": [
+                "SALES_VIEW",
+                "SALES_EDIT",
                 "PROD_VIEW",
                 "PROD_EDIT",
                 "planning:start",

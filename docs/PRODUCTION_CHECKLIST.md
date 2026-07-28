@@ -46,6 +46,13 @@ Email transactionnel (confirmation de devis signé — `backend/core/events.py`)
 | `SMTP_PASSWORD` | Mot de passe SMTP | Vide |
 | `SMTP_FROM` | Adresse d'expédition | Repli sur `SMTP_USER` ; **obligatoire** (via l'une des deux) |
 | `SMTP_USE_TLS` | STARTTLS après connexion | `true` (mettre `false` pour un relais local non chiffré) |
+| `CRM_REMINDERS_ENABLED` | Génération autonome des plans de relance | `true` |
+| `CRM_REMINDER_SYNC_INTERVAL_SECONDS` | Intervalle du worker backend, en secondes | 300 (minimum 30) |
+| `CRM_SMTP_REQUIRED` | Garde-fou SMTP du CRM | `true` ; en production, le backend refuse de démarrer si le worker est actif sans `SMTP_HOST` et `SMTP_FROM`/`SMTP_USER` |
+
+Le worker CRM s'exécute automatiquement à l'intervalle configuré, sans dépendre
+de l'ouverture du cockpit. La synchronisation est idempotente en base :
+plusieurs passages ne recréent pas les mêmes plans.
 
 ## 2. Migrations de schéma — automatiques au déploiement
 
@@ -136,9 +143,10 @@ Ne pas tout activer le jour J. Ordre conseillé :
 5. **IA** : nécessite `OPENAI_API_KEY` ; sans clé, les fonctions IA sont
    inactives.
 6. **Email SMTP** : emails transactionnels réels (confirmation de devis signé,
-   portail client et passage « Accepté »). Nécessite `SMTP_HOST` et
-   `SMTP_FROM` (voir §1) ; **sans ces variables, l'envoi est ignoré proprement**
-   (warning dans les logs, jamais d'erreur côté flux métier). L'écran
+   portail client, passage « Accepté » et relances CRM). Nécessite `SMTP_HOST`
+   et `SMTP_FROM` (voir §1). Avec les relances CRM actives en production, ces
+   variables sont bloquantes au démarrage afin d'éviter des relances seulement
+   journalisées. L'écran
    « Paramètres plateforme → Tester SMTP » permet de valider les identifiants
    avant de les poser dans `.env`.
 
@@ -149,6 +157,10 @@ Ne pas tout activer le jour J. Ordre conseillé :
 - [ ] `python scripts/prod_check.py` (voir `DEPLOYMENT.md`)
 - [ ] Connexion admin OK, mot de passe changé, comptes démo désactivés
 - [ ] 6 tentatives de login avec un mauvais PIN → HTTP 429
+- [ ] Un utilisateur sans `SALES_EDIT` reçoit HTTP 403 sur les écritures CRM
+- [ ] `CRM_REMINDERS_ENABLED=true`, SMTP testé et worker visible dans les logs
+- [ ] `cd frontend_v2 && npm run test:e2e` → parcours CRM Playwright vert
+- [ ] Import/export CSV client, segmentation, contacts et fusion de doublons testés
 - [ ] Sauvegarde cron en place + une restauration testée
 - [ ] `NF525_HMAC_KEY` défini (si POS activé)
 - [ ] Audit non mutatif : `python scripts/functional_audit.py --api https://api.<domaine> --frontend https://<domaine> --no-mutate`

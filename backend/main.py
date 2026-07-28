@@ -25,6 +25,16 @@ from sqlalchemy.orm import Session
 get_db = database.get_db
 
 
+def _env_enabled(name: str, default: str = "true") -> bool:
+    return os.environ.get(name, default).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "non",
+        "off",
+    }
+
+
 async def _planning_alert_worker():
     interval_seconds = max(
         15,
@@ -50,6 +60,61 @@ async def _planning_alert_worker():
             db.close()
 
 
+def _validate_crm_email_configuration() -> None:
+    if os.environ.get("APP_ENV", "development").lower() != "production":
+        return
+    if not _env_enabled("CRM_REMINDERS_ENABLED"):
+        return
+    if not _env_enabled("CRM_SMTP_REQUIRED"):
+        return
+    from .core.events import _smtp_settings
+
+    if _smtp_settings() is None:
+        raise RuntimeError(
+            "SMTP_HOST and SMTP_FROM (or SMTP_USER) are required in production "
+            "when CRM reminders are enabled. Set CRM_REMINDERS_ENABLED=false "
+            "to disable the module explicitly."
+        )
+
+
+def _sync_crm_reminders_once() -> dict:
+    from .services.crm_reminders import sync_reminder_plans
+
+    db = database.SessionLocal()
+    try:
+        result = sync_reminder_plans(
+            db,
+            created_by="Planificateur CRM",
+            now=utcnow(),
+        )
+        if result.get("created") or result.get("cancelled"):
+            logger.info(
+                "crm_reminder_plans_synchronized created=%s cancelled=%s",
+                result.get("created", 0),
+                result.get("cancelled", 0),
+            )
+        return result
+    except Exception:
+        db.rollback()
+        logger.exception("crm_reminder_plan_synchronization_failed")
+        raise
+    finally:
+        db.close()
+
+
+async def _crm_reminder_worker():
+    interval_seconds = max(
+        30,
+        int(os.environ.get("CRM_REMINDER_SYNC_INTERVAL_SECONDS", "300")),
+    )
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            _sync_crm_reminders_once()
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialisation DB au démarrage (jamais à l'import du module).
@@ -67,13 +132,24 @@ async def lifespan(app: FastAPI):
     ensure_default_stations()
     from .seed_permissions import seed_permissions
     seed_permissions()
+    _validate_crm_email_configuration()
     alert_worker = asyncio.create_task(_planning_alert_worker())
+    crm_worker = (
+        asyncio.create_task(_crm_reminder_worker())
+        if _env_enabled("CRM_REMINDERS_ENABLED")
+        else None
+    )
     try:
         yield
     finally:
-        alert_worker.cancel()
-        with suppress(asyncio.CancelledError):
-            await alert_worker
+        workers = [alert_worker, crm_worker]
+        for worker in workers:
+            if worker:
+                worker.cancel()
+        for worker in workers:
+            if worker:
+                with suppress(asyncio.CancelledError):
+                    await worker
 
 
 app = FastAPI(title="Atelier Menuiserie V1 Pro", lifespan=lifespan)

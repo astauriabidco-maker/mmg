@@ -98,7 +98,6 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
     const cockpitQuery = useQuery({
         queryKey: ['crm-cockpit', horizonDays, selectedOwnerId],
         queryFn: async () => {
-            await api.post('/v2/mmg/crm/reminder-plans/sync');
             const response = await api.get('/v2/mmg/crm/cockpit', {
                 params: {
                     horizon_days: horizonDays,

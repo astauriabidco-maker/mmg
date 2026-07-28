@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, BellRing, Building2, CalendarClock, CheckCircle2, ClipboardList, FileText, Mail, MapPin, Package, Phone, Plus, Search, Send, Truck, Users, Wrench, X } from 'lucide-react';
+import { ArrowRight, BellRing, Building2, CalendarClock, CheckCircle2, ClipboardList, Download, FileText, Mail, MapPin, Merge, Package, Phone, Plus, Search, Send, Truck, Upload, Users, Wrench, X } from 'lucide-react';
 import api from '../services/api';
 import BusinessTimeline from '../components/BusinessTimeline';
 import CRMClientActionWorkspace from '../components/CRMClientActionWorkspace';
@@ -21,13 +21,17 @@ export default function CRMClientsDashboard() {
     const navigate = useNavigate();
     const [crmView, setCrmView] = useState('cockpit');
     const [searchTerm, setSearchTerm] = useState('');
+    const [segmentFilter, setSegmentFilter] = useState('');
     const [selectedClientId, setSelectedClientId] = useState(null);
     const [showProposalStarter, setShowProposalStarter] = useState(false);
     const [showClientModal, setShowClientModal] = useState(false);
     const [showMeasureStarter, setShowMeasureStarter] = useState(false);
     const [showSiteModal, setShowSiteModal] = useState(false);
+    const [showDuplicates, setShowDuplicates] = useState(false);
     const [isCreatingClient, setIsCreatingClient] = useState(false);
     const [isCreatingSite, setIsCreatingSite] = useState(false);
+    const [isImportingClients, setIsImportingClients] = useState(false);
+    const [clientDataMessage, setClientDataMessage] = useState('');
     const [clientDraft, setClientDraft] = useState({
         name: '',
         contact_name: '',
@@ -36,6 +40,8 @@ export default function CRMClientsDashboard() {
         address: '',
         tax_id: '',
         customer_type: 'B2B',
+        segment: '',
+        tags: '',
     });
     const [siteDraft, setSiteDraft] = useState({
         label: 'Chantier',
@@ -67,6 +73,15 @@ export default function CRMClientsDashboard() {
             const res = await api.get('/v2/partners/clients');
             return res.data;
         }
+    });
+
+    const duplicatesQuery = useQuery({
+        queryKey: ['partners', 'clients', 'duplicates'],
+        enabled: showDuplicates,
+        queryFn: async () => {
+            const response = await api.get('/v2/partners/clients/duplicates');
+            return Array.isArray(response.data) ? response.data : [];
+        },
     });
 
     const { data: sales = [] } = useQuery({
@@ -107,7 +122,7 @@ export default function CRMClientsDashboard() {
     };
 
     const openSale = (saleId) => {
-        navigate(`/manager?view=sale-detail&id=${saleId}&from=crm`);
+        navigate(`/sales/${saleId}?from=crm`);
     };
 
     const updateClientDraft = (field, value) => {
@@ -123,6 +138,8 @@ export default function CRMClientsDashboard() {
             address: '',
             tax_id: '',
             customer_type: 'B2B',
+            segment: '',
+            tags: '',
         });
     };
 
@@ -140,6 +157,11 @@ export default function CRMClientsDashboard() {
                 address: clientDraft.address.trim() || null,
                 tax_id: clientDraft.tax_id.trim() || null,
                 customer_type: clientDraft.customer_type,
+                segment: clientDraft.segment.trim() || null,
+                tags: clientDraft.tags
+                    .split(',')
+                    .map(tag => tag.trim())
+                    .filter(Boolean),
                 is_active: true,
             };
             const res = await api.post('/v2/partners/clients', payload);
@@ -157,10 +179,72 @@ export default function CRMClientsDashboard() {
         }
     };
 
+    const exportClients = async () => {
+        setClientDataMessage('');
+        try {
+            const response = await api.get('/v2/partners/clients/export.csv', {
+                responseType: 'blob',
+            });
+            const url = URL.createObjectURL(response.data);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'clients-crm.csv';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+            setClientDataMessage('Export clients généré.');
+        } catch (error) {
+            setClientDataMessage(error?.response?.data?.detail || "L'export clients a échoué.");
+        }
+    };
+
+    const importClients = async (file) => {
+        if (!file) return;
+        setIsImportingClients(true);
+        setClientDataMessage('');
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const response = await api.post('/v2/partners/clients/import', formData);
+            await refetchClients();
+            const result = response.data;
+            setClientDataMessage(
+                `${result.created} créé(s), ${result.updated} mis à jour, ${result.skipped} ignoré(s).`,
+            );
+        } catch (error) {
+            setClientDataMessage(error?.response?.data?.detail || "L'import clients a échoué.");
+        } finally {
+            setIsImportingClients(false);
+        }
+    };
+
+    const mergeDuplicateGroup = async (group) => {
+        const [target, ...sources] = group.clients || [];
+        if (!target || !sources.length) return;
+        if (!window.confirm(`Fusionner ${sources.length} fiche(s) dans « ${target.name} » ?`)) return;
+        try {
+            await api.post(`/v2/partners/clients/${target.id}/merge`, {
+                source_client_ids: sources.map(client => client.id),
+                confirm: true,
+            });
+            setSelectedClientId(target.id);
+            await Promise.all([refetchClients(), duplicatesQuery.refetch()]);
+            setClientDataMessage('Fiches clients fusionnées avec leur historique.');
+        } catch (error) {
+            setClientDataMessage(error?.response?.data?.detail || 'La fusion a échoué.');
+        }
+    };
+
+    const clientSegments = useMemo(() => (
+        [...new Set(clients.map(client => client.segment).filter(Boolean))].sort()
+    ), [clients]);
+
     const filteredClients = useMemo(() => {
         const needle = normalize(searchTerm);
         return clients
             .filter(client => client.is_active !== false)
+            .filter(client => !segmentFilter || client.segment === segmentFilter)
             .filter(client => {
                 if (!needle) return true;
                 return [
@@ -169,10 +253,12 @@ export default function CRMClientsDashboard() {
                     client.phone,
                     client.email,
                     client.address,
-                    client.tax_id
+                    client.tax_id,
+                    client.segment,
+                    ...(client.tags || []),
                 ].some(value => normalize(value).includes(needle));
             });
-    }, [clients, searchTerm]);
+    }, [clients, searchTerm, segmentFilter]);
 
     const selectedClient = useMemo(() => (
         clients.find(client => client.id === selectedClientId) || filteredClients[0] || null
@@ -564,6 +650,14 @@ export default function CRMClientsDashboard() {
                                     className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                             </div>
+                            <select
+                                value={segmentFilter}
+                                onChange={event => setSegmentFilter(event.target.value)}
+                                className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="">Tous les segments</option>
+                                {clientSegments.map(segment => <option key={segment} value={segment}>{segment}</option>)}
+                            </select>
                             <button
                                 onClick={() => setShowClientModal(true)}
                                 className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-black text-white hover:bg-slate-800"
@@ -571,6 +665,39 @@ export default function CRMClientsDashboard() {
                                 <Plus className="h-4 w-4" />
                                 Nouveau client
                             </button>
+                            <div className="mt-2 grid grid-cols-3 gap-1.5">
+                                <label className="inline-flex cursor-pointer items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-2 text-[10px] font-black text-slate-600 hover:bg-slate-50">
+                                    <Upload className="h-3.5 w-3.5" />
+                                    {isImportingClients ? 'Import…' : 'Importer'}
+                                    <input
+                                        type="file"
+                                        accept=".csv,text/csv"
+                                        className="hidden"
+                                        disabled={isImportingClients}
+                                        onChange={event => {
+                                            importClients(event.target.files?.[0]);
+                                            event.target.value = '';
+                                        }}
+                                    />
+                                </label>
+                                <button
+                                    onClick={exportClients}
+                                    className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-2 text-[10px] font-black text-slate-600 hover:bg-slate-50"
+                                >
+                                    <Download className="h-3.5 w-3.5" />
+                                    Exporter
+                                </button>
+                                <button
+                                    onClick={() => setShowDuplicates(true)}
+                                    className="inline-flex items-center justify-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-[10px] font-black text-amber-800 hover:bg-amber-100"
+                                >
+                                    <Merge className="h-3.5 w-3.5" />
+                                    Doublons
+                                </button>
+                            </div>
+                            {clientDataMessage && (
+                                <p className="mt-2 text-[10px] font-bold leading-relaxed text-slate-500">{clientDataMessage}</p>
+                            )}
                         </div>
                         <div className="flex-1 overflow-auto p-3">
                             {filteredClients.length ? (
@@ -585,6 +712,11 @@ export default function CRMClientsDashboard() {
                                             >
                                                 <p className="truncate text-sm font-black text-slate-900">{client.name}</p>
                                                 <p className="mt-1 truncate text-xs font-semibold text-slate-500">{client.phone || client.email || 'Coordonnées à compléter'}</p>
+                                                {(client.segment || client.tags?.length) && (
+                                                    <p className="mt-1 truncate text-[9px] font-black uppercase tracking-wide text-blue-600">
+                                                        {[client.segment, ...(client.tags || [])].filter(Boolean).join(' · ')}
+                                                    </p>
+                                                )}
                                             </button>
                                         );
                                     })}
@@ -620,6 +752,7 @@ export default function CRMClientsDashboard() {
                                 onPlanMeasureForSite={startMeasureForSite}
                                 onPlanMeasureForOpportunity={startMeasureForOpportunity}
                                 onOpenSale={openSale}
+                                onClientChanged={refetchClients}
                                 onOpenMeasures={(dossier) => dossier?.measure_mission_id
                                     ? navigate(`/measure-missions/${dossier.measure_mission_id}`)
                                     : setCrmView('measures')}
@@ -1121,6 +1254,24 @@ export default function CRMClientsDashboard() {
                                 </select>
                             </label>
                             <label>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Segment</span>
+                                <input
+                                    value={clientDraft.segment}
+                                    onChange={event => updateClientDraft('segment', event.target.value)}
+                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Ex. Grands comptes"
+                                />
+                            </label>
+                            <label>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Tags</span>
+                                <input
+                                    value={clientDraft.tags}
+                                    onChange={event => updateClientDraft('tags', event.target.value)}
+                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Prioritaire, Prescription"
+                                />
+                            </label>
+                            <label>
                                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Téléphone</span>
                                 <input
                                     value={clientDraft.phone}
@@ -1174,6 +1325,63 @@ export default function CRMClientsDashboard() {
                             >
                                 {isCreatingClient ? 'Création...' : 'Créer le client'}
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showDuplicates && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+                    <div className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                        <div className="flex items-start justify-between bg-slate-900 px-6 py-5 text-white">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-amber-300">Qualité des données CRM</p>
+                                <h3 className="mt-2 text-2xl font-black">Doublons clients détectés</h3>
+                                <p className="mt-1 text-sm font-semibold text-slate-300">La fiche la plus ancienne est proposée comme cible. Tout l’historique est réaffecté avant suppression.</p>
+                            </div>
+                            <button onClick={() => setShowDuplicates(false)} className="rounded-full p-2 text-slate-300 hover:bg-white/10 hover:text-white"><X className="h-5 w-5" /></button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-6">
+                            {duplicatesQuery.isLoading ? (
+                                <p className="py-10 text-center text-sm font-bold text-slate-500">Analyse des fiches clients…</p>
+                            ) : duplicatesQuery.isError ? (
+                                <p className="border-l-4 border-red-500 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">Impossible d’analyser les doublons.</p>
+                            ) : !duplicatesQuery.data?.length ? (
+                                <div className="py-10 text-center">
+                                    <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-500" />
+                                    <p className="mt-3 text-lg font-black text-slate-800">Aucun doublon probable</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-500">Les emails, téléphones, identifiants fiscaux et noms/adresses sont cohérents.</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    {duplicatesQuery.data.map((group, index) => (
+                                        <div key={`${group.clients?.[0]?.id}-${index}`} className="border border-amber-200 bg-amber-50/50 p-4">
+                                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                                <div>
+                                                    <p className="text-xs font-black uppercase tracking-widest text-amber-800">Similarité {group.score}%</p>
+                                                    <p className="mt-1 text-xs font-semibold text-slate-600">{(group.reasons || []).join(' · ')}</p>
+                                                </div>
+                                                <button
+                                                    onClick={() => mergeDuplicateGroup(group)}
+                                                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-xs font-black text-white hover:bg-amber-500"
+                                                >
+                                                    <Merge className="h-4 w-4" />
+                                                    Fusionner
+                                                </button>
+                                            </div>
+                                            <div className="mt-3 grid gap-2 md:grid-cols-2">
+                                                {(group.clients || []).map((duplicate, duplicateIndex) => (
+                                                    <div key={duplicate.id} className="border border-slate-200 bg-white px-3 py-3">
+                                                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{duplicateIndex === 0 ? 'Fiche cible conservée' : 'Fiche source fusionnée'}</p>
+                                                        <p className="mt-1 text-sm font-black text-slate-900">{duplicate.name}</p>
+                                                        <p className="mt-1 text-xs font-semibold text-slate-500">{duplicate.email || duplicate.phone || 'Sans coordonnées'}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

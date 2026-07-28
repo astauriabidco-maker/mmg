@@ -298,15 +298,69 @@ class ClientBase(BaseModel):
     country: Optional[str] = None
     tax_id: Optional[str] = None
     customer_type: str = "B2B"
+    segment: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
     is_active: bool = True
 
 class ClientCreate(ClientBase):
     pass
 
+class ClientContactBase(BaseModel):
+    name: str
+    role: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    is_primary: bool = False
+    notes: Optional[str] = None
+
+class ClientContactCreate(ClientContactBase):
+    pass
+
+class ClientContactUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    is_primary: Optional[bool] = None
+    notes: Optional[str] = None
+
+class ClientContactResponse(ClientContactBase):
+    id: int
+    client_id: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
 class ClientResponse(ClientBase):
     id: int
     created_at: datetime
+    contacts: List[ClientContactResponse] = Field(default_factory=list)
     model_config = ConfigDict(from_attributes=True)
+
+class ClientDuplicateCandidate(BaseModel):
+    client: ClientResponse
+    score: int
+    reasons: List[str]
+
+class ClientDuplicateGroup(BaseModel):
+    clients: List[ClientResponse]
+    score: int
+    reasons: List[str]
+
+class ClientMergeRequest(BaseModel):
+    source_client_ids: List[int]
+    confirm: bool = False
+
+class ClientMergeResponse(BaseModel):
+    target: ClientResponse
+    merged_client_ids: List[int]
+    moved_records: Dict[str, int]
+
+class ClientImportResponse(BaseModel):
+    created: int
+    updated: int
+    skipped: int
+    errors: List[str] = Field(default_factory=list)
 
 class SupplierBase(BaseModel):
     name: str
