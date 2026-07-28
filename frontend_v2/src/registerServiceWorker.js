@@ -3,8 +3,18 @@ export function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
 
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch((error) => {
-            console.info('PWA service worker registration skipped:', error);
+        let reloading = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (reloading) return;
+            reloading = true;
+            window.location.reload();
         });
+
+        navigator.serviceWorker
+            .register('/sw.js', { updateViaCache: 'none' })
+            .then((registration) => registration.update())
+            .catch((error) => {
+                console.info('PWA service worker registration skipped:', error);
+            });
     });
 }
