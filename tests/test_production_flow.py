@@ -30,6 +30,9 @@ def test_workshop_flow_updates_order_tracking_without_500():
     def override_current_user_role():
         return "ADMIN"
 
+    def override_current_user_roles():
+        return ["ADMIN"]
+
     models.Base.metadata.create_all(bind=engine)
     with testing_session_local() as db:
         seed_default_stations(db)
@@ -39,6 +42,7 @@ def test_workshop_flow_updates_order_tracking_without_500():
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[security.get_current_user] = override_current_user
     app.dependency_overrides[security.get_current_user_role] = override_current_user_role
+    app.dependency_overrides[security.get_current_user_roles] = override_current_user_roles
 
     try:
         client = TestClient(app)
