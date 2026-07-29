@@ -60,13 +60,23 @@ WHATSAPP_ACCESS_TOKEN=
 WHATSAPP_PHONE_ID=
 MANAGER_PHONE=
 
+CRM_REMINDERS_ENABLED=true
+CRM_REMINDER_SYNC_INTERVAL_SECONDS=300
+CRM_SMTP_REQUIRED=true
+
 LABEL_OUTPUT_DIR=/data/output/labels
 WATCH_DIR=/data/exports_proges_valides
 OUTPUT_QR_DIR=/data/output/qr
 API_URL=http://backend:7000
 PRINTER_NAME=
 SMTP_SERVER=localhost
-SMTP_PORT=1025
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=CHANGE_ME_SMTP_USER
+SMTP_PASSWORD=CHANGE_ME_SMTP_PASSWORD
+SMTP_FROM=crm@example.com
+SMTP_USE_TLS=true
+PURCHASES_CC_EMAIL=
 ```
 
 Générer `SECRET_KEY` :
@@ -76,6 +86,12 @@ openssl rand -hex 32
 ```
 
 Ne jamais garder `ADMIN_PASSWORD=1234` en production.
+
+Les variables `CRM_*` et `SMTP_*` doivent être disponibles au runtime du
+service backend. Avec les relances actives, le backend refuse volontairement
+de démarrer si `SMTP_HOST` et `SMTP_FROM` (ou `SMTP_USER`) sont absents. Pour
+un redéploiement d'urgence sans relances, définir explicitement
+`CRM_REMINDERS_ENABLED=false`.
 
 Ne pas créer de variable `DATABASE_URL` dans Coolify pour ce Compose.
 `docker-compose.coolify.yml` la construit automatiquement avec le host interne `db`.

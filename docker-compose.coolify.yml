@@ -33,13 +33,22 @@ services:
       WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
       WHATSAPP_PHONE_ID: ${WHATSAPP_PHONE_ID:-}
       MANAGER_PHONE: ${MANAGER_PHONE:-}
+      CRM_REMINDERS_ENABLED: ${CRM_REMINDERS_ENABLED:-true}
+      CRM_REMINDER_SYNC_INTERVAL_SECONDS: ${CRM_REMINDER_SYNC_INTERVAL_SECONDS:-300}
+      CRM_SMTP_REQUIRED: ${CRM_SMTP_REQUIRED:-true}
       LABEL_OUTPUT_DIR: ${LABEL_OUTPUT_DIR:-/data/output/labels}
       WATCH_DIR: ${WATCH_DIR:-/data/exports_proges_valides}
       OUTPUT_QR_DIR: ${OUTPUT_QR_DIR:-/data/output/qr}
       API_URL: ${API_URL:-http://backend:7000}
       PRINTER_NAME: ${PRINTER_NAME:-}
       SMTP_SERVER: ${SMTP_SERVER:-localhost}
-      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      PURCHASES_CC_EMAIL: ${PURCHASES_CC_EMAIL:-}
     depends_on:
       db:
         condition: service_healthy
