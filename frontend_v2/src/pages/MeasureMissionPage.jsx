@@ -167,6 +167,11 @@ const formatDate = value => value
     ? new Date(value).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })
     : 'Non planifiée';
 
+const formatMoney = value => Number(value || 0).toLocaleString('fr-FR', {
+    style: 'currency',
+    currency: 'EUR',
+});
+
 const apiError = error => error?.response?.data?.detail || 'Une erreur est survenue.';
 
 function StatusBadge({ status, opening = false }) {
@@ -218,7 +223,7 @@ export default function MeasureMissionPage() {
     const [mission, setMission] = useState(null);
     const [technicalGovernance, setTechnicalGovernance] = useState(null);
     const [technicalForm, setTechnicalForm] = useState({
-        source_system: 'PROGES',
+        source_system: 'AUTO',
         document_type: 'QUOTING',
         source_reference: '',
         notes: '',
@@ -669,6 +674,10 @@ export default function MeasureMissionPage() {
 
     const downloadTechnicalHandoff = async () => {
         setError('');
+        if (technicalForm.source_system === 'AUTO') {
+            setError('Choisissez PROGES ou ORGADATA avant de générer la fiche de transfert.');
+            return;
+        }
         try {
             const response = await api.get(
                 `/v2/mmg/missions/${missionId}/technical-dossier/handoff`,
@@ -812,6 +821,9 @@ export default function MeasureMissionPage() {
     const latestCuttingVersion = [...(mission?.technical_dossier?.versions || [])]
         .reverse()
         .find(version => version.document_type === 'CUTTING');
+    const latestQuotingVersion = [...(mission?.technical_dossier?.versions || [])]
+        .reverse()
+        .find(version => version.document_type === 'QUOTING');
 
     if (loading || (!isNew && !mission)) {
         return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>;
@@ -1139,6 +1151,7 @@ export default function MeasureMissionPage() {
                                                 onChange={event => setTechnicalForm(current => ({ ...current, source_system: event.target.value }))}
                                                 className={inputClass}
                                             >
+                                                <option value="AUTO">Détection automatique</option>
                                                 <option value="PROGES">PROGES</option>
                                                 <option value="ORGADATA">ORGADATA / LogiKal</option>
                                                 <option value="INTERNAL">Document technique MMG</option>
@@ -1340,6 +1353,94 @@ export default function MeasureMissionPage() {
                                                 </div>
                                             </div>
                                         )}
+                                    </div>
+                                )}
+
+                                {technicalPhase === 'quoting' && latestQuotingVersion && (
+                                    <div className="mt-5 overflow-hidden border border-indigo-200 bg-white">
+                                        <div className="flex flex-col gap-3 border-b border-indigo-100 bg-indigo-50/60 px-4 py-4 md:flex-row md:items-start md:justify-between md:px-5">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-indigo-600">Prévisualisation du chiffrage importé</p>
+                                                <h3 className="mt-1 text-base font-black text-slate-950">
+                                                    {latestQuotingVersion.detected_source_system || latestQuotingVersion.source_system}
+                                                    {' · '}
+                                                    {latestQuotingVersion.detected_project_reference || latestQuotingVersion.source_reference || `V${latestQuotingVersion.version_number}`}
+                                                </h3>
+                                                <p className="mt-1 text-xs font-bold text-slate-500">
+                                                    Les montants ci-dessous alimenteront le devis après validation BE.
+                                                </p>
+                                            </div>
+                                            <span className={`border px-2 py-1 text-[10px] font-black uppercase ${ANALYSIS_STATUS_META[latestQuotingVersion.analysis_status]?.[1] || ANALYSIS_STATUS_META.PENDING[1]}`}>
+                                                {ANALYSIS_STATUS_META[latestQuotingVersion.analysis_status]?.[0] || latestQuotingVersion.analysis_status}
+                                            </span>
+                                        </div>
+
+                                        <div className="grid gap-2 border-b border-slate-100 p-4 sm:grid-cols-2 lg:grid-cols-5 md:p-5">
+                                            {[
+                                                ['Lignes', latestQuotingVersion.parsed_summary?.line_count || 0],
+                                                ['Ouvrages', latestQuotingVersion.parsed_summary?.total_quantity || 0],
+                                                ['HT brut', formatMoney(latestQuotingVersion.parsed_summary?.subtotal_before_discount)],
+                                                ['Remise', formatMoney(latestQuotingVersion.parsed_summary?.discount_amount)],
+                                                ['HT net', formatMoney(latestQuotingVersion.parsed_summary?.subtotal_after_discount)],
+                                            ].map(([label, value]) => (
+                                                <div key={label} className="border border-slate-200 bg-slate-50 px-3 py-3">
+                                                    <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">{label}</p>
+                                                    <p className="mt-1 text-base font-black text-slate-900">{value}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        {!!latestQuotingVersion.parsed_issues?.length && (
+                                            <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 md:px-5">
+                                                <p className="text-xs font-black text-amber-950">Écarts à contrôler</p>
+                                                <ul className="mt-2 space-y-1 text-xs font-semibold text-amber-900">
+                                                    {latestQuotingVersion.parsed_issues.map((issue, index) => (
+                                                        <li key={`${issue.code}-${index}`}>
+                                                            {issue.severity === 'error' ? 'Bloquant' : 'Alerte'} · {issue.message}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+
+                                        {latestQuotingVersion.comparison_summary?.has_changes && (
+                                            <div className="border-b border-blue-200 bg-blue-50 px-4 py-3 text-xs font-bold text-blue-900 md:px-5">
+                                                Écart avec la version précédente :
+                                                {' '}{latestQuotingVersion.comparison_summary.added_count} ajout(s),
+                                                {' '}{latestQuotingVersion.comparison_summary.removed_count} retrait(s),
+                                                {' '}{latestQuotingVersion.comparison_summary.changed_count} modification(s),
+                                                {' '}delta {formatMoney(latestQuotingVersion.comparison_summary.total_delta)}.
+                                            </div>
+                                        )}
+
+                                        <div className="overflow-x-auto">
+                                            <table className="min-w-[880px] w-full text-left">
+                                                <thead className="bg-slate-50 text-[9px] font-black uppercase tracking-wider text-slate-400">
+                                                    <tr>
+                                                        <th className="px-4 py-2.5">Position</th>
+                                                        <th className="px-4 py-2.5">Désignation</th>
+                                                        <th className="px-4 py-2.5 text-right">Dimensions</th>
+                                                        <th className="px-4 py-2.5 text-right">Qté</th>
+                                                        <th className="px-4 py-2.5 text-right">P.U. HT</th>
+                                                        <th className="px-4 py-2.5 text-right">Total HT</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100 text-xs">
+                                                    {(latestQuotingVersion.parsed_records || []).map((record, index) => (
+                                                        <tr key={`${record.position}-${index}`}>
+                                                            <td className="px-4 py-3 font-black text-indigo-700">{record.position || `Ligne ${index + 1}`}</td>
+                                                            <td className="max-w-lg px-4 py-3 font-bold text-slate-800">{record.description}</td>
+                                                            <td className="px-4 py-3 text-right font-bold text-slate-600">
+                                                                {record.width_mm && record.height_mm ? `${record.width_mm} × ${record.height_mm} mm` : '—'}
+                                                            </td>
+                                                            <td className="px-4 py-3 text-right font-black text-slate-700">{record.quantity}</td>
+                                                            <td className="px-4 py-3 text-right font-black text-slate-800">{formatMoney(record.unit_price)}</td>
+                                                            <td className="px-4 py-3 text-right font-black text-slate-950">{formatMoney(record.total_price)}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
                                 )}
 

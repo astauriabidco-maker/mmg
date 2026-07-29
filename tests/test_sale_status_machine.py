@@ -43,7 +43,12 @@ def _cleanup_test_client(engine):
     models.Base.metadata.drop_all(bind=engine)
 
 
-def _create_sale(db, status: str, reference: str = "DEV-STATUT") -> int:
+def _create_sale(
+    db,
+    status: str,
+    reference: str = "DEV-STATUT",
+    unit_price: float = 1000,
+) -> int:
     sale = models.SaleOrder(
         reference=reference,
         client_name="Client statuts",
@@ -57,7 +62,7 @@ def _create_sale(db, status: str, reference: str = "DEV-STATUT") -> int:
             order_id=sale.id,
             description="Menuiserie ALU",
             quantity=1,
-            unit_price=1000,
+            unit_price=unit_price,
         )
     )
     db.commit()
@@ -97,6 +102,27 @@ def test_arbitrary_transition_is_rejected():
 
         with TestingSessionLocal() as db:
             assert db.query(models.SaleOrder).one().status == "DRAFT"
+    finally:
+        _cleanup_test_client(engine)
+
+
+def test_draft_with_zero_priced_service_cannot_be_sent():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            sale_id = _create_sale(db, "DRAFT", unit_price=0)
+
+        headers = _auth_headers(TestingSessionLocal, "statuts-admin")
+        response = client.put(
+            f"/v2/sales/{sale_id}/status",
+            params={"status": "SENT"},
+            headers=headers,
+        )
+
+        assert response.status_code == 400
+        assert "ligne sans prix" in response.text.lower()
+        with TestingSessionLocal() as db:
+            assert db.get(models.SaleOrder, sale_id).status == "DRAFT"
     finally:
         _cleanup_test_client(engine)
 

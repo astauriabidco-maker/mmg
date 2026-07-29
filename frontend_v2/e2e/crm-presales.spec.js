@@ -237,3 +237,140 @@ test('commercial completes the CRM presales journey and merges a duplicate', asy
     await page.getByRole('button', { name: 'Fusionner' }).click();
     await expect(page.getByText('Fiches clients fusionnées avec leur historique.')).toBeVisible();
 });
+
+
+test('BE previews an anonymized PROGES quote before validation', async ({ page }) => {
+    const quoteVersion = {
+        id: 10,
+        dossier_id: 5,
+        version_number: 1,
+        document_type: 'QUOTING',
+        source_system: 'PROGES',
+        source_reference: 'PVC-ANON-001',
+        original_filename: 'proges-pvc-anonymise.pdf',
+        content_type: 'application/pdf',
+        file_size: 42000,
+        checksum_sha256: 'a'.repeat(64),
+        opening_ids: [101, 102],
+        notes: 'Fixture anonymisée',
+        analysis_status: 'PARSED',
+        detected_document_type: 'QUOTING',
+        detected_source_system: 'PROGES',
+        detected_project_reference: 'PVC-ANON-001',
+        parsed_summary: {
+            line_count: 2,
+            total_quantity: 2,
+            subtotal_before_discount: 2200,
+            discount_amount: 200,
+            subtotal_after_discount: 2000,
+        },
+        parsed_records: [
+            {
+                position: 'F01',
+                description: 'KOMMERLING 76 ADVANCED',
+                width_mm: 1200,
+                height_mm: 1400,
+                quantity: 1,
+                unit_price: 650,
+                total_price: 650,
+            },
+            {
+                position: 'PF01',
+                description: 'Porte fenêtre PVC',
+                width_mm: 1800,
+                height_mm: 2150,
+                quantity: 1,
+                unit_price: 1550,
+                total_price: 1550,
+            },
+        ],
+        parsed_issues: [],
+        comparison_summary: {},
+        impact_status: 'INITIAL',
+        revision_after_launch: false,
+        revision_status: 'NOT_REQUIRED',
+        created_by: 'be-e2e',
+        created_at: now,
+    };
+    const technicalDossier = {
+        id: 5,
+        reference: 'TECH-ANON-001',
+        mission_id: 1,
+        quoting_status: 'DRAFT',
+        production_status: 'LOCKED',
+        external_source_system: 'PROGES',
+        external_project_reference: 'PVC-ANON-001',
+        stock_status: 'LOCKED',
+        launch_status: 'LOCKED',
+        created_by: 'be-e2e',
+        created_at: now,
+        updated_at: now,
+        versions: [quoteVersion],
+    };
+    const mission = {
+        id: 1,
+        reference: 'MET-ANON-001',
+        client_id: 1,
+        client_name: 'CLIENT ANONYMISE',
+        opportunity_id: 1,
+        site_address_id: 1,
+        site_reference: 'CHANTIER-ANON',
+        assigned_user_id: 1,
+        assigned_user_name: 'BE Test',
+        source_type: 'SITE_VISIT',
+        project_scope: 'SUPPLY_AND_INSTALL',
+        status: 'VALIDATED',
+        verification_status: 'READY_FOR_FABRICATION',
+        sale_order_id: null,
+        sale_order_status: null,
+        purpose: 'Deux menuiseries anonymisées',
+        notes: null,
+        scheduled_start: now,
+        scheduled_end: '2026-07-28T12:00:00Z',
+        openings: [
+            { id: 101, sequence: 1, label: 'F01', room: 'Séjour', product_type: 'WINDOW', width_mm: 1200, height_mm: 1400, material: 'PVC', status: 'VALIDATED', documents: [] },
+            { id: 102, sequence: 2, label: 'PF01', room: 'Séjour', product_type: 'DOOR', width_mm: 1800, height_mm: 2150, material: 'PVC', status: 'VALIDATED', documents: [] },
+        ],
+        source_documents: [],
+        technical_dossier: technicalDossier,
+    };
+
+    await page.addInitScript(() => {
+        localStorage.setItem('token', 'e2e-be-token');
+        localStorage.setItem('username', 'be-e2e');
+        localStorage.setItem('role', 'ADMIN');
+        localStorage.setItem('roles', JSON.stringify(['ADMIN']));
+        localStorage.setItem('stations', JSON.stringify([]));
+        localStorage.setItem('permissions', JSON.stringify(['SALES_VIEW', 'SALES_EDIT']));
+    });
+
+    await page.route('http://localhost:7000/**', async route => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/v2/mmg/missions/1') return json(route, mission);
+        if (url.pathname === '/v2/mmg/missions/1/technical-dossier/governance') {
+            return json(route, {
+                dossier_reference: technicalDossier.reference,
+                external_source_system: 'PROGES',
+                external_project_reference: 'PVC-ANON-001',
+                document_matrix: { documents: [] },
+                stock: {},
+                execution: {},
+                gates: { be: 'LOCKED', stock: 'LOCKED', launch: 'LOCKED' },
+                latest_revision: null,
+            });
+        }
+        if (url.pathname === '/v2/config/users') return json(route, []);
+        if (url.pathname === '/v2/mmg/sites') return json(route, []);
+        return json(route, []);
+    });
+
+    await page.goto('/measure-missions/1');
+
+    await expect(page.getByRole('heading', { name: 'Passerelle PROGES / ORGADATA' })).toBeVisible();
+    await expect(page.getByText('Prévisualisation du chiffrage importé')).toBeVisible();
+    await expect(page.getByText('PVC-ANON-001').first()).toBeVisible();
+    await expect(page.getByText('KOMMERLING 76 ADVANCED')).toBeVisible();
+    await expect(page.getByText('Porte fenêtre PVC')).toBeVisible();
+    await expect(page.getByText('2 000,00 €')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Envoyer au contrôle BE' })).toBeEnabled();
+});
