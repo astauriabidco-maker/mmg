@@ -7,7 +7,8 @@
         "dev": "vite",
         "build": "vite build",
         "preview": "vite preview",
-        "test:e2e": "playwright test"
+        "test:e2e": "playwright test",
+        "test:e2e:real": "playwright test --config=playwright.real.config.js"
     },
     "dependencies": {
         "@tanstack/react-query": "^5.100.9",

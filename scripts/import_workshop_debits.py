@@ -131,6 +131,7 @@ def extract_pdf_text(path: Path) -> str:
 
 def detect_project_reference(text: str) -> str | None:
     patterns = [
+        r"Affaire\s+N[°º]\s*(MMG[\w./-]+)",
         r"Affaire:\s*([A-Z0-9_-]+)",
         r"Référence Commande\s*:\s*([^\n\r]+)",
     ]
@@ -214,9 +215,190 @@ def parse_progers_txt(path: Path, text: str) -> tuple[list[DebitRecord], list[De
 
 ORGADATA_SECTION_RE = re.compile(
     r"^\s*(Cortizo|Technal|Hydro|Sepalumic)\s+([A-Za-z0-9./_-]+)\s+(.+?)\s*$",
-    re.IGNORECASE,
+    re.IGNORECASE | re.MULTILINE,
 )
 ORGADATA_BAR_RE = re.compile(r"^\s*([0-9]+)\s+Pce\s+[àaá]\s+([0-9 ]+(?:[,.][0-9]+)?)\s*mm", re.IGNORECASE)
+CORTIZO_DIRECT_ITEM_RE = re.compile(
+    r"^\s*(?P<ordered>\d[\d ]*)\s+pce\s*\((?P<required>\d[\d ]*)\)\s+"
+    r"(?P<reference>[A-Z0-9][A-Z0-9._/-]*)\s+(?P<designation>.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+CORTIZO_PACK_ITEM_RE = re.compile(
+    r"^\s*(?P<packs>\d+)\s+UV\s+[aàá]\s+"
+    r"(?P<pack_size>\d{1,3}(?:[ .]\d{3})*|\d+)(?:\s+pce)?\s+"
+    r"(?P<reference>[A-Z0-9][A-Z0-9._/-]*)\s+(?P<designation>.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+CORTIZO_REQUIRED_RE = re.compile(
+    r"^\s*(?:pce\s*)?\((?P<required>\d[\d ]*)\)\s*(?P<continuation>.*)$",
+    re.IGNORECASE,
+)
+CORTIZO_PRICE_SUFFIX_RE = re.compile(
+    r"\s+\d[\d ]*,\d{2}\s+\d[\d ]*,\d{2}\s*$"
+)
+CORTIZO_COLORS = ("7016CM", "BLANC", "NOIR", "GRIS")
+
+
+def is_cortizo_order_text(text: str) -> bool:
+    upper = text.upper()
+    has_columns = "CROQUIS QUANTITÉ / NUMÉRO" in upper
+    has_order_rows = bool(
+        CORTIZO_DIRECT_ITEM_RE.search(text)
+        or CORTIZO_PACK_ITEM_RE.search(text)
+    )
+    return (
+        "COMMANDE" in upper
+        and bool(re.search(r"AFFAIRE\s+N[°º]\s*MMG", text, flags=re.IGNORECASE))
+        and has_columns
+        and has_order_rows
+        and ("CORTIZO" in upper or bool(CORTIZO_PACK_ITEM_RE.search(text)))
+    )
+
+
+def _cortizo_designation_and_color(value: str) -> tuple[str, str | None]:
+    designation = CORTIZO_PRICE_SUFFIX_RE.sub("", clean_text(value)).strip()
+    upper = designation.upper()
+    for color in CORTIZO_COLORS:
+        if upper.endswith(f" {color}"):
+            return designation[: -len(color)].strip(), color
+    return designation, None
+
+
+def _parse_cortizo_integer(value: str) -> float:
+    return float(value.replace(" ", "").replace(".", ""))
+
+
+def parse_cortizo_order_pdf(
+    path: Path,
+    text: str,
+) -> tuple[list[DebitRecord], list[DebitIssue]]:
+    """Parse an MMG/Cortizo purchase BOM using the parenthesized workshop need.
+
+    ``2 UV à 25 pce (40)`` means two purchase packs of 25 pieces, while 40
+    pieces are required by the workshop. Stock reservation must therefore use
+    the parenthesized quantity and not the purchased pack quantity.
+    """
+
+    project_reference = detect_project_reference(text)
+    records: list[DebitRecord] = []
+    issues: list[DebitIssue] = []
+    current: dict[str, Any] | None = None
+    current_section: str | None = None
+
+    def finish_current() -> None:
+        nonlocal current
+        if current is None:
+            return
+        if current["required"] is None:
+            issues.append(
+                DebitIssue(
+                    "warning",
+                    "missing_required_quantity",
+                    path.name,
+                    current["row"],
+                    current["reference"],
+                    (
+                        "Quantité nécessaire absente; la quantité d'achat UV "
+                        "n'est pas utilisée comme débit atelier."
+                    ),
+                )
+            )
+            current = None
+            return
+        designation, color = _cortizo_designation_and_color(
+            " ".join(current["designation_parts"])
+        )
+        records.append(
+            DebitRecord(
+                source=path.name,
+                row=current["row"],
+                supplier="CORTIZO",
+                reference=current["reference"],
+                designation=designation or current["reference"],
+                quantity=current["required"],
+                unit="pce",
+                project_reference=project_reference,
+                color=color,
+                position=current_section,
+            )
+        )
+        current = None
+
+    ignored_prefixes = (
+        "--- PAGE",
+        "AFFAIRE N°",
+        "DATE:",
+        "COMMANDE",
+        "NOM AFFAIRE:",
+        "TECHNICIEN:",
+        "POSITIONS INCLUSES:",
+        "CROQUIS QUANTITÉ /",
+        "UNITÉ",
+        "(NÉCESSAIRE)",
+        "SOMME:",
+        "TOTAL:",
+        "PAGE ",
+    )
+
+    for row_number, raw_line in enumerate(text.splitlines(), start=1):
+        line = clean_text(raw_line)
+        direct_match = CORTIZO_DIRECT_ITEM_RE.match(line)
+        pack_match = CORTIZO_PACK_ITEM_RE.match(line)
+        if direct_match or pack_match:
+            finish_current()
+            match = direct_match or pack_match
+            assert match is not None
+            current = {
+                "row": row_number,
+                "reference": match.group("reference"),
+                "required": (
+                    _parse_cortizo_integer(match.group("required"))
+                    if direct_match
+                    else None
+                ),
+                "designation_parts": [match.group("designation")],
+            }
+            continue
+
+        if line.upper() in {"FERRURE", "ACCESSOIRES"}:
+            finish_current()
+            current_section = line.capitalize()
+            continue
+
+        if current is None:
+            continue
+        if not line:
+            finish_current()
+            continue
+
+        required_match = CORTIZO_REQUIRED_RE.match(line)
+        if required_match and current["required"] is None:
+            current["required"] = _parse_cortizo_integer(
+                required_match.group("required")
+            )
+            continuation = clean_text(required_match.group("continuation"))
+            if continuation:
+                current["designation_parts"].append(continuation)
+            continue
+
+        if line.upper().startswith(ignored_prefixes):
+            finish_current()
+            continue
+        current["designation_parts"].append(line)
+
+    finish_current()
+    if not records:
+        issues.append(
+            DebitIssue(
+                "error",
+                "no_cortizo_requirements",
+                path.name,
+                None,
+                None,
+                "Aucune ligne Cortizo avec quantité nécessaire exploitable.",
+            )
+        )
+    return records, issues
 
 
 def parse_orgadata_optimized_pdf(path: Path, text: str) -> tuple[list[DebitRecord], list[DebitIssue]]:
@@ -276,6 +458,8 @@ def parse_file(path: Path) -> tuple[list[DebitRecord], list[DebitIssue]]:
         text = extract_pdf_text(path)
         if "Débit optimisé" in text:
             return parse_orgadata_optimized_pdf(path, text)
+        if is_cortizo_order_text(text):
+            return parse_cortizo_order_pdf(path, text)
         return [], [
             DebitIssue(
                 "info",

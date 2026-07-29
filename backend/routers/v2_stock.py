@@ -22,6 +22,7 @@ from ..services.stock_reservations import (
     cancel_reservation,
     consume_reservation,
     create_reservation,
+    technical_dossier_for_sale,
 )
 from ..services.stock_service import InventoryService
 from ..services.workshop_preparations import (
@@ -2213,6 +2214,16 @@ async def import_bom_for_sale_order(sale_order_id: int, background_tasks: Backgr
     sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_order_id).first()
     if not sale:
         raise HTTPException(404, "Sale Order introuvable")
+    try:
+        technical_dossier = technical_dossier_for_sale(db, sale.id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if technical_dossier:
+        raise HTTPException(
+            409,
+            "Ce devis est rattaché à un dossier technique. "
+            "Utilisez le débit validé pour créer une réservation puis un bon de préparation.",
+        )
 
     contents = await file.read()
     try:

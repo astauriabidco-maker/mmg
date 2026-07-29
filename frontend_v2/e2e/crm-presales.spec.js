@@ -374,3 +374,205 @@ test('BE previews an anonymized PROGES quote before validation', async ({ page }
     await expect(page.getByText('2 000,00 €')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Envoyer au contrôle BE' })).toBeEnabled();
 });
+
+
+test('stock lead creates the workshop reservation from the validated cutting list', async ({ page }) => {
+    const cuttingVersion = {
+        id: 20,
+        dossier_id: 8,
+        version_number: 3,
+        document_type: 'CUTTING',
+        source_system: 'ORGADATA',
+        source_reference: 'ALU-ANON-002',
+        original_filename: 'debit-alu-anonymise.pdf',
+        content_type: 'application/pdf',
+        file_size: 36000,
+        checksum_sha256: 'b'.repeat(64),
+        opening_ids: [201],
+        notes: 'Fixture anonymisée',
+        analysis_status: 'PARSED',
+        detected_document_type: 'CUTTING',
+        detected_source_system: 'ORGADATA',
+        detected_project_reference: 'ALU-ANON-002',
+        parsed_summary: {
+            total_lines: 2,
+            total_quantity: 8,
+            unique_references: 2,
+        },
+        parsed_records: [
+            { reference: 'COR-ANON-001', supplier: 'CORTIZO', quantity: 5, unit: 'barre', length_mm: 6500 },
+            { reference: 'COR-ANON-002', supplier: 'CORTIZO', quantity: 3, unit: 'barre', length_mm: 6500 },
+        ],
+        parsed_issues: [],
+        comparison_summary: {},
+        impact_status: 'INITIAL',
+        revision_after_launch: false,
+        revision_status: 'NOT_REQUIRED',
+        stock_data_approved_at: now,
+        stock_data_approved_by: 'stock-e2e',
+        created_by: 'be-e2e',
+        created_at: now,
+    };
+    const technicalDossier = {
+        id: 8,
+        reference: 'TECH-ANON-002',
+        mission_id: 2,
+        quoting_status: 'VALIDATED',
+        production_status: 'VALIDATED',
+        external_source_system: 'ORGADATA',
+        external_project_reference: 'ALU-ANON-002',
+        stock_status: 'VALIDATED',
+        stock_validated_at: now,
+        stock_validated_by: 'stock-e2e',
+        launch_status: 'TO_REVIEW',
+        launch_validated_at: null,
+        launch_validated_by: null,
+        production_validated_at: now,
+        production_validated_by: 'be-e2e',
+        created_by: 'be-e2e',
+        created_at: now,
+        updated_at: now,
+        versions: [cuttingVersion],
+    };
+    const mission = {
+        id: 2,
+        reference: 'MET-ANON-002',
+        client_id: 2,
+        client_name: 'CLIENT ANONYMISE',
+        opportunity_id: 2,
+        site_address_id: 2,
+        site_reference: 'CHANTIER-ANON-002',
+        assigned_user_id: 2,
+        assigned_user_name: 'BE Test',
+        source_type: 'SITE_VISIT',
+        project_scope: 'SUPPLY_AND_INSTALL',
+        status: 'VALIDATED',
+        verification_status: 'READY_FOR_FABRICATION',
+        sale_order_id: 42,
+        sale_order_status: 'VALIDATED',
+        purpose: 'Menuiserie aluminium anonymisée',
+        notes: null,
+        scheduled_start: now,
+        scheduled_end: '2026-07-28T12:00:00Z',
+        openings: [
+            { id: 201, sequence: 1, label: 'F01', room: 'Séjour', product_type: 'WINDOW', width_mm: 1200, height_mm: 1400, material: 'ALU', status: 'VALIDATED', documents: [] },
+        ],
+        source_documents: [],
+        technical_dossier: technicalDossier,
+    };
+    let reservationRequests = 0;
+    let governance = {
+        dossier_reference: technicalDossier.reference,
+        external_source_system: 'ORGADATA',
+        external_project_reference: 'ALU-ANON-002',
+        document_matrix: {
+            complete: true,
+            reference_consistent: true,
+            documents: [
+                { document_type: 'FABRICATION', required: true, present: true, version_number: 2 },
+                { document_type: 'CUTTING', required: true, present: true, version_number: 3 },
+            ],
+        },
+        stock: { ready: true, line_count: 2, ok_count: 2, unknown_count: 0, shortage_count: 0 },
+        execution: {
+            sale_order_id: 42,
+            reservation: {
+                id: 89,
+                reference: 'RESA-2026-0089',
+                status: 'cancelled',
+                source_label: 'dossier_technique',
+                cutting_version_id: cuttingVersion.id,
+            },
+            preparation: null,
+            production_orders: [],
+        },
+        gates: { be: 'VALIDATED', stock: 'VALIDATED', launch: 'TO_REVIEW' },
+        latest_revision: {
+            version_id: cuttingVersion.id,
+            version_number: cuttingVersion.version_number,
+            impact_status: 'INITIAL',
+            revision_after_launch: false,
+            revision_status: 'NOT_REQUIRED',
+            comparison_summary: {},
+        },
+    };
+
+    await page.addInitScript(() => {
+        localStorage.setItem('token', 'e2e-stock-token');
+        localStorage.setItem('username', 'stock-e2e');
+        localStorage.setItem('role', 'ADMIN');
+        localStorage.setItem('roles', JSON.stringify(['ADMIN']));
+        localStorage.setItem('stations', JSON.stringify([]));
+        localStorage.setItem('permissions', JSON.stringify(['SALES_VIEW', 'SALES_EDIT', 'STOCK_VIEW']));
+    });
+    page.on('dialog', dialog => dialog.accept());
+
+    await page.route('http://localhost:7000/**', async route => {
+        const request = route.request();
+        const url = new URL(request.url());
+        if (url.pathname === '/v2/mmg/missions/2') return json(route, mission);
+        if (url.pathname === '/v2/mmg/missions/2/technical-dossier/governance' && request.method() === 'GET') {
+            return json(route, governance);
+        }
+        if (url.pathname === '/v2/mmg/missions/2/technical-dossier/reservation' && request.method() === 'POST') {
+            reservationRequests += 1;
+            governance = {
+                ...governance,
+                execution: {
+                    ...governance.execution,
+                    reservation: {
+                        id: 90,
+                        reference: 'RESA-2026-0090',
+                        status: 'reserved',
+                        source_label: 'dossier_technique',
+                        cutting_version_id: cuttingVersion.id,
+                    },
+                },
+            };
+            return json(route, governance, 201);
+        }
+        if (url.pathname === '/v2/mmg/missions/2/technical-dossier/gate-review' && request.method() === 'PATCH') {
+            const payload = request.postDataJSON();
+            if (payload.gate === 'LAUNCH' && payload.action === 'VALIDATE') {
+                technicalDossier.launch_status = 'VALIDATED';
+                technicalDossier.launch_validated_at = now;
+                technicalDossier.launch_validated_by = 'atelier-e2e';
+                technicalDossier.launched_at = now;
+                technicalDossier.launched_by = 'atelier-e2e';
+                governance = {
+                    ...governance,
+                    gates: { ...governance.gates, launch: 'VALIDATED' },
+                };
+            }
+            return json(route, technicalDossier);
+        }
+        if (url.pathname === '/v2/config/users') return json(route, []);
+        if (url.pathname === '/v2/mmg/sites') return json(route, []);
+        return json(route, []);
+    });
+
+    await page.goto('/measure-missions/2');
+    await page.getByRole('button', { name: '2. Fabrication & débit' }).click();
+
+    const executionFlow = page.getByLabel("Flux d'exécution atelier");
+    await expect(executionFlow.getByText('RESA-2026-0089 · annulée, à recréer')).toBeVisible();
+    await expect(executionFlow.getByText('Verrouillée avant réservation')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Créer la réservation depuis ce débit' })).toBeEnabled();
+
+    await page.getByRole('button', { name: 'Créer la réservation depuis ce débit' }).click();
+
+    await expect(executionFlow.getByText('RESA-2026-0090 · réservée')).toBeVisible();
+    await expect(executionFlow.getByText('À créer dans le module Stock')).toBeVisible();
+    await expect(executionFlow.getByText('En attente d’autorisation')).toBeVisible();
+    await expect(page.getByText('Réservation RESA-2026-0090 créée depuis le débit validé.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ouvrir la préparation et le débit dans Stock' })).toBeVisible();
+    expect(reservationRequests).toBe(1);
+
+    await page.getByRole('button', { name: 'Autoriser le lancement atelier' }).click();
+    await expect(executionFlow.getByText('Autorisé par atelier-e2e')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ouvrir la commande et lancer la production' })).toBeVisible();
+    await page.getByRole('button', { name: 'Importer une nouvelle révision' }).click();
+    await expect(page.getByText(/Cette révision intervient après le lancement/)).toBeVisible();
+    await page.locator('select:has(option[value="CUTTING"])').selectOption('CUTTING');
+    await expect(page.getByText('Importer la révision du débit')).toBeVisible();
+});
