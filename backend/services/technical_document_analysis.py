@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from backend.services.commercial_quote_analysis import analyze_commercial_quote
 from scripts.import_workshop_debits import (
     build_summary,
     consolidate_records,
@@ -44,6 +45,8 @@ def _detect_source(text: str, filename: str, declared_source: str) -> str | None
 
 def _detect_project_reference(text: str) -> str | None:
     patterns = (
+        r"\bDevis\s+N[°º]\s*([A-Z0-9][A-Z0-9._/-]*)",
+        r"\bDEVIS\s+N[°º]?\s*([A-Z0-9][A-Z0-9._/-]*)",
         r"Affaire\s*:\s*([A-Z0-9_-]+)",
         r"N[°º]\s*offre\s*:\s*([A-Z0-9_-]+)",
         r"Offre\s+n[°º]\s*:\s*([A-Z0-9_-]+)",
@@ -120,7 +123,22 @@ def analyze_technical_document(
     records = []
     issues = []
 
-    if declared_type == "CUTTING":
+    if declared_type == "QUOTING":
+        quote_analysis = analyze_commercial_quote(
+            text,
+            path.name,
+            declared_source or None,
+        )
+        records = quote_analysis.records
+        issues.extend(quote_analysis.issues)
+        summary = quote_analysis.summary
+        detected_source = quote_analysis.source_system or detected_source
+        detected_reference = quote_analysis.project_reference or detected_reference
+        if records and not any(issue.get("severity") == "error" for issue in issues):
+            status = "PARSED_WITH_WARNINGS" if issues else "PARSED"
+        else:
+            status = "FAILED"
+    elif declared_type == "CUTTING":
         try:
             parsed_records, parsed_issues = parse_file(path)
         except Exception as exc:

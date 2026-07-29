@@ -16,6 +16,7 @@ from ..core import uploads
 from ..core.events import _send_smtp_email, _smtp_settings
 from ..services.document_sequences import next_number
 from ..services.technical_document_analysis import analyze_technical_document
+from ..services.commercial_quote_analysis import compare_commercial_quote_versions
 from ..services.crm_cockpit import build_crm_cockpit
 from ..services.crm_reminders import (
     build_template_context,
@@ -260,6 +261,46 @@ def _validate_production_document_analysis(
             f"({fabrication_reference} / {cutting_reference}).",
         )
     return cutting
+
+
+def _validate_quoting_document_analysis(
+    dossier: models.TechnicalDossier,
+) -> models.TechnicalDossierVersion:
+    quoting = _latest_technical_version(
+        dossier,
+        schemas.TechnicalDocumentType.QUOTING.value,
+    )
+    if not quoting:
+        raise HTTPException(422, "Ajoutez le chiffrage PROGES ou ORGADATA")
+    if (
+        quoting.analysis_status not in {"PARSED", "PARSED_WITH_WARNINGS"}
+        or not quoting.parsed_records
+    ):
+        raise HTTPException(
+            422,
+            "Le chiffrage n'est pas exploitable automatiquement. "
+            "Importez un devis PDF PROGES ou ORGADATA reconnu.",
+        )
+    blocking_issues = [
+        issue
+        for issue in quoting.parsed_issues or []
+        if issue.get("severity") == "error"
+    ]
+    if blocking_issues:
+        raise HTTPException(
+            422,
+            "Le chiffrage contient des anomalies bloquantes : "
+            + "; ".join(issue.get("message", "anomalie") for issue in blocking_issues[:3]),
+        )
+    if quoting.source_system not in {
+        schemas.TechnicalSourceSystem.PROGES.value,
+        schemas.TechnicalSourceSystem.ORGADATA.value,
+    }:
+        raise HTTPException(422, "Le chiffrage doit provenir de PROGES ou ORGADATA")
+    summary = quoting.parsed_summary or {}
+    if float(summary.get("subtotal_after_discount") or 0) <= 0:
+        raise HTTPException(422, "Le total HT net du chiffrage doit être positif")
+    return quoting
 
 
 def _records_from_technical_version(
@@ -2210,10 +2251,14 @@ async def upload_measure_technical_version(
             409,
             "Cette phase doit être en brouillon ou à corriger pour ajouter une version",
         )
-    try:
-        normalized_source = schemas.TechnicalSourceSystem(source_system.upper()).value
-    except ValueError as exc:
-        raise HTTPException(422, "Logiciel source invalide") from exc
+    requested_source = source_system.upper().strip()
+    if requested_source == "AUTO":
+        normalized_source = ""
+    else:
+        try:
+            normalized_source = schemas.TechnicalSourceSystem(requested_source).value
+        except ValueError as exc:
+            raise HTTPException(422, "Logiciel source invalide") from exc
 
     parsed_opening_ids = []
     if opening_ids.strip():
@@ -2258,6 +2303,48 @@ async def upload_measure_technical_version(
         normalized_source,
         source_reference,
     )
+    resolved_source = (
+        analysis.detected_source_system
+        or normalized_source
+        or schemas.TechnicalSourceSystem.OTHER.value
+    )
+    if is_quoting and resolved_source not in {
+        schemas.TechnicalSourceSystem.PROGES.value,
+        schemas.TechnicalSourceSystem.ORGADATA.value,
+    }:
+        os.remove(file_path)
+        raise HTTPException(
+            422,
+            "Format de chiffrage non reconnu. Importez un devis PDF PROGES ou ORGADATA.",
+        )
+    if is_quoting:
+        extracted_quantity = float(analysis.summary.get("total_quantity") or 0)
+        expected_quantity = len(parsed_opening_ids)
+        if extracted_quantity != expected_quantity:
+            analysis.issues.append(
+                {
+                    "severity": "warning",
+                    "code": "commercial_quote_opening_quantity_mismatch",
+                    "source": file.filename or "chiffrage",
+                    "row": None,
+                    "reference": analysis.detected_project_reference,
+                    "message": (
+                        f"Le chiffrage représente {extracted_quantity:g} ouvrage(s), "
+                        f"contre {expected_quantity} dans la mission."
+                    ),
+                }
+            )
+            analysis.summary["issue_count"] = len(analysis.issues)
+            if analysis.status == "PARSED":
+                analysis = analysis.__class__(
+                    status="PARSED_WITH_WARNINGS",
+                    detected_document_type=analysis.detected_document_type,
+                    detected_source_system=analysis.detected_source_system,
+                    detected_project_reference=analysis.detected_project_reference,
+                    summary=analysis.summary,
+                    records=analysis.records,
+                    issues=analysis.issues,
+                )
     previous_same_type = _latest_technical_version(dossier, normalized_type)
     comparison = (
         compare_material_versions(
@@ -2268,6 +2355,11 @@ async def upload_measure_technical_version(
         and previous_same_type
         else {}
     )
+    if is_quoting and previous_same_type:
+        comparison = compare_commercial_quote_versions(
+            previous_same_type.parsed_records or [],
+            analysis.records,
+        )
     revision_after_launch = bool(
         normalized_type != schemas.TechnicalDocumentType.QUOTING.value
         and dossier.launched_at
@@ -2291,35 +2383,70 @@ async def upload_measure_technical_version(
         or analysis.detected_project_reference
         or None
     )
-    if not is_quoting:
-        if not dossier.external_source_system:
-            dossier.external_source_system = normalized_source
-        if not dossier.external_project_reference and resolved_external_reference:
-            dossier.external_project_reference = resolved_external_reference
-        if (
-            dossier.external_project_reference
-            and resolved_external_reference
-            and dossier.external_project_reference != resolved_external_reference
-        ):
-            analysis.issues.append(
-                {
-                    "severity": "error",
-                    "code": "technical_dossier_reference_mismatch",
-                    "source": file.filename or "dossier-technique",
-                    "row": None,
-                    "reference": resolved_external_reference,
-                    "message": (
-                        f"Le dossier industriel attend la référence "
-                        f"{dossier.external_project_reference}, pas {resolved_external_reference}."
-                    ),
-                }
-            )
-            analysis.summary["issue_count"] = len(analysis.issues)
+    if (
+        dossier.external_source_system
+        and resolved_source
+        and dossier.external_source_system != resolved_source
+    ):
+        analysis.issues.append(
+            {
+                "severity": "error",
+                "code": "technical_dossier_source_mismatch",
+                "source": file.filename or "dossier-technique",
+                "row": None,
+                "reference": resolved_external_reference,
+                "message": (
+                    f"Le dossier industriel est rattaché à "
+                    f"{dossier.external_source_system}, pas {resolved_source}."
+                ),
+            }
+        )
+        analysis.summary["issue_count"] = len(analysis.issues)
+    if not dossier.external_source_system and resolved_source:
+        dossier.external_source_system = resolved_source
+    if not dossier.external_project_reference and resolved_external_reference:
+        dossier.external_project_reference = resolved_external_reference
+    if (
+        dossier.external_project_reference
+        and resolved_external_reference
+        and dossier.external_project_reference != resolved_external_reference
+    ):
+        analysis.issues.append(
+            {
+                "severity": "error",
+                "code": "technical_dossier_reference_mismatch",
+                "source": file.filename or "dossier-technique",
+                "row": None,
+                "reference": resolved_external_reference,
+                "message": (
+                    f"Le dossier industriel attend la référence "
+                    f"{dossier.external_project_reference}, pas {resolved_external_reference}."
+                ),
+            }
+        )
+        analysis.summary["issue_count"] = len(analysis.issues)
+    normalized_analysis_status = (
+        "FAILED"
+        if any(issue.get("severity") == "error" for issue in analysis.issues)
+        else "PARSED_WITH_WARNINGS"
+        if analysis.issues and analysis.status == "PARSED"
+        else analysis.status
+    )
+    if normalized_analysis_status != analysis.status:
+        analysis = analysis.__class__(
+            status=normalized_analysis_status,
+            detected_document_type=analysis.detected_document_type,
+            detected_source_system=analysis.detected_source_system,
+            detected_project_reference=analysis.detected_project_reference,
+            summary=analysis.summary,
+            records=analysis.records,
+            issues=analysis.issues,
+        )
     version = models.TechnicalDossierVersion(
         dossier=dossier,
         version_number=len(dossier.versions) + 1,
         document_type=normalized_type,
-        source_system=normalized_source,
+        source_system=resolved_source,
         source_reference=(
             (source_reference or "").strip()
             or analysis.detected_project_reference
@@ -2443,7 +2570,9 @@ def submit_measure_technical_dossier(
             label = "chiffrage" if is_quoting else required_type.lower()
             raise HTTPException(422, f"Ajoutez le fichier {label} PROGES/ORGADATA")
         _validate_technical_coverage(mission, latest.opening_ids or [])
-    if not is_quoting:
+    if is_quoting:
+        _validate_quoting_document_analysis(dossier)
+    else:
         _validate_production_document_analysis(dossier)
     prefix = "quoting" if is_quoting else "production"
     setattr(dossier, status_field, schemas.TechnicalDossierStatus.TO_REVIEW.value)
@@ -2504,7 +2633,9 @@ def review_measure_technical_dossier(
                 raise HTTPException(422, f"Fichier {required_type.lower()} absent")
             _validate_technical_coverage(mission, latest.opening_ids or [])
         cutting = None
-        if not is_quoting:
+        if is_quoting:
+            _validate_quoting_document_analysis(dossier)
+        else:
             cutting = _validate_production_document_analysis(dossier)
         setattr(dossier, status_field, schemas.TechnicalDossierStatus.VALIDATED.value)
         setattr(dossier, f"{prefix}_review_note", note)
@@ -2783,6 +2914,7 @@ def generate_measure_mission_quote(
     ]
     if invalid_openings:
         raise HTTPException(422, "Tous les ouvrages doivent être validés par le BE")
+    quoting_version = _validate_quoting_document_analysis(mission.technical_dossier)
 
     if mission.sale_order_id:
         sale = (
@@ -2804,6 +2936,16 @@ def generate_measure_mission_quote(
         if mission.site
         else "chantier à préciser"
     )
+    quote_summary = quoting_version.parsed_summary or {}
+    effective_discount_pct = round(
+        float(quote_summary.get("effective_discount_pct") or 0),
+        6,
+    )
+    source_reference = (
+        quoting_version.detected_project_reference
+        or quoting_version.source_reference
+        or mission.technical_dossier.reference
+    )
     sale = models.SaleOrder(
         reference=next_number(db, "quote"),
         client_name=mission.client.name,
@@ -2812,42 +2954,46 @@ def generate_measure_mission_quote(
         client_address=mission.client.address,
         status="DRAFT",
         workflow_type="FABRICATION_FROM_MEASURE",
+        tax_rate=float(quote_summary.get("tax_rate") or 20),
         notes=(
-            f"Brouillon de chiffrage généré depuis {mission.reference}, {site_label}. "
-            "Les prix doivent être complétés et validés avant envoi au client."
+            f"Proposition générée depuis le chiffrage "
+            f"{quoting_version.source_system} {source_reference}, "
+            f"version V{quoting_version.version_number}, mission {mission.reference}, "
+            f"{site_label}. Contrôle commercial requis avant envoi."
         ),
         author=current_user.get("sub", "Système"),
     )
     db.add(sale)
     db.flush()
 
-    for opening in mission.openings:
-        dimensions = f"{opening.width_mm:g} x {opening.height_mm:g} mm"
+    for record in quoting_version.parsed_records or []:
         description = " - ".join(
             part
             for part in [
-                f"{opening.sequence}. {opening.label}",
-                opening.room,
-                opening.product_type,
-                opening.material,
-                dimensions,
+                str(record.get("position") or "").strip(),
+                str(record.get("description") or "").strip(),
             ]
             if part
         )
-        db.add(
+        sale.lines.append(
             models.SaleOrderLine(
-                order_id=sale.id,
                 line_type="SERVICE",
-                description=description,
-                quantity=1.0,
-                unit_price=0,
+                description=description[:500],
+                quantity=float(record.get("quantity") or 0),
+                unit_price=float(record.get("unit_price") or 0),
+                discount_pct=effective_discount_pct,
                 visual_config=None,
             )
         )
+    db.flush()
     mission.sale_order_id = sale.id
     mission.status = models.MeasureMissionStatus.QUOTED.value
     if mission.opportunity:
         mission.opportunity.sale_order_id = sale.id
+        mission.opportunity.estimated_amount = float(
+            quote_summary.get("subtotal_after_discount") or 0
+        )
+        db.flush()
         sync_opportunity_from_sale(
             db,
             sale,

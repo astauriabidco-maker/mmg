@@ -1,9 +1,11 @@
 import shutil
 import sys
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from reportlab.pdfgen import canvas
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -20,6 +22,39 @@ PNG_1PX = (
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAD"
     "UlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
+
+
+def _anonymized_proges_quote_pdf(
+    *,
+    reference: str = "PVC-TEST-001",
+    second_unit_price: float = 900.0,
+) -> bytes:
+    first_total = 650.0
+    second_total = second_unit_price
+    subtotal = first_total + second_total
+    buffer = BytesIO()
+    document = canvas.Canvas(buffer)
+    lines = [
+        f"Devis N° {reference}",
+        "CLIENT ANONYMISE",
+        "Qté Désignation L H P.U. HT P.T. HT",
+        "F01",
+        "1 KOMMERLING 76 ADVANCED 1200 1400 650,00 650,00",
+        "DORMANT NEUF 4 côtés",
+        "Fenêtre OB 2 vantaux",
+        "PF01",
+        f"1 Porte fenêtre PVC 1800 2150 {second_unit_price:.2f} {second_total:.2f}".replace(".", ","),
+        "DORMANT NEUF 4 côtés",
+        f"MONTANT TOTAL H.T. {subtotal:.2f} €".replace(".", ","),
+        "T.V.A. à 20,00 %",
+        f"MONTANT TOTAL T.T.C. {subtotal * 1.2:.2f} €".replace(".", ","),
+    ]
+    y = 800
+    for line in lines:
+        document.drawString(40, y, line)
+        y -= 24
+    document.save()
+    return buffer.getvalue()
 
 
 @pytest.fixture()
@@ -420,10 +455,25 @@ def test_validated_measure_mission_generates_idempotent_multi_opening_quote(clie
         },
         headers=headers,
     ).json()
+    opportunity = client.post(
+        "/v2/mmg/opportunities",
+        json={
+            "client_id": crm_client["id"],
+            "owner_user_id": 1,
+            "title": "Menuiseries anonymisées à chiffrer",
+            "need_type": "fourniture_pose",
+            "stage": "nouveau",
+            "probability": 10,
+        },
+        headers=headers,
+    )
+    assert opportunity.status_code == 201, opportunity.text
+    opportunity = opportunity.json()
     mission = client.post(
         "/v2/mmg/missions",
         json={
             "client_id": crm_client["id"],
+            "opportunity_id": opportunity["id"],
             "site": {
                 "label": "Résidence",
                 "address_line1": "12 rue du Chantier",
@@ -518,17 +568,26 @@ def test_validated_measure_mission_generates_idempotent_multi_opening_quote(clie
         f"/v2/mmg/missions/{mission['id']}/technical-dossier/versions",
         data={
             "document_type": "QUOTING",
-            "source_system": "PROGES",
-            "source_reference": "PROGES-CHANTIER-42",
+            "source_system": "AUTO",
+            "source_reference": "PVC-TEST-001",
             "opening_ids": ",".join(str(value) for value in opening_ids),
             "notes": "Export technique initial",
         },
-        files={"file": ("proges-export.txt", b"PROGES;F01;PF01", "text/plain")},
+        files={
+            "file": (
+                "proges-anonymise.pdf",
+                _anonymized_proges_quote_pdf(),
+                "application/pdf",
+            )
+        },
         headers=headers,
     )
     assert technical_version.status_code == 200, technical_version.text
     assert technical_version.json()["versions"][0]["version_number"] == 1
     assert technical_version.json()["versions"][0]["opening_ids"] == opening_ids
+    assert technical_version.json()["versions"][0]["source_system"] == "PROGES"
+    assert technical_version.json()["versions"][0]["analysis_status"] == "PARSED"
+    assert technical_version.json()["versions"][0]["parsed_summary"]["line_count"] == 2
 
     submitted = client.patch(
         f"/v2/mmg/missions/{mission['id']}/technical-dossier/submit",
@@ -550,17 +609,25 @@ def test_validated_measure_mission_generates_idempotent_multi_opening_quote(clie
         f"/v2/mmg/missions/{mission['id']}/technical-dossier/versions",
         data={
             "document_type": "QUOTING",
-            "source_system": "PROGES",
-            "source_reference": "PROGES-CHANTIER-42-B",
+            "source_system": "AUTO",
+            "source_reference": "PVC-TEST-001",
             "opening_ids": ",".join(str(value) for value in opening_ids),
             "notes": "Référence porte-fenêtre corrigée",
         },
-        files={"file": ("proges-export-v2.txt", b"PROGES;F01;PF01;CORRECTED", "text/plain")},
+        files={
+            "file": (
+                "proges-anonymise-v2.pdf",
+                _anonymized_proges_quote_pdf(second_unit_price=950),
+                "application/pdf",
+            )
+        },
         headers=headers,
     )
     assert second_version.status_code == 200, second_version.text
     assert [version["version_number"] for version in second_version.json()["versions"]] == [1, 2]
     assert second_version.json()["quoting_status"] == "DRAFT"
+    assert second_version.json()["versions"][1]["comparison_summary"]["has_changes"] is True
+    assert second_version.json()["versions"][1]["comparison_summary"]["changed_count"] == 1
 
     resubmitted = client.patch(
         f"/v2/mmg/missions/{mission['id']}/technical-dossier/submit",
@@ -612,7 +679,19 @@ def test_validated_measure_mission_generates_idempotent_multi_opening_quote(clie
     assert sale.json()["workflow_type"] == "FABRICATION_FROM_MEASURE"
     assert sale.json()["status"] == "DRAFT"
     assert len(sale.json()["lines"]) == 2
-    assert all(line["unit_price"] == 0 for line in sale.json()["lines"])
+    assert all(line["unit_price"] > 0 for line in sale.json()["lines"])
+    assert sum(
+        line["quantity"] * line["unit_price"] * (1 - line["discount_pct"] / 100)
+        for line in sale.json()["lines"]
+    ) == pytest.approx(1600)
+    linked_opportunity = client.get(
+        f"/v2/mmg/opportunities/{opportunity['id']}",
+        headers=headers,
+    )
+    assert linked_opportunity.status_code == 200, linked_opportunity.text
+    assert linked_opportunity.json()["sale_order_id"] == result["sale_order_id"]
+    assert linked_opportunity.json()["stage"] == "proposition_a_valider"
+    assert linked_opportunity.json()["estimated_amount"] == pytest.approx(1600)
 
     mission_detail = client.get(
         f"/v2/mmg/missions/{mission['id']}",

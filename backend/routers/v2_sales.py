@@ -220,17 +220,17 @@ def _create_signature_invoice(db: Session, sale: models.SaleOrder) -> models.Inv
 
 
 def _ensure_sale_is_commercially_signable(sale: models.SaleOrder) -> None:
-    zero_priced_stock_lines = [
+    zero_priced_lines = [
         line.description or f"Ligne #{line.id}"
         for line in sale.lines or []
-        if (line.line_type or "").upper() == "STOCK_ITEM" and (line.unit_price or 0) <= 0
+        if (line.unit_price or 0) <= 0
     ]
-    if zero_priced_stock_lines:
+    if zero_priced_lines:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Signature impossible: article stock sans prix de vente HT positif. "
-                + ", ".join(zero_priced_stock_lines[:5])
+                "Envoi ou signature impossible: ligne sans prix de vente HT positif. "
+                + ", ".join(zero_priced_lines[:5])
             ),
         )
 
@@ -1012,6 +1012,9 @@ def update_sale_status(
         )
 
     assert_permission(db, current_user, "SALES_EDIT")
+
+    if status == "SENT":
+        _ensure_sale_is_commercially_signable(order)
 
     if status in SALE_WORKSHOP_GUARDED_STATUSES:
         active_workshop_reservations = _active_workshop_reservations_for_sale(db, order.id).count()
