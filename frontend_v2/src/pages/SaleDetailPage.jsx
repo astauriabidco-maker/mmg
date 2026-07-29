@@ -139,7 +139,18 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     };
 
     const updateStatus = (status) => runAction('status', async () => {
-        await api.put(`/v2/sales/${sale.id}/status?status=${status}`);
+        const response = await api.put(`/v2/sales/${sale.id}/status?status=${status}`);
+        if (status === 'SENT') {
+            if (response.data?.email_status === 'SENT') {
+                alert(`Devis envoyé à ${response.data.email_recipient}.`);
+            } else {
+                alert(
+                    response.data?.email_error
+                        ? `Devis marqué envoyé, mais email non transmis : ${response.data.email_error}`
+                        : "Devis marqué envoyé, mais le transport email n'a pas été confirmé."
+                );
+            }
+        }
     });
 
     const deliverFreeSale = () => {
@@ -311,9 +322,14 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                                 </button>
                             )}
                             {sale.status === 'SENT' && (
-                                <button onClick={() => updateStatus('VALIDATED')} disabled={busyAction === 'status'} className="px-5 py-3 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500 disabled:bg-slate-300 inline-flex items-center gap-2">
-                                    <CheckCircle className="w-4 h-4" /> Marquer signé
-                                </button>
+                                <>
+                                    <button onClick={() => updateStatus('SENT')} disabled={busyAction === 'status'} className="px-5 py-3 rounded-xl bg-blue-600 text-white font-black hover:bg-blue-500 disabled:bg-slate-300 inline-flex items-center gap-2">
+                                        <Send className="w-4 h-4" /> Renvoyer l'email
+                                    </button>
+                                    <button onClick={() => updateStatus('VALIDATED')} disabled={busyAction === 'status'} className="px-5 py-3 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500 disabled:bg-slate-300 inline-flex items-center gap-2">
+                                        <CheckCircle className="w-4 h-4" /> Marquer signé
+                                    </button>
+                                </>
                             )}
                             {canDeliver && (
                                 <button onClick={deliverFreeSale} disabled={busyAction === 'deliverFreeSale'} className="px-5 py-3 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500 disabled:bg-slate-300 inline-flex items-center gap-2">

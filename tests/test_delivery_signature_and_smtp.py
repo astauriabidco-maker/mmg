@@ -4,6 +4,8 @@ Couvre :
 - POST /v2/logistics/notes/{id}/deliver : la signature base64 est décodée via
   backend/core/uploads.py, écrite sous uploads/delivery/ et le chemin est
   persisté (colonne signature_path) puis exposé dans la réponse.
+- EventBus.send_quote_for_signature_email : le devis et son lien de signature
+  sont réellement envoyés, avec un résultat SENT/SKIPPED/FAILED exploitable.
 - EventBus._task_send_quote_confirmation_email : envoi SMTP réel via smtplib
   (mocké) quand la config d'environnement est complète, skip gracieux sinon,
   et jamais d'exception propagée si le transport SMTP échoue (l'email est
@@ -184,6 +186,95 @@ def test_smtp_email_sent_with_expected_content_when_configured(monkeypatch):
     assert "DEV-2026-0042" in html_part
 
 
+def test_smtp_quote_for_signature_sent_with_expected_content(monkeypatch):
+    _set_smtp_env(monkeypatch)
+    with patch("backend.core.events.smtplib.SMTP") as smtp_cls:
+        server = smtp_cls.return_value.__enter__.return_value
+        result = EventBus.send_quote_for_signature_email(
+            "alice@example.test",
+            "ACME Renovation",
+            "DEV-2026-0042",
+            4320.0,
+            "https://mmg.test/portal/sign/token-abc",
+        )
+
+    assert result == {
+        "status": "SENT",
+        "recipient": "alice@example.test",
+        "error": None,
+    }
+    server.send_message.assert_called_once()
+    msg = server.send_message.call_args[0][0]
+    assert msg["To"] == "alice@example.test"
+    assert msg["Subject"] == "Votre devis DEV-2026-0042 à signer - MMG"
+    plain_part = msg.get_payload()[0].get_payload(decode=True).decode("utf-8")
+    assert "4 320,00 € TTC" in plain_part
+    assert "https://mmg.test/portal/sign/token-abc" in plain_part
+
+
+def test_sent_status_sends_and_can_resend_quote_email(isolated_client, monkeypatch):
+    client, TestingSessionLocal = isolated_client
+    _create_admin(TestingSessionLocal)
+    headers = _admin_headers(client)
+    _set_smtp_env(monkeypatch)
+
+    create_response = client.post(
+        "/v2/sales/",
+        json={
+            "client_name": "ACME Renovation",
+            "client_email": "alice@example.test",
+            "validity_days": 30,
+            "tax_rate": 20.0,
+            "currency": "EUR",
+            "lines": [
+                {
+                    "variant_id": None,
+                    "description": "Fenêtre de recette",
+                    "quantity": 1,
+                    "unit_price": 1000.0,
+                    "discount_pct": 0,
+                    "visual_config": None,
+                },
+            ],
+        },
+        headers=headers,
+    )
+    assert create_response.status_code == 200, create_response.text
+    sale = create_response.json()
+
+    with patch("backend.core.events.smtplib.SMTP") as smtp_cls:
+        server = smtp_cls.return_value.__enter__.return_value
+        sent_response = client.put(
+            f"/v2/sales/{sale['id']}/status",
+            params={"status": "SENT"},
+            headers=headers,
+        )
+        resend_response = client.put(
+            f"/v2/sales/{sale['id']}/status",
+            params={"status": "SENT"},
+            headers=headers,
+        )
+
+    assert sent_response.status_code == 200, sent_response.text
+    assert sent_response.json()["email_status"] == "SENT"
+    assert sent_response.json()["email_recipient"] == "alice@example.test"
+    assert resend_response.status_code == 200, resend_response.text
+    assert resend_response.json()["email_status"] == "SENT"
+    assert server.send_message.call_count == 2
+
+    with TestingSessionLocal() as db:
+        logs = (
+            db.query(models.ChatterMessage)
+            .filter(
+                models.ChatterMessage.model_name == "sale_order",
+                models.ChatterMessage.record_id == sale["id"],
+            )
+            .all()
+        )
+    assert len(logs) == 2
+    assert all("envoyé pour signature" in item.body for item in logs)
+
+
 def test_smtp_email_skipped_gracefully_when_not_configured(monkeypatch):
     _clear_smtp_env(monkeypatch)
     with patch("backend.core.events.smtplib.SMTP") as smtp_cls:
@@ -255,25 +346,27 @@ def test_portal_sign_triggers_confirmation_email(isolated_client, monkeypatch):
     assert create_response.status_code == 200, create_response.text
     sale = create_response.json()
 
-    sent_response = client.put(
-        f"/v2/sales/{sale['id']}/status",
-        params={"status": "SENT"},
-        headers=headers,
-    )
-    assert sent_response.status_code == 200, sent_response.text
-    portal_link = sent_response.json()["portal_link"]
-    token = portal_link.rsplit("/", 1)[-1]
-
     with patch("backend.core.events.smtplib.SMTP") as smtp_cls:
         server = smtp_cls.return_value.__enter__.return_value
+        sent_response = client.put(
+            f"/v2/sales/{sale['id']}/status",
+            params={"status": "SENT"},
+            headers=headers,
+        )
+        assert sent_response.status_code == 200, sent_response.text
+        portal_link = sent_response.json()["portal_link"]
+        token = portal_link.rsplit("/", 1)[-1]
         sign_response = client.post(f"/v2/sales/portal/{token}/sign")
         assert sign_response.status_code == 200, sign_response.text
 
-    server.send_message.assert_called_once()
-    msg = server.send_message.call_args[0][0]
-    assert msg["To"] == "alice@example.test"
-    assert sale["reference"] in msg["Subject"]
-    plain_part = msg.get_payload()[0].get_payload(decode=True).decode("utf-8")
+    assert server.send_message.call_count == 2
+    invitation = server.send_message.call_args_list[0][0][0]
+    confirmation = server.send_message.call_args_list[1][0][0]
+    assert invitation["To"] == "alice@example.test"
+    assert "à signer" in invitation["Subject"]
+    assert confirmation["To"] == "alice@example.test"
+    assert sale["reference"] in confirmation["Subject"]
+    plain_part = confirmation.get_payload()[0].get_payload(decode=True).decode("utf-8")
     # 2 × 1500 € HT, TVA 20 % → 3 600,00 € TTC
     assert "3 600,00 € TTC" in plain_part
 
@@ -314,6 +407,8 @@ def test_portal_sign_without_smtp_config_still_signs(isolated_client, monkeypatc
         params={"status": "SENT"},
         headers=headers,
     )
+    assert sent_response.json()["email_status"] == "SKIPPED"
+    assert sent_response.json()["email_error"] == "SMTP non configuré."
     token = sent_response.json()["portal_link"].rsplit("/", 1)[-1]
 
     with patch("backend.core.events.smtplib.SMTP") as smtp_cls:

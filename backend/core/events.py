@@ -117,6 +117,85 @@ def sanitize_client_name(client_name: str) -> str:
 
 class EventBus:
     @staticmethod
+    def send_quote_for_signature_email(
+        client_email: Optional[str],
+        client_name: str,
+        reference: str,
+        amount_ttc: float,
+        portal_link: str,
+    ) -> dict:
+        """Envoie le devis à signer et retourne un résultat traçable.
+
+        Contrairement aux confirmations post-signature exécutées en tâche de
+        fond, l'envoi initial doit rendre son résultat à l'interface afin
+        qu'un devis ne soit pas présenté comme envoyé sans transport SMTP.
+        """
+        recipient = (client_email or "").strip()
+        if not recipient:
+            return {
+                "status": "SKIPPED",
+                "recipient": None,
+                "error": "Adresse email client absente.",
+            }
+
+        amount_label = f"{amount_ttc:,.2f}".replace(",", " ").replace(".", ",")
+        subject = f"Votre devis {reference} à signer - MMG"
+        text_body = (
+            f"Bonjour {client_name},\n\n"
+            f"Votre devis {reference}, d'un montant de {amount_label} € TTC, "
+            f"est disponible pour consultation et signature :\n{portal_link}\n\n"
+            "Merci de consulter le document et les conditions générales avant validation.\n\n"
+            "Cordialement,\n"
+            "L'équipe MMG"
+        )
+        html_body = (
+            '<html><body style="font-family: Arial, sans-serif; color: #1e293b;">'
+            f"<p>Bonjour {client_name},</p>"
+            f"<p>Votre devis <b>{reference}</b>, d'un montant de "
+            f"<b>{amount_label} &euro; TTC</b>, est disponible.</p>"
+            f'<p><a href="{portal_link}" '
+            'style="display:inline-block;padding:12px 18px;background:#2563eb;'
+            'color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">'
+            "Consulter et signer mon devis</a></p>"
+            "<p>Merci de consulter le document et les conditions générales avant validation.</p>"
+            "<p>Cordialement,<br/>L'équipe MMG</p>"
+            "</body></html>"
+        )
+
+        try:
+            sent = _send_smtp_email(recipient, subject, text_body, html_body)
+        except Exception as exc:
+            logger.error(
+                "[EventBus] Échec d'envoi du devis %s à signer vers %s : %s",
+                reference,
+                recipient,
+                exc,
+            )
+            return {
+                "status": "FAILED",
+                "recipient": recipient,
+                "error": str(exc),
+            }
+
+        if not sent:
+            return {
+                "status": "SKIPPED",
+                "recipient": recipient,
+                "error": "SMTP non configuré.",
+            }
+
+        logger.info(
+            "[EventBus] Email de signature du devis %s envoyé à %s.",
+            reference,
+            recipient,
+        )
+        return {
+            "status": "SENT",
+            "recipient": recipient,
+            "error": None,
+        }
+
+    @staticmethod
     def on_quote_accepted(
         quote_id: int,
         client_name: str,
