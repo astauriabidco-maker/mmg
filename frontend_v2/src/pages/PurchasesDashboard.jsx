@@ -348,6 +348,8 @@ export default function PurchasesDashboard() {
     const canCreatePurchaseOrder = can('purchases.order');
     const canCreatePurchaseRequest = can('purchases.request');
     const canApprovePurchaseRequest = can('purchases.approve');
+    const canManageSupplierInvoices = can('purchases.invoice.manage');
+    const canManageSupplierPayments = can('purchases.payments.manage');
 
     const { data: purchases = [] } = useQuery({
         queryKey: ['purchases'],
@@ -830,6 +832,7 @@ export default function PurchasesDashboard() {
     const receiveQuantityTotal = receiveLines.reduce((sum, line) => sum + (parseFloat(line.quantity || 0) || 0), 0);
 
     const openSupplierInvoiceModal = () => {
+        if (!canManageSupplierInvoices) return;
         const lines = (selectedPO?.lines || [])
             .map(line => ({
                 line_id: line.id,
@@ -885,6 +888,7 @@ export default function PurchasesDashboard() {
     };
 
     const openSupplierPaymentModal = (invoice) => {
+        if (!canManageSupplierPayments) return;
         const remaining = Number(invoice.remaining_amount ?? Math.max(Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0), 0));
         setSupplierPaymentTarget(invoice);
         setSupplierPaymentForm({
@@ -1483,7 +1487,7 @@ export default function PurchasesDashboard() {
                                                         <button onClick={() => openSupplierInvoiceDetail(invoice, selectedPO)} className="mt-2 mr-2 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-[10px] font-black uppercase tracking-widest hover:bg-slate-200">
                                                             Fiche
                                                         </button>
-                                                        {Number(invoice.remaining_amount || 0) > 0 && (
+                                                        {canManageSupplierPayments && Number(invoice.remaining_amount || 0) > 0 && (
                                                             <button onClick={() => openSupplierPaymentModal(invoice)} className="mt-2 px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-widest hover:bg-emerald-200">
                                                                 Payer
                                                             </button>
@@ -1499,7 +1503,7 @@ export default function PurchasesDashboard() {
                                     <div className="rounded-2xl border border-orange-100 bg-orange-50 p-5">
                                         <p className="text-[10px] font-black uppercase tracking-widest text-orange-500 mb-2">Reste facturable</p>
                                         <p className="text-3xl font-black text-orange-700">{Math.max(Number(selectedPO.quantity_received || 0) - Number(selectedPO.quantity_invoiced || 0), 0).toLocaleString('fr-FR')}</p>
-                                        <button onClick={openSupplierInvoiceModal} disabled={Math.max(Number(selectedPO.quantity_received || 0) - Number(selectedPO.quantity_invoiced || 0), 0) <= 0} className="mt-4 w-full px-4 py-3 rounded-xl bg-orange-600 disabled:bg-slate-300 text-white font-black hover:bg-orange-500">
+                                        <button onClick={openSupplierInvoiceModal} disabled={!canManageSupplierInvoices || Math.max(Number(selectedPO.quantity_received || 0) - Number(selectedPO.quantity_invoiced || 0), 0) <= 0} className="mt-4 w-full px-4 py-3 rounded-xl bg-orange-600 disabled:bg-slate-300 text-white font-black hover:bg-orange-500">
                                             Rapprocher facture
                                         </button>
                                     </div>
@@ -1858,7 +1862,7 @@ export default function PurchasesDashboard() {
             )}
 
             {/* SUPPLIER INVOICE MODAL */}
-            {showSupplierInvoiceModal && selectedPO && (
+            {canManageSupplierInvoices && showSupplierInvoiceModal && selectedPO && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full border border-slate-100 overflow-hidden">
                         <div className="px-8 py-6 bg-slate-900 text-white flex justify-between items-start">
@@ -1956,7 +1960,7 @@ export default function PurchasesDashboard() {
             )}
 
             {/* SUPPLIER PAYMENT MODAL */}
-            {supplierPaymentTarget && (
+            {canManageSupplierPayments && supplierPaymentTarget && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-3xl shadow-2xl max-w-xl w-full border border-slate-100 overflow-hidden">
                         <div className="px-8 py-6 bg-emerald-950 text-white flex justify-between items-start">
@@ -2014,7 +2018,7 @@ export default function PurchasesDashboard() {
                         || (!dispute.supplier_invoice_id && dispute.purchase_order_id === selectedSupplierInvoice.purchaseOrder?.id)
                     ))}
                     onClose={() => setSelectedSupplierInvoice(null)}
-                    onPay={openSupplierPaymentModal}
+                    onPay={canManageSupplierPayments ? openSupplierPaymentModal : null}
                     onOpenPO={openPODetails}
                     onOpenDispute={openSupplierDisputeDetail}
                 />
@@ -2421,7 +2425,7 @@ const SupplierInvoiceDetailModal = ({ invoice, purchaseOrder, disputes = [], onC
                                 <div className="mt-5 h-2 rounded-full bg-slate-100 overflow-hidden">
                                     <div className="h-full bg-emerald-500" style={{ width: `${paidRatio}%` }} />
                                 </div>
-                                {remainingAmount > 0 && (
+                                {onPay && remainingAmount > 0 && (
                                     <button
                                         onClick={() => onPay(invoice)}
                                         disabled={paymentBlocked}

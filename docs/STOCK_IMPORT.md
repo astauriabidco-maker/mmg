@@ -28,7 +28,7 @@ La prévisualisation remonte :
 
 - doublons fournisseur/référence ;
 - lignes sans référence ;
-- quantités vides ou invalides ;
+- quantités vides ou invalides (signalées et exclues de l'import) ;
 - désignations vides ;
 - nombre d'articles importables.
 - comparaison optionnelle avec la base active (`--compare-db`) : références déjà présentes, nouvelles références, échantillon des correspondances.
@@ -46,6 +46,7 @@ python3 scripts/import_real_stock.py "/chemin/tableau à envoyer.xlsx" \
 
 Si la prévisualisation contient des erreurs bloquantes, `--apply` refuse d'écrire.
 Corriger le fichier ou relancer explicitement avec `--allow-errors` pour ignorer les lignes bloquantes déjà exclues de l'import.
+Les lignes dont la quantité est vide, `/`, `?` ou non numérique restent dans le rapport d'anomalies mais ne sont jamais converties automatiquement en stock zéro.
 
 L'import crée ou met à jour :
 

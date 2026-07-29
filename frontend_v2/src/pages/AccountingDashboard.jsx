@@ -6,9 +6,12 @@ import {
 import api from '../services/api';
 import { openPdfWithFeedback, downloadFileWithFeedback } from '../services/pdf';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { useAuth } from '../context/AuthContext';
 
 export default function AccountingDashboard() {
     const queryClient = useQueryClient();
+    const { user } = useAuth();
+    const canEdit = user?.permissions?.includes('*') || user?.permissions?.includes('ACC_EDIT');
 
     const { data: invoices = [], isLoading } = useQuery({
         queryKey: ['invoices'],
@@ -143,7 +146,7 @@ export default function AccountingDashboard() {
                     </div>
                 </div>
 
-                <div className="bg-gradient-to-r from-indigo-600 to-blue-700 p-6 rounded-2xl shadow-lg flex flex-col justify-center items-start text-white">
+                {canEdit && <div className="bg-gradient-to-r from-indigo-600 to-blue-700 p-6 rounded-2xl shadow-lg flex flex-col justify-center items-start text-white">
                     <p className="text-sm font-bold text-indigo-100 mb-2">Clôture Comptable</p>
                     <button 
                         onClick={handleExportFEC}
@@ -152,7 +155,7 @@ export default function AccountingDashboard() {
                         <Download className="w-5 h-5"/>
                         Export FEC (Norme FR)
                     </button>
-                </div>
+                </div>}
             </div>
 
             {/* MAIN LIST */}
@@ -180,12 +183,12 @@ export default function AccountingDashboard() {
                             <option value="PAID">Payé</option>
                             <option value="AVOIR">Avoir (Annulé)</option>
                         </select>
-                        <button 
+                        {canEdit && <button
                             onClick={() => setShowNewInvoiceModal(true)}
                             className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-xl shadow-sm transition-colors flex items-center gap-2"
                         >
                             <Plus className="w-4 h-4" /> Nouvelle Facture
-                        </button>
+                        </button>}
                     </div>
                 </div>
 
@@ -230,7 +233,7 @@ export default function AccountingDashboard() {
                                         </td>
                                         <td className="p-4 text-center">
                                             <div className="flex justify-center gap-2">
-                                                {(inv.status === "UNPAID" || inv.status === "PARTIAL") && (
+                                                {canEdit && (inv.status === "UNPAID" || inv.status === "PARTIAL") && (
                                                     <button 
                                                         onClick={() => handleRemind(inv)}
                                                         className="p-2 bg-orange-50 text-orange-600 hover:bg-orange-600 hover:text-white rounded-lg transition-colors"
@@ -239,7 +242,7 @@ export default function AccountingDashboard() {
                                                         <BellRing className="w-4 h-4" />
                                                     </button>
                                                 )}
-                                                {inv.status !== "PAID" && inv.status !== "AVOIR" && (
+                                                {canEdit && inv.status !== "PAID" && inv.status !== "AVOIR" && (
                                                     <button 
                                                         onClick={() => openPaymentModal(inv)}
                                                         className="p-2 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-colors"
@@ -248,7 +251,7 @@ export default function AccountingDashboard() {
                                                         <CreditCard className="w-4 h-4" />
                                                     </button>
                                                 )}
-                                                {inv.status !== "AVOIR" && (
+                                                {canEdit && inv.status !== "AVOIR" && (
                                                     <button 
                                                         onClick={() => handleCreditNote(inv)}
                                                         className="p-2 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-lg transition-colors"
@@ -280,7 +283,7 @@ export default function AccountingDashboard() {
             </div>
 
             {/* PAYMENT MODAL */}
-            {showPaymentModal && selectedInvoice && (
+            {canEdit && showPaymentModal && selectedInvoice && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-[2rem] max-w-md w-full p-8 shadow-2xl animate-fade-in-up">
                         <h3 className="text-2xl font-black text-slate-800 mb-2">Nouvel Encaissement</h3>
@@ -339,7 +342,7 @@ export default function AccountingDashboard() {
             )}
 
             {/* NEW INVOICE MODAL */}
-            {showNewInvoiceModal && (
+            {canEdit && showNewInvoiceModal && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-[2rem] max-w-2xl w-full p-8 shadow-2xl animate-fade-in-up max-h-[90vh] overflow-y-auto">
                         <h3 className="text-2xl font-black text-slate-800 mb-6 flex items-center gap-2">

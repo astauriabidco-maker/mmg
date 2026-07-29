@@ -38,7 +38,7 @@ const ROLE_PRESETS = [
         label: 'Achats',
         description: 'Suit les commandes fournisseurs et les réceptions attendues.',
         scope: 'Achats',
-        permissions: ['STOCK_VIEW', 'purchases.request', 'purchases.approve', 'purchases.order', 'purchases.receive', 'PLANNING_VIEW'],
+        permissions: ['STOCK_VIEW', 'PURCHASES_VIEW', 'purchases.request', 'purchases.approve', 'purchases.order', 'purchases.receive', 'purchases.invoice.manage', 'purchases.payments.manage', 'PLANNING_VIEW'],
     },
     {
         name: 'SALES',
@@ -46,6 +46,20 @@ const ROLE_PRESETS = [
         description: 'Gère les clients, propositions, devis et avant-vente.',
         scope: 'Ventes',
         permissions: ['SALES_VIEW', 'SALES_EDIT', 'PLANNING_VIEW', 'PLANNING_EDIT'],
+    },
+    {
+        name: 'TECHNICO_COMMERCIAL',
+        label: 'Technico-commercial',
+        description: 'Pilote le cycle commercial et les dossiers du bureau d’études, avec consultation et réservation du stock.',
+        scope: 'Commerce + BE',
+        permissions: ['SALES_VIEW', 'SALES_EDIT', 'STOCK_VIEW', 'workshop.reserve_stock', 'PLANNING_VIEW', 'PLANNING_EDIT'],
+    },
+    {
+        name: 'FINANCE',
+        label: 'Comptable / Finance',
+        description: 'Suit les factures clients et fournisseurs, encaissements, paiements, avoirs et exports comptables.',
+        scope: 'Finance',
+        permissions: ['ACC_VIEW', 'ACC_EDIT', 'SALES_VIEW', 'PURCHASES_VIEW', 'purchases.invoice.manage', 'purchases.payments.manage', 'PLANNING_VIEW'],
     },
 ];
 
