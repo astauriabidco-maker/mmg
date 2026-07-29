@@ -229,6 +229,8 @@ export default function MeasureMissionPage() {
         notes: '',
     });
     const [technicalReviewNote, setTechnicalReviewNote] = useState('');
+    const [technicalExecutionNotice, setTechnicalExecutionNotice] = useState('');
+    const [technicalRevisionImportOpen, setTechnicalRevisionImportOpen] = useState(false);
     const [selectedOpeningId, setSelectedOpeningId] = useState(null);
     const [openingForm, setOpeningForm] = useState(emptyOpening);
     const [planForm, setPlanForm] = useState({
@@ -257,9 +259,13 @@ export default function MeasureMissionPage() {
     });
 
     const roles = new Set([user?.role, ...(user?.roles || [])].filter(Boolean));
+    const permissions = new Set(user?.permissions || []);
     const canReview = [...roles].some(role => ['ADMIN', 'MANAGER', 'QUALITY_CONTROLLER', 'WORKSHOP_LEAD'].includes(role));
     const canReviewStock = [...roles].some(role => ['ADMIN', 'MANAGER', 'CHEF_STOCK'].includes(role));
     const canReviewLaunch = [...roles].some(role => ['ADMIN', 'MANAGER', 'WORKSHOP_LEAD'].includes(role));
+    const canReserveWorkshop = canReviewStock
+        || permissions.has('*')
+        || permissions.has('workshop.reserve_stock');
     const selectedOpening = mission?.openings?.find(item => item.id === selectedOpeningId);
     const selectedOpeningDocuments = mission?.source_documents?.filter(
         document => document.opening_id === selectedOpeningId,
@@ -664,6 +670,7 @@ export default function MeasureMissionPage() {
             );
             updateTechnicalDossier(response.data);
             setTechnicalForm(current => ({ ...current, source_reference: '', notes: '' }));
+            setTechnicalRevisionImportOpen(false);
         } catch (requestError) {
             setError(apiError(requestError));
         } finally {
@@ -763,6 +770,26 @@ export default function MeasureMissionPage() {
         }
     };
 
+    const createTechnicalReservation = async () => {
+        if (!window.confirm('Créer la réservation atelier depuis le dernier débit validé ?')) return;
+        setSaving(true);
+        setError('');
+        setTechnicalExecutionNotice('');
+        try {
+            const response = await api.post(
+                `/v2/mmg/missions/${missionId}/technical-dossier/reservation`,
+            );
+            setTechnicalGovernance(response.data);
+            setTechnicalExecutionNotice(
+                `Réservation ${response.data.execution?.reservation?.reference || 'atelier'} créée depuis le débit validé.`,
+            );
+        } catch (requestError) {
+            setError(apiError(requestError));
+        } finally {
+            setSaving(false);
+        }
+    };
+
     const reviewTechnicalRevision = async action => {
         const revision = technicalGovernance?.latest_revision;
         if (!revision) return;
@@ -809,7 +836,13 @@ export default function MeasureMissionPage() {
     const isSiteVisit = (mission?.source_type || planForm.source_type) === 'SITE_VISIT';
     const sourceMeta = SOURCE_META[mission?.source_type || planForm.source_type] || SOURCE_META.SITE_VISIT;
     const verificationMeta = VERIFICATION_META[mission?.verification_status] || VERIFICATION_META.UNVERIFIED;
-    const productionUnlocked = ['VALIDATED', 'DELIVERED'].includes(mission?.sale_order_status);
+    const productionUnlocked = [
+        'VALIDATED',
+        'IN_DESIGN',
+        'READY_FOR_PROD',
+        'IN_PRODUCTION',
+        'DELIVERED',
+    ].includes(mission?.sale_order_status);
     const technicalPhase = technicalForm.document_type === 'QUOTING' ? 'quoting' : 'production';
     const technicalStatus = mission?.technical_dossier?.[`${technicalPhase}_status`] || 'LOCKED';
     const technicalReview = mission?.technical_dossier?.[`${technicalPhase}_review_note`];
@@ -824,6 +857,28 @@ export default function MeasureMissionPage() {
     const latestQuotingVersion = [...(mission?.technical_dossier?.versions || [])]
         .reverse()
         .find(version => version.document_type === 'QUOTING');
+    const technicalReservation = technicalGovernance?.execution?.reservation;
+    const technicalPreparation = technicalGovernance?.execution?.preparation;
+    const technicalPreparationStatus = technicalPreparation?.status;
+    const technicalReservationStatus = technicalReservation?.status;
+    const technicalReservationPresent = ['reserved', 'consumed'].includes(technicalReservationStatus);
+    const technicalDebitConsumed = technicalReservationStatus === 'consumed'
+        || technicalPreparationStatus === 'consumed'
+        || technicalGovernance?.execution?.consumption?.status === 'consumed'
+        || technicalGovernance?.execution?.consumed === true;
+    const technicalPreparationHandedOver = ['handed_over', 'consumed'].includes(technicalPreparationStatus);
+    const technicalLaunchAuthorized = mission?.technical_dossier?.launch_status === 'VALIDATED';
+    const canImportPostLaunchRevision = technicalPhase === 'production'
+        && technicalStatus === 'VALIDATED'
+        && Boolean(mission?.technical_dossier?.launched_at)
+        && productionUnlocked;
+    const canCreateTechnicalReservation = Boolean(
+        mission?.technical_dossier?.production_status === 'VALIDATED'
+        && mission?.technical_dossier?.stock_status === 'VALIDATED'
+        && latestCuttingVersion?.parsed_records?.length
+        && !technicalReservationPresent
+        && canReserveWorkshop
+    );
 
     if (loading || (!isNew && !mission)) {
         return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>;
@@ -1135,10 +1190,35 @@ export default function MeasureMissionPage() {
                                                 Correction BE : {technicalReview}
                                             </div>
                                         )}
+                                        {canImportPostLaunchRevision && !technicalRevisionImportOpen && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setTechnicalRevisionImportOpen(true)}
+                                                className="mt-3 inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-2.5 text-xs font-black text-red-700 hover:bg-red-50"
+                                            >
+                                                <FilePlus2 className="h-4 w-4" />
+                                                Importer une nouvelle révision
+                                            </button>
+                                        )}
                                     </div>
 
-                                    {['DRAFT', 'CORRECTION_REQUIRED'].includes(technicalStatus) && (technicalPhase === 'quoting' || productionUnlocked) && (
+                                    {(
+                                        ['DRAFT', 'CORRECTION_REQUIRED'].includes(technicalStatus)
+                                        || (canImportPostLaunchRevision && technicalRevisionImportOpen)
+                                    ) && (technicalPhase === 'quoting' || productionUnlocked) && (
                                         <div className="grid w-full gap-2 sm:grid-cols-2 xl:w-[560px]">
+                                            {canImportPostLaunchRevision && technicalRevisionImportOpen && (
+                                                <div className="border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-800 sm:col-span-2">
+                                                    Cette révision intervient après le lancement. Son import rebloquera les validations stock et atelier jusqu’au contrôle de son impact.
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setTechnicalRevisionImportOpen(false)}
+                                                        className="mt-2 block text-xs font-black underline"
+                                                    >
+                                                        Annuler l’import de révision
+                                                    </button>
+                                                </div>
+                                            )}
                                             {technicalPhase === 'production' && (
                                                 <select value={technicalForm.document_type} onChange={event => setTechnicalForm(current => ({ ...current, document_type: event.target.value }))} className={`${inputClass} sm:col-span-2`}>
                                                     <option value="FABRICATION">Fiche de fabrication PDF</option>
@@ -1179,7 +1259,9 @@ export default function MeasureMissionPage() {
                                             </button>
                                             <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 text-sm font-black text-white hover:bg-indigo-500 sm:col-span-2">
                                                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                                                Importer {technicalForm.document_type === 'QUOTING' ? 'le chiffrage' : technicalForm.document_type === 'CUTTING' ? 'le débit' : 'la fabrication'}
+                                                {canImportPostLaunchRevision && technicalRevisionImportOpen
+                                                    ? `Importer la révision ${technicalForm.document_type === 'CUTTING' ? 'du débit' : 'de fabrication'}`
+                                                    : `Importer ${technicalForm.document_type === 'QUOTING' ? 'le chiffrage' : technicalForm.document_type === 'CUTTING' ? 'le débit' : 'la fabrication'}`}
                                                 <input
                                                     type="file"
                                                     accept=".pdf,.txt,.xml,.csv,.json,.zip,.dat,.cut,.dxf"
@@ -1297,24 +1379,121 @@ export default function MeasureMissionPage() {
                                                         </div>
                                                     ))}
                                                 </div>
-                                                <dl className="mt-4 space-y-2 text-xs">
-                                                    <div className="flex justify-between gap-4 border-b border-slate-100 pb-2">
-                                                        <dt className="font-bold text-slate-500">Réservation</dt>
-                                                        <dd className="text-right font-black text-slate-800">{technicalGovernance.execution?.reservation?.reference || 'À créer'}</dd>
+                                                <div className="mt-4 border border-slate-200" aria-label="Flux d'exécution atelier">
+                                                    {[
+                                                        {
+                                                            label: '1. Réservation atelier',
+                                                            value: technicalReservationPresent
+                                                                ? `${technicalReservation.reference} · ${technicalReservationStatus === 'consumed' ? 'consommée' : 'réservée'}`
+                                                                : technicalReservationStatus === 'cancelled'
+                                                                    ? `${technicalReservation.reference} · annulée, à recréer`
+                                                                : mission.technical_dossier.stock_status === 'VALIDATED'
+                                                                    ? 'À créer depuis le débit'
+                                                                    : 'En attente de validation stock',
+                                                            complete: technicalReservationPresent || technicalDebitConsumed,
+                                                        },
+                                                        {
+                                                            label: '2. Préparation magasin',
+                                                            value: technicalReservationPresent && technicalPreparation
+                                                                ? `${technicalPreparation.reference} · ${{
+                                                                    draft: 'en préparation',
+                                                                    ready: 'prête à remettre',
+                                                                    handed_over: 'remise à l’atelier',
+                                                                    consumed: 'consommée',
+                                                                    returned: 'retournée au magasin',
+                                                                    cancelled: 'annulée',
+                                                                }[technicalPreparationStatus] || technicalPreparationStatus}`
+                                                                : technicalReservationPresent
+                                                                    ? 'À créer dans le module Stock'
+                                                                    : 'Verrouillée avant réservation',
+                                                            complete: technicalReservationPresent && (technicalPreparationHandedOver || technicalDebitConsumed),
+                                                        },
+                                                        {
+                                                            label: '3. Lancement atelier',
+                                                            value: technicalLaunchAuthorized
+                                                                ? `Autorisé${mission.technical_dossier.launch_validated_by ? ` par ${mission.technical_dossier.launch_validated_by}` : ''}`
+                                                                : technicalReservationPresent
+                                                                    ? 'En attente d’autorisation'
+                                                                    : 'Verrouillé avant réservation',
+                                                            complete: technicalLaunchAuthorized,
+                                                        },
+                                                        {
+                                                            label: '4. Débit matière réel',
+                                                            value: technicalDebitConsumed
+                                                                ? 'Débit enregistré dans le stock'
+                                                                : technicalLaunchAuthorized && technicalPreparationHandedOver
+                                                                    ? 'Autorisé, à enregistrer dans Stock'
+                                                                    : technicalLaunchAuthorized
+                                                                        ? 'En attente de remise atelier'
+                                                                        : 'Verrouillé avant lancement',
+                                                            complete: technicalDebitConsumed,
+                                                        },
+                                                    ].map((step, index, steps) => (
+                                                        <div
+                                                            key={step.label}
+                                                            className={`flex gap-3 px-3 py-3 ${index < steps.length - 1 ? 'border-b border-slate-100' : ''}`}
+                                                        >
+                                                            <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
+                                                                step.complete
+                                                                    ? 'bg-emerald-600 text-white'
+                                                                    : 'border border-slate-300 bg-white text-slate-400'
+                                                            }`}>
+                                                                {step.complete ? <Check className="h-3 w-3" /> : <Clock3 className="h-3 w-3" />}
+                                                            </span>
+                                                            <div className="min-w-0">
+                                                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">{step.label}</p>
+                                                                <p className="mt-0.5 text-xs font-black text-slate-800">{step.value}</p>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                {technicalExecutionNotice && (
+                                                    <div className="mt-3 border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800">
+                                                        {technicalExecutionNotice}
                                                     </div>
-                                                    <div className="flex justify-between gap-4 border-b border-slate-100 pb-2">
-                                                        <dt className="font-bold text-slate-500">Bon préparation</dt>
-                                                        <dd className="text-right font-black text-slate-800">
-                                                            {technicalGovernance.execution?.preparation
-                                                                ? `${technicalGovernance.execution.preparation.reference} · ${technicalGovernance.execution.preparation.status}`
-                                                                : 'À créer après réservation'}
-                                                        </dd>
-                                                    </div>
-                                                    <div className="flex justify-between gap-4">
-                                                        <dt className="font-bold text-slate-500">Ordres atelier</dt>
-                                                        <dd className="text-right font-black text-slate-800">{technicalGovernance.execution?.production_orders?.length || 0}</dd>
-                                                    </div>
-                                                </dl>
+                                                )}
+
+                                                {canCreateTechnicalReservation && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={createTechnicalReservation}
+                                                        disabled={saving}
+                                                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-3 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:opacity-40"
+                                                    >
+                                                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardCheck className="h-4 w-4" />}
+                                                        Créer la réservation depuis ce débit
+                                                    </button>
+                                                )}
+
+                                                {technicalReservationPresent && !technicalDebitConsumed && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => navigate('/stock')}
+                                                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-3 text-xs font-black text-slate-800 hover:bg-slate-50"
+                                                    >
+                                                        Ouvrir la préparation et le débit dans Stock
+                                                        <ChevronRight className="h-4 w-4" />
+                                                    </button>
+                                                )}
+
+                                                {technicalLaunchAuthorized
+                                                    && technicalGovernance.execution?.sale_order_id
+                                                    && !technicalGovernance.execution?.production_orders?.length && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => navigate(`/sales/${technicalGovernance.execution.sale_order_id}`)}
+                                                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 py-3 text-xs font-black text-white hover:bg-slate-800"
+                                                    >
+                                                        Ouvrir la commande et lancer la production
+                                                        <ChevronRight className="h-4 w-4" />
+                                                    </button>
+                                                )}
+
+                                                <div className="mt-3 flex items-center justify-between gap-4 text-xs">
+                                                    <span className="font-bold text-slate-500">Ordres atelier</span>
+                                                    <span className="text-right font-black text-slate-800">{technicalGovernance.execution?.production_orders?.length || 0}</span>
+                                                </div>
                                                 <textarea
                                                     value={technicalReviewNote}
                                                     onChange={event => setTechnicalReviewNote(event.target.value)}

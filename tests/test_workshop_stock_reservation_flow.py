@@ -1,5 +1,6 @@
 import io
 import json
+from datetime import datetime
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
@@ -1127,6 +1128,91 @@ def _cleanup_test_client(engine):
 SEPALUMIC_CONTENT = b"SEPALUMIC GAMME BASE\r\nVER TEST\r\nRAL;7007;BAVETTE DE FAITAGE;3;barre  6,50\r\n"
 
 
+def _attach_validated_technical_dossier(
+    db,
+    sale_id,
+    *,
+    stock_status="VALIDATED",
+    launch_status="TO_REVIEW",
+):
+    sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_id).one()
+    sale.signed_at = datetime(2026, 7, 1, 10, 0)
+    client = models.Client(name=f"Client technique {sale.reference}")
+    db.add(client)
+    db.flush()
+    mission = models.MeasureMission(
+        reference=f"MET-{sale.reference}",
+        client_id=client.id,
+        sale_order_id=sale.id,
+        status="QUOTED",
+        created_by="test",
+    )
+    dossier = models.TechnicalDossier(
+        reference=f"DT-{sale.reference}",
+        mission=mission,
+        production_status="VALIDATED",
+        stock_status=stock_status,
+        launch_status=launch_status,
+        external_source_system="PROGES",
+        external_project_reference="VER TEST",
+        created_by="test",
+    )
+    db.add(dossier)
+    db.flush()
+    fabrication = models.TechnicalDossierVersion(
+        dossier=dossier,
+        version_number=1,
+        document_type="FABRICATION",
+        source_system="PROGES",
+        source_reference="VER TEST",
+        original_filename="fabrication.pdf",
+        stored_filename="fabrication.pdf",
+        file_path="uploads/test/fabrication.pdf",
+        checksum_sha256=f"fab-{sale.id}",
+        opening_ids=[],
+        analysis_status="PARSED",
+        parsed_summary={},
+        parsed_records=[],
+        parsed_issues=[],
+        created_by="test",
+    )
+    cutting = models.TechnicalDossierVersion(
+        dossier=dossier,
+        version_number=2,
+        document_type="CUTTING",
+        source_system="PROGES",
+        source_reference="VER TEST",
+        original_filename="SEPVER.TXT",
+        stored_filename="SEPVER.TXT",
+        file_path="uploads/test/SEPVER.TXT",
+        checksum_sha256=f"cut-{sale.id}",
+        opening_ids=[],
+        analysis_status="PARSED",
+        detected_document_type="CUTTING",
+        detected_source_system="PROGES",
+        detected_project_reference="VER TEST",
+        parsed_summary={"record_count": 1},
+        parsed_records=[
+            {
+                "source": "SEPVER.TXT",
+                "supplier": "SEPALUMIC",
+                "reference": "7007",
+                "designation": "Bavette de faitage",
+                "quantity": 3,
+                "unit": "barre",
+                "project_reference": "VER TEST",
+            }
+        ],
+        parsed_issues=[],
+        stock_data_approved_at=datetime(2026, 7, 2, 10, 0),
+        stock_data_approved_by="chef-stock",
+        created_by="test",
+    )
+    db.add_all([fabrication, cutting])
+    db.commit()
+    return mission.id, dossier.id, cutting.id
+
+
 def test_workshop_reservation_moves_sale_to_ready_for_prod():
     engine, TestingSessionLocal, client = _make_test_client()
     try:
@@ -1265,5 +1351,366 @@ def test_full_flow_reservation_then_launch_production():
         assert sale_db.status == "IN_PRODUCTION"
         assert order.sale_order_id == sale_id
         assert reservation_db.production_order_id == order.id
+    finally:
+        _cleanup_test_client(engine)
+
+
+def test_technical_cutting_creates_one_traced_reservation_without_reupload():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            sale_id = _seed_stock_and_sale(
+                db,
+                "VALIDATED",
+                "DEV-CUTTING-AUTO",
+                workflow_type="FABRICATION_FROM_MEASURE",
+            )
+            mission_id, _dossier_id, cutting_id = _attach_validated_technical_dossier(
+                db,
+                sale_id,
+            )
+
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
+        generic = client.post(
+            "/v2/stock/workshop-debits/reservations",
+            headers=headers,
+            data={"sale_order_id": str(sale_id)},
+            files=[("files", ("SEPVER.TXT", SEPALUMIC_CONTENT, "text/plain"))],
+        )
+        assert generic.status_code == 400
+        assert "dossier technique" in generic.text
+
+        legacy_bom = client.post(
+            f"/v2/stock/import-bom/{sale_id}",
+            headers=headers,
+            files={"file": ("bom.csv", b"reference,quantity\n7007,3", "text/csv")},
+        )
+        assert legacy_bom.status_code == 409
+        assert "débit validé" in legacy_bom.text
+
+        first = client.post(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/reservation",
+            headers=headers,
+        )
+        assert first.status_code == 200, first.text
+        reservation = first.json()["execution"]["reservation"]
+        assert reservation["status"] == "reserved"
+        assert reservation["cutting_version_id"] == cutting_id
+
+        second = client.post(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/reservation",
+            headers=headers,
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["execution"]["reservation"]["id"] == reservation["id"]
+
+        with TestingSessionLocal() as db:
+            reservations = db.query(models.StockReservation).all()
+            sale = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_id).one()
+        assert len(reservations) == 1
+        assert reservations[0].technical_dossier_version_id == cutting_id
+        assert f"id={cutting_id}" in reservations[0].notes
+        assert "sha256=cut-" in reservations[0].notes
+        assert sale.status == "READY_FOR_PROD"
+    finally:
+        _cleanup_test_client(engine)
+
+
+def test_technical_physical_moves_wait_for_current_launch_authorization():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            sale_id = _seed_stock_and_sale(
+                db,
+                "VALIDATED",
+                "DEV-GATES-PHYSIQUES",
+                workflow_type="FABRICATION_FROM_MEASURE",
+            )
+            mission_id, dossier_id, _cutting_id = _attach_validated_technical_dossier(
+                db,
+                sale_id,
+            )
+
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
+        governance = client.post(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/reservation",
+            headers=headers,
+        ).json()
+        reservation = governance["execution"]["reservation"]
+        preparation_response = client.post(
+            "/v2/stock/workshop-preparations",
+            headers=headers,
+            json={"reservation_id": reservation["id"]},
+        )
+        assert preparation_response.status_code == 200, preparation_response.text
+        preparation = preparation_response.json()
+        for line in preparation["lines"]:
+            response = client.patch(
+                f"/v2/stock/workshop-preparations/{preparation['id']}/lines/{line['id']}",
+                headers=headers,
+                json={"prepared_quantity": line["planned_quantity"]},
+            )
+            assert response.status_code == 200, response.text
+
+        blocked = client.post(
+            f"/v2/stock/workshop-preparations/{preparation['id']}/handover",
+            headers=headers,
+        )
+        assert blocked.status_code == 400
+        assert "autoriser le lancement" in blocked.text
+
+        with TestingSessionLocal() as db:
+            dossier = (
+                db.query(models.TechnicalDossier)
+                .filter(models.TechnicalDossier.id == dossier_id)
+                .one()
+            )
+            dossier.launched_at = datetime(2026, 7, 3, 10, 0)
+            dossier.launch_status = "CORRECTION_REQUIRED"
+            db.commit()
+
+        still_blocked = client.post(
+            f"/v2/stock/workshop-preparations/{preparation['id']}/handover",
+            headers=headers,
+        )
+        assert still_blocked.status_code == 400
+        assert "autoriser le lancement" in still_blocked.text
+
+        authorized = client.patch(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/gate-review",
+            headers=headers,
+            json={"gate": "LAUNCH", "action": "VALIDATE"},
+        )
+        assert authorized.status_code == 200, authorized.text
+
+        handed_over = client.post(
+            f"/v2/stock/workshop-preparations/{preparation['id']}/handover",
+            headers=headers,
+        )
+        assert handed_over.status_code == 200, handed_over.text
+        consumed = client.post(
+            f"/v2/stock/workshop-debits/reservations/{reservation['id']}/consume",
+            headers=headers,
+        )
+        assert consumed.status_code == 200, consumed.text
+        assert consumed.json()["consumed_lines"] == 1
+
+        duplicate = client.post(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/reservation",
+            headers=headers,
+        )
+        assert duplicate.status_code == 409
+        assert "déjà une réservation consumed" in duplicate.text
+
+        with TestingSessionLocal() as db:
+            dossier = (
+                db.query(models.TechnicalDossier)
+                .filter(models.TechnicalDossier.id == dossier_id)
+                .one()
+            )
+            previous_cutting = (
+                db.query(models.TechnicalDossierVersion)
+                .filter(models.TechnicalDossierVersion.document_type == "CUTTING")
+                .one()
+            )
+            db.add(
+                models.TechnicalDossierVersion(
+                    dossier=dossier,
+                    version_number=3,
+                    document_type="CUTTING",
+                    source_system="PROGES",
+                    source_reference="VER TEST",
+                    original_filename="SEPVER-V2.TXT",
+                    stored_filename="SEPVER-V2.TXT",
+                    file_path="uploads/test/SEPVER-V2.TXT",
+                    checksum_sha256="cut-after-consumption",
+                    opening_ids=[],
+                    analysis_status="PARSED",
+                    parsed_summary={"record_count": 1},
+                    parsed_records=previous_cutting.parsed_records,
+                    parsed_issues=[],
+                    stock_data_approved_at=datetime(2026, 7, 5, 10, 0),
+                    stock_data_approved_by="chef-stock",
+                )
+            )
+            db.commit()
+
+        revision = client.post(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/reservation",
+            headers=headers,
+        )
+        assert revision.status_code == 409
+        assert "régularisation de stock" in revision.text
+        with TestingSessionLocal() as db:
+            assert db.query(models.StockReservation).count() == 1
+    finally:
+        _cleanup_test_client(engine)
+
+
+def test_launch_gate_rejects_cancelled_or_previous_cutting_reservation():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            sale_id = _seed_stock_and_sale(
+                db,
+                "VALIDATED",
+                "DEV-GATE-VERSION",
+                workflow_type="FABRICATION_FROM_MEASURE",
+            )
+            mission_id, dossier_id, cutting_id = _attach_validated_technical_dossier(
+                db,
+                sale_id,
+            )
+
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
+        created = client.post(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/reservation",
+            headers=headers,
+        )
+        assert created.status_code == 200, created.text
+        reservation_id = created.json()["execution"]["reservation"]["id"]
+
+        with TestingSessionLocal() as db:
+            reservation = (
+                db.query(models.StockReservation)
+                .filter(models.StockReservation.id == reservation_id)
+                .one()
+            )
+            reservation.status = "cancelled"
+            cutting = (
+                db.query(models.TechnicalDossierVersion)
+                .filter(models.TechnicalDossierVersion.id == cutting_id)
+                .one()
+            )
+            cutting_v2 = models.TechnicalDossierVersion(
+                dossier_id=dossier_id,
+                version_number=3,
+                document_type="CUTTING",
+                source_system="PROGES",
+                source_reference="VER TEST",
+                original_filename="SEPVER-V2.TXT",
+                stored_filename="SEPVER-V2.TXT",
+                file_path="uploads/test/SEPVER-V2.TXT",
+                checksum_sha256="cut-v2",
+                opening_ids=[],
+                analysis_status="PARSED",
+                parsed_summary={"record_count": 1},
+                parsed_records=cutting.parsed_records,
+                parsed_issues=[],
+                stock_data_approved_at=datetime(2026, 7, 4, 10, 0),
+                stock_data_approved_by="chef-stock",
+            )
+            db.add(cutting_v2)
+            db.commit()
+
+        rejected = client.patch(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/gate-review",
+            headers=headers,
+            json={"gate": "LAUNCH", "action": "VALIDATE"},
+        )
+        assert rejected.status_code == 409
+        assert "dernière version de débit" in rejected.text
+    finally:
+        _cleanup_test_client(engine)
+
+
+def test_operator_cannot_mutate_technical_dossier():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            sale_id = _seed_stock_and_sale(
+                db,
+                "VALIDATED",
+                "DEV-RBAC-TECHNIQUE",
+                workflow_type="FABRICATION_FROM_MEASURE",
+            )
+            mission_id, _dossier_id, _cutting_id = _attach_validated_technical_dossier(
+                db,
+                sale_id,
+            )
+
+        operator = _auth_headers(TestingSessionLocal, "operator-technique", role="OPERATOR")
+        create = client.post(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier",
+            headers=operator,
+        )
+        assert create.status_code == 403
+
+        upload = client.post(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/versions",
+            headers=operator,
+            data={
+                "document_type": "CUTTING",
+                "source_system": "INTERNAL",
+            },
+            files={"file": ("debit.txt", SEPALUMIC_CONTENT, "text/plain")},
+        )
+        assert upload.status_code == 403
+
+        submit = client.patch(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/submit",
+            headers=operator,
+            params={"phase": "CUTTING"},
+        )
+        assert submit.status_code == 403
+
+        review = client.patch(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/review",
+            headers=operator,
+            json={"phase": "CUTTING", "action": "VALIDATE"},
+        )
+        assert review.status_code == 403
+    finally:
+        _cleanup_test_client(engine)
+
+
+def test_internal_supplier_document_does_not_conflict_with_external_design_source():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            sale_id = _seed_stock_and_sale(
+                db,
+                "VALIDATED",
+                "DEV-SOURCE-DERIVEE",
+                workflow_type="FABRICATION_FROM_MEASURE",
+            )
+            mission_id, dossier_id, _cutting_id = _attach_validated_technical_dossier(
+                db,
+                sale_id,
+            )
+            dossier = (
+                db.query(models.TechnicalDossier)
+                .filter(models.TechnicalDossier.id == dossier_id)
+                .one()
+            )
+            dossier.production_status = "CORRECTION_REQUIRED"
+            db.commit()
+
+        headers = _auth_headers(TestingSessionLocal, "be-manager")
+        upload = client.post(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/versions",
+            headers=headers,
+            data={
+                "document_type": "FABRICATION",
+                "source_system": "INTERNAL",
+                "source_reference": "VER TEST",
+            },
+            files={
+                "file": (
+                    "commande-cortizo.txt",
+                    b"COMMANDE FOURNISSEUR CORTIZO\nREFERENCE VER TEST\n",
+                    "text/plain",
+                )
+            },
+        )
+        assert upload.status_code == 200, upload.text
+        payload = upload.json()
+        latest = payload["versions"][-1]
+        assert latest["source_system"] == "INTERNAL"
+        assert not any(
+            issue.get("code") == "technical_dossier_source_mismatch"
+            for issue in latest["parsed_issues"]
+        )
+        assert payload["external_source_system"] == "PROGES"
     finally:
         _cleanup_test_client(engine)

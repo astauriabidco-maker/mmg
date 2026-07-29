@@ -4,6 +4,8 @@ from scripts.import_workshop_debits import (
     build_summary,
     consolidate_records,
     detect_project_reference,
+    is_cortizo_order_text,
+    parse_cortizo_order_pdf,
     parse_orgadata_optimized_pdf,
     parse_progers_txt,
 )
@@ -61,3 +63,61 @@ def test_parse_orgadata_optimized_pdf_text_extracts_bar_requirements(tmp_path):
     assert consolidated[0].project_reference == "MMG26020068NC"
     assert consolidated[1].reference == "2022"
     assert consolidated[1].length_mm == 6500
+
+
+def test_parse_cortizo_order_uses_required_quantity_not_purchase_pack(tmp_path):
+    path = tmp_path / "commande-cortizo-anonymisee.pdf"
+    text = """--- PAGE 1 ---
+AFFAIRE N°MMG26070001V2modifiée - CLIENT TEST
+Commande
+Nom affaire: ALIAS LIBRE
+Ferrure
+Croquis Quantité / Numéro Description Teinte Prix Total
+        Unité [EUR] [EUR]
+        3 pce (3) 123456 Poignée de test Blanc 2,00 6,00
+Accessoires
+Croquis Quantité / Numéro Description Teinte Prix Total
+        Unité [EUR] [EUR]
+        (Nécessaire)
+        2 UV á 25 pce 654321 Équerre de test 0,50 25,00
+        (40)
+        1 UV á 1 000 800001 Vis de test Noir 0,02 20,00
+        pce (80)
+Somme: 51,00
+"""
+
+    assert is_cortizo_order_text(text)
+    records, issues = parse_cortizo_order_pdf(path, text)
+
+    assert not issues
+    assert [record.reference for record in records] == [
+        "123456",
+        "654321",
+        "800001",
+    ]
+    assert [record.quantity for record in records] == [3, 40, 80]
+    assert all(record.unit == "pce" for record in records)
+    assert all(
+        record.project_reference == "MMG26070001V2modifiée" for record in records
+    )
+    assert records[0].color == "BLANC"
+    assert records[2].color == "NOIR"
+    assert records[0].position == "Ferrure"
+    assert records[1].position == "Accessoires"
+
+
+def test_parse_cortizo_order_does_not_guess_missing_required_quantity(tmp_path):
+    path = tmp_path / "commande-cortizo-incomplete.pdf"
+    text = """AFFAIRE N°MMG26070002 - CLIENT TEST
+Commande
+Croquis Quantité / Numéro Description Teinte Prix Total
+1 UV á 50 pce 654321 Article sans besoin atelier
+"""
+
+    records, issues = parse_cortizo_order_pdf(path, text)
+
+    assert records == []
+    assert [issue.code for issue in issues] == [
+        "missing_required_quantity",
+        "no_cortizo_requirements",
+    ]

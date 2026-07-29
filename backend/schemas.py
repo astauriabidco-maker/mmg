@@ -1470,6 +1470,7 @@ class StockReservationResponse(BaseModel):
     reference: str
     sale_order_id: Optional[int] = None
     production_order_id: Optional[int] = None
+    technical_dossier_version_id: Optional[int] = None
     order_reference: Optional[str] = None
     project_reference: Optional[str] = None
     source_label: Optional[str] = None

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, File, Fo
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from pathlib import Path
 import os
@@ -36,7 +37,7 @@ from ..services.technical_dossier_governance import (
     build_document_matrix,
     compare_material_versions,
 )
-from ..services.stock_reservations import preview_records
+from ..services.stock_reservations import create_reservation, preview_records
 from ..core.time import utcnow
 from scripts.import_workshop_debits import DebitRecord
 
@@ -198,7 +199,13 @@ def _latest_technical_version(
 def _sale_is_signed(mission: models.MeasureMission) -> bool:
     return bool(
         mission.sale_order
-        and mission.sale_order.status in {"VALIDATED", "DELIVERED"}
+        and mission.sale_order.status in {
+            "VALIDATED",
+            "IN_DESIGN",
+            "READY_FOR_PROD",
+            "IN_PRODUCTION",
+            "DELIVERED",
+        }
         and mission.sale_order.signed_at
     )
 
@@ -372,7 +379,6 @@ def _technical_execution_context(
             db.query(models.StockReservation)
             .filter(
                 models.StockReservation.sale_order_id == mission.sale_order_id,
-                models.StockReservation.status == "reserved",
                 models.StockReservation.source_label.notin_(["devis libre", "devis_libre"]),
             )
             .order_by(models.StockReservation.created_at.desc())
@@ -396,6 +402,8 @@ def _technical_execution_context(
             "id": reservation.id,
             "reference": reservation.reference,
             "status": reservation.status,
+            "source_label": reservation.source_label,
+            "technical_dossier_version_id": reservation.technical_dossier_version_id,
         } if reservation else None,
         "preparation": {
             "id": preparation.id,
@@ -406,6 +414,48 @@ def _technical_execution_context(
             {"id": order.id, "reference": order.reference}
             for order in production_orders
         ],
+    }
+
+
+def _technical_governance_payload(
+    db: Session,
+    mission: models.MeasureMission,
+) -> dict:
+    dossier = mission.technical_dossier
+    if not dossier:
+        raise HTTPException(404, "Dossier technique introuvable")
+    latest_cutting = _latest_technical_version(
+        dossier,
+        schemas.TechnicalDocumentType.CUTTING.value,
+    )
+    execution = _technical_execution_context(db, mission)
+    if execution["reservation"] and latest_cutting:
+        execution["reservation"]["cutting_version_id"] = (
+            latest_cutting.id
+            if execution["reservation"]["technical_dossier_version_id"]
+            == latest_cutting.id
+            else None
+        )
+    return {
+        "dossier_reference": dossier.reference,
+        "external_source_system": dossier.external_source_system,
+        "external_project_reference": dossier.external_project_reference,
+        "document_matrix": build_document_matrix(dossier.versions),
+        "stock": _technical_stock_snapshot(db, dossier),
+        "execution": execution,
+        "gates": {
+            "be": dossier.production_status,
+            "stock": dossier.stock_status,
+            "launch": dossier.launch_status,
+        },
+        "latest_revision": {
+            "version_id": latest_cutting.id,
+            "version_number": latest_cutting.version_number,
+            "impact_status": latest_cutting.impact_status,
+            "revision_after_launch": latest_cutting.revision_after_launch,
+            "revision_status": latest_cutting.revision_status,
+            "comparison_summary": latest_cutting.comparison_summary or {},
+        } if latest_cutting else None,
     }
 
 
@@ -508,6 +558,19 @@ MISSION_TERMINAL_STATUSES = {
 BE_REVIEW_ROLES = {"ADMIN", "MANAGER", "QUALITY_CONTROLLER", "WORKSHOP_LEAD"}
 STOCK_REVIEW_ROLES = {"ADMIN", "MANAGER", "CHEF_STOCK"}
 LAUNCH_REVIEW_ROLES = {"ADMIN", "MANAGER", "WORKSHOP_LEAD"}
+
+
+def _assert_technical_edit(db: Session, current_user: dict) -> None:
+    """Autorise l'édition au commerce ou aux rôles chargés du contrôle BE."""
+    try:
+        security.assert_permission(db, current_user, "SALES_EDIT")
+        return
+    except HTTPException as exc:
+        if exc.status_code != 403:
+            raise
+    if _current_roles(current_user) & BE_REVIEW_ROLES:
+        return
+    raise HTTPException(403, "Permission SALES_EDIT ou rôle BE requis")
 
 
 def _get_mission_or_404(db: Session, mission_id: int) -> models.MeasureMission:
@@ -2185,6 +2248,7 @@ def create_measure_technical_dossier(
     db: Session = Depends(get_db),
     current_user: dict = Depends(security.get_current_user),
 ):
+    _assert_technical_edit(db, current_user)
     mission = _get_mission_or_404(db, mission_id)
     if mission.status not in {
         models.MeasureMissionStatus.VALIDATED.value,
@@ -2216,6 +2280,7 @@ async def upload_measure_technical_version(
     db: Session = Depends(get_db),
     current_user: dict = Depends(security.get_current_user),
 ):
+    _assert_technical_edit(db, current_user)
     mission = _get_mission_or_404(db, mission_id)
     if mission.status not in {
         models.MeasureMissionStatus.VALIDATED.value,
@@ -2383,9 +2448,14 @@ async def upload_measure_technical_version(
         or analysis.detected_project_reference
         or None
     )
+    external_design_sources = {
+        schemas.TechnicalSourceSystem.PROGES.value,
+        schemas.TechnicalSourceSystem.ORGADATA.value,
+    }
     if (
         dossier.external_source_system
-        and resolved_source
+        and resolved_source in external_design_sources
+        and dossier.external_source_system in external_design_sources
         and dossier.external_source_system != resolved_source
     ):
         analysis.issues.append(
@@ -2402,7 +2472,10 @@ async def upload_measure_technical_version(
             }
         )
         analysis.summary["issue_count"] = len(analysis.issues)
-    if not dossier.external_source_system and resolved_source:
+    if (
+        not dossier.external_source_system
+        and resolved_source in external_design_sources
+    ):
         dossier.external_source_system = resolved_source
     if not dossier.external_project_reference and resolved_external_reference:
         dossier.external_project_reference = resolved_external_reference
@@ -2543,10 +2616,17 @@ def submit_measure_technical_dossier(
     db: Session = Depends(get_db),
     current_user: dict = Depends(security.get_current_user),
 ):
+    _assert_technical_edit(db, current_user)
     mission = _get_mission_or_404(db, mission_id)
     dossier = mission.technical_dossier
     if not dossier:
         raise HTTPException(404, "Dossier technique introuvable")
+    dossier = (
+        db.query(models.TechnicalDossier)
+        .filter(models.TechnicalDossier.id == dossier.id)
+        .with_for_update()
+        .one()
+    )
     is_quoting = phase == schemas.TechnicalDocumentType.QUOTING
     if not is_quoting and not _sale_is_signed(mission):
         raise HTTPException(409, "Le devis client doit être signé avant le contrôle fabrication")
@@ -2662,34 +2742,128 @@ def get_measure_technical_governance(
     db: Session = Depends(get_db),
 ):
     mission = _get_mission_or_404(db, mission_id)
+    return _technical_governance_payload(db, mission)
+
+
+@router.post("/missions/{mission_id}/technical-dossier/reservation")
+def reserve_measure_technical_cutting(
+    mission_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    """Réserve directement le dernier débit approuvé, sans second téléversement."""
+    security.assert_permission(db, current_user, "workshop.reserve_stock")
+    mission = _get_mission_or_404(db, mission_id)
     dossier = mission.technical_dossier
     if not dossier:
         raise HTTPException(404, "Dossier technique introuvable")
-    latest_cutting = _latest_technical_version(
-        dossier,
-        schemas.TechnicalDocumentType.CUTTING.value,
+    dossier = (
+        db.query(models.TechnicalDossier)
+        .filter(models.TechnicalDossier.id == dossier.id)
+        .with_for_update()
+        .one()
     )
-    return {
-        "dossier_reference": dossier.reference,
-        "external_source_system": dossier.external_source_system,
-        "external_project_reference": dossier.external_project_reference,
-        "document_matrix": build_document_matrix(dossier.versions),
-        "stock": _technical_stock_snapshot(db, dossier),
-        "execution": _technical_execution_context(db, mission),
-        "gates": {
-            "be": dossier.production_status,
-            "stock": dossier.stock_status,
-            "launch": dossier.launch_status,
-        },
-        "latest_revision": {
-            "version_id": latest_cutting.id,
-            "version_number": latest_cutting.version_number,
-            "impact_status": latest_cutting.impact_status,
-            "revision_after_launch": latest_cutting.revision_after_launch,
-            "revision_status": latest_cutting.revision_status,
-            "comparison_summary": latest_cutting.comparison_summary or {},
-        } if latest_cutting else None,
-    }
+    if not mission.sale_order_id or not mission.sale_order:
+        raise HTTPException(409, "Le dossier technique doit être lié à un devis signé")
+    if dossier.production_status != schemas.TechnicalDossierStatus.VALIDATED.value:
+        raise HTTPException(409, "Le BE doit valider fabrication et débit avant la réservation")
+    if dossier.stock_status != schemas.TechnicalDossierStatus.VALIDATED.value:
+        raise HTTPException(409, "Le stock doit être validé avant la réservation atelier")
+
+    cutting = _validate_production_document_analysis(dossier)
+    source_label = f"technical_dossier:{dossier.id}:cutting_version:{cutting.id}"
+    same_version = (
+        db.query(models.StockReservation)
+        .filter(
+            models.StockReservation.technical_dossier_version_id == cutting.id,
+        )
+        .order_by(models.StockReservation.created_at.desc())
+        .first()
+    )
+    if same_version:
+        if same_version.status == "reserved":
+            return _technical_governance_payload(db, mission)
+        raise HTTPException(
+            409,
+            f"La version de débit validée a déjà une réservation {same_version.status} "
+            f"({same_version.reference}); elle ne peut pas être réservée une seconde fois.",
+        )
+    consumed_previous_version = (
+        db.query(models.StockReservation)
+        .join(
+            models.TechnicalDossierVersion,
+            models.TechnicalDossierVersion.id
+            == models.StockReservation.technical_dossier_version_id,
+        )
+        .filter(
+            models.TechnicalDossierVersion.dossier_id == dossier.id,
+            models.StockReservation.status == "consumed",
+        )
+        .first()
+    )
+    if consumed_previous_version:
+        raise HTTPException(
+            409,
+            "Une version antérieure de ce dossier a déjà été consommée. "
+            "La nouvelle version doit faire l'objet d'une régularisation de stock "
+            "contrôlée; une réservation du total complet est interdite.",
+        )
+    active_other_version = (
+        db.query(models.StockReservation)
+        .filter(
+            models.StockReservation.sale_order_id == mission.sale_order_id,
+            models.StockReservation.status == "reserved",
+            models.StockReservation.source_label.notin_(["devis libre", "devis_libre"]),
+        )
+        .first()
+    )
+    if active_other_version:
+        raise HTTPException(
+            409,
+            "Une réservation active issue d'une autre version de débit existe déjà. "
+            "Annulez-la avant de réserver la version validée.",
+        )
+
+    trace_note = (
+        f"Dossier {dossier.reference} | CUTTING v{cutting.version_number} "
+        f"(id={cutting.id}, sha256={cutting.checksum_sha256})"
+    )
+    try:
+        create_reservation(
+            db,
+            _records_from_technical_version(cutting),
+            source_label=source_label,
+            created_by=current_user.get("sub", "Système"),
+            source_location="WH/Stock",
+            order_reference=mission.sale_order.reference,
+            sale_order_id=mission.sale_order_id,
+            notes=trace_note,
+            technical_cutting_version_id=cutting.id,
+        )
+        if mission.sale_order.status in {"VALIDATED", "IN_DESIGN"}:
+            mission.sale_order.status = "READY_FOR_PROD"
+        db.commit()
+        db.refresh(dossier)
+        return _technical_governance_payload(db, mission)
+    except IntegrityError as exc:
+        db.rollback()
+        concurrent = (
+            db.query(models.StockReservation)
+            .filter(
+                models.StockReservation.technical_dossier_version_id == cutting.id
+            )
+            .first()
+        )
+        if concurrent and concurrent.status == "reserved":
+            fresh_mission = _get_mission_or_404(db, mission_id)
+            return _technical_governance_payload(db, fresh_mission)
+        raise HTTPException(
+            409,
+            "Cette version de débit possède déjà une réservation.",
+        ) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.patch(
@@ -2757,8 +2931,18 @@ def review_measure_technical_gate(
             dossier.launch_validated_by = None
         else:
             execution = _technical_execution_context(db, mission)
-            if not execution["reservation"]:
-                raise HTTPException(409, "Créez la réservation atelier avant d'autoriser le lancement")
+            cutting = _validate_production_document_analysis(dossier)
+            reservation = execution["reservation"]
+            if (
+                not reservation
+                or reservation["status"] != "reserved"
+                or reservation["technical_dossier_version_id"] != cutting.id
+            ):
+                raise HTTPException(
+                    409,
+                    "Créez une réservation active depuis la dernière version de débit "
+                    "validée avant d'autoriser le lancement.",
+                )
             dossier.launch_status = schemas.TechnicalDossierStatus.VALIDATED.value
             dossier.launch_review_note = note
             dossier.launch_validated_at = utcnow()

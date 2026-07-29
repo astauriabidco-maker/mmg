@@ -40,11 +40,20 @@ def _detect_source(text: str, filename: str, declared_source: str) -> str | None
         return "ORGADATA"
     if "SEPALUMIC GAMME" in haystack or "VALORISATION DE COMMANDE" in haystack:
         return "PROGES"
+    if (
+        "COMMANDE" in haystack
+        and "CROQUIS QUANTITÉ / NUMÉRO" in haystack
+        and re.search(r"AFFAIRE\s+N[°º]\s*MMG", haystack)
+    ):
+        # This is an MMG-derived Cortizo purchase BOM, not proof of the CAD
+        # software that produced the underlying design.
+        return "INTERNAL"
     return declared_source or None
 
 
 def _detect_project_reference(text: str) -> str | None:
     patterns = (
+        r"Affaire\s+N[°º]\s*(MMG[\w./-]+)",
         r"\bDevis\s+N[°º]\s*([A-Z0-9][A-Z0-9._/-]*)",
         r"\bDEVIS\s+N[°º]?\s*([A-Z0-9][A-Z0-9._/-]*)",
         r"Affaire\s*:\s*([A-Z0-9_-]+)",
@@ -72,6 +81,12 @@ def _detect_project_reference(text: str) -> str | None:
 def _detect_type(text: str, filename: str, declared_type: str) -> str:
     haystack = f"{filename}\n{text[:12000]}".upper()
     if "DÉBIT OPTIMISÉ" in haystack or filename.upper().startswith("SEP"):
+        return "CUTTING"
+    if (
+        "COMMANDE" in haystack
+        and "CROQUIS QUANTITÉ / NUMÉRO" in haystack
+        and re.search(r"AFFAIRE\s+N[°º]\s*MMG", haystack)
+    ):
         return "CUTTING"
     if "BON D'ATELIER" in haystack:
         return "FABRICATION"

@@ -8,6 +8,7 @@ from .document_sequences import next_number
 from .stock_reservations import (
     ACTIVE_RESERVATION_STATUS,
     assert_consumable_at_location,
+    assert_technical_launch_authorized,
     resolve_reservation_location,
 )
 from .stock_service import InventoryService
@@ -156,6 +157,7 @@ def hand_over_preparation(
     if reservation.location_id != preparation.source_location_id:
         raise ValueError("L'emplacement de la réservation a changé depuis la création du bon.")
 
+    assert_technical_launch_authorized(db, reservation)
     assert_consumable_at_location(db, reservation, preparation.source_location)
     stats = {"created_moves": 0, "transferred_lines": 0}
     for line in preparation.lines:

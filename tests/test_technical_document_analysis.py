@@ -71,3 +71,45 @@ def test_valuation_pdf_detects_reference_despite_pdf_encoding(tmp_path, monkeypa
     assert analysis.status == "DOCUMENT_ONLY"
     assert analysis.detected_document_type == "VALUATION"
     assert analysis.detected_project_reference == "VER DIMASCIO"
+
+
+def test_cortizo_purchase_bom_is_internal_cutting_requirement(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "commande-cortizo-anonymisee.pdf"
+    path.write_bytes(b"%PDF-test")
+    text = """AFFAIRE N°MMG26070003V1 - CLIENT TEST
+Commande
+Nom affaire: ALIAS TEST
+Ferrure
+Croquis Quantité / Numéro Description Teinte Prix Total
+Unité [EUR] [EUR]
+2 pce (2) 123456 Article direct 1,00 2,00
+Accessoires
+Croquis Quantité / Numéro Description Teinte Prix Total
+Unité [EUR] [EUR]
+(Nécessaire)
+1 UV á 25 pce 654321 Article conditionné 0,50 12,50
+(8)
+"""
+    monkeypatch.setattr(
+        "backend.services.technical_document_analysis._document_text",
+        lambda _path: text,
+    )
+    monkeypatch.setattr(
+        "scripts.import_workshop_debits.extract_pdf_text",
+        lambda _path: text,
+    )
+
+    # A manual ORGADATA selection must not turn this derived Word document
+    # into proof that ORGADATA generated it.
+    analysis = analyze_technical_document(path, "CUTTING", "ORGADATA")
+
+    assert analysis.status == "PARSED"
+    assert analysis.detected_document_type == "CUTTING"
+    assert analysis.detected_source_system == "INTERNAL"
+    assert analysis.detected_project_reference == "MMG26070003V1"
+    assert analysis.summary["debit_lines"] == 2
+    assert analysis.summary["total_quantity"] == 10
+    assert [record["quantity"] for record in analysis.records] == [2, 8]

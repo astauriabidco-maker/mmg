@@ -34,6 +34,101 @@ class InsufficientStockAtConsumptionError(ValueError):
     réservation et le débit. Mappée en HTTP 409 par les routeurs."""
 
 
+def technical_dossier_for_sale(
+    db: Session,
+    sale_order_id: int | None,
+) -> models.TechnicalDossier | None:
+    """Retourne le dossier industriel réellement rattaché au devis, s'il existe.
+
+    Le contrôle est volontairement fondé sur le lien mission -> devis. Un devis
+    de fabrication autonome, sans dossier technique, conserve ainsi son flux
+    historique.
+    """
+    if not sale_order_id:
+        return None
+    dossiers = (
+        db.query(models.TechnicalDossier)
+        .join(
+            models.MeasureMission,
+            models.MeasureMission.id == models.TechnicalDossier.mission_id,
+        )
+        .filter(models.MeasureMission.sale_order_id == sale_order_id)
+        .order_by(models.TechnicalDossier.id)
+        .limit(2)
+        .all()
+    )
+    if len(dossiers) > 1:
+        raise ValueError(
+            "Plusieurs dossiers techniques sont rattachés au même devis; "
+            "corrigez les liens avant toute opération de stock."
+        )
+    return dossiers[0] if dossiers else None
+
+
+def _latest_cutting_version(
+    dossier: models.TechnicalDossier,
+) -> models.TechnicalDossierVersion | None:
+    versions = [
+        version
+        for version in dossier.versions
+        if version.document_type == "CUTTING"
+    ]
+    return versions[-1] if versions else None
+
+
+def assert_technical_reservation_context(
+    db: Session,
+    sale_order_id: int | None,
+    *,
+    technical_cutting_version_id: int | None,
+) -> None:
+    """Empêche un réupload générique de contourner le débit validé par le BE."""
+    dossier = technical_dossier_for_sale(db, sale_order_id)
+    if not dossier:
+        return
+    if technical_cutting_version_id is None:
+        raise ValueError(
+            "Ce devis est rattaché à un dossier technique. "
+            "Créez la réservation depuis le débit validé du dossier, sans réimporter de fichier."
+        )
+    if dossier.production_status != "VALIDATED":
+        raise ValueError("Le BE doit valider la fabrication et le débit avant la réservation.")
+    if dossier.stock_status != "VALIDATED":
+        raise ValueError("Le stock doit être validé avant la réservation atelier.")
+    cutting = _latest_cutting_version(dossier)
+    if (
+        not cutting
+        or cutting.id != technical_cutting_version_id
+        or cutting.analysis_status not in {"PARSED", "PARSED_WITH_WARNINGS"}
+        or not cutting.parsed_records
+        or not cutting.stock_data_approved_at
+    ):
+        raise ValueError(
+            "La réservation doit utiliser la dernière version de débit approuvée par le stock."
+        )
+
+
+def assert_technical_launch_authorized(
+    db: Session,
+    reservation: models.StockReservation,
+) -> None:
+    """Bloque tout mouvement physique tant que le chef d'atelier n'a pas autorisé."""
+    sale_order_id = reservation.sale_order_id
+    if not sale_order_id and reservation.production_order_id:
+        production_order = (
+            db.query(models.Order)
+            .filter(models.Order.id == reservation.production_order_id)
+            .first()
+        )
+        sale_order_id = production_order.sale_order_id if production_order else None
+    dossier = technical_dossier_for_sale(db, sale_order_id)
+    if dossier and dossier.launch_status != "VALIDATED":
+        raise ValueError(
+            "Le chef d'atelier doit autoriser le lancement du dossier technique "
+            "avant toute remise ou consommation physique."
+        )
+
+
 def get_default_internal_location(db: Session) -> models.StockLocation:
     """Emplacement interne principal : « WH/Stock » actif, sinon premier interne actif.
 
@@ -100,6 +195,7 @@ def validate_workflow_context(
     records: list[DebitRecord],
     sale_order_id: int | None = None,
     production_order_id: int | None = None,
+    technical_cutting_version_id: int | None = None,
 ) -> tuple[models.SaleOrder | None, models.Order | None, list[dict]]:
     issues: list[dict] = []
     sale = None
@@ -131,6 +227,15 @@ def validate_workflow_context(
 
     if not sale and not production_order:
         raise ValueError("La réservation doit être liée à un devis validé ou à un ordre de production.")
+
+    workflow_sale_id = sale.id if sale else (
+        production_order.sale_order_id if production_order else None
+    )
+    assert_technical_reservation_context(
+        db,
+        workflow_sale_id,
+        technical_cutting_version_id=technical_cutting_version_id,
+    )
 
     file_material = infer_material_from_records(records)
     expected_material = None
@@ -364,6 +469,7 @@ def create_reservation(
     notes: str | None = None,
     allow_missing: bool = False,
     allow_shortage: bool = False,
+    technical_cutting_version_id: int | None = None,
 ) -> models.StockReservation:
     source = get_or_create_location(db, source_location, "internal")
     consolidated = consolidate_records(records)
@@ -374,6 +480,7 @@ def create_reservation(
         consolidated,
         sale_order_id=sale_order_id,
         production_order_id=production_order_id,
+        technical_cutting_version_id=technical_cutting_version_id,
     )
     matches = preview_records(db, consolidated, source_location)
     missing = [match for match in matches if match.status == "not_found"]
@@ -395,6 +502,7 @@ def create_reservation(
         reference=reference,
         sale_order_id=sale.id if sale else None,
         production_order_id=production_order.id if production_order else None,
+        technical_dossier_version_id=technical_cutting_version_id,
         order_reference=resolved_order_reference,
         project_reference=project_reference,
         source_label=source_label,
@@ -571,6 +679,7 @@ def consume_reservation(
 ) -> dict[str, int]:
     if reservation.status != ACTIVE_RESERVATION_STATUS:
         return {"created_moves": 0, "consumed_lines": 0}
+    assert_technical_launch_authorized(db, reservation)
 
     preparation = (
         db.query(models.WorkshopPreparation)

@@ -999,6 +999,13 @@ class StockReservation(Base):
     reference = Column(String, unique=True, index=True)
     sale_order_id = Column(Integer, ForeignKey("sale_orders.id"), nullable=True, index=True)
     production_order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
+    technical_dossier_version_id = Column(
+        Integer,
+        ForeignKey("technical_dossier_versions.id", ondelete="RESTRICT"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
     order_reference = Column(String, index=True, nullable=True)
     project_reference = Column(String, index=True, nullable=True)
     source_label = Column(String, nullable=True)
@@ -1014,6 +1021,7 @@ class StockReservation(Base):
     lines = relationship("StockReservationLine", back_populates="reservation", cascade="all, delete-orphan")
     sale_order = relationship("SaleOrder")
     production_order = relationship("Order")
+    technical_dossier_version = relationship("TechnicalDossierVersion")
     location = relationship("StockLocation")
 
 class StockReservationLine(Base):
