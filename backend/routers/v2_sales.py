@@ -954,6 +954,74 @@ SALE_ALLOWED_TRANSITIONS = {
 SALE_WORKSHOP_GUARDED_STATUSES = {"READY_FOR_PROD"}
 
 
+def _quote_portal_link(order: models.SaleOrder) -> Optional[str]:
+    if not order.signature_token:
+        return None
+    frontend_base_url = os.environ.get(
+        "FRONTEND_BASE_URL",
+        "http://localhost:5000",
+    ).rstrip("/")
+    return f"{frontend_base_url}/portal/sign/{order.signature_token}"
+
+
+def _send_quote_for_signature(
+    db: Session,
+    order: models.SaleOrder,
+    *,
+    author: str,
+) -> dict:
+    from ..core.events import EventBus
+
+    portal_link = _quote_portal_link(order)
+    if not portal_link:
+        result = {
+            "status": "FAILED",
+            "recipient": (order.client_email or "").strip() or None,
+            "error": "Lien de signature absent.",
+        }
+    else:
+        amount_ttc = _sale_total_amount(order) * (
+            1 + _sale_tax_rate(order) / 100
+        )
+        result = EventBus.send_quote_for_signature_email(
+            order.client_email,
+            order.client_name,
+            order.reference,
+            amount_ttc,
+            portal_link,
+        )
+
+    email_status = result["status"]
+    recipient = result.get("recipient") or "destinataire absent"
+    error = result.get("error")
+    if email_status == "SENT":
+        body = (
+            f"Devis {order.reference} envoyé pour signature à {recipient}. "
+            f"Lien portail : {portal_link}"
+        )
+    else:
+        body = (
+            f"Devis {order.reference} non envoyé par email à {recipient}. "
+            f"Statut transport : {email_status}. Motif : {error or 'inconnu'}"
+        )
+    db.add(
+        models.ChatterMessage(
+            model_name="sale_order",
+            record_id=order.id,
+            body=body,
+            author=author,
+            is_system_log=True,
+        )
+    )
+    db.commit()
+    return {
+        "email_status": email_status,
+        "email_recipient": result.get("recipient"),
+        "email_error": error,
+        "portal_link": portal_link,
+    }
+
+
 @router.put(
     "/{order_id}/status",
 )
@@ -973,22 +1041,26 @@ def update_sale_status(
     if status not in SALE_KNOWN_STATUSES:
         raise HTTPException(status_code=400, detail=f"Statut cible inconnu : {status}.")
 
-    if status == order.status:
+    is_sent_resend = status == order.status == "SENT"
+    if status == order.status and not is_sent_resend:
         return {
             "message": f"Statut inchangé : {status}",
             "portal_link": None,
+            "email_status": None,
+            "email_recipient": None,
+            "email_error": None,
             "commercial_reservation_id": None,
             "cancelled_commercial_reservations": 0,
         }
 
-    if order.status in SALE_TERMINAL_STATUSES:
+    if not is_sent_resend and order.status in SALE_TERMINAL_STATUSES:
         raise HTTPException(
             status_code=400,
             detail=f"Le devis est {order.status} : ce statut terminal ne peut plus être modifié ici.",
         )
 
     allowed_targets = SALE_ALLOWED_TRANSITIONS.get(order.status, set())
-    if status not in allowed_targets:
+    if not is_sent_resend and status not in allowed_targets:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -1015,6 +1087,27 @@ def update_sale_status(
 
     if status == "SENT":
         _ensure_sale_is_commercially_signable(order)
+        if is_sent_resend:
+            if not order.signature_token:
+                import uuid
+
+                order.signature_token = str(uuid.uuid4())
+                db.commit()
+            email_result = _send_quote_for_signature(
+                db,
+                order,
+                author=current_user.get("sub", "Système"),
+            )
+            return {
+                "message": (
+                    f"Email du devis renvoyé à {email_result['email_recipient']}."
+                    if email_result["email_status"] == "SENT"
+                    else "Le devis reste envoyé, mais l'email n'a pas été transmis."
+                ),
+                **email_result,
+                "commercial_reservation_id": None,
+                "cancelled_commercial_reservations": 0,
+            }
 
     if status in SALE_WORKSHOP_GUARDED_STATUSES:
         active_workshop_reservations = _active_workshop_reservations_for_sale(db, order.id).count()
@@ -1050,11 +1143,19 @@ def update_sale_status(
     )
     db.commit()
     
-    # Generate portal link
-    portal_link = None
-    if order.signature_token:
-        frontend_base_url = os.environ.get("FRONTEND_BASE_URL", "http://localhost:5000").rstrip("/")
-        portal_link = f"{frontend_base_url}/portal/sign/{order.signature_token}"
+    portal_link = _quote_portal_link(order)
+    email_result = {
+        "email_status": None,
+        "email_recipient": None,
+        "email_error": None,
+        "portal_link": portal_link,
+    }
+    if status == "SENT":
+        email_result = _send_quote_for_signature(
+            db,
+            order,
+            author=current_user.get("sub", "Système"),
+        )
 
     # --- INTERNAL AUTOMATION TRIGGER ---
     if status == "ACCEPTED":
@@ -1071,7 +1172,7 @@ def update_sale_status(
 
     return {
         "message": f"Statut mis à jour : {status}",
-        "portal_link": portal_link,
+        **email_result,
         "commercial_reservation_id": reservation.id if reservation else None,
         "cancelled_commercial_reservations": cancelled_reservations,
     }
