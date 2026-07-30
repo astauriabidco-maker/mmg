@@ -1731,7 +1731,11 @@ export default function MeasureMissionPage() {
                                         {latestCuttingVersion.parsed_summary && (
                                             <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                                                 {[
-                                                    ['Lignes matière', latestCuttingVersion.parsed_summary.total_lines ?? latestCuttingVersion.parsed_summary.records ?? 0],
+                                                    ['Lignes matière', latestCuttingVersion.parsed_summary.debit_lines
+                                                        ?? latestCuttingVersion.parsed_summary.total_lines
+                                                        ?? latestCuttingVersion.parsed_summary.line_count
+                                                        ?? latestCuttingVersion.parsed_records?.length
+                                                        ?? 0],
                                                     ['Quantité totale', latestCuttingVersion.parsed_summary.total_quantity ?? 0],
                                                     ['Références', latestCuttingVersion.parsed_summary.unique_references ?? latestCuttingVersion.parsed_records?.length ?? 0],
                                                     ['Alertes', latestCuttingVersion.parsed_issues?.length ?? 0],
@@ -1765,6 +1769,7 @@ export default function MeasureMissionPage() {
                                                             <th className="px-3 py-2">Quantité</th>
                                                             <th className="px-3 py-2">Unité</th>
                                                             <th className="px-3 py-2">Longueur</th>
+                                                            <th className="px-3 py-2">Coupe</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
@@ -1775,6 +1780,11 @@ export default function MeasureMissionPage() {
                                                                 <td className="px-3 py-2 font-black text-slate-800">{record.quantity ?? '—'}</td>
                                                                 <td className="px-3 py-2 font-bold text-slate-600">{record.unit || '—'}</td>
                                                                 <td className="px-3 py-2 font-bold text-slate-600">{record.length_mm ? `${record.length_mm} mm` : '—'}</td>
+                                                                <td className="px-3 py-2 font-bold text-slate-600">
+                                                                    {record.cut_left_deg != null && record.cut_right_deg != null
+                                                                        ? `${record.cut_left_deg}° / ${record.cut_right_deg}°${record.cut_orientation ? ` · ${record.cut_orientation}` : ''}`
+                                                                        : '—'}
+                                                                </td>
                                                             </tr>
                                                         ))}
                                                     </tbody>

@@ -7,13 +7,18 @@ from typing import Any, Iterable
 PRODUCTION_DOCUMENT_TYPES = ("FABRICATION", "CUTTING")
 
 
-def _record_key(record: dict[str, Any]) -> tuple[str, str, str, float | None]:
+def _record_key(record: dict[str, Any]) -> tuple:
     length = record.get("length_mm")
+    cut_left = record.get("cut_left_deg")
+    cut_right = record.get("cut_right_deg")
     return (
         str(record.get("supplier") or "").strip().upper(),
         str(record.get("reference") or "").strip().upper(),
         str(record.get("unit") or "").strip().lower(),
         round(float(length), 3) if length not in (None, "") else None,
+        round(float(cut_left), 3) if cut_left not in (None, "") else None,
+        round(float(cut_right), 3) if cut_right not in (None, "") else None,
+        str(record.get("cut_orientation") or "").strip().upper() or None,
     )
 
 
@@ -30,6 +35,9 @@ def _aggregate_records(records: Iterable[dict[str, Any]]) -> dict[tuple, dict[st
                 "reference": key[1],
                 "unit": key[2],
                 "length_mm": key[3],
+                "cut_left_deg": key[4],
+                "cut_right_deg": key[5],
+                "cut_orientation": key[6],
                 "designation": record.get("designation"),
                 "quantity": 0.0,
             }
