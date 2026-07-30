@@ -43,6 +43,7 @@ _SMTP_ENV = {
     "SMTP_PASSWORD": "secret",
     "SMTP_FROM": "contact@mmg.test",
     "SMTP_USE_TLS": "true",
+    "SMTP_USE_SSL": "false",
 }
 
 
@@ -210,6 +211,55 @@ def test_smtp_quote_for_signature_sent_with_expected_content(monkeypatch):
     plain_part = msg.get_payload()[0].get_payload(decode=True).decode("utf-8")
     assert "4 320,00 € TTC" in plain_part
     assert "https://mmg.test/portal/sign/token-abc" in plain_part
+
+
+def test_smtp_port_465_uses_implicit_ssl(monkeypatch):
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.delenv("SMTP_USE_SSL")
+
+    with (
+        patch("backend.core.events.smtplib.SMTP") as smtp_cls,
+        patch("backend.core.events.smtplib.SMTP_SSL") as smtp_ssl_cls,
+    ):
+        server = smtp_ssl_cls.return_value.__enter__.return_value
+        result = EventBus.send_quote_for_signature_email(
+            "alice@example.test",
+            "ACME Renovation",
+            "DEV-2026-0042",
+            4320.0,
+            "https://mmg.test/portal/sign/token-abc",
+        )
+
+    assert result["status"] == "SENT"
+    smtp_cls.assert_not_called()
+    smtp_ssl_cls.assert_called_once_with("smtp.example.test", 465, timeout=15)
+    server.starttls.assert_not_called()
+    server.login.assert_called_once_with("contact@mmg.test", "secret")
+    server.send_message.assert_called_once()
+
+
+def test_empty_ssl_setting_keeps_starttls_on_port_587(monkeypatch):
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setenv("SMTP_USE_SSL", "")
+
+    with (
+        patch("backend.core.events.smtplib.SMTP") as smtp_cls,
+        patch("backend.core.events.smtplib.SMTP_SSL") as smtp_ssl_cls,
+    ):
+        server = smtp_cls.return_value.__enter__.return_value
+        result = EventBus.send_quote_for_signature_email(
+            "alice@example.test",
+            "ACME Renovation",
+            "DEV-2026-0042",
+            4320.0,
+            "https://mmg.test/portal/sign/token-abc",
+        )
+
+    assert result["status"] == "SENT"
+    smtp_cls.assert_called_once_with("smtp.example.test", 587, timeout=15)
+    smtp_ssl_cls.assert_not_called()
+    server.starttls.assert_called_once()
 
 
 def test_sent_status_sends_and_can_resend_quote_email(isolated_client, monkeypatch):

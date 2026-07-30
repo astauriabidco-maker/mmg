@@ -30,6 +30,15 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
         enabled: Boolean(saleId),
     });
 
+    const { data: saleChatter = [], refetch: refetchSaleChatter } = useQuery({
+        queryKey: ['sale-email-audit', saleId],
+        queryFn: async () => {
+            const res = await api.get(`/v2/stock/chatter/sale_order/${saleId}`);
+            return res.data;
+        },
+        enabled: Boolean(saleId),
+    });
+
     const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
     const formatDate = (value) => value ? new Date(value).toLocaleDateString('fr-FR') : '-';
 
@@ -141,6 +150,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     const updateStatus = (status) => runAction('status', async () => {
         const response = await api.put(`/v2/sales/${sale.id}/status?status=${status}`);
         if (status === 'SENT') {
+            await refetchSaleChatter();
             if (response.data?.email_status === 'SENT') {
                 alert(`Devis envoyé à ${response.data.email_recipient}.`);
             } else {
@@ -248,6 +258,15 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     const canReturn = trace.isDelivered;
     const canCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote;
     const unpaidFinalInvoice = trace.finalInvoices.find(invoice => String(invoice.status || '').toUpperCase() !== 'PAID');
+    const latestEmailDelivery = saleChatter.find(message => (
+        message.is_system_log
+        && (
+            message.body?.includes('envoyé pour signature')
+            || message.body?.includes('non envoyé par email')
+        )
+    ));
+    const emailDeliveryFailed = latestEmailDelivery?.body?.includes('non envoyé par email');
+    const emailDeliveryMessage = latestEmailDelivery?.body?.split(' Lien portail :')[0];
     const timelineActions = {
         createDepositInvoice: canCreateDepositInvoice ? { label: "Créer acompte", onClick: createDepositInvoice } : null,
         deliverFreeSale: canDeliver ? { label: "Sortie client / BL", onClick: deliverFreeSale } : null,
@@ -363,6 +382,23 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                             )}
                         </div>
                     </div>
+                    {latestEmailDelivery && (
+                        <div className={`px-8 py-4 border-b text-sm font-bold ${
+                            emailDeliveryFailed
+                                ? 'border-red-200 bg-red-50 text-red-800'
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                        }`}>
+                            <p className="text-[10px] font-black uppercase tracking-widest opacity-70">
+                                Dernier transport email
+                            </p>
+                            <p className="mt-1">{emailDeliveryMessage}</p>
+                            {latestEmailDelivery.created_at && (
+                                <p className="mt-1 text-xs opacity-70">
+                                    {new Date(latestEmailDelivery.created_at).toLocaleString('fr-FR')}
+                                </p>
+                            )}
+                        </div>
+                    )}
                 </section>
 
                 <BusinessTimeline

@@ -389,11 +389,12 @@ def test_smtp_configuration(req: schemas.SMTPTestRequest, role: str = Depends(se
         body = "Bonjour,\n\nCeci est un email de test envoyé depuis votre plateforme MMG ERP.\nSi vous recevez cet email, cela signifie que votre configuration SMTP est correcte.\n\nCordialement,\nL'équipe Technique MMG"
         msg.attach(MIMEText(body, 'plain'))
         
-        server = smtplib.SMTP(req.host, req.port)
-        server.starttls()
-        server.login(req.username, req.password)
-        server.send_message(msg)
-        server.quit()
+        smtp_client = smtplib.SMTP_SSL if req.port == 465 else smtplib.SMTP
+        with smtp_client(req.host, req.port, timeout=15) as server:
+            if req.port != 465:
+                server.starttls()
+            server.login(req.username, req.password)
+            server.send_message(msg)
         
         return {"status": "success", "message": "Email de test envoyé avec succès"}
     except Exception as e:
