@@ -1342,8 +1342,11 @@ class ProductVariantCreate(ProductVariantBase):
 class ProductVariantResponse(ProductVariantBase):
     id: int
     product_id: int
-    reserved_quantity: float = 0.0
-    available_quantity: float = 0.0
+    # Ces valeurs deviennent nulles pour un compteur affecté à une campagne
+    # aveugle ouverte. Le catalogue reste exploitable sans révéler l'espéré.
+    quantity_in_stock: Optional[float] = None
+    reserved_quantity: Optional[float] = None
+    available_quantity: Optional[float] = None
     model_config = ConfigDict(from_attributes=True)
 
 class ProductBase(BaseModel):
@@ -1549,6 +1552,18 @@ class InventorySessionCreate(BaseModel):
     # Comptage aveugle : l'API masque expected_quantity/variance des lignes
     # jusqu'à la validation (les écarts restent calculés côté serveur).
     blind_counting: bool = False
+    inventory_type: str = "full"
+    scheduled_for: Optional[datetime] = None
+    cycle_frequency_days: Optional[int] = Field(default=None, ge=1, le=366)
+    assigned_usernames: List[str] = []
+    approval_threshold_value: Optional[float] = Field(default=None, ge=0)
+
+
+class InventorySessionUpdate(BaseModel):
+    notes: Optional[str] = None
+    assigned_usernames: Optional[List[str]] = None
+    approval_threshold_value: Optional[float] = Field(default=None, ge=0)
+    scheduled_for: Optional[datetime] = None
 
 class InventoryCountLineUpsert(BaseModel):
     variant_id: int
@@ -1556,6 +1571,20 @@ class InventoryCountLineUpsert(BaseModel):
     counted_quantity: float
     reason: Optional[str] = None
     notes: Optional[str] = None
+    expected_version: Optional[int] = Field(default=None, ge=1)
+    client_operation_id: Optional[str] = Field(default=None, min_length=8, max_length=100)
+
+
+class InventoryCountAttachmentResponse(BaseModel):
+    id: int
+    line_id: int
+    filename: str
+    content_type: Optional[str] = None
+    size_bytes: int
+    uploaded_by: str
+    created_at: datetime
+    url: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
 
 class InventoryCountLineResponse(BaseModel):
     id: int
@@ -1574,7 +1603,11 @@ class InventoryCountLineResponse(BaseModel):
     recount_notes: Optional[str] = None
     counted_by: Optional[str] = None
     counted_at: Optional[datetime] = None
+    version: int = 1
+    unit_cost_snapshot: Optional[float] = None
+    variance_value: Optional[float] = None
     adjustment_move_id: Optional[int] = None
+    attachments: List[InventoryCountAttachmentResponse] = []
     variant: Optional[ProductVariantResponse] = None
     location: Optional[StockLocationResponse] = None
     model_config = ConfigDict(from_attributes=True)
@@ -1588,15 +1621,37 @@ class InventorySessionResponse(BaseModel):
     notes: Optional[str] = None
     zone_locked: bool = True
     blind_counting: bool = False
+    include_all_variants: bool = False
+    inventory_type: str = "full"
+    scheduled_for: Optional[datetime] = None
+    cycle_frequency_days: Optional[int] = None
+    assigned_usernames: List[str] = []
+    approval_threshold_value: Optional[float] = None
+    finance_approved_by: Optional[str] = None
+    finance_approved_at: Optional[datetime] = None
+    archived_by: Optional[str] = None
+    archived_at: Optional[datetime] = None
     locked_at: Optional[datetime] = None
     unlocked_at: Optional[datetime] = None
     created_by: str
     created_at: datetime
     validated_by: Optional[str] = None
     validated_at: Optional[datetime] = None
+    total_variance_value: Optional[float] = None
+    absolute_variance_value: Optional[float] = None
+    requires_finance_approval: bool = False
+    can_view_expected: bool = True
     location: Optional[StockLocationResponse] = None
     lines: List[InventoryCountLineResponse] = []
     model_config = ConfigDict(from_attributes=True)
+
+
+class InventorySessionPage(BaseModel):
+    items: List[InventorySessionResponse]
+    total: int
+    limit: int
+    offset: int
+
 
 class InventoryRecountRequest(BaseModel):
     notes: Optional[str] = None

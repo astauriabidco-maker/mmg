@@ -391,7 +391,12 @@ def test_physical_inventory_recount_blocks_validation_and_export_report():
         recount_line = client.post(
             f"/v2/stock/inventory-sessions/{session_id}/lines",
             headers=headers,
-            json={"variant_id": variant_id, "location_id": location_id, "counted_quantity": 5},
+            json={
+                "variant_id": variant_id,
+                "location_id": location_id,
+                "counted_quantity": 5,
+                "expected_version": recount_response.json()["version"],
+            },
         )
         assert recount_line.status_code == 200, recount_line.text
         assert recount_line.json()["status"] == "ok"

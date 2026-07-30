@@ -59,7 +59,7 @@ const ROLE_PRESETS = [
         label: 'Comptable / Finance',
         description: 'Suit les factures clients et fournisseurs, encaissements, paiements, avoirs et exports comptables.',
         scope: 'Finance',
-        permissions: ['ACC_VIEW', 'ACC_EDIT', 'SALES_VIEW', 'PURCHASES_VIEW', 'purchases.invoice.manage', 'purchases.payments.manage', 'PLANNING_VIEW'],
+        permissions: ['ACC_VIEW', 'ACC_EDIT', 'SALES_VIEW', 'PURCHASES_VIEW', 'purchases.invoice.manage', 'purchases.payments.manage', 'inventory.approve_value', 'PLANNING_VIEW'],
     },
 ];
 
