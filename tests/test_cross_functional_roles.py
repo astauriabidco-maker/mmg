@@ -87,8 +87,13 @@ def test_cross_functional_roles_are_seeded_with_expected_scope(isolated_client, 
         "PURCHASES_VIEW",
         "purchases.invoice.manage",
         "purchases.payments.manage",
+        "inventory.approve_value",
     }.issubset(finance_permissions)
-    assert {"ACC_VIEW", "ACC_EDIT"}.issubset(manager_permissions)
+    assert {
+        "ACC_VIEW",
+        "ACC_EDIT",
+        "inventory.approve_value",
+    }.issubset(manager_permissions)
     assert "stock.adjust" not in technico_permissions
     assert "inventory.validate" not in technico_permissions
     assert "TECHNICO_COMMERCIAL" in BE_REVIEW_ROLES

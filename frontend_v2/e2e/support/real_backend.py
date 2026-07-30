@@ -156,6 +156,7 @@ def seed_browser_journey() -> None:
             conditioning="barre",
             length_per_unit=6.5,
             quantity_in_stock=20,
+            cost_price=10,
         )
         stock_location = models.StockLocation(
             name="WH/Stock",

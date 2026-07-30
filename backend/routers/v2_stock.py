@@ -1,18 +1,24 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from ..database import get_db
 from .. import models, schemas
-from ..core.security import assert_permission, get_current_user
+from ..core.security import (
+    assert_permission,
+    get_current_user,
+    roles_have_permission,
+)
 import time
 import io
 import tempfile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 import openpyxl
 from openpyxl.styles import Font, PatternFill
 from sqlalchemy import func, or_, update
+from sqlalchemy.exc import IntegrityError
 from ..services.bom_parser import parse_bom_file
 from ..services.stock_reservations import (
     InsufficientStockAtConsumptionError,
@@ -201,6 +207,110 @@ def _require_permission(db: Session, user: dict, permission_code: str) -> None:
     assert_permission(db, user, permission_code)
 
 
+def _has_permission(db: Session, user: dict, permission_code: str) -> bool:
+    try:
+        assert_permission(db, user, permission_code)
+        return True
+    except HTTPException as exc:
+        if exc.status_code in {401, 403}:
+            return False
+        raise
+
+
+def _user_roles(user: dict) -> set[str]:
+    roles = set(user.get("roles") or [])
+    if user.get("role"):
+        roles.add(user["role"])
+    return roles
+
+
+def _normalize_usernames(values: Optional[List[str]]) -> List[str]:
+    return list(dict.fromkeys(
+        str(value or "").strip()
+        for value in (values or [])
+        if str(value or "").strip()
+    ))
+
+
+def _assert_known_inventory_counters(db: Session, usernames: List[str]) -> None:
+    if not usernames:
+        return
+    rows = (
+        db.query(models.User)
+        .filter(models.User.username.in_(usernames), models.User.is_active == True)
+        .all()
+    )
+    found = {row.username for row in rows}
+    missing = [username for username in usernames if username not in found]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Compteur(s) actif(s) introuvable(s): {', '.join(missing)}",
+        )
+    unauthorized = [
+        row.username
+        for row in rows
+        if not roles_have_permission(db, row.role_names, "inventory.count")
+    ]
+    if unauthorized:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Permission inventory.count absente pour: "
+                f"{', '.join(unauthorized)}"
+            ),
+        )
+
+
+def _assert_counter_assignment(session: models.InventorySession, user: dict) -> None:
+    assigned = set(session.assigned_usernames or [])
+    if not assigned:
+        return
+    username = _actor(user)
+    if username in assigned:
+        return
+    if _user_roles(user) & {"ADMIN", "SUPER_ADMIN", "MANAGER"}:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=f"Vous n'êtes pas affecté à la campagne {session.reference}.",
+    )
+
+
+def _active_blind_location_ids(db: Session, user: dict) -> set[int]:
+    """Emplacements dont l'espéré doit être masqué pour le compteur courant.
+
+    Les valideurs conservent leur vue de contrôle. Un compteur affecté (ou tous
+    les compteurs lorsqu'aucune affectation n'est définie) ne reçoit ni quants
+    couverts, ni agrégats variante tant que la campagne aveugle est ouverte.
+    """
+    if not _has_permission(db, user, "inventory.count"):
+        return set()
+    if _has_permission(db, user, "inventory.validate"):
+        return set()
+    username = _actor(user)
+    sessions = (
+        db.query(models.InventorySession)
+        .filter(
+            models.InventorySession.blind_counting == True,
+            models.InventorySession.archived_at == None,
+            models.InventorySession.status.in_(["draft", "counting", "pending_approval"]),
+        )
+        .all()
+    )
+    covered: set[int] = set()
+    for session in sessions:
+        assigned = set(session.assigned_usernames or [])
+        if assigned and username not in assigned:
+            continue
+        covered.update(_zone_location_ids(db, session.location_id))
+    return covered
+
+
+def _can_reveal_blind_inventory(db: Session, user: dict) -> bool:
+    return _has_permission(db, user, "inventory.approve_value")
+
+
 def _get_quant_quantity(db: Session, variant_id: int, location_id: int) -> float:
     quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=location_id).first()
     return float(quant.quantity if quant else 0)
@@ -226,6 +336,25 @@ def _get_or_create_inventory_location(db: Session) -> models.StockLocation:
 
 def _line_status_from_variance(variance: float) -> str:
     return "ok" if abs(float(variance or 0)) <= 0.000001 else "variance"
+
+
+def _line_variance_value(line: models.InventoryCountLine) -> float:
+    if line.variance_value is not None:
+        return float(line.variance_value)
+    return float(line.variance_quantity or 0) * float(line.unit_cost_snapshot or 0)
+
+
+def _inventory_value_summary(session: models.InventorySession) -> tuple[float, float]:
+    values = [_line_variance_value(line) for line in (session.lines or [])]
+    return sum(values), sum(abs(value) for value in values)
+
+
+def _naive_utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _zone_location_ids(db: Session, location_id: Optional[int]) -> List[int]:
@@ -309,28 +438,71 @@ def _mask_pending_line(line: schemas.InventoryCountLineResponse) -> None:
         line.counted_at = None
 
 
-def _serialize_inventory_session(session: models.InventorySession) -> schemas.InventorySessionResponse:
+def _serialize_inventory_session(
+    session: models.InventorySession,
+    *,
+    reveal_blind: bool = False,
+) -> schemas.InventorySessionResponse:
     """Sérialise une campagne ; en comptage aveugle, l'espéré et l'écart des
     lignes sont masqués tant que la campagne n'est pas validée/annulée."""
     response = schemas.InventorySessionResponse.model_validate(session)
-    blind = session.blind_counting and session.status in ["draft", "counting"]
+    blind = (
+        session.blind_counting
+        and session.status in ["draft", "counting", "pending_approval"]
+        and not (reveal_blind and session.status == "pending_approval")
+    )
+    total_value, absolute_value = _inventory_value_summary(session)
+    threshold = float(session.approval_threshold_value or 0)
+    response.total_variance_value = None if blind else total_value
+    response.absolute_variance_value = None if blind else absolute_value
+    response.requires_finance_approval = bool(
+        threshold > 0
+        and absolute_value > threshold + 0.005
+        and not session.finance_approved_at
+    )
+    response.can_view_expected = not blind
+    attachment_paths = {
+        attachment.id: (
+            f"/uploads/inventory/{session.id}/{model_line.id}/{attachment.stored_filename}"
+        )
+        for model_line in (session.lines or [])
+        for attachment in (model_line.attachments or [])
+    }
     for line in response.lines:
         _mask_pending_line(line)
+        for attachment in line.attachments:
+            attachment.url = attachment_paths.get(attachment.id)
         if blind:
             line.expected_quantity = None
             line.variance_quantity = None
+            line.unit_cost_snapshot = None
+            line.variance_value = None
+            if line.status in {"ok", "variance"}:
+                line.status = "counted"
     return response
 
 
 def _serialize_count_line(
     session: models.InventorySession,
     line: models.InventoryCountLine,
+    *,
+    reveal_blind: bool = False,
 ) -> schemas.InventoryCountLineResponse:
     response = schemas.InventoryCountLineResponse.model_validate(line)
     _mask_pending_line(response)
-    if session.blind_counting and session.status in ["draft", "counting"]:
+    for attachment, row in zip(response.attachments, line.attachments):
+        attachment.url = f"/uploads/inventory/{session.id}/{line.id}/{row.stored_filename}"
+    if (
+        session.blind_counting
+        and session.status in ["draft", "counting", "pending_approval"]
+        and not (reveal_blind and session.status == "pending_approval")
+    ):
         response.expected_quantity = None
         response.variance_quantity = None
+        response.unit_cost_snapshot = None
+        response.variance_value = None
+        if response.status in {"ok", "variance"}:
+            response.status = "counted"
     return response
 
 
@@ -358,20 +530,134 @@ def _sync_variant_internal_stock(db: Session, variant_id: int) -> None:
     variant.quantity_in_stock = sum(float(quant.quantity or 0) for quant in internal_quants)
 
 
+def _inventory_session_query(db: Session):
+    return db.query(models.InventorySession).options(
+        joinedload(models.InventorySession.location),
+        joinedload(models.InventorySession.lines)
+        .joinedload(models.InventoryCountLine.variant)
+        .joinedload(models.ProductVariant.product),
+        joinedload(models.InventorySession.lines)
+        .joinedload(models.InventoryCountLine.location),
+        joinedload(models.InventorySession.lines)
+        .joinedload(models.InventoryCountLine.attachments),
+    )
+
+
+def _filtered_inventory_sessions_query(
+    db: Session,
+    *,
+    status: Optional[str],
+    search: Optional[str],
+    include_archived: bool,
+):
+    query = _inventory_session_query(db)
+    if status:
+        query = query.filter(models.InventorySession.status == status)
+    if not include_archived:
+        query = query.filter(models.InventorySession.archived_at == None)
+    cleaned_search = _clean(search)
+    if cleaned_search:
+        pattern = f"%{cleaned_search}%"
+        query = query.filter(or_(
+            models.InventorySession.reference.ilike(pattern),
+            models.InventorySession.name.ilike(pattern),
+            models.InventorySession.created_by.ilike(pattern),
+        ))
+    return query
+
+
 @router.get("/inventory-sessions", response_model=List[schemas.InventorySessionResponse])
 def list_inventory_sessions(
     status: Optional[str] = None,
+    search: Optional[str] = None,
+    include_archived: bool = False,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    query = db.query(models.InventorySession).options(
-        joinedload(models.InventorySession.location),
-        joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.variant),
-        joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.location),
-    ).order_by(models.InventorySession.created_at.desc())
-    if status:
-        query = query.filter(models.InventorySession.status == status)
-    return [_serialize_inventory_session(session) for session in query.limit(50).all()]
+    query = _filtered_inventory_sessions_query(
+        db,
+        status=status,
+        search=search,
+        include_archived=include_archived,
+    )
+    sessions = (
+        query.order_by(models.InventorySession.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    reveal_blind = _can_reveal_blind_inventory(db, user)
+    return [
+        _serialize_inventory_session(session, reveal_blind=reveal_blind)
+        for session in sessions
+    ]
+
+
+@router.get("/inventory-counters", response_model=List[schemas.User])
+def list_inventory_counters(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "inventory.validate")
+    users = (
+        db.query(models.User)
+        .filter(models.User.is_active == True)
+        .order_by(
+            models.User.first_name,
+            models.User.last_name,
+            models.User.username,
+        )
+        .all()
+    )
+    return [
+        candidate
+        for candidate in users
+        if roles_have_permission(
+            db,
+            candidate.role_names,
+            "inventory.count",
+        )
+    ]
+
+
+@router.get("/inventory-sessions-page", response_model=schemas.InventorySessionPage)
+def page_inventory_sessions(
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    include_archived: bool = False,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    query = _filtered_inventory_sessions_query(
+        db,
+        status=status,
+        search=search,
+        include_archived=include_archived,
+    )
+    total = query.order_by(None).count()
+    sessions = (
+        query.order_by(models.InventorySession.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    reveal_blind = _can_reveal_blind_inventory(db, user)
+    return {
+        "items": [
+            _serialize_inventory_session(
+                session,
+                reveal_blind=reveal_blind,
+            )
+            for session in sessions
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.post("/inventory-sessions", response_model=schemas.InventorySessionResponse)
@@ -387,29 +673,124 @@ def create_inventory_session(
             raise HTTPException(status_code=404, detail="Emplacement introuvable.")
     if not payload.name.strip():
         raise HTTPException(status_code=400, detail="Nom de campagne obligatoire.")
+    inventory_type = str(payload.inventory_type or "full").strip().lower()
+    if inventory_type not in {"full", "cycle"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Type d'inventaire invalide. Utilisez full ou cycle.",
+        )
+    assigned_usernames = _normalize_usernames(payload.assigned_usernames)
+    _assert_known_inventory_counters(db, assigned_usernames)
+    scheduled_for = _naive_utc(payload.scheduled_for)
+    is_scheduled = bool(scheduled_for and scheduled_for > utcnow())
     # Gel de zone imposé à True par défaut côté serveur : le client peut
     # explicitement demander False, la garde anti-dérive 409 à la validation
     # reste alors le filet (cf. doc du schéma InventorySessionCreate).
-    zone_locked = True if payload.zone_locked is None else bool(payload.zone_locked)
+    zone_locked = False if is_scheduled else (
+        True if payload.zone_locked is None else bool(payload.zone_locked)
+    )
     reference = f"INV-{int(time.time() * 1000)}"
     session = models.InventorySession(
         reference=reference,
         name=payload.name.strip(),
         location_id=payload.location_id,
         notes=payload.notes,
-        status="draft",
+        status="scheduled" if is_scheduled else "draft",
         zone_locked=zone_locked,
         blind_counting=bool(payload.blind_counting),
+        include_all_variants=bool(payload.include_all_variants),
+        inventory_type=inventory_type,
+        scheduled_for=scheduled_for,
+        cycle_frequency_days=payload.cycle_frequency_days,
+        assigned_usernames=assigned_usernames,
+        approval_threshold_value=payload.approval_threshold_value,
         locked_at=utcnow() if zone_locked else None,
         unlocked_at=None if zone_locked else utcnow(),
         created_by=user.get("sub", "Admin"),
     )
     db.add(session)
     db.flush()
-    _prefill_inventory_lines(db, session, payload.include_all_variants)
+    if not is_scheduled:
+        _prefill_inventory_lines(db, session, payload.include_all_variants)
     db.commit()
-    db.refresh(session)
-    return _serialize_inventory_session(session)
+    created = _inventory_session_query(db).filter(
+        models.InventorySession.id == session.id
+    ).first()
+    return _serialize_inventory_session(
+        created,
+        reveal_blind=_can_reveal_blind_inventory(db, user),
+    )
+
+
+@router.patch("/inventory-sessions/{session_id}", response_model=schemas.InventorySessionResponse)
+def update_inventory_session(
+    session_id: int,
+    payload: schemas.InventorySessionUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "inventory.validate")
+    session = db.query(models.InventorySession).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+    if session.status in {"validated", "cancelled"}:
+        raise HTTPException(status_code=400, detail="Campagne clôturée.")
+    changes = payload.model_dump(exclude_unset=True)
+    if "assigned_usernames" in changes:
+        assigned = _normalize_usernames(changes["assigned_usernames"])
+        _assert_known_inventory_counters(db, assigned)
+        session.assigned_usernames = assigned
+    if "notes" in changes:
+        session.notes = changes["notes"]
+    if "approval_threshold_value" in changes:
+        session.approval_threshold_value = changes["approval_threshold_value"]
+        session.finance_approved_by = None
+        session.finance_approved_at = None
+        if session.status == "pending_approval":
+            session.status = "counting"
+    if "scheduled_for" in changes:
+        if session.status != "scheduled":
+            raise HTTPException(
+                status_code=400,
+                detail="La date ne peut être modifiée que pour une campagne planifiée.",
+            )
+        session.scheduled_for = _naive_utc(changes["scheduled_for"])
+    db.commit()
+    loaded = _inventory_session_query(db).filter(
+        models.InventorySession.id == session.id
+    ).first()
+    return _serialize_inventory_session(
+        loaded,
+        reveal_blind=_can_reveal_blind_inventory(db, user),
+    )
+
+
+@router.post("/inventory-sessions/{session_id}/start", response_model=schemas.InventorySessionResponse)
+def start_inventory_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "inventory.validate")
+    session = db.query(models.InventorySession).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+    if session.status != "scheduled":
+        raise HTTPException(status_code=409, detail="Cette campagne n'est pas planifiée.")
+    session.status = "draft"
+    session.zone_locked = True
+    session.locked_at = utcnow()
+    session.unlocked_at = None
+    if not session.lines:
+        _prefill_inventory_lines(db, session, bool(session.include_all_variants))
+    db.commit()
+    loaded = _inventory_session_query(db).filter(
+        models.InventorySession.id == session.id
+    ).first()
+    return _serialize_inventory_session(
+        loaded,
+        reveal_blind=_can_reveal_blind_inventory(db, user),
+    )
 
 
 @router.get("/inventory-sessions/{session_id}", response_model=schemas.InventorySessionResponse)
@@ -419,18 +800,16 @@ def get_inventory_session(
     user: dict = Depends(get_current_user),
 ):
     session = (
-        db.query(models.InventorySession)
-        .options(
-            joinedload(models.InventorySession.location),
-            joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.variant).joinedload(models.ProductVariant.product),
-            joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.location),
-        )
+        _inventory_session_query(db)
         .filter(models.InventorySession.id == session_id)
         .first()
     )
     if not session:
         raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
-    return _serialize_inventory_session(session)
+    return _serialize_inventory_session(
+        session,
+        reveal_blind=_can_reveal_blind_inventory(db, user),
+    )
 
 
 @router.post("/inventory-sessions/{session_id}/lines", response_model=schemas.InventoryCountLineResponse)
@@ -441,11 +820,40 @@ def upsert_inventory_count_line(
     user: dict = Depends(get_current_user),
 ):
     _require_permission(db, user, "inventory.count")
-    session = db.query(models.InventorySession).filter_by(id=session_id).first()
+    session = (
+        db.query(models.InventorySession)
+        .filter_by(id=session_id)
+        .with_for_update()
+        .first()
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
-    if session.status in ["validated", "cancelled"]:
-        raise HTTPException(status_code=400, detail="Campagne clôturée.")
+    if session.status not in ["draft", "counting"]:
+        raise HTTPException(
+            status_code=400,
+            detail="La campagne n'est pas ouverte à la saisie.",
+        )
+    _assert_counter_assignment(session, user)
+    if payload.client_operation_id:
+        replayed = (
+            db.query(models.InventoryCountLine)
+            .filter(
+                models.InventoryCountLine.last_client_operation_id
+                == payload.client_operation_id
+            )
+            .first()
+        )
+        if replayed:
+            if replayed.session_id != session_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Identifiant de synchronisation déjà utilisé.",
+                )
+            return _serialize_count_line(
+                session,
+                replayed,
+                reveal_blind=_can_reveal_blind_inventory(db, user),
+            )
     variant = db.query(models.ProductVariant).filter_by(id=payload.variant_id).first()
     if not variant:
         raise HTTPException(status_code=404, detail="Variante introuvable.")
@@ -464,6 +872,7 @@ def upsert_inventory_count_line(
     line = (
         db.query(models.InventoryCountLine)
         .filter_by(session_id=session_id, variant_id=payload.variant_id, location_id=payload.location_id)
+        .with_for_update()
         .first()
     )
     if not line:
@@ -471,8 +880,34 @@ def upsert_inventory_count_line(
             session_id=session_id,
             variant_id=payload.variant_id,
             location_id=payload.location_id,
+            version=1,
         )
         db.add(line)
+        expected = _get_quant_quantity(db, payload.variant_id, payload.location_id)
+    else:
+        if payload.expected_version is None and line.status != "pending":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Version de ligne obligatoire. Rechargez la campagne.",
+                    "current_version": int(line.version or 1),
+                },
+            )
+        if (
+            payload.expected_version is not None
+            and int(payload.expected_version) != int(line.version or 1)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Cette ligne a été modifiée par un autre compteur.",
+                    "current_version": int(line.version or 1),
+                    "counted_by": line.counted_by,
+                    "counted_at": line.counted_at.isoformat() if line.counted_at else None,
+                },
+            )
+        expected = float(line.expected_quantity or 0)
+        line.version = int(line.version or 1) + 1
     line.expected_quantity = expected
     line.counted_quantity = counted
     line.variance_quantity = counted - expected
@@ -484,10 +919,114 @@ def upsert_inventory_count_line(
     line.recount_notes = None
     line.counted_by = user.get("sub", "Admin")
     line.counted_at = utcnow()
+    line.last_client_operation_id = payload.client_operation_id
+    line.unit_cost_snapshot = float(variant.cost_price or 0)
+    line.variance_value = float(line.variance_quantity or 0) * float(
+        line.unit_cost_snapshot or 0
+    )
     session.status = "counting"
-    db.commit()
+    session.finance_approved_by = None
+    session.finance_approved_at = None
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Une saisie concurrente existe déjà pour cette référence et cet emplacement.",
+        ) from exc
     db.refresh(line)
-    return _serialize_count_line(session, line)
+    return _serialize_count_line(
+        session,
+        line,
+        reveal_blind=_can_reveal_blind_inventory(db, user),
+    )
+
+
+@router.post(
+    "/inventory-sessions/{session_id}/lines/{line_id}/attachments",
+    response_model=schemas.InventoryCountAttachmentResponse,
+)
+async def upload_inventory_count_attachment(
+    session_id: int,
+    line_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "inventory.count")
+    session = db.query(models.InventorySession).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+    if session.status not in {"draft", "counting", "pending_approval"}:
+        raise HTTPException(status_code=400, detail="Campagne clôturée.")
+    _assert_counter_assignment(session, user)
+    line = (
+        db.query(models.InventoryCountLine)
+        .filter_by(id=line_id, session_id=session_id)
+        .first()
+    )
+    if not line:
+        raise HTTPException(status_code=404, detail="Ligne de comptage introuvable.")
+
+    content_type = (file.content_type or "application/octet-stream").lower()
+    allowed = (
+        content_type.startswith("image/")
+        or content_type in {"application/pdf", "text/plain"}
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=415,
+            detail="Justificatif accepté: image, PDF ou fichier texte.",
+        )
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Le justificatif est vide.")
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Justificatif limité à 10 Mo.")
+
+    original_name = Path(file.filename or "justificatif").name
+    if content_type == "application/pdf":
+        suffix = ".pdf"
+    elif content_type == "text/plain":
+        suffix = ".txt"
+    else:
+        image_suffixes = {
+            ".avif",
+            ".bmp",
+            ".gif",
+            ".heic",
+            ".heif",
+            ".jpeg",
+            ".jpg",
+            ".png",
+            ".tif",
+            ".tiff",
+            ".webp",
+        }
+        original_suffix = Path(original_name).suffix.lower()
+        suffix = original_suffix if original_suffix in image_suffixes else ".img"
+    stored_filename = f"{uuid4().hex}{suffix}"
+    target_dir = Path("uploads") / "inventory" / str(session_id) / str(line_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / stored_filename).write_bytes(content)
+    attachment = models.InventoryCountAttachment(
+        line_id=line.id,
+        filename=original_name,
+        stored_filename=stored_filename,
+        content_type=content_type,
+        size_bytes=len(content),
+        uploaded_by=_actor(user),
+        created_at=utcnow(),
+    )
+    db.add(attachment)
+    db.commit()
+    db.refresh(attachment)
+    response = schemas.InventoryCountAttachmentResponse.model_validate(attachment)
+    response.url = (
+        f"/uploads/inventory/{session_id}/{line_id}/{stored_filename}"
+    )
+    return response
 
 
 @router.post("/inventory-sessions/{session_id}/lines/{line_id}/recount", response_model=schemas.InventoryCountLineResponse)
@@ -517,9 +1056,57 @@ def request_inventory_line_recount(
     line.recount_requested_by = user.get("sub", "Admin")
     line.recount_requested_at = utcnow()
     line.recount_notes = payload.notes
+    session.status = "counting"
+    session.finance_approved_by = None
+    session.finance_approved_at = None
     db.commit()
     db.refresh(line)
-    return _serialize_count_line(session, line)
+    return _serialize_count_line(
+        session,
+        line,
+        reveal_blind=_can_reveal_blind_inventory(db, user),
+    )
+
+
+@router.post(
+    "/inventory-sessions/{session_id}/approve-value",
+    response_model=schemas.InventorySessionResponse,
+)
+def approve_inventory_variance_value(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "inventory.approve_value")
+    session = (
+        _inventory_session_query(db)
+        .filter(models.InventorySession.id == session_id)
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+    if session.status != "pending_approval":
+        raise HTTPException(
+            status_code=409,
+            detail="Cette campagne n'attend pas d'approbation financière.",
+        )
+    _total_value, absolute_value = _inventory_value_summary(session)
+    threshold = float(session.approval_threshold_value or 0)
+    if threshold <= 0 or absolute_value <= threshold + 0.005:
+        raise HTTPException(
+            status_code=409,
+            detail="Le seuil d'approbation n'est plus dépassé.",
+        )
+    session.finance_approved_by = _actor(user)
+    session.finance_approved_at = utcnow()
+    db.commit()
+    loaded = _inventory_session_query(db).filter(
+        models.InventorySession.id == session.id
+    ).first()
+    return _serialize_inventory_session(
+        loaded,
+        reveal_blind=_can_reveal_blind_inventory(db, user),
+    )
 
 
 @router.post("/inventory-sessions/{session_id}/validate", response_model=schemas.InventorySessionResponse)
@@ -541,6 +1128,11 @@ def validate_inventory_session(
         raise HTTPException(status_code=409, detail="Campagne déjà validée.")
     if session.status == "cancelled":
         raise HTTPException(status_code=400, detail="Campagne annulée.")
+    if session.status == "scheduled":
+        raise HTTPException(
+            status_code=400,
+            detail="Démarrez la campagne planifiée avant de la valider.",
+        )
     if not session.lines:
         raise HTTPException(status_code=400, detail="Aucune ligne comptée à valider.")
     recount_lines = [line for line in session.lines if line.status == "recount"]
@@ -578,6 +1170,17 @@ def validate_inventory_session(
                 ),
             )
 
+    _total_value, absolute_value = _inventory_value_summary(session)
+    threshold = float(session.approval_threshold_value or 0)
+    if (
+        threshold > 0
+        and absolute_value > threshold + 0.005
+        and not session.finance_approved_at
+    ):
+        session.status = "pending_approval"
+        db.commit()
+        return get_inventory_session(session.id, db, user)
+
     # Verrou anti double validation concurrente : bascule atomique du statut.
     # Si une requête concurrente a déjà validé la campagne, rowcount vaut 0 et
     # toute la transaction (ajustements inclus) est annulée avec ce 409.
@@ -585,7 +1188,7 @@ def validate_inventory_session(
         update(models.InventorySession)
         .where(
             models.InventorySession.id == session.id,
-            models.InventorySession.status.in_(["draft", "counting"]),
+            models.InventorySession.status.in_(["draft", "counting", "pending_approval"]),
         )
         .values(status="validated")
     ).rowcount
@@ -636,6 +1239,29 @@ def validate_inventory_session(
     session.validated_at = utcnow()
     session.zone_locked = False
     session.unlocked_at = utcnow()
+    if (
+        session.inventory_type == "cycle"
+        and session.cycle_frequency_days
+        and session.cycle_frequency_days > 0
+    ):
+        db.add(models.InventorySession(
+            reference=f"INV-{int(time.time() * 1000)}-{uuid4().hex[:4].upper()}",
+            name=f"{session.name} · cycle suivant",
+            status="scheduled",
+            location_id=session.location_id,
+            notes=session.notes,
+            zone_locked=False,
+            blind_counting=session.blind_counting,
+            include_all_variants=session.include_all_variants,
+            inventory_type="cycle",
+            scheduled_for=utcnow() + timedelta(days=session.cycle_frequency_days),
+            cycle_frequency_days=session.cycle_frequency_days,
+            assigned_usernames=list(session.assigned_usernames or []),
+            approval_threshold_value=session.approval_threshold_value,
+            locked_at=None,
+            unlocked_at=utcnow(),
+            created_by=author,
+        ))
     db.commit()
     db.refresh(session)
     return get_inventory_session(session.id, db, user)
@@ -661,6 +1287,49 @@ def cancel_inventory_session(
     return session
 
 
+@router.post(
+    "/inventory-sessions/{session_id}/archive",
+    response_model=schemas.InventorySessionResponse,
+)
+def archive_inventory_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "inventory.validate")
+    session = db.query(models.InventorySession).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+    if session.status not in {"validated", "cancelled"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Seules les campagnes clôturées peuvent être archivées.",
+        )
+    session.archived_by = _actor(user)
+    session.archived_at = utcnow()
+    db.commit()
+    return get_inventory_session(session.id, db, user)
+
+
+@router.post(
+    "/inventory-sessions/{session_id}/restore",
+    response_model=schemas.InventorySessionResponse,
+)
+def restore_inventory_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    _require_permission(db, user, "inventory.validate")
+    session = db.query(models.InventorySession).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
+    session.archived_by = None
+    session.archived_at = None
+    db.commit()
+    return get_inventory_session(session.id, db, user)
+
+
 @router.get("/inventory-sessions/{session_id}/export")
 def export_inventory_session(
     session_id: int,
@@ -673,12 +1342,7 @@ def export_inventory_session(
     # ``_serialize_inventory_session``).
     _require_permission(db, user, "inventory.validate")
     session = (
-        db.query(models.InventorySession)
-        .options(
-            joinedload(models.InventorySession.location),
-            joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.variant).joinedload(models.ProductVariant.product),
-            joinedload(models.InventorySession.lines).joinedload(models.InventoryCountLine.location),
-        )
+        _inventory_session_query(db)
         .filter(models.InventorySession.id == session_id)
         .first()
     )
@@ -691,6 +1355,15 @@ def export_inventory_session(
     sheet.append(["Campagne", session.reference, session.name])
     sheet.append(["Statut", session.status, "Zone gelée" if session.zone_locked else "Zone libérée"])
     sheet.append(["Emplacement", session.location.name if session.location else "Tous emplacements internes"])
+    sheet.append(["Compteurs affectés", ", ".join(session.assigned_usernames or []) or "Tous"])
+    total_value, absolute_value = _inventory_value_summary(session)
+    sheet.append(["Écart valorisé net", float(total_value), "Valeur absolue", float(absolute_value)])
+    sheet.append([
+        "Seuil d'approbation",
+        float(session.approval_threshold_value or 0),
+        "Approuvé par",
+        session.finance_approved_by or "",
+    ])
     sheet.append([])
     headers = [
         "Référence",
@@ -699,10 +1372,14 @@ def export_inventory_session(
         "Système",
         "Compté",
         "Écart",
+        "Coût unitaire",
+        "Écart valorisé",
         "Statut ligne",
         "Motif",
+        "Compté par",
         "Recompte demandé par",
         "Note recompte",
+        "Justificatifs",
         "Mouvement ajustement",
     ]
     sheet.append(headers)
@@ -721,10 +1398,14 @@ def export_inventory_session(
             float(line.expected_quantity or 0),
             float(line.counted_quantity or 0),
             float(line.variance_quantity or 0),
+            float(line.unit_cost_snapshot or 0),
+            _line_variance_value(line),
             line.status,
             line.reason or "",
+            line.counted_by or "",
             line.recount_requested_by or "",
             line.recount_notes or "",
+            ", ".join(attachment.filename for attachment in line.attachments),
             line.adjustment_move_id or "",
         ])
 
@@ -745,10 +1426,19 @@ def export_inventory_session(
 @router.get("/products", response_model=List[schemas.ProductResponse])
 def get_products(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     products = db.query(models.Product).options(joinedload(models.Product.variants)).all()
+    blind_locations = _active_blind_location_ids(db, user)
+    responses = []
     for product in products:
         for variant in product.variants:
             annotate_variant_availability(db, variant)
-    return products
+        response = schemas.ProductResponse.model_validate(product)
+        if blind_locations:
+            for variant in response.variants:
+                variant.quantity_in_stock = None
+                variant.reserved_quantity = None
+                variant.available_quantity = None
+        responses.append(response)
+    return responses
 
 @router.post("/products", response_model=schemas.ProductResponse)
 def create_product(product_data: schemas.ProductCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -1780,6 +2470,12 @@ def get_all_quants(db: Session = Depends(get_db), user: dict = Depends(get_curre
         .filter(models.StockQuant.quantity > 0)
         .all()
     )
+    blind_locations = _active_blind_location_ids(db, user)
+    if blind_locations:
+        quants = [
+            quant for quant in quants
+            if quant.location_id not in blind_locations
+        ]
     for quant in quants:
         if quant.location and quant.location.usage == "internal":
             _physical, reserved, available = available_quantity_at_location(db, quant.variant_id, quant.location_id)

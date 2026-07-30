@@ -112,7 +112,7 @@ class InventoryService:
             db.query(models.InventorySession)
             .filter(
                 models.InventorySession.zone_locked == True,
-                models.InventorySession.status.in_(["draft", "counting"]),
+                models.InventorySession.status.in_(["draft", "counting", "pending_approval"]),
                 or_(
                     models.InventorySession.location_id == None,
                     models.InventorySession.location_id.in_(ancestor_ids),

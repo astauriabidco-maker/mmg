@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { downloadFileWithFeedback } from '../services/pdf';
@@ -96,6 +96,7 @@ export default function StockDashboard() {
         consumeWorkshop: can('workshop.consume_stock'),
         countInventory: can('inventory.count'),
         validateInventory: can('inventory.validate'),
+        approveInventoryValue: can('inventory.approve_value'),
         receivePurchases: can('purchases.receive'),
         requestPurchases: can('purchases.request'),
     };
@@ -2902,6 +2903,8 @@ export default function StockDashboard() {
                             quants={quants}
                             canCount={stockPermissions.countInventory}
                             canValidate={stockPermissions.validateInventory}
+                            canApproveValue={stockPermissions.approveInventoryValue}
+                            currentUsername={user?.username}
                             queryClient={queryClient}
                         />
                     </div>
@@ -5168,15 +5171,78 @@ function RoleRule({ icon: Icon, title, text }) {
     );
 }
 
-function PhysicalInventoryView({ sessions, products, locations, quants, canCount, canValidate, queryClient }) {
-    const [selectedSessionId, setSelectedSessionId] = useState(sessions[0]?.id || null);
-    const [newSession, setNewSession] = useState({ name: '', location_id: '', notes: '', include_all_variants: false, blind_counting: false });
+function PhysicalInventoryView({
+    sessions: initialSessions,
+    products,
+    locations,
+    quants,
+    canCount,
+    canValidate,
+    canApproveValue,
+    currentUsername,
+    queryClient,
+}) {
+    const [sessionSearch, setSessionSearch] = useState('');
+    const [sessionStatusFilter, setSessionStatusFilter] = useState('');
+    const [includeArchived, setIncludeArchived] = useState(false);
+    const [sessionOffset, setSessionOffset] = useState(0);
+    const sessionLimit = 25;
+    const { data: sessionPage = { items: initialSessions, total: initialSessions.length } } = useQuery({
+        queryKey: ['inventory-sessions-page', sessionOffset, sessionSearch, sessionStatusFilter, includeArchived],
+        queryFn: async () => {
+            const params = new URLSearchParams({
+                limit: String(sessionLimit),
+                offset: String(sessionOffset),
+                include_archived: String(includeArchived),
+            });
+            if (sessionSearch.trim()) params.set('search', sessionSearch.trim());
+            if (sessionStatusFilter) params.set('status', sessionStatusFilter);
+            const res = await api.get(`/v2/stock/inventory-sessions-page?${params.toString()}`);
+            return res.data;
+        },
+    });
+    const sessions = sessionPage.items || [];
+    const { data: inventoryUsers = [] } = useQuery({
+        queryKey: ['inventory-users'],
+        queryFn: async () => {
+            const res = await api.get('/v2/stock/inventory-counters');
+            return res.data;
+        },
+        enabled: canValidate,
+    });
+    const [selectedSessionId, setSelectedSessionId] = useState(initialSessions[0]?.id || null);
+    const [newSession, setNewSession] = useState({
+        name: '',
+        location_id: '',
+        notes: '',
+        include_all_variants: false,
+        blind_counting: false,
+        inventory_type: 'full',
+        scheduled_for: '',
+        cycle_frequency_days: '',
+        approval_threshold_value: '',
+        assigned_usernames: [],
+    });
     const [lineForm, setLineForm] = useState({ variant_id: '', location_id: '', counted_quantity: '', reason: '' });
     const [scanValue, setScanValue] = useState('');
+    const [evidenceFile, setEvidenceFile] = useState(null);
+    const [syncError, setSyncError] = useState('');
     const [busy, setBusy] = useState(false);
+    const offlineQueueKey = `mmg.inventory.pending.${currentUsername || 'anonymous'}`;
+    const [offlineQueue, setOfflineQueue] = useState(() => {
+        try {
+            return JSON.parse(window.localStorage.getItem(offlineQueueKey) || '[]');
+        } catch {
+            return [];
+        }
+    });
 
     const internalLocations = locations.filter(location => location.usage === 'internal' && location.is_active !== false);
-    const selectedSession = sessions.find(session => session.id === selectedSessionId) || sessions[0] || null;
+    const selectedSession = sessions.find(session => session.id === selectedSessionId)
+        || initialSessions.find(session => session.id === selectedSessionId)
+        || sessions[0]
+        || initialSessions[0]
+        || null;
     const selectedLocationId = selectedSession?.location_id || lineForm.location_id;
     const stockVariants = products
         .filter(product => (product.product_type || 'stockable') !== 'service')
@@ -5197,25 +5263,40 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
     const variance = countedQuantity === null ? null : countedQuantity - expectedQuantity;
     const hasRecountLines = Boolean(selectedSession?.lines?.some(line => line.status === 'recount'));
     const hasPendingLines = Boolean(selectedSession?.lines?.some(line => line.status === 'pending'));
-    const isBlindCounting = Boolean(selectedSession?.blind_counting && ['draft', 'counting'].includes(selectedSession?.status));
+    const isBlindCounting = Boolean(selectedSession?.blind_counting && ['draft', 'counting', 'pending_approval'].includes(selectedSession?.status));
     const totalLines = selectedSession?.lines?.length || 0;
     const countedLines = (selectedSession?.lines || []).filter(line => line.status !== 'pending').length;
 
     const matchVariantFromScan = (value) => {
         const needle = value.trim().toLowerCase();
-        if (!needle) return null;
-        return stockVariants.find(variant => [
+        if (!needle) return { variant: null, error: "Saisissez une référence ou un code-barres." };
+        const exactMatches = stockVariants.filter(variant => [
+            variant.reference,
+            variant.barcode,
+            variant.supplier_reference,
+        ].some(field => String(field || '').trim().toLowerCase() === needle));
+        if (exactMatches.length === 1) return { variant: exactMatches[0], error: null };
+        if (exactMatches.length > 1) {
+            return { variant: null, error: `${exactMatches.length} références correspondent exactement. Sélectionnez l'article dans la liste.` };
+        }
+        const partialMatches = stockVariants.filter(variant => [
             variant.reference,
             variant.barcode,
             variant.supplier_reference,
             variant.product_name,
             variant.supplier,
         ].some(field => String(field || '').toLowerCase().includes(needle)));
+        if (partialMatches.length === 1) return { variant: partialMatches[0], error: null };
+        if (partialMatches.length > 1) {
+            return { variant: null, error: `${partialMatches.length} références possibles. Affinez la recherche.` };
+        }
+        return { variant: null, error: "Référence introuvable dans le catalogue stock." };
     };
 
     const refreshInventory = async () => {
         await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['inventory-sessions'] }),
+            queryClient.invalidateQueries({ queryKey: ['inventory-sessions-page'] }),
             queryClient.invalidateQueries({ queryKey: ['quants'] }),
             queryClient.invalidateQueries({ queryKey: ['products'] }),
             queryClient.invalidateQueries({ queryKey: ['transactions'] }),
@@ -5234,10 +5315,31 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                 zone_locked: true,
                 include_all_variants: newSession.include_all_variants,
                 blind_counting: newSession.blind_counting,
+                inventory_type: newSession.inventory_type,
+                scheduled_for: newSession.scheduled_for ? new Date(newSession.scheduled_for).toISOString() : null,
+                cycle_frequency_days: newSession.inventory_type === 'cycle' && newSession.cycle_frequency_days
+                    ? Number(newSession.cycle_frequency_days)
+                    : null,
+                approval_threshold_value: newSession.approval_threshold_value === ''
+                    ? null
+                    : Number(newSession.approval_threshold_value),
+                assigned_usernames: newSession.assigned_usernames,
             };
             const res = await api.post('/v2/stock/inventory-sessions', payload);
             setSelectedSessionId(res.data.id);
-            setNewSession({ name: '', location_id: '', notes: '', include_all_variants: false, blind_counting: false });
+            setNewSession({
+                name: '',
+                location_id: '',
+                notes: '',
+                include_all_variants: false,
+                blind_counting: false,
+                inventory_type: 'full',
+                scheduled_for: '',
+                cycle_frequency_days: '',
+                approval_threshold_value: '',
+                assigned_usernames: [],
+            });
+            setSessionOffset(0);
             await refreshInventory();
         } catch (error) {
             alert(error.response?.data?.detail || "Création de campagne impossible.");
@@ -5246,21 +5348,118 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
         }
     };
 
+    const persistOfflineQueue = (nextQueue) => {
+        setOfflineQueue(nextQueue);
+        window.localStorage.setItem(offlineQueueKey, JSON.stringify(nextQueue));
+    };
+
+    const operationId = () => (
+        window.crypto?.randomUUID?.()
+        || `inv-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    );
+
+    const queueCount = (sessionId, payload) => {
+        const nextQueue = [
+            ...offlineQueue,
+            {
+                id: payload.client_operation_id,
+                session_id: sessionId,
+                payload,
+                created_at: new Date().toISOString(),
+            },
+        ];
+        persistOfflineQueue(nextQueue);
+        setSyncError('');
+    };
+
+    const syncOfflineQueue = async () => {
+        if (!offlineQueue.length || busy || !navigator.onLine) return;
+        setBusy(true);
+        setSyncError('');
+        let remaining = [];
+        for (let index = 0; index < offlineQueue.length; index += 1) {
+            const item = offlineQueue[index];
+            try {
+                await api.post(`/v2/stock/inventory-sessions/${item.session_id}/lines`, item.payload);
+            } catch (error) {
+                remaining = offlineQueue.slice(index);
+                const detail = error.response?.data?.detail;
+                setSyncError(
+                    typeof detail === 'object'
+                        ? detail.message || "Conflit de synchronisation."
+                        : detail || "Synchronisation interrompue."
+                );
+                break;
+            }
+        }
+        persistOfflineQueue(remaining);
+        await refreshInventory();
+        setBusy(false);
+    };
+
+    useEffect(() => {
+        const handleOnline = () => {
+            if (offlineQueue.length) syncOfflineQueue();
+        };
+        window.addEventListener('online', handleOnline);
+        return () => window.removeEventListener('online', handleOnline);
+    }, [offlineQueue.length, busy]);
+
     const submitLine = async (event) => {
         event.preventDefault();
         if (!selectedSession || !lineForm.variant_id || !selectedLocationId || lineForm.counted_quantity === '' || busy) return;
+        const existingLine = (selectedSession.lines || []).find(line => (
+            String(line.variant_id) === String(lineForm.variant_id)
+            && String(line.location_id) === String(selectedLocationId)
+        ));
+        const payload = {
+            variant_id: Number(lineForm.variant_id),
+            location_id: Number(selectedLocationId),
+            counted_quantity: Number(lineForm.counted_quantity),
+            reason: lineForm.reason || null,
+            expected_version: existingLine?.version || null,
+            client_operation_id: operationId(),
+        };
+        if (!navigator.onLine) {
+            queueCount(selectedSession.id, payload);
+            if (evidenceFile) {
+                alert("La saisie est conservée hors ligne. Le justificatif devra être joint après synchronisation.");
+            }
+            setLineForm({ variant_id: '', location_id: selectedSession.location_id || '', counted_quantity: '', reason: '' });
+            setEvidenceFile(null);
+            return;
+        }
         setBusy(true);
         try {
-            await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/lines`, {
-                variant_id: Number(lineForm.variant_id),
-                location_id: Number(selectedLocationId),
-                counted_quantity: Number(lineForm.counted_quantity),
-                reason: lineForm.reason || null,
-            });
+            const lineResponse = await api.post(
+                `/v2/stock/inventory-sessions/${selectedSession.id}/lines`,
+                payload
+            );
+            if (evidenceFile) {
+                const attachment = new FormData();
+                attachment.append('file', evidenceFile);
+                await api.post(
+                    `/v2/stock/inventory-sessions/${selectedSession.id}/lines/${lineResponse.data.id}/attachments`,
+                    attachment
+                );
+            }
             setLineForm({ variant_id: '', location_id: selectedSession.location_id || '', counted_quantity: '', reason: '' });
+            setEvidenceFile(null);
+            setSyncError('');
             await refreshInventory();
         } catch (error) {
-            alert(error.response?.data?.detail || "Saisie de comptage impossible.");
+            if (!error.response) {
+                queueCount(selectedSession.id, payload);
+                alert("Connexion perdue : la saisie est conservée localement et sera synchronisée au retour du réseau.");
+            } else {
+                const detail = error.response?.data?.detail;
+                const message = typeof detail === 'object'
+                    ? detail.message || "Conflit de comptage."
+                    : detail || "Saisie de comptage impossible.";
+                setSyncError(message);
+                alert(message);
+                if (error.response.status === 409) await refreshInventory();
+            }
         } finally {
             setBusy(false);
         }
@@ -5268,11 +5467,12 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
 
     const handleScanSubmit = (event) => {
         event.preventDefault();
-        const variant = matchVariantFromScan(scanValue);
-        if (!variant) {
-            alert("Référence introuvable dans le catalogue stock.");
+        const result = matchVariantFromScan(scanValue);
+        if (!result.variant) {
+            alert(result.error);
             return;
         }
+        const variant = result.variant;
         setLineForm(prev => ({ ...prev, variant_id: String(variant.id) }));
         setScanValue(variant.reference || scanValue);
     };
@@ -5322,10 +5522,54 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
         if (!window.confirm(`Valider ${selectedSession.reference} ? Les écarts créeront des mouvements d'ajustement stock.`)) return;
         setBusy(true);
         try {
-            await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/validate`);
+            const response = await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/validate`);
             await refreshInventory();
+            if (response.data.status === 'pending_approval') {
+                alert(`Le seuil de ${Number(response.data.approval_threshold_value || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })} est dépassé. Approbation Finance/Manager requise.`);
+            }
         } catch (error) {
             alert(error.response?.data?.detail || "Validation impossible.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const approveSessionValue = async () => {
+        if (!selectedSession || busy) return;
+        if (!window.confirm(`Approuver l'écart valorisé de ${Number(selectedSession.absolute_variance_value || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })} ?`)) return;
+        setBusy(true);
+        try {
+            await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/approve-value`);
+            await refreshInventory();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Approbation impossible.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const startSession = async () => {
+        if (!selectedSession || busy) return;
+        setBusy(true);
+        try {
+            await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/start`);
+            await refreshInventory();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Démarrage impossible.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const toggleArchiveSession = async () => {
+        if (!selectedSession || busy) return;
+        const action = selectedSession.archived_at ? 'restore' : 'archive';
+        setBusy(true);
+        try {
+            await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/${action}`);
+            await refreshInventory();
+        } catch (error) {
+            alert(error.response?.data?.detail || "Archivage impossible.");
         } finally {
             setBusy(false);
         }
@@ -5346,13 +5590,16 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
     };
 
     const statusLabel = {
+        scheduled: 'Planifiée',
         draft: 'Brouillon',
         counting: 'Comptage',
+        pending_approval: 'Approbation',
         validated: 'Validée',
         cancelled: 'Annulée',
     };
     const lineStatusLabel = {
         pending: 'À compter',
+        counted: 'Compté',
         ok: 'OK',
         variance: 'Écart',
         recount: 'À recompter',
@@ -5360,6 +5607,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
     };
     const lineStatusClass = {
         pending: 'bg-slate-50 text-slate-500 border-slate-200',
+        counted: 'bg-blue-50 text-blue-700 border-blue-100',
         ok: 'bg-emerald-50 text-emerald-700 border-emerald-100',
         variance: 'bg-amber-50 text-amber-700 border-amber-100',
         recount: 'bg-red-50 text-red-700 border-red-100',
@@ -5382,7 +5630,7 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                     <div className="grid grid-cols-3 gap-3">
                         <div className="px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200">
                             <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">Campagnes</p>
-                            <p className="text-xl font-black text-slate-900">{sessions.length}</p>
+                            <p className="text-xl font-black text-slate-900">{sessionPage.total ?? sessions.length}</p>
                         </div>
                         <div className="px-4 py-3 rounded-2xl bg-amber-50 border border-amber-100">
                             <p className="text-[10px] uppercase font-black tracking-widest text-amber-500">En cours</p>
@@ -5420,6 +5668,69 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                                     <option key={location.id} value={location.id}>{location.name}</option>
                                 ))}
                             </select>
+                            <div className="grid grid-cols-2 gap-2">
+                                <select
+                                    value={newSession.inventory_type}
+                                    onChange={event => setNewSession(prev => ({ ...prev, inventory_type: event.target.value }))}
+                                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                    disabled={!canValidate || busy}
+                                >
+                                    <option value="full">Inventaire complet</option>
+                                    <option value="cycle">Inventaire cyclique</option>
+                                </select>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={newSession.approval_threshold_value}
+                                    onChange={event => setNewSession(prev => ({ ...prev, approval_threshold_value: event.target.value }))}
+                                    placeholder="Seuil approb. €"
+                                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                    disabled={!canValidate || busy}
+                                />
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <input
+                                    type="datetime-local"
+                                    value={newSession.scheduled_for}
+                                    onChange={event => setNewSession(prev => ({ ...prev, scheduled_for: event.target.value }))}
+                                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                    disabled={!canValidate || busy}
+                                    title="Laisser vide pour démarrer immédiatement"
+                                />
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="366"
+                                    value={newSession.cycle_frequency_days}
+                                    onChange={event => setNewSession(prev => ({ ...prev, cycle_frequency_days: event.target.value }))}
+                                    placeholder="Cycle (jours)"
+                                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                                    disabled={!canValidate || busy || newSession.inventory_type !== 'cycle'}
+                                />
+                            </div>
+                            {inventoryUsers.length > 0 && (
+                                <label className="block space-y-1">
+                                    <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">Compteurs affectés</span>
+                                    <select
+                                        multiple
+                                        value={newSession.assigned_usernames}
+                                        onChange={event => setNewSession(prev => ({
+                                            ...prev,
+                                            assigned_usernames: Array.from(event.target.selectedOptions).map(option => option.value),
+                                        }))}
+                                        className="w-full min-h-[76px] rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                        disabled={!canValidate || busy}
+                                    >
+                                        {inventoryUsers.filter(item => item.is_active !== false).map(item => (
+                                            <option key={item.id} value={item.username}>
+                                                {[item.first_name, item.last_name].filter(Boolean).join(' ') || item.username} · {item.role}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <span className="text-[10px] font-bold text-slate-400">Aucune sélection = tous les compteurs autorisés.</span>
+                                </label>
+                            )}
                             <input
                                 value={newSession.notes}
                                 onChange={event => setNewSession(prev => ({ ...prev, notes: event.target.value }))}
@@ -5456,6 +5767,47 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                             </button>
                         </form>
 
+                        <div className="rounded-2xl border border-slate-200 bg-white p-3 space-y-2">
+                            <input
+                                value={sessionSearch}
+                                onChange={event => {
+                                    setSessionSearch(event.target.value);
+                                    setSessionOffset(0);
+                                }}
+                                placeholder="Rechercher campagne..."
+                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <div className="grid grid-cols-[1fr_auto] gap-2">
+                                <select
+                                    value={sessionStatusFilter}
+                                    onChange={event => {
+                                        setSessionStatusFilter(event.target.value);
+                                        setSessionOffset(0);
+                                    }}
+                                    className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
+                                >
+                                    <option value="">Tous statuts</option>
+                                    <option value="scheduled">Planifiées</option>
+                                    <option value="draft">Brouillons</option>
+                                    <option value="counting">Comptages</option>
+                                    <option value="pending_approval">À approuver</option>
+                                    <option value="validated">Validées</option>
+                                    <option value="cancelled">Annulées</option>
+                                </select>
+                                <label className="inline-flex items-center gap-1 text-[10px] font-black text-slate-500">
+                                    <input
+                                        type="checkbox"
+                                        checked={includeArchived}
+                                        onChange={event => {
+                                            setIncludeArchived(event.target.checked);
+                                            setSessionOffset(0);
+                                        }}
+                                    />
+                                    Archives
+                                </label>
+                            </div>
+                        </div>
+
                         <div className="space-y-2">
                             {sessions.map(session => {
                                 const isSelected = selectedSession?.id === session.id;
@@ -5475,7 +5827,12 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                                         <p className={`text-xs font-bold mt-2 ${isSelected ? 'text-slate-200' : 'text-slate-500'}`}>
                                             {session.location?.name || 'Tous emplacements'} - {session.lines?.length || 0} ligne(s)
                                         </p>
-                                        {session.zone_locked && ['draft', 'counting'].includes(session.status) && (
+                                        {session.assigned_usernames?.length > 0 && (
+                                            <p className={`text-[10px] font-bold mt-1 ${isSelected ? 'text-blue-200' : 'text-blue-600'}`}>
+                                                {session.assigned_usernames.join(', ')}
+                                            </p>
+                                        )}
+                                        {session.zone_locked && ['draft', 'counting', 'pending_approval'].includes(session.status) && (
                                             <p className={`text-[10px] font-black uppercase mt-2 ${isSelected ? 'text-amber-200' : 'text-amber-600'}`}>
                                                 Zone gelée
                                             </p>
@@ -5486,6 +5843,29 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                             {sessions.length === 0 && (
                                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm font-bold text-slate-400">
                                     Aucune campagne créée.
+                                </div>
+                            )}
+                            {sessionPage.total > sessionLimit && (
+                                <div className="flex items-center justify-between gap-2 pt-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setSessionOffset(Math.max(0, sessionOffset - sessionLimit))}
+                                        disabled={sessionOffset === 0}
+                                        className="px-3 py-2 rounded-lg border border-slate-200 bg-white disabled:opacity-40 text-xs font-black"
+                                    >
+                                        Précédent
+                                    </button>
+                                    <span className="text-[10px] font-black text-slate-400">
+                                        {sessionOffset + 1}–{Math.min(sessionOffset + sessionLimit, sessionPage.total)} / {sessionPage.total}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setSessionOffset(sessionOffset + sessionLimit)}
+                                        disabled={sessionOffset + sessionLimit >= sessionPage.total}
+                                        className="px-3 py-2 rounded-lg border border-slate-200 bg-white disabled:opacity-40 text-xs font-black"
+                                    >
+                                        Suivant
+                                    </button>
                                 </div>
                             )}
                         </div>
@@ -5508,8 +5888,11 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                                             {selectedSession.reference} - {selectedSession.location?.name || 'Tous emplacements internes'}
                                         </p>
                                         <div className="flex flex-wrap gap-2 mt-3">
-                                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-[10px] uppercase font-black border ${selectedSession.zone_locked && ['draft', 'counting'].includes(selectedSession.status) ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
-                                                {selectedSession.zone_locked && ['draft', 'counting'].includes(selectedSession.status) ? 'Zone gelée' : 'Zone libérée'}
+                                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-[10px] uppercase font-black border ${selectedSession.zone_locked && ['draft', 'counting', 'pending_approval'].includes(selectedSession.status) ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                                                {selectedSession.zone_locked && ['draft', 'counting', 'pending_approval'].includes(selectedSession.status) ? 'Zone gelée' : 'Zone libérée'}
+                                            </span>
+                                            <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] uppercase font-black border bg-blue-50 text-blue-700 border-blue-100">
+                                                {selectedSession.inventory_type === 'cycle' ? 'Cyclique' : 'Complet'}
                                             </span>
                                             {selectedSession.blind_counting && (
                                                 <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] uppercase font-black border bg-violet-50 text-violet-700 border-violet-100">
@@ -5521,6 +5904,25 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                                                     Recompte requis
                                                 </span>
                                             )}
+                                            {selectedSession.finance_approved_at && (
+                                                <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] uppercase font-black border bg-emerald-50 text-emerald-700 border-emerald-100">
+                                                    Valeur approuvée · {selectedSession.finance_approved_by}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3 max-w-2xl">
+                                            <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                                                <p className="text-[9px] uppercase font-black text-slate-400">Écart net valorisé</p>
+                                                <p className="text-sm font-black text-slate-900">{selectedSession.can_view_expected ? Number(selectedSession.total_variance_value || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }) : 'Masqué'}</p>
+                                            </div>
+                                            <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                                                <p className="text-[9px] uppercase font-black text-slate-400">Valeur absolue</p>
+                                                <p className="text-sm font-black text-slate-900">{selectedSession.can_view_expected ? Number(selectedSession.absolute_variance_value || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }) : 'Masqué'}</p>
+                                            </div>
+                                            <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                                                <p className="text-[9px] uppercase font-black text-slate-400">Compteurs</p>
+                                                <p className="text-xs font-black text-slate-900">{selectedSession.assigned_usernames?.join(', ') || 'Tous autorisés'}</p>
+                                            </div>
                                         </div>
                                         {totalLines > 0 && (
                                             <div className="mt-3 max-w-sm">
@@ -5537,11 +5939,16 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                                             </div>
                                         )}
                                     </div>
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-wrap gap-2 justify-end">
                                         <button onClick={exportSession} disabled={!canValidate || busy || !selectedSession.lines?.length} title={!canValidate ? 'Réservé à la validation d\'inventaire' : undefined} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm inline-flex items-center gap-2">
                                             <Download className="w-4 h-4" />
                                             Rapport
                                         </button>
+                                        {selectedSession.status === 'scheduled' && (
+                                            <button onClick={startSession} disabled={!canValidate || busy} className="px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black text-sm">
+                                                Démarrer
+                                            </button>
+                                        )}
                                         {['draft', 'counting'].includes(selectedSession.status) && (
                                             <>
                                                 <button onClick={cancelSession} disabled={!canValidate || busy} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm">
@@ -5552,8 +5959,44 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                                                 </button>
                                             </>
                                         )}
+                                        {selectedSession.status === 'pending_approval' && !selectedSession.finance_approved_at && (
+                                            <button onClick={approveSessionValue} disabled={!canApproveValue || busy} title={!canApproveValue ? 'Permission Finance/Manager requise' : undefined} className="px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-white font-black text-sm">
+                                                Approuver la valeur
+                                            </button>
+                                        )}
+                                        {selectedSession.status === 'pending_approval' && selectedSession.finance_approved_at && (
+                                            <button onClick={validateSession} disabled={!canValidate || busy} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
+                                                Appliquer les ajustements
+                                            </button>
+                                        )}
+                                        {['validated', 'cancelled'].includes(selectedSession.status) && canValidate && (
+                                            <button onClick={toggleArchiveSession} disabled={busy} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm">
+                                                {selectedSession.archived_at ? 'Restaurer' : 'Archiver'}
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
+
+                                {(offlineQueue.length > 0 || syncError) && (
+                                    <div className={`rounded-2xl border p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${syncError ? 'bg-red-50 border-red-100' : 'bg-amber-50 border-amber-100'}`}>
+                                        <div>
+                                            <p className={`text-sm font-black ${syncError ? 'text-red-700' : 'text-amber-700'}`}>
+                                                {offlineQueue.length} saisie(s) en attente de synchronisation
+                                            </p>
+                                            <p className="text-xs font-bold text-slate-500 mt-1">
+                                                {syncError || "Les saisies sont conservées sur cet appareil avec un identifiant idempotent."}
+                                            </p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={syncOfflineQueue}
+                                            disabled={busy || !navigator.onLine || offlineQueue.length === 0}
+                                            className="px-4 py-2 rounded-xl bg-slate-900 disabled:bg-slate-300 text-white text-xs font-black"
+                                        >
+                                            Synchroniser
+                                        </button>
+                                    </div>
+                                )}
 
                                 {['draft', 'counting'].includes(selectedSession.status) && (
                                     <form onSubmit={submitLine} className="rounded-3xl border border-blue-100 bg-blue-50/40 p-5 grid grid-cols-1 lg:grid-cols-[1.1fr_1.5fr_1fr_160px_1fr_auto] gap-3 items-end">
@@ -5630,6 +6073,19 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                                         >
                                             Ajouter
                                         </button>
+                                        <label className="lg:col-span-6 rounded-xl border border-dashed border-slate-300 bg-white px-3 py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                            <span>
+                                                <span className="block text-[10px] uppercase font-black tracking-widest text-slate-500">Justificatif optionnel</span>
+                                                <span className="block text-[11px] font-bold text-slate-400">Photo, PDF ou texte · 10 Mo maximum</span>
+                                            </span>
+                                            <input
+                                                type="file"
+                                                accept="image/*,application/pdf,text/plain"
+                                                onChange={event => setEvidenceFile(event.target.files?.[0] || null)}
+                                                className="text-xs font-bold text-slate-600"
+                                                disabled={!canCount || busy}
+                                            />
+                                        </label>
                                         {selectedVariant && selectedLocation && (
                                             <div className="lg:col-span-6 grid grid-cols-3 gap-3 text-sm">
                                                 <div className="rounded-xl bg-white border border-slate-200 p-3">
@@ -5688,7 +6144,28 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                                                             <p className="text-[11px] font-bold text-red-500 mt-1">{line.recount_notes}</p>
                                                         )}
                                                     </td>
-                                                    <td className="px-5 py-4 text-sm font-bold text-slate-500">{line.reason || '-'}</td>
+                                                    <td className="px-5 py-4 text-sm font-bold text-slate-500">
+                                                        <p>{line.reason || '-'}</p>
+                                                        {line.counted_by && <p className="text-[10px] text-slate-400 mt-1">Par {line.counted_by} · v{line.version || 1}</p>}
+                                                        {!isBlindCounting && line.variance_value !== null && line.variance_value !== undefined && (
+                                                            <p className="text-[10px] text-indigo-600 mt-1">{Number(line.variance_value).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</p>
+                                                        )}
+                                                        {line.attachments?.length > 0 && (
+                                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                                {line.attachments.map(attachment => (
+                                                                    <a
+                                                                        key={attachment.id}
+                                                                        href={attachment.url}
+                                                                        target="_blank"
+                                                                        rel="noreferrer"
+                                                                        className="text-[10px] text-blue-600 underline"
+                                                                    >
+                                                                        {attachment.filename}
+                                                                    </a>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </td>
                                                     <td className="px-5 py-4 text-right">
                                                         {['draft', 'counting'].includes(selectedSession.status) && line.status === 'pending' && (
                                                             <button
@@ -5698,6 +6175,16 @@ function PhysicalInventoryView({ sessions, products, locations, quants, canCount
                                                                 className="px-3 py-2 rounded-lg border border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 text-xs font-black"
                                                             >
                                                                 Saisir
+                                                            </button>
+                                                        )}
+                                                        {['draft', 'counting'].includes(selectedSession.status) && line.status === 'recount' && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => focusLine(line)}
+                                                                disabled={!canCount || busy}
+                                                                className="px-3 py-2 rounded-lg border border-red-100 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50 text-xs font-black"
+                                                            >
+                                                                Recompter
                                                             </button>
                                                         )}
                                                         {['draft', 'counting'].includes(selectedSession.status) && line.status !== 'pending' && line.status !== 'recount' && line.status !== 'validated' && Math.abs(Number(line.variance_quantity || 0)) > 0.000001 && (

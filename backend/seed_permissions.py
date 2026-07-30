@@ -60,6 +60,7 @@ def seed_permissions():
             {"code": "workshop.consume_stock", "module": "Stock - Atelier", "description": "Transformer une réservation atelier en débit réel"},
             {"code": "inventory.count", "module": "Stock - Inventaire physique", "description": "Saisir un comptage physique"},
             {"code": "inventory.validate", "module": "Stock - Inventaire physique", "description": "Valider les écarts d'inventaire"},
+            {"code": "inventory.approve_value", "module": "Stock - Inventaire physique", "description": "Approuver les écarts valorisés dépassant le seuil"},
             {"code": "purchases.request", "module": "Achats", "description": "Créer une demande d'achat à valider"},
             {"code": "purchases.approve", "module": "Achats", "description": "Valider ou refuser une demande d'achat"},
             {"code": "purchases.order", "module": "Achats", "description": "Créer un bon de commande fournisseur"},
@@ -126,6 +127,7 @@ def seed_permissions():
                 "workshop.consume_stock",
                 "inventory.count",
                 "inventory.validate",
+                "inventory.approve_value",
                 "purchases.request",
                 "purchases.approve",
                 "purchases.order",
@@ -246,6 +248,7 @@ def seed_permissions():
                 "PURCHASES_VIEW",
                 "purchases.invoice.manage",
                 "purchases.payments.manage",
+                "inventory.approve_value",
                 "PLANNING_VIEW",
             ],
         }

@@ -8,6 +8,10 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
     const { logout, user } = useAuth();
     const canAccess = (item) => {
         if (!canAccessManagerView(user, item.id)) return false;
+        if (item.anyPermission) {
+            const permissions = user?.permissions || [];
+            return permissions.includes('*') || item.anyPermission.some(permission => permissions.includes(permission));
+        }
         if (!item.permission) return true;
         const permissions = user?.permissions || [];
         return permissions.includes('*') || permissions.includes(item.permission);
@@ -43,7 +47,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
         {
             title: 'Supply Chain',
             items: [
-                { id: 'stock', label: 'Inventaire & Stock', icon: Archive, type: 'internal', permission: 'STOCK_VIEW' },
+                { id: 'stock', label: 'Inventaire & Stock', icon: Archive, type: 'internal', anyPermission: ['STOCK_VIEW', 'inventory.approve_value'] },
                 { id: 'purchases', label: 'Achats & Appro', icon: ShoppingCart, type: 'internal', permission: 'PURCHASES_VIEW' },
                 { id: 'logistics', label: 'Logistique & Expédition', icon: Truck, type: 'internal' },
             ]

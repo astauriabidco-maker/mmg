@@ -1093,11 +1093,21 @@ class InventorySession(Base):
     id = Column(Integer, primary_key=True, index=True)
     reference = Column(String, unique=True, index=True)
     name = Column(String, nullable=False)
-    status = Column(String, default="draft", index=True) # draft, counting, validated, cancelled
+    status = Column(String, default="draft", index=True) # scheduled, draft, counting, pending_approval, validated, cancelled
     location_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True, index=True)
     notes = Column(Text, nullable=True)
     zone_locked = Column(Boolean, default=True)
     blind_counting = Column(Boolean, default=False) # comptage aveugle : espéré masqué jusqu'à validation
+    include_all_variants = Column(Boolean, default=False)
+    inventory_type = Column(String, default="full", index=True) # full, cycle
+    scheduled_for = Column(DateTime, nullable=True, index=True)
+    cycle_frequency_days = Column(Integer, nullable=True)
+    assigned_usernames = Column(JSON, nullable=False, default=list)
+    approval_threshold_value = Column(Numeric(14, 2), nullable=True)
+    finance_approved_by = Column(String, nullable=True)
+    finance_approved_at = Column(DateTime, nullable=True)
+    archived_by = Column(String, nullable=True)
+    archived_at = Column(DateTime, nullable=True, index=True)
     locked_at = Column(DateTime, default=utcnow)
     unlocked_at = Column(DateTime, nullable=True)
     created_by = Column(String, default="Système")
@@ -1110,6 +1120,14 @@ class InventorySession(Base):
 
 class InventoryCountLine(Base):
     __tablename__ = "inventory_count_lines"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "variant_id",
+            "location_id",
+            name="uq_inventory_count_line_session_variant_location",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(Integer, ForeignKey("inventory_sessions.id"), index=True)
@@ -1126,12 +1144,41 @@ class InventoryCountLine(Base):
     recount_notes = Column(Text, nullable=True)
     counted_by = Column(String, default="Système")
     counted_at = Column(DateTime, default=utcnow)
+    version = Column(Integer, nullable=False, default=1)
+    last_client_operation_id = Column(String, nullable=True, unique=True, index=True)
+    unit_cost_snapshot = Column(Numeric(14, 2), nullable=True)
+    variance_value = Column(Numeric(14, 2), nullable=True)
     adjustment_move_id = Column(Integer, ForeignKey("stock_moves.id"), nullable=True)
 
     session = relationship("InventorySession", back_populates="lines")
     variant = relationship("ProductVariant")
     location = relationship("StockLocation")
     adjustment_move = relationship("StockMove")
+    attachments = relationship(
+        "InventoryCountAttachment",
+        back_populates="line",
+        cascade="all, delete-orphan",
+    )
+
+
+class InventoryCountAttachment(Base):
+    __tablename__ = "inventory_count_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    line_id = Column(
+        Integer,
+        ForeignKey("inventory_count_lines.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    filename = Column(String, nullable=False)
+    stored_filename = Column(String, nullable=False)
+    content_type = Column(String, nullable=True)
+    size_bytes = Column(Integer, nullable=False, default=0)
+    uploaded_by = Column(String, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+    line = relationship("InventoryCountLine", back_populates="attachments")
 
 class MMGStatus(str, enum.Enum):
     SENT = "SENT"

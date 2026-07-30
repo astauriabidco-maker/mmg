@@ -10,7 +10,7 @@ const MANAGER_VIEW_PERMISSIONS = {
     'sale-detail': 'SALES_VIEW',
     pos: 'SALES_EDIT',
     accounting: 'ACC_VIEW',
-    stock: 'STOCK_VIEW',
+    stock: ['STOCK_VIEW', 'inventory.approve_value'],
     purchases: 'PURCHASES_VIEW',
 };
 
@@ -38,6 +38,7 @@ export function userHasPermission(user, permission) {
 export function canAccessManagerView(user, view) {
     if (getUserRoles(user).some(role => MANAGER_ROLES.has(role))) return true;
     const permission = MANAGER_VIEW_PERMISSIONS[view];
+    if (Array.isArray(permission)) return permission.some(item => userHasPermission(user, item));
     if (permission) return userHasPermission(user, permission);
     return false;
 }
@@ -50,6 +51,7 @@ export function getDefaultManagerView(user) {
     if (userHasPermission(user, 'SALES_VIEW')) return 'crm';
     if (userHasPermission(user, 'ACC_VIEW')) return 'accounting';
     if (userHasPermission(user, 'PURCHASES_VIEW')) return 'purchases';
+    if (userHasPermission(user, 'inventory.approve_value')) return 'stock';
     if (userHasPermission(user, 'STOCK_VIEW')) return 'stock';
     return null;
 }
