@@ -541,6 +541,88 @@ def create_reservation(
     return reservation
 
 
+def reactivate_cancelled_reservation(
+    db: Session,
+    reservation: models.StockReservation,
+) -> models.StockReservation:
+    """Réactive une réservation annulée avant toute préparation physique.
+
+    La version technique est liée de façon unique à sa réservation pour garder
+    une traçabilité univoque. Une annulation doit donc réutiliser cette ligne,
+    après un nouveau contrôle ferme du stock, plutôt que créer un doublon.
+    """
+    if reservation.status != "cancelled":
+        raise ValueError("Seule une réservation annulée peut être réactivée.")
+
+    preparation = (
+        db.query(models.WorkshopPreparation)
+        .filter(models.WorkshopPreparation.reservation_id == reservation.id)
+        .first()
+    )
+    if preparation:
+        raise ValueError(
+            f"Le bon {preparation.reference} existe déjà pour cette réservation. "
+            "Créez une nouvelle version de débit pour reprendre le flux."
+        )
+
+    location = resolve_reservation_location(db, reservation)
+    lines = list(reservation.lines or [])
+    if not lines:
+        raise ValueError("La réservation annulée ne contient aucune ligne à réactiver.")
+
+    requested_by_variant: dict[int, float] = {}
+    for line in lines:
+        requested = float(line.requested_quantity or 0)
+        if not line.variant_id or requested <= 0:
+            raise ValueError(
+                f"La ligne {line.supplier_reference or line.id} n'est pas réservable."
+            )
+        requested_by_variant[line.variant_id] = (
+            requested_by_variant.get(line.variant_id, 0.0) + requested
+        )
+
+    availability_by_variant: dict[int, float] = {}
+    shortages: list[str] = []
+    for variant_id, requested in requested_by_variant.items():
+        _physical, _reserved, available = available_quantity_at_location(
+            db,
+            variant_id,
+            location.id,
+        )
+        availability_by_variant[variant_id] = available
+        if available < requested:
+            variant = (
+                db.query(models.ProductVariant)
+                .filter(models.ProductVariant.id == variant_id)
+                .first()
+            )
+            reference = variant.reference if variant else str(variant_id)
+            shortages.append(
+                f"{reference}: {available:g} disponible < {requested:g} demandé"
+            )
+    if shortages:
+        raise ValueError(
+            "Stock insuffisant pour réactiver la réservation: "
+            + ", ".join(shortages[:10])
+        )
+
+    for line in lines:
+        line.reserved_quantity = float(line.requested_quantity or 0)
+        line.consumed_quantity = 0.0
+        line.available_at_reservation = availability_by_variant[line.variant_id]
+        line.status = ACTIVE_RESERVATION_STATUS
+
+    reservation.status = ACTIVE_RESERVATION_STATUS
+    reservation.consumed_at = None
+    reservation.notes = (
+        (reservation.notes or "")
+        + f"\nRéservation réactivée le {utcnow().strftime('%Y-%m-%d %H:%M:%S')} "
+        "après nouveau contrôle du stock."
+    ).strip()
+    db.flush()
+    return reservation
+
+
 def create_commercial_reservation_for_sale(
     db: Session,
     sale: models.SaleOrder,

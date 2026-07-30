@@ -1416,6 +1416,56 @@ def test_technical_cutting_creates_one_traced_reservation_without_reupload():
         _cleanup_test_client(engine)
 
 
+def test_cancelled_technical_reservation_can_be_reactivated_without_duplicate():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            sale_id = _seed_stock_and_sale(
+                db,
+                "VALIDATED",
+                "DEV-CUTTING-REACTIVATE",
+                workflow_type="FABRICATION_FROM_MEASURE",
+            )
+            mission_id, _dossier_id, cutting_id = _attach_validated_technical_dossier(
+                db,
+                sale_id,
+            )
+
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
+        created = client.post(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/reservation",
+            headers=headers,
+        )
+        assert created.status_code == 200, created.text
+        reservation = created.json()["execution"]["reservation"]
+
+        cancelled = client.post(
+            f"/v2/stock/workshop-debits/reservations/{reservation['id']}/cancel",
+            headers=headers,
+        )
+        assert cancelled.status_code == 200, cancelled.text
+        assert cancelled.json()["released_quantity"] > 0
+
+        reactivated = client.post(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/reservation",
+            headers=headers,
+        )
+        assert reactivated.status_code == 200, reactivated.text
+        reactivated_reservation = reactivated.json()["execution"]["reservation"]
+        assert reactivated_reservation["id"] == reservation["id"]
+        assert reactivated_reservation["status"] == "reserved"
+        assert reactivated_reservation["cutting_version_id"] == cutting_id
+
+        with TestingSessionLocal() as db:
+            reservations = db.query(models.StockReservation).all()
+            lines = db.query(models.StockReservationLine).all()
+        assert len(reservations) == 1
+        assert all(line.status == "reserved" for line in lines)
+        assert all(line.reserved_quantity == line.requested_quantity for line in lines)
+    finally:
+        _cleanup_test_client(engine)
+
+
 def test_technical_physical_moves_wait_for_current_launch_authorization():
     engine, TestingSessionLocal, client = _make_test_client()
     try:
