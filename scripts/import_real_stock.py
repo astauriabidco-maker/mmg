@@ -35,7 +35,7 @@ ISSUE_DECISIONS = {
     "invalid_reference": "Corriger la référence ou ignorer la ligne.",
     "missing_reference": "Renseigner la référence fournisseur.",
     "missing_designation": "Compléter la désignation produit.",
-    "missing_or_invalid_quantity": "Renseigner une quantité réelle ou confirmer 0.",
+    "missing_or_invalid_quantity": "Renseigner une quantité réelle; la ligne n'est pas importée.",
 }
 
 
@@ -51,6 +51,8 @@ class StockRecord:
     category: str = "ACCESSOIRE"
     material_type: str = "ACCESSOIRE"
     product_type: str = "stockable"
+    designation_is_placeholder: bool = False
+    quantity_is_valid: bool = True
 
 
 @dataclass(frozen=True)
@@ -227,7 +229,8 @@ def parse_workbook(path: Path) -> tuple[list[StockRecord], list[StockIssue]]:
                     )
                 )
                 continue
-            if not name:
+            designation_is_placeholder = not name
+            if designation_is_placeholder:
                 issues.append(
                     StockIssue(
                         "warning",
@@ -239,7 +242,8 @@ def parse_workbook(path: Path) -> tuple[list[StockRecord], list[StockIssue]]:
                     )
                 )
                 name = reference
-            if quantity is None:
+            quantity_is_valid = quantity is not None
+            if not quantity_is_valid:
                 issues.append(
                     StockIssue(
                         "warning",
@@ -247,7 +251,7 @@ def parse_workbook(path: Path) -> tuple[list[StockRecord], list[StockIssue]]:
                         row_number,
                         supplier,
                         reference,
-                        f"Quantité vide ou invalide ({quantity_raw!r}); importée à 0.",
+                        f"Quantité vide ou invalide ({quantity_raw!r}); ligne exclue de l'import.",
                     )
                 )
                 quantity = 0.0
@@ -260,6 +264,8 @@ def parse_workbook(path: Path) -> tuple[list[StockRecord], list[StockIssue]]:
                     designation=name,
                     quantity=quantity,
                     gamme=gamme_text,
+                    designation_is_placeholder=designation_is_placeholder,
+                    quantity_is_valid=quantity_is_valid,
                 )
             )
 
@@ -276,6 +282,8 @@ def consolidate_records(records: list[StockRecord]) -> list[StockRecord]:
     }
     consolidated: dict[tuple[str, str], StockRecord] = {}
     for record in records:
+        if not record.quantity_is_valid:
+            continue
         key = (record.supplier, record.reference)
         if key in conflict_keys:
             continue
@@ -301,6 +309,10 @@ def consolidate_records(records: list[StockRecord]) -> list[StockRecord]:
             category=existing.category,
             material_type=existing.material_type,
             product_type=existing.product_type,
+            designation_is_placeholder=(
+                existing.designation_is_placeholder and record.designation_is_placeholder
+            ),
+            quantity_is_valid=True,
         )
     return list(consolidated.values())
 
@@ -440,6 +452,9 @@ def import_records(records: list[StockRecord], location_name: str, dry_run: bool
         "updated_quants": 0,
         "created_moves": 0,
         "skipped_conflicting_records": len(records) - len(consolidated),
+        "skipped_invalid_quantity_records": sum(
+            1 for record in records if not record.quantity_is_valid
+        ),
     }
 
     if dry_run:
@@ -471,7 +486,8 @@ def import_records(records: list[StockRecord], location_name: str, dry_run: bool
                 db.flush()
                 stats["created_products"] += 1
             else:
-                product.name = record.designation or product.name
+                if not record.designation_is_placeholder:
+                    product.name = record.designation or product.name
                 product.category = record.category
                 product.material_type = record.material_type
                 product.unit = record.unit

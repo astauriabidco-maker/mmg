@@ -22,13 +22,19 @@ import InsightDashboard from './InsightDashboard';
 import RBACMatrix from '../components/RBACMatrix';
 import PlatformSettings from '../components/PlatformSettings';
 import ScheduleDashboard from './ScheduleDashboard';
+import { canAccessManagerView, getDefaultManagerView } from '../utils/roleNavigation';
 
 export default function ManagerDashboard() {
-    const { logout } = useAuth();
+    const { logout, user } = useAuth();
     const location = useLocation();
     const [searchParams, setSearchParams] = useSearchParams();
 
-    const [activeView, setActiveView] = useState(() => location.state?.view || searchParams.get('view') || 'dashboard'); // 'dashboard', 'live', 'orders', 'stock', 'config'
+    const requestedInitialView = location.state?.view || searchParams.get('view');
+    const [activeView, setActiveView] = useState(() => (
+        requestedInitialView && canAccessManagerView(user, requestedInitialView)
+            ? requestedInitialView
+            : getDefaultManagerView(user) || 'dashboard'
+    )); // 'dashboard', 'live', 'orders', 'stock', 'config'
     const [configTab, setConfigTab] = useState('stations');
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -42,6 +48,7 @@ export default function ManagerDashboard() {
     const [currentPage, setCurrentPage] = useState(1);
     const ITEMS_PER_PAGE = 10;
     const saleDetailSource = searchParams.get('from');
+    const canAccessManagerOperations = canAccessManagerView(user, 'dashboard');
     const sidebarActiveView = activeView === 'sale-detail'
         ? (saleDetailSource === 'crm' ? 'crm' : 'sales')
         : activeView;
@@ -60,16 +67,25 @@ export default function ManagerDashboard() {
                                         activeView === 'analytics_atelier' ? 'Performance Atelier' :
                                             activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration';
     const handleViewChange = (view) => {
+        if (!canAccessManagerView(user, view)) return;
         setActiveView(view);
         setSearchParams(view === 'dashboard' ? {} : { view });
     };
 
     useEffect(() => {
         const requestedView = location.state?.view || searchParams.get('view');
-        if (requestedView && requestedView !== activeView) {
+        if (requestedView && requestedView !== activeView && canAccessManagerView(user, requestedView)) {
             setActiveView(requestedView);
+            return;
         }
-    }, [activeView, location.state, searchParams]);
+        if (!canAccessManagerView(user, activeView)) {
+            const fallbackView = getDefaultManagerView(user);
+            if (fallbackView) {
+                setActiveView(fallbackView);
+                setSearchParams({ view: fallbackView }, { replace: true });
+            }
+        }
+    }, [activeView, location.state, searchParams, setSearchParams, user]);
 
     const { data: stats = { total: 0, avg_time: "...", delay_rate: 0, active: 0, defects: 0 } } = useQuery({
         queryKey: ['manager-stats'],
@@ -78,6 +94,7 @@ export default function ManagerDashboard() {
             return data;
         },
         refetchInterval: 10000,
+        enabled: canAccessManagerOperations,
     });
 
     const { data: chartData = [] } = useQuery({
@@ -87,6 +104,7 @@ export default function ManagerDashboard() {
             return data;
         },
         refetchInterval: 10000,
+        enabled: canAccessManagerOperations,
     });
 
     const { data: kpi = { ca_mensuel: 0, ca_delta_pct: 0, inventory_value: 0, yield_rate: 100, active_dossiers: 0, chart_data: [] } } = useQuery({
@@ -96,6 +114,7 @@ export default function ManagerDashboard() {
             return data;
         },
         refetchInterval: 30000,
+        enabled: canAccessManagerOperations,
     });
 
     const { data: recentOrders = [] } = useQuery({
@@ -105,6 +124,7 @@ export default function ManagerDashboard() {
             return data;
         },
         refetchInterval: 10000,
+        enabled: canAccessManagerOperations,
     });
 
     const { data: stations = [] } = useQuery({
@@ -112,7 +132,8 @@ export default function ManagerDashboard() {
         queryFn: async () => {
             const { data } = await api.get('/v2/config/stations');
             return data;
-        }
+        },
+        enabled: canAccessManagerOperations,
     });
 
     const { data: trackingOrders = [], isLoading: trackingLoading } = useQuery({
@@ -122,6 +143,7 @@ export default function ManagerDashboard() {
             return data;
         },
         refetchInterval: 5000,
+        enabled: canAccessManagerOperations,
     });
 
     const { data: workshopAnalytics, isLoading: analyticsLoading } = useQuery({
@@ -130,7 +152,8 @@ export default function ManagerDashboard() {
             const res = await api.get('/v2/analytics/workshop');
             return res.data;
         },
-        refetchInterval: 60000 // refresh every minute
+        refetchInterval: 60000, // refresh every minute
+        enabled: canAccessManagerOperations,
     });
 
 

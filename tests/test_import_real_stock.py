@@ -54,11 +54,29 @@ def test_parse_workbook_detects_supplier_blocks_and_issues(tmp_path):
     summary = build_summary(records, issues)
 
     assert summary["raw_records"] == 5
-    assert summary["importable_records"] == 4
-    assert summary["suppliers"] == {"CORTIZO": 2, "GEZE": 2}
+    assert summary["importable_records"] == 2
+    assert summary["suppliers"] == {"CORTIZO": 1, "GEZE": 1}
     assert summary["issues"]["duplicate_quantity_disagreement"] == 1
     assert summary["issues"]["missing_or_invalid_quantity"] == 2
     assert summary["issues"]["missing_reference"] == 1
+
+
+def test_parse_workbook_marks_reference_fallback_as_placeholder(tmp_path):
+    path = tmp_path / "stock.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["CORTIZO"])
+    sheet.append([])
+    sheet.append(["Réf", "Nom de l'accessoire", "Quant", "Gamme", "iIlustration"])
+    sheet.append([])
+    sheet.append(["A-003", None, 4, "COR 70", None])
+    workbook.save(path)
+
+    records, _issues = parse_workbook(path)
+
+    assert len(records) == 1
+    assert records[0].designation == "A-003"
+    assert records[0].designation_is_placeholder is True
 
 
 def test_consolidate_records_does_not_sum_duplicate_supplier_references(tmp_path):
@@ -71,6 +89,17 @@ def test_consolidate_records_does_not_sum_duplicate_supplier_references(tmp_path
 
     assert cortizo_a001.quantity == 3
     assert cortizo_a001.designation == "Equerre"
+
+
+def test_consolidate_records_excludes_invalid_quantities(tmp_path):
+    path = tmp_path / "stock.xlsx"
+    write_stock_workbook(path)
+
+    records, _issues = parse_workbook(path)
+    consolidated = consolidate_records(records)
+
+    assert not any(record.reference in {"A-002", "/074509"} for record in consolidated)
+    assert sum(not record.quantity_is_valid for record in records) == 2
 
 
 def test_consolidate_records_quarantines_conflicting_duplicate_references(tmp_path):

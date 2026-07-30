@@ -1113,7 +1113,16 @@ def test_supplier_dispute_can_be_opened_and_resolved_on_purchase_order(purchase_
     client, TestingSessionLocal = purchase_test_client
 
     with TestingSessionLocal() as db:
-        _grant_role_permissions(db, "ACHATS", ["purchases.order", "purchases.receive", "purchases.approve"])
+        _grant_role_permissions(
+            db,
+            "ACHATS",
+            [
+                "purchases.order",
+                "purchases.receive",
+                "purchases.approve",
+                "purchases.invoice.manage",
+            ],
+        )
         variant_id = _seed_purchase_need_variant(
             db,
             reference="REQ-DISPUTE",

@@ -260,7 +260,7 @@ export default function MeasureMissionPage() {
 
     const roles = new Set([user?.role, ...(user?.roles || [])].filter(Boolean));
     const permissions = new Set(user?.permissions || []);
-    const canReview = [...roles].some(role => ['ADMIN', 'MANAGER', 'QUALITY_CONTROLLER', 'WORKSHOP_LEAD'].includes(role));
+    const canReview = [...roles].some(role => ['ADMIN', 'MANAGER', 'QUALITY_CONTROLLER', 'WORKSHOP_LEAD', 'TECHNICO_COMMERCIAL'].includes(role));
     const canReviewStock = [...roles].some(role => ['ADMIN', 'MANAGER', 'CHEF_STOCK'].includes(role));
     const canReviewLaunch = [...roles].some(role => ['ADMIN', 'MANAGER', 'WORKSHOP_LEAD'].includes(role));
     const canReserveWorkshop = canReviewStock

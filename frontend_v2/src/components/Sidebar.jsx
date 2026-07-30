@@ -2,10 +2,12 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart, Truck, Users, UserCircle, FileText, BarChart3, CalendarDays, UserRoundCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { canAccessManagerView } from '../utils/roleNavigation';
 
 export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }) {
     const { logout, user } = useAuth();
     const canAccess = (item) => {
+        if (!canAccessManagerView(user, item.id)) return false;
         if (!item.permission) return true;
         const permissions = user?.permissions || [];
         return permissions.includes('*') || permissions.includes(item.permission);
@@ -32,17 +34,17 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
         {
             title: 'Commerce & Ventes',
             items: [
-                { id: 'crm', label: 'CRM Avant-vente', icon: UserCircle, type: 'internal' },
-                { id: 'sales', label: 'Commandes signées', icon: Users, type: 'internal' },
-                { id: 'pos', label: 'Point de Vente (POS)', icon: ShoppingCart, type: 'external', path: '/pos' },
-                { id: 'accounting', label: 'Facturation clients', icon: FileText, type: 'internal' },
+                { id: 'crm', label: 'CRM Avant-vente', icon: UserCircle, type: 'internal', permission: 'SALES_VIEW' },
+                { id: 'sales', label: 'Commandes signées', icon: Users, type: 'internal', permission: 'SALES_VIEW' },
+                { id: 'pos', label: 'Point de Vente (POS)', icon: ShoppingCart, type: 'external', path: '/pos', permission: 'SALES_EDIT' },
+                { id: 'accounting', label: 'Facturation clients', icon: FileText, type: 'internal', permission: 'ACC_VIEW' },
             ]
         },
         {
             title: 'Supply Chain',
             items: [
-                { id: 'stock', label: 'Inventaire & Stock', icon: Archive, type: 'internal' },
-                { id: 'purchases', label: 'Achats & Appro', icon: ShoppingCart, type: 'internal' },
+                { id: 'stock', label: 'Inventaire & Stock', icon: Archive, type: 'internal', permission: 'STOCK_VIEW' },
+                { id: 'purchases', label: 'Achats & Appro', icon: ShoppingCart, type: 'internal', permission: 'PURCHASES_VIEW' },
                 { id: 'logistics', label: 'Logistique & Expédition', icon: Truck, type: 'internal' },
             ]
         },

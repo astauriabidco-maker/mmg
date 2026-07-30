@@ -1838,6 +1838,7 @@ def create_supplier_invoice(
     db: Session = Depends(get_db),
     current_user: dict = Depends(security.get_current_user),
 ):
+    security.assert_permission(db, current_user, "purchases.invoice.manage")
     po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po_id).first()
     if not po:
         raise HTTPException(status_code=404, detail="PO not found")
@@ -1921,7 +1922,7 @@ def pay_supplier_invoice(
     db: Session = Depends(get_db),
     current_user: dict = Depends(security.get_current_user),
 ):
-    security.assert_permission(db, current_user, "purchases.approve")
+    security.assert_permission(db, current_user, "purchases.payments.manage")
     invoice = db.query(models.SupplierInvoice).filter(models.SupplierInvoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Facture fournisseur introuvable.")

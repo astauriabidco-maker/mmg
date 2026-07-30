@@ -1363,8 +1363,7 @@ def create_final_invoice(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    if current_user.get("role") not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut créer la facture finale.")
+    assert_permission(db, current_user, "ACC_EDIT")
 
     sale = (
         db.query(models.SaleOrder)
@@ -1426,8 +1425,7 @@ def create_deposit_invoice(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    if current_user.get("role") not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut créer une facture d'acompte.")
+    assert_permission(db, current_user, "ACC_EDIT")
 
     sale = (
         db.query(models.SaleOrder)

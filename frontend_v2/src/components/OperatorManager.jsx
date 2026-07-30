@@ -7,6 +7,8 @@ const ROLE_DISPLAY = {
     ADMIN: { label: 'Administrateur', family: 'Bureau' },
     MANAGER: { label: 'Manager opérationnel', family: 'Bureau' },
     SALES: { label: 'Commercial CRM', family: 'Bureau' },
+    TECHNICO_COMMERCIAL: { label: 'Technico-commercial', family: 'Bureau d’études' },
+    FINANCE: { label: 'Comptable / Finance', family: 'Bureau' },
     ACHATS: { label: 'Achats', family: 'Bureau' },
     MAGASINIER: { label: 'Magasinier', family: 'Stock' },
     CHEF_STOCK: { label: 'Chef stock', family: 'Stock' },

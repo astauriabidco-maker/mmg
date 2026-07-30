@@ -118,14 +118,18 @@ def _returned_sale_order_lines(db: Session, sale_order_id: int) -> list[tuple[mo
     return returned_lines
 
 @router.get("/invoices", response_model=List[schemas.InvoiceResponse])
-def get_invoices(db: Session = Depends(get_db)):
+def get_invoices(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.require_permissions("ACC_VIEW")),
+):
     return db.query(models.Invoice).order_by(models.Invoice.issue_date.desc()).all()
 
 @router.post("/invoices", response_model=schemas.InvoiceResponse)
-def create_invoice(invoice: schemas.InvoiceCreate, db: Session = Depends(get_db), role: str = Depends(security.get_current_user_role)):
-    if role not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager ou un administrateur peut créer une facture.")
-
+def create_invoice(
+    invoice: schemas.InvoiceCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.require_permissions("ACC_EDIT")),
+):
     # Calculate Totals
     subtotal = sum(l.unit_price * l.quantity for l in invoice.lines)
     tax_amount = sum(l.unit_price * l.quantity * (l.tax_rate / 100.0) for l in invoice.lines)
@@ -166,10 +170,12 @@ def create_invoice(invoice: schemas.InvoiceCreate, db: Session = Depends(get_db)
     return new_invoice
 
 @router.post("/invoices/{invoice_id}/pay", response_model=schemas.InvoiceResponse)
-def add_payment(invoice_id: int, payment: schemas.PaymentCreate, db: Session = Depends(get_db), role: str = Depends(security.get_current_user_role)):
-    if role not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut encaisser un paiement.")
-
+def add_payment(
+    invoice_id: int,
+    payment: schemas.PaymentCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.require_permissions("ACC_EDIT")),
+):
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(404, "Facture introuvable")
@@ -202,7 +208,11 @@ def add_payment(invoice_id: int, payment: schemas.PaymentCreate, db: Session = D
     return invoice
 
 @router.post("/invoices/{invoice_id}/remind")
-def send_reminder(invoice_id: int, db: Session = Depends(get_db)):
+def send_reminder(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.require_permissions("ACC_EDIT")),
+):
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(404, "Facture introuvable")
@@ -224,11 +234,8 @@ def create_credit_note(
     invoice_id: int,
     credit_note: Optional[schemas.CreditNoteCreate] = None,
     db: Session = Depends(get_db),
-    role: str = Depends(security.get_current_user_role),
+    current_user: dict = Depends(security.require_permissions("ACC_EDIT")),
 ):
-    if role not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut émettre un avoir.")
-
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(404, "Facture introuvable")
@@ -322,11 +329,8 @@ def create_credit_note(
 def create_credit_note_from_return(
     invoice_id: int,
     db: Session = Depends(get_db),
-    role: str = Depends(security.get_current_user_role),
+    current_user: dict = Depends(security.require_permissions("ACC_EDIT")),
 ):
-    if role not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Seul un manager peut émettre un avoir.")
-
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(404, "Facture introuvable")
@@ -345,15 +349,15 @@ def create_credit_note_from_return(
         invoice_id=invoice_id,
         credit_note=schemas.CreditNoteCreate(delivery_note_id=delivery_note.id),
         db=db,
-        role=role,
+        current_user=current_user,
     )
     return avoir
 
 @router.get("/export/fec")
-def export_fec(db: Session = Depends(get_db), role: str = Depends(security.get_current_user_role)):
-    if role != "ADMIN":
-        raise HTTPException(status_code=403, detail="Réservé à l'administrateur système.")
-        
+def export_fec(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.require_permissions("ACC_EDIT")),
+):
     # Fichier des Écritures Comptables (Simplified)
     # JournalCode|JournalLib|EcritureNum|EcritureDate|CompteNum|CompteLib|CompAuxNum|CompAuxLib|PieceRef|PieceDate|EcritureLib|Debit|Credit|EcritureLet|DateLet|ValidDate|Montantdevise|Idevise
     

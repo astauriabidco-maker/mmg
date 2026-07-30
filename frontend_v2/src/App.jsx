@@ -2,7 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { getDefaultPathForUser, userHasAnyRole } from './utils/roleNavigation';
+import { getDefaultManagerView, getDefaultPathForUser, userHasAnyRole } from './utils/roleNavigation';
 
 const Login = lazy(() => import('./pages/Login'));
 const OperatorDashboard = lazy(() => import('./pages/OperatorDashboard'));
@@ -48,6 +48,15 @@ const PermissionRoute = ({ children, permission }) => {
     return children;
 };
 
+const ManagerPortalRoute = ({ children }) => {
+    const { user } = useAuth();
+    if (!user) return <Navigate to="/login" replace />;
+    if (!getDefaultManagerView(user)) {
+        return <Navigate to={getDefaultPathForUser(user)} replace />;
+    }
+    return children;
+};
+
 const SaleDetailRedirect = () => {
     const { saleId } = useParams();
     return <SaleDetailPage saleId={saleId} />;
@@ -87,17 +96,17 @@ export default function App() {
                             <Route
                                 path="/manager"
                                 element={
-                                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                                    <ManagerPortalRoute>
                                         <ManagerDashboard />
-                                    </RoleRoute>
+                                    </ManagerPortalRoute>
                                 }
                             />
                             <Route
                                 path="/sales/:saleId"
                                 element={
-                                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER', 'SALES']}>
+                                    <PermissionRoute permission="SALES_VIEW">
                                         <SaleDetailRedirect />
-                                    </RoleRoute>
+                                    </PermissionRoute>
                                 }
                             />
                             <Route
@@ -111,9 +120,9 @@ export default function App() {
                             <Route
                                 path="/mmg"
                                 element={
-                                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                                    <PermissionRoute permission="SALES_VIEW">
                                         <MMGDossiers />
-                                    </RoleRoute>
+                                    </PermissionRoute>
                                 }
                             />
                             <Route
