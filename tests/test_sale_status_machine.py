@@ -257,6 +257,8 @@ def test_valid_commercial_transitions_still_work():
             sale_db = db.query(models.SaleOrder).one()
         assert sale_db.status == "IN_DESIGN"
         assert sale_db.signature_token
+        assert sale_db.signed_at is not None
+        assert "VALIDATION MANUELLE" in sale_db.notes
     finally:
         _cleanup_test_client(engine)
 
