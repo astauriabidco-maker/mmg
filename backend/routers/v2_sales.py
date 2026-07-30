@@ -1126,6 +1126,17 @@ def update_sale_status(
         order.signature_token = str(uuid.uuid4())
         
     order.status = status
+    if status == "VALIDATED" and not order.signed_at:
+        signed_at = utcnow()
+        order.signed_at = signed_at
+        order.notes = (
+            (order.notes or "")
+            + (
+                "\n[VALIDATION MANUELLE] Devis marqué signé "
+                f"le {signed_at.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"par {current_user.get('sub', 'Système')}."
+            )
+        )
     reservation = None
     cancelled_reservations = 0
     if status == "CANCELLED":
@@ -1229,10 +1240,13 @@ def sign_quote(token: str, request: Request, background_tasks: BackgroundTasks, 
     if not order:
         raise HTTPException(status_code=404, detail="Lien invalide ou expiré.")
         
-    if order.status == "VALIDATED":
+    if order.status == "VALIDATED" and order.signed_at:
         return {"message": "Ce devis est déjà signé."}
 
-    _ensure_sale_is_commercially_signable(order)
+    # Répare les devis historiques passés manuellement à VALIDATED sans
+    # horodatage de signature. Ce cas bloquait ensuite la passerelle atelier.
+    if order.status != "VALIDATED":
+        _ensure_sale_is_commercially_signable(order)
         
     client_ip = request.client.host
     # Capture timestamp
