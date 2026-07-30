@@ -31,7 +31,8 @@ def _smtp_settings() -> Optional[dict]:
     """Retourne la config SMTP depuis l'environnement, ou None si incomplète.
 
     Variables : SMTP_HOST, SMTP_PORT (défaut 587), SMTP_USER, SMTP_PASSWORD,
-    SMTP_FROM (repli sur SMTP_USER), SMTP_USE_TLS (défaut true).
+    SMTP_FROM (repli sur SMTP_USER), SMTP_USE_TLS (défaut true) et
+    SMTP_USE_SSL (automatique sur le port 465 si vide).
     """
     host = (os.environ.get("SMTP_HOST") or "").strip()
     sender = (os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER") or "").strip()
@@ -41,7 +42,16 @@ def _smtp_settings() -> Optional[dict]:
         port = int(os.environ.get("SMTP_PORT", "587"))
     except ValueError:
         port = 587
-    use_tls = (os.environ.get("SMTP_USE_TLS", "true").strip().lower() not in _FALSE_VALUES)
+    raw_use_ssl = os.environ.get("SMTP_USE_SSL")
+    use_ssl = (
+        port == 465
+        if raw_use_ssl is None or not raw_use_ssl.strip()
+        else raw_use_ssl.strip().lower() not in _FALSE_VALUES
+    )
+    use_tls = (
+        not use_ssl
+        and os.environ.get("SMTP_USE_TLS", "true").strip().lower() not in _FALSE_VALUES
+    )
     return {
         "host": host,
         "port": port,
@@ -49,6 +59,7 @@ def _smtp_settings() -> Optional[dict]:
         "password": os.environ.get("SMTP_PASSWORD") or "",
         "sender": sender,
         "use_tls": use_tls,
+        "use_ssl": use_ssl,
     }
 
 
@@ -95,7 +106,12 @@ def _send_smtp_email(
             part.add_header("Content-Disposition", "attachment", filename=attachment["filename"])
             msg.attach(part)
 
-    with smtplib.SMTP(settings["host"], settings["port"], timeout=_SMTP_TIMEOUT_SECONDS) as server:
+    smtp_client = smtplib.SMTP_SSL if settings["use_ssl"] else smtplib.SMTP
+    with smtp_client(
+        settings["host"],
+        settings["port"],
+        timeout=_SMTP_TIMEOUT_SECONDS,
+    ) as server:
         if settings["use_tls"]:
             server.starttls()
         if settings["user"]:

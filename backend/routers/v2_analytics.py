@@ -156,13 +156,13 @@ def get_daily_stats(db: Session = Depends(get_db)):
 
 @router.get("/hourly")
 def get_hourly_stats(db: Session = Depends(get_db)):
-    # Simple hourly aggregation
-    # SQLite strftime('%H', start_time)
+    # SQLAlchemy compile extract() en EXTRACT pour PostgreSQL et en
+    # STRFTIME pour SQLite : l'agrégation reste portable entre prod et tests.
     today = utcnow().date()
     start_of_day = datetime(today.year, today.month, today.day)
     
     results = db.query(
-        func.strftime('%H', models.ProductionLog.start_time).label('hour'),
+        func.extract('hour', models.ProductionLog.start_time).label('hour'),
         func.count(models.ProductionLog.id).label('count')
     ).filter(
         models.ProductionLog.start_time >= start_of_day

@@ -48,6 +48,7 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-}
       PURCHASES_CC_EMAIL: ${PURCHASES_CC_EMAIL:-}
     depends_on:
       db:
