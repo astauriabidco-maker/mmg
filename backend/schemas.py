@@ -1606,6 +1606,13 @@ class InventoryCountLineResponse(BaseModel):
     version: int = 1
     unit_cost_snapshot: Optional[float] = None
     variance_value: Optional[float] = None
+    # Analyse calculée à la lecture : elle aide à prioriser le contrôle mais
+    # ne modifie jamais automatiquement le statut ni le stock.
+    anomaly_score: Optional[int] = None
+    anomaly_priority: Optional[str] = None
+    anomaly_reasons: List[str] = Field(default_factory=list)
+    recount_recommended: Optional[bool] = None
+    recommended_action: Optional[str] = None
     adjustment_move_id: Optional[int] = None
     attachments: List[InventoryCountAttachmentResponse] = []
     variant: Optional[ProductVariantResponse] = None

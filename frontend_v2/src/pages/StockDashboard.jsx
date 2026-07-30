@@ -5266,6 +5266,17 @@ function PhysicalInventoryView({
     const isBlindCounting = Boolean(selectedSession?.blind_counting && ['draft', 'counting', 'pending_approval'].includes(selectedSession?.status));
     const totalLines = selectedSession?.lines?.length || 0;
     const countedLines = (selectedSession?.lines || []).filter(line => line.status !== 'pending').length;
+    const rankedInventoryLines = [...(selectedSession?.lines || [])].sort((left, right) => {
+        const scoreDifference = Number(right.anomaly_score ?? -1) - Number(left.anomaly_score ?? -1);
+        if (scoreDifference !== 0) return scoreDifference;
+        return Number(left.id || 0) - Number(right.id || 0);
+    });
+    const priorityAnomalyCount = (selectedSession?.lines || []).filter(
+        line => ['critical', 'high'].includes(line.anomaly_priority)
+    ).length;
+    const recommendedRecountCount = (selectedSession?.lines || []).filter(
+        line => line.recount_recommended
+    ).length;
 
     const matchVariantFromScan = (value) => {
         const needle = value.trim().toLowerCase();
@@ -5484,7 +5495,11 @@ function PhysicalInventoryView({
 
     const requestRecount = async (line) => {
         if (!selectedSession || busy) return;
-        const notes = window.prompt("Pourquoi demander un recompte ?", line.reason || "");
+        const suggestedNotes = line.recount_notes
+            || line.anomaly_reasons?.join(' · ')
+            || line.reason
+            || "";
+        const notes = window.prompt("Pourquoi demander un recompte ?", suggestedNotes);
         if (notes === null) return;
         setBusy(true);
         try {
@@ -5612,6 +5627,22 @@ function PhysicalInventoryView({
         variance: 'bg-amber-50 text-amber-700 border-amber-100',
         recount: 'bg-red-50 text-red-700 border-red-100',
         validated: 'bg-blue-50 text-blue-700 border-blue-100',
+    };
+    const anomalyPriorityLabel = {
+        critical: 'Critique',
+        high: 'Élevée',
+        medium: 'Moyenne',
+        low: 'Faible',
+        none: 'Conforme',
+        pending: 'À analyser',
+    };
+    const anomalyPriorityClass = {
+        critical: 'bg-red-100 text-red-800 border-red-200',
+        high: 'bg-orange-50 text-orange-700 border-orange-200',
+        medium: 'bg-amber-50 text-amber-700 border-amber-200',
+        low: 'bg-blue-50 text-blue-700 border-blue-100',
+        none: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+        pending: 'bg-slate-50 text-slate-500 border-slate-200',
     };
 
     return (
@@ -5938,6 +5969,29 @@ function PhysicalInventoryView({
                                                 </div>
                                             </div>
                                         )}
+                                        {selectedSession.can_view_expected ? (
+                                            <div className="mt-3 max-w-2xl rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <div>
+                                                        <p className="text-[10px] uppercase font-black tracking-widest text-indigo-500">Analyse automatique</p>
+                                                        <p className="text-xs font-bold text-indigo-900">Classement explicable, sans ajustement automatique du stock.</p>
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <span className="rounded-lg border border-red-100 bg-white px-2.5 py-1 text-[10px] font-black text-red-700">
+                                                            {priorityAnomalyCount} prioritaire(s)
+                                                        </span>
+                                                        <span className="rounded-lg border border-orange-100 bg-white px-2.5 py-1 text-[10px] font-black text-orange-700">
+                                                            {recommendedRecountCount} recompte(s) conseillé(s)
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="mt-3 max-w-2xl rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3">
+                                                <p className="text-[10px] uppercase font-black tracking-widest text-violet-500">Analyse protégée</p>
+                                                <p className="text-xs font-bold text-violet-900">Le classement sera révélé avec les écarts afin de préserver le comptage aveugle.</p>
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="flex flex-wrap gap-2 justify-end">
                                         <button onClick={exportSession} disabled={!canValidate || busy || !selectedSession.lines?.length} title={!canValidate ? 'Réservé à la validation d\'inventaire' : undefined} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm inline-flex items-center gap-2">
@@ -6105,8 +6159,8 @@ function PhysicalInventoryView({
                                     </form>
                                 )}
 
-                                <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden">
-                                    <table className="w-full text-left">
+                                <div className="bg-white rounded-3xl border border-slate-200 overflow-x-auto">
+                                    <table className="w-full min-w-[1280px] text-left">
                                         <thead className="bg-slate-50 border-b border-slate-100">
                                             <tr>
                                                 <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400">Référence</th>
@@ -6115,12 +6169,13 @@ function PhysicalInventoryView({
                                                 <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400 text-right">Compté</th>
                                                 <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400 text-right">Écart</th>
                                                 <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400">Statut</th>
+                                                <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400">Analyse</th>
                                                 <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400">Motif</th>
                                                 <th className="px-5 py-4 text-[10px] uppercase font-black tracking-widest text-slate-400 text-right">Action</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
-                                            {(selectedSession.lines || []).map(line => (
+                                            {rankedInventoryLines.map(line => (
                                                 <tr key={line.id} className="hover:bg-slate-50">
                                                     <td className="px-5 py-4">
                                                         <p className="font-black text-sm text-slate-900">{line.variant?.reference || `Variante #${line.variant_id}`}</p>
@@ -6142,6 +6197,26 @@ function PhysicalInventoryView({
                                                         </span>
                                                         {line.recount_notes && (
                                                             <p className="text-[11px] font-bold text-red-500 mt-1">{line.recount_notes}</p>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-5 py-4 max-w-[260px]">
+                                                        {line.anomaly_priority ? (
+                                                            <>
+                                                                <span className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-[10px] uppercase font-black ${anomalyPriorityClass[line.anomaly_priority] || anomalyPriorityClass.pending}`}>
+                                                                    {anomalyPriorityLabel[line.anomaly_priority] || line.anomaly_priority}
+                                                                    {line.anomaly_score !== null && line.anomaly_score !== undefined ? ` · ${line.anomaly_score}/100` : ''}
+                                                                </span>
+                                                                {line.recount_recommended && (
+                                                                    <p className="mt-1 text-[10px] font-black text-red-600">Recompte conseillé</p>
+                                                                )}
+                                                                {line.anomaly_reasons?.length > 0 && (
+                                                                    <p className="mt-1 text-[10px] font-bold leading-relaxed text-slate-500">
+                                                                        {line.anomaly_reasons.join(' · ')}
+                                                                    </p>
+                                                                )}
+                                                            </>
+                                                        ) : (
+                                                            <span className="text-xs font-bold text-slate-400">Masquée</span>
                                                         )}
                                                     </td>
                                                     <td className="px-5 py-4 text-sm font-bold text-slate-500">
@@ -6202,7 +6277,7 @@ function PhysicalInventoryView({
                                             ))}
                                             {(!selectedSession.lines || selectedSession.lines.length === 0) && (
                                                 <tr>
-                                                    <td colSpan="8" className="py-12 text-center text-sm font-bold text-slate-400">
+                                                    <td colSpan="9" className="py-12 text-center text-sm font-bold text-slate-400">
                                                         Aucune ligne dans cette campagne. Scannez ou ajoutez les références réellement vérifiées.
                                                     </td>
                                                 </tr>

@@ -344,6 +344,126 @@ def _line_variance_value(line: models.InventoryCountLine) -> float:
     return float(line.variance_quantity or 0) * float(line.unit_cost_snapshot or 0)
 
 
+def _inventory_anomaly_analysis(line: models.InventoryCountLine) -> dict:
+    """Classe une ligne de manière déterministe et explicable.
+
+    Le résultat est une recommandation de contrôle uniquement : il ne change
+    ni ``line.status`` ni les quantités. Les seuils cumulent écart relatif,
+    quantité et valeur afin de ne pas surclasser un petit écart peu coûteux.
+    """
+    if line.status == "pending":
+        return {
+            "anomaly_score": None,
+            "anomaly_priority": "pending",
+            "anomaly_reasons": [],
+            "recount_recommended": False,
+            "recommended_action": "count",
+        }
+
+    expected = float(line.expected_quantity or 0)
+    counted = float(line.counted_quantity or 0)
+    variance = float(line.variance_quantity or (counted - expected))
+    absolute_variance = abs(variance)
+    if absolute_variance <= 0.000001:
+        return {
+            "anomaly_score": 0,
+            "anomaly_priority": "none",
+            "anomaly_reasons": [],
+            "recount_recommended": False,
+            "recommended_action": "accept",
+        }
+
+    score = 0
+    reasons: List[str] = []
+    relative_variance = absolute_variance / max(abs(expected), 1.0)
+    absolute_value = abs(_line_variance_value(line))
+
+    if expected > 0.000001 and counted <= 0.000001:
+        score += 70
+        reasons.append("Stock attendu mais comptage nul")
+    elif abs(expected) <= 0.000001 and counted > 0.000001:
+        score += 55
+        reasons.append("Stock trouvé alors que le système attend zéro")
+
+    if relative_variance >= 1:
+        score += 35
+        reasons.append("Écart supérieur ou égal à 100 %")
+    elif relative_variance >= 0.5:
+        score += 30
+        reasons.append("Écart supérieur ou égal à 50 %")
+    elif relative_variance >= 0.2:
+        score += 20
+        reasons.append("Écart supérieur ou égal à 20 %")
+    elif relative_variance >= 0.05:
+        score += 10
+        reasons.append("Écart supérieur ou égal à 5 %")
+
+    if absolute_value >= 1000:
+        score += 30
+        reasons.append("Impact valorisé supérieur ou égal à 1 000 €")
+    elif absolute_value >= 500:
+        score += 22
+        reasons.append("Impact valorisé supérieur ou égal à 500 €")
+    elif absolute_value >= 100:
+        score += 15
+        reasons.append("Impact valorisé supérieur ou égal à 100 €")
+    elif absolute_value >= 25:
+        score += 10
+        reasons.append("Impact valorisé supérieur ou égal à 25 €")
+
+    if absolute_variance >= 100:
+        score += 15
+        reasons.append("Écart de quantité supérieur ou égal à 100")
+    elif absolute_variance >= 20:
+        score += 10
+        reasons.append("Écart de quantité supérieur ou égal à 20")
+
+    if not str(line.reason or "").strip():
+        score += 5
+        reasons.append("Motif non renseigné")
+
+    if line.status == "recount":
+        score = max(score, 85)
+        reasons.insert(0, "Recompte déjà demandé")
+
+    score = min(score, 100)
+    if score >= 80:
+        priority = "critical"
+    elif score >= 55:
+        priority = "high"
+    elif score >= 30:
+        priority = "medium"
+    else:
+        priority = "low"
+    recount_recommended = line.status == "recount" or score >= 55
+    return {
+        "anomaly_score": score,
+        "anomaly_priority": priority,
+        "anomaly_reasons": reasons,
+        "recount_recommended": recount_recommended,
+        "recommended_action": "recount" if recount_recommended else "review",
+    }
+
+
+def _apply_inventory_anomaly_analysis(
+    response: schemas.InventoryCountLineResponse,
+    line: models.InventoryCountLine,
+) -> None:
+    for field, value in _inventory_anomaly_analysis(line).items():
+        setattr(response, field, value)
+
+
+def _hide_inventory_anomaly_analysis(
+    response: schemas.InventoryCountLineResponse,
+) -> None:
+    """Évite qu'un score ne révèle indirectement l'espéré en mode aveugle."""
+    response.anomaly_score = None
+    response.anomaly_priority = None
+    response.anomaly_reasons = []
+    response.recount_recommended = None
+    response.recommended_action = None
+
+
 def _inventory_value_summary(session: models.InventorySession) -> tuple[float, float]:
     values = [_line_variance_value(line) for line in (session.lines or [])]
     return sum(values), sum(abs(value) for value in values)
@@ -468,11 +588,16 @@ def _serialize_inventory_session(
         for model_line in (session.lines or [])
         for attachment in (model_line.attachments or [])
     }
+    model_lines = {line.id: line for line in (session.lines or [])}
     for line in response.lines:
+        model_line = model_lines.get(line.id)
+        if model_line:
+            _apply_inventory_anomaly_analysis(line, model_line)
         _mask_pending_line(line)
         for attachment in line.attachments:
             attachment.url = attachment_paths.get(attachment.id)
         if blind:
+            _hide_inventory_anomaly_analysis(line)
             line.expected_quantity = None
             line.variance_quantity = None
             line.unit_cost_snapshot = None
@@ -489,6 +614,7 @@ def _serialize_count_line(
     reveal_blind: bool = False,
 ) -> schemas.InventoryCountLineResponse:
     response = schemas.InventoryCountLineResponse.model_validate(line)
+    _apply_inventory_anomaly_analysis(response, line)
     _mask_pending_line(response)
     for attachment, row in zip(response.attachments, line.attachments):
         attachment.url = f"/uploads/inventory/{session.id}/{line.id}/{row.stored_filename}"
@@ -497,6 +623,7 @@ def _serialize_count_line(
         and session.status in ["draft", "counting", "pending_approval"]
         and not (reveal_blind and session.status == "pending_approval")
     ):
+        _hide_inventory_anomaly_analysis(response)
         response.expected_quantity = None
         response.variance_quantity = None
         response.unit_cost_snapshot = None
@@ -1375,6 +1502,10 @@ def export_inventory_session(
         "Coût unitaire",
         "Écart valorisé",
         "Statut ligne",
+        "Priorité anomalie",
+        "Score anomalie",
+        "Analyse automatique",
+        "Action recommandée",
         "Motif",
         "Compté par",
         "Recompte demandé par",
@@ -1391,6 +1522,7 @@ def export_inventory_session(
     for line in session.lines:
         variant = line.variant
         product = variant.product if variant else None
+        analysis = _inventory_anomaly_analysis(line)
         sheet.append([
             variant.reference if variant else f"Variante #{line.variant_id}",
             product.name if product else "",
@@ -1401,6 +1533,10 @@ def export_inventory_session(
             float(line.unit_cost_snapshot or 0),
             _line_variance_value(line),
             line.status,
+            analysis["anomaly_priority"] or "",
+            analysis["anomaly_score"] if analysis["anomaly_score"] is not None else "",
+            " · ".join(analysis["anomaly_reasons"]),
+            analysis["recommended_action"] or "",
             line.reason or "",
             line.counted_by or "",
             line.recount_requested_by or "",

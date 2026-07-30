@@ -184,6 +184,10 @@ def test_blind_counter_cannot_read_expected_stock_and_assignment_is_enforced(
     assert counted.json()["expected_quantity"] is None
     assert counted.json()["variance_value"] is None
     assert counted.json()["status"] == "counted"
+    assert counted.json()["anomaly_score"] is None
+    assert counted.json()["anomaly_priority"] is None
+    assert counted.json()["recount_recommended"] is None
+    assert counted.json()["anomaly_reasons"] == []
 
     blind_session = client.get(
         f"/v2/stock/inventory-sessions/{session['id']}",
@@ -192,6 +196,7 @@ def test_blind_counter_cannot_read_expected_stock_and_assignment_is_enforced(
     assert blind_session.status_code == 200, blind_session.text
     assert blind_session.json()["total_variance_value"] is None
     assert blind_session.json()["absolute_variance_value"] is None
+    assert blind_session.json()["lines"][0]["anomaly_priority"] is None
 
 
 def test_count_line_version_idempotency_and_attachment(
@@ -255,6 +260,44 @@ def test_count_line_version_idempotency_and_attachment(
     assert attachment.json()["filename"] == "preuve.jpg"
     stored = tmp_path / attachment.json()["url"].lstrip("/")
     assert stored.read_bytes() == b"fake-image"
+
+
+def test_inventory_anomaly_analysis_recommends_recount_without_mutating_status(
+    isolated_client,
+):
+    client, session_factory = isolated_client
+    admin = _headers(session_factory, "inventory-analysis-admin", "ADMIN", [])
+    variant_id, location_id, _outside_id = _seed_inventory_data(session_factory)
+    session = _create_session(client, admin, location_id)
+    line = session["lines"][0]
+
+    counted = client.post(
+        f"/v2/stock/inventory-sessions/{session['id']}/lines",
+        headers=admin,
+        json={
+            "variant_id": variant_id,
+            "location_id": location_id,
+            "counted_quantity": 0,
+            "expected_version": line["version"],
+        },
+    )
+    assert counted.status_code == 200, counted.text
+    analysis = counted.json()
+    assert analysis["status"] == "variance"
+    assert analysis["anomaly_priority"] == "critical"
+    assert analysis["anomaly_score"] >= 80
+    assert analysis["recount_recommended"] is True
+    assert analysis["recommended_action"] == "recount"
+    assert "Stock attendu mais comptage nul" in analysis["anomaly_reasons"]
+
+    reloaded = client.get(
+        f"/v2/stock/inventory-sessions/{session['id']}",
+        headers=admin,
+    )
+    assert reloaded.status_code == 200, reloaded.text
+    reloaded_line = reloaded.json()["lines"][0]
+    assert reloaded_line["status"] == "variance"
+    assert reloaded_line["anomaly_priority"] == "critical"
 
 
 def test_value_approval_cycle_scheduling_and_financial_export(isolated_client):
@@ -339,6 +382,8 @@ def test_value_approval_cycle_scheduling_and_financial_export(isolated_client):
     assert "Écart valorisé net" in values
     assert "Coût unitaire" in values
     assert "Écart valorisé" in values
+    assert "Priorité anomalie" in values
+    assert "Analyse automatique" in values
     assert "inventory-finance" in values
 
 
