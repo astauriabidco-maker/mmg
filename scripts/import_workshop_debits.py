@@ -58,6 +58,9 @@ class DebitRecord:
     color: str | None = None
     length_mm: float | None = None
     position: str | None = None
+    cut_left_deg: float | None = None
+    cut_right_deg: float | None = None
+    cut_orientation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -132,7 +135,7 @@ def extract_pdf_text(path: Path) -> str:
 def detect_project_reference(text: str) -> str | None:
     patterns = [
         r"Affaire\s+N[°º]\s*(MMG[\w./-]+)",
-        r"Affaire:\s*([A-Z0-9_-]+)",
+        r"Affaire\s*:\s*([A-Z0-9_-]+)",
         r"Référence Commande\s*:\s*([^\n\r]+)",
     ]
     for pattern in patterns:
@@ -210,6 +213,236 @@ def parse_progers_txt(path: Path, text: str) -> tuple[list[DebitRecord], list[De
 
     if not records:
         issues.append(DebitIssue("error", "no_records", path.name, None, None, "Aucune ligne Progers exploitable."))
+    return records, issues
+
+
+PROGES_FABRICATION_HEADER_RE = re.compile(
+    r"R\S*F\S*RENCE\s+D\S*SIGNATION\s+COLORIS\s+QT\S*\s+D\S*BIT\s+COUPE",
+    re.IGNORECASE,
+)
+PROGES_FABRICATION_PROFILE_RE = re.compile(
+    r"^\s*(?P<reference>\S+)\s+"
+    r"(?P<designation>.+?)\s+"
+    r"(?P<color>\S+)\s+"
+    r"(?P<quantity>\d+(?:[,.]\d+)?)\s+"
+    r"(?P<length>\d+(?:[,.]\d+)?)\s+"
+    r"(?P<cut_left>\d+(?:[,.]\d+)?)\s*/\s*"
+    r"(?P<cut_right>\d+(?:[,.]\d+)?)"
+    r"(?:\s+(?P<orientation>.*?))?\s*$",
+    re.IGNORECASE,
+)
+PROGES_FABRICATION_ACCESSORY_RE = re.compile(
+    r"^\s*(?P<reference>\S+)\s+"
+    r"(?P<designation>.+?)\s+"
+    r"(?P<color>\S+)\s+"
+    r"(?P<quantity>\d+(?:[,.]\d+)?)\s+"
+    r"(?P<unit>paire|pi\S*ce|unit\S*|pce|ml|m\S*tre|m)\s*$",
+    re.IGNORECASE,
+)
+PROGES_FABRICATION_POSITION_RE = re.compile(
+    r"\bREPERE\s*:\s*([A-Z0-9._/-]+)",
+    re.IGNORECASE,
+)
+PROGES_FABRICATION_SECTIONS = {
+    "K6": "KOMMERLING",
+    "QU": "QUINCAILLERIE",
+    "RX": "ROTO",
+    "SG": "VITRAGE",
+    "X1": "PROGES",
+}
+PROGES_CALCULATION_REFERENCES = {
+    "HFFO",
+    "LFFO",
+    "LFFOP",
+    "LFFOS",
+    "LCREMONE",
+}
+
+
+def is_proges_fabrication_text(text: str) -> bool:
+    upper = text.upper()
+    return (
+        "LOGICIEL PROGES" in upper
+        and "FICHE DE FABRICATION" in upper
+        and bool(PROGES_FABRICATION_HEADER_RE.search(text))
+    )
+
+
+def _proges_section_supplier(section: str | None) -> str:
+    if section:
+        return PROGES_FABRICATION_SECTIONS.get(section.upper(), "PROGES")
+    return "PROGES"
+
+
+def _normalize_proges_unit(value: str) -> str:
+    normalized = value.lower()
+    if (
+        normalized == "pce"
+        or (normalized.startswith("pi") and normalized.endswith("ce"))
+        or normalized.startswith("unit")
+    ):
+        return "pce"
+    if normalized == "m" or (
+        normalized.startswith("m") and normalized.endswith("tre")
+    ):
+        return "ml"
+    return normalized
+
+
+def parse_proges_fabrication_pdf(
+    path: Path,
+    text: str,
+) -> tuple[list[DebitRecord], list[DebitIssue]]:
+    """Parse PROGES fabrication sheets containing material cutting tables."""
+
+    project_reference = detect_project_reference(text)
+    records: list[DebitRecord] = []
+    issues: list[DebitIssue] = []
+    current_position: str | None = None
+    current_section: str | None = None
+
+    for row_number, raw_line in enumerate(text.splitlines(), start=1):
+        line = clean_text(raw_line)
+        if not line:
+            continue
+
+        position_match = PROGES_FABRICATION_POSITION_RE.search(line)
+        if position_match:
+            current_position = position_match.group(1)
+            continue
+
+        if line.upper() in PROGES_FABRICATION_SECTIONS:
+            current_section = line.upper()
+            continue
+
+        # pdfplumber preserves the fixed-width PROGES columns. Reading them
+        # before the whitespace-normalized fallback also supports references
+        # containing spaces, such as "GV 15 M3".
+        if raw_line.startswith(" ") and len(raw_line) >= 59:
+            layout_reference = clean_text(raw_line[1:14])
+            layout_designation = clean_text(raw_line[14:41])
+            layout_color = clean_text(raw_line[41:53])
+            layout_quantity = parse_number(raw_line[53:58])
+            layout_tail = clean_text(raw_line[58:])
+            if (
+                layout_reference
+                and layout_designation
+                and layout_color
+                and layout_quantity is not None
+                and layout_reference.upper() not in PROGES_CALCULATION_REFERENCES
+            ):
+                layout_profile = re.match(
+                    r"^(?P<length>\d+(?:[,.]\d+)?)\s+"
+                    r"(?P<cut_left>\d+(?:[,.]\d+)?)\s*/\s*"
+                    r"(?P<cut_right>\d+(?:[,.]\d+)?)"
+                    r"(?:\s+(?P<orientation>.*?))?$",
+                    layout_tail,
+                )
+                if layout_profile:
+                    records.append(
+                        DebitRecord(
+                            source=path.name,
+                            row=row_number,
+                            supplier=_proges_section_supplier(current_section),
+                            reference=layout_reference,
+                            designation=layout_designation,
+                            quantity=layout_quantity,
+                            unit="pce",
+                            project_reference=project_reference,
+                            color=layout_color,
+                            length_mm=parse_number(layout_profile.group("length")),
+                            position=current_position,
+                            cut_left_deg=parse_number(layout_profile.group("cut_left")),
+                            cut_right_deg=parse_number(layout_profile.group("cut_right")),
+                            cut_orientation=clean_text(
+                                layout_profile.group("orientation")
+                            )
+                            or None,
+                        )
+                    )
+                    continue
+                if re.fullmatch(r"\S+", layout_tail):
+                    records.append(
+                        DebitRecord(
+                            source=path.name,
+                            row=row_number,
+                            supplier=_proges_section_supplier(current_section),
+                            reference=layout_reference,
+                            designation=layout_designation,
+                            quantity=layout_quantity,
+                            unit=_normalize_proges_unit(layout_tail),
+                            project_reference=project_reference,
+                            color=layout_color,
+                            position=current_position,
+                        )
+                    )
+                    continue
+
+        profile_match = PROGES_FABRICATION_PROFILE_RE.match(line)
+        if profile_match:
+            reference = profile_match.group("reference").strip()
+            if reference.upper() in PROGES_CALCULATION_REFERENCES:
+                continue
+            quantity = parse_number(profile_match.group("quantity"))
+            length_mm = parse_number(profile_match.group("length"))
+            cut_left = parse_number(profile_match.group("cut_left"))
+            cut_right = parse_number(profile_match.group("cut_right"))
+            if quantity is None or length_mm is None:
+                continue
+            records.append(
+                DebitRecord(
+                    source=path.name,
+                    row=row_number,
+                    supplier=_proges_section_supplier(current_section),
+                    reference=reference,
+                    designation=clean_text(profile_match.group("designation")),
+                    quantity=quantity,
+                    unit="pce",
+                    project_reference=project_reference,
+                    color=clean_text(profile_match.group("color")) or None,
+                    length_mm=length_mm,
+                    position=current_position,
+                    cut_left_deg=cut_left,
+                    cut_right_deg=cut_right,
+                    cut_orientation=clean_text(profile_match.group("orientation")) or None,
+                )
+            )
+            continue
+
+        accessory_match = PROGES_FABRICATION_ACCESSORY_RE.match(line)
+        if accessory_match:
+            reference = accessory_match.group("reference").strip()
+            if reference.upper() in PROGES_CALCULATION_REFERENCES:
+                continue
+            quantity = parse_number(accessory_match.group("quantity"))
+            if quantity is None:
+                continue
+            records.append(
+                DebitRecord(
+                    source=path.name,
+                    row=row_number,
+                    supplier=_proges_section_supplier(current_section),
+                    reference=reference,
+                    designation=clean_text(accessory_match.group("designation")),
+                    quantity=quantity,
+                    unit=_normalize_proges_unit(accessory_match.group("unit")),
+                    project_reference=project_reference,
+                    color=clean_text(accessory_match.group("color")) or None,
+                    position=current_position,
+                )
+            )
+
+    if not records:
+        issues.append(
+            DebitIssue(
+                "error",
+                "no_proges_fabrication_records",
+                path.name,
+                None,
+                None,
+                "Aucune ligne de fabrication ou de débit PROGES exploitable.",
+            )
+        )
     return records, issues
 
 
@@ -456,6 +689,8 @@ def parse_file(path: Path) -> tuple[list[DebitRecord], list[DebitIssue]]:
         return parse_progers_txt(path, read_text_file(path))
     if suffix == ".pdf":
         text = extract_pdf_text(path)
+        if is_proges_fabrication_text(text):
+            return parse_proges_fabrication_pdf(path, text)
         if "Débit optimisé" in text:
             return parse_orgadata_optimized_pdf(path, text)
         if is_cortizo_order_text(text):
@@ -474,9 +709,18 @@ def parse_file(path: Path) -> tuple[list[DebitRecord], list[DebitIssue]]:
 
 
 def consolidate_records(records: list[DebitRecord]) -> list[DebitRecord]:
-    consolidated: dict[tuple[str, str, str, str, float | None], DebitRecord] = {}
+    consolidated: dict[tuple, DebitRecord] = {}
     for record in records:
-        key = (record.source, record.supplier, record.reference, record.unit, record.length_mm)
+        key = (
+            record.source,
+            record.supplier,
+            record.reference,
+            record.unit,
+            record.length_mm,
+            record.cut_left_deg,
+            record.cut_right_deg,
+            record.cut_orientation,
+        )
         existing = consolidated.get(key)
         if not existing:
             consolidated[key] = record
@@ -494,6 +738,9 @@ def consolidate_records(records: list[DebitRecord]) -> list[DebitRecord]:
             color=existing.color or record.color,
             length_mm=existing.length_mm,
             position=existing.position,
+            cut_left_deg=existing.cut_left_deg,
+            cut_right_deg=existing.cut_right_deg,
+            cut_orientation=existing.cut_orientation,
         )
     return list(consolidated.values())
 
@@ -503,6 +750,9 @@ def build_summary(records: list[DebitRecord], issues: list[DebitIssue]) -> dict[
     return {
         "raw_records": len(records),
         "debit_lines": len(consolidated),
+        "unique_references": len(
+            {(record.supplier, record.reference) for record in consolidated}
+        ),
         "total_quantity": sum(record.quantity for record in consolidated),
         "suppliers": dict(sorted(Counter(record.supplier for record in consolidated).items())),
         "units": dict(sorted(Counter(record.unit for record in consolidated).items())),

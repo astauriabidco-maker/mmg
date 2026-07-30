@@ -330,6 +330,9 @@ def _records_from_technical_version(
                 color=record.get("color"),
                 length_mm=record.get("length_mm"),
                 position=record.get("position"),
+                cut_left_deg=record.get("cut_left_deg"),
+                cut_right_deg=record.get("cut_right_deg"),
+                cut_orientation=record.get("cut_orientation"),
             )
         )
     return records

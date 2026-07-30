@@ -10,6 +10,7 @@ from scripts.import_workshop_debits import (
     build_summary,
     consolidate_records,
     extract_pdf_text,
+    is_proges_fabrication_text,
     parse_file,
     read_text_file,
 )
@@ -38,7 +39,11 @@ def _detect_source(text: str, filename: str, declared_source: str) -> str | None
     haystack = f"{filename}\n{text[:12000]}".upper()
     if "ORGADATA" in haystack or "LOGIKAL" in haystack or "DÉBIT OPTIMISÉ" in haystack:
         return "ORGADATA"
-    if "SEPALUMIC GAMME" in haystack or "VALORISATION DE COMMANDE" in haystack:
+    if (
+        "SEPALUMIC GAMME" in haystack
+        or "VALORISATION DE COMMANDE" in haystack
+        or ("LOGICIEL PROGES" in haystack and "FICHE DE FABRICATION" in haystack)
+    ):
         return "PROGES"
     if (
         "COMMANDE" in haystack
@@ -80,6 +85,10 @@ def _detect_project_reference(text: str) -> str | None:
 
 def _detect_type(text: str, filename: str, declared_type: str) -> str:
     haystack = f"{filename}\n{text[:12000]}".upper()
+    if is_proges_fabrication_text(text):
+        if declared_type in {"FABRICATION", "CUTTING"}:
+            return declared_type
+        return "CUTTING"
     if "DÉBIT OPTIMISÉ" in haystack or filename.upper().startswith("SEP"):
         return "CUTTING"
     if (
@@ -122,6 +131,7 @@ def analyze_technical_document(
             summary={
                 "raw_records": 0,
                 "debit_lines": 0,
+                "unique_references": 0,
                 "total_quantity": 0,
                 "suppliers": {},
                 "units": {},
@@ -180,6 +190,7 @@ def analyze_technical_document(
         summary = {
             "raw_records": 0,
             "debit_lines": 0,
+            "unique_references": 0,
             "total_quantity": 0,
             "suppliers": {},
             "units": {},

@@ -403,7 +403,7 @@ test('stock lead creates the workshop reservation from the validated cutting lis
         detected_source_system: 'ORGADATA',
         detected_project_reference: 'ALU-ANON-002',
         parsed_summary: {
-            total_lines: 2,
+            debit_lines: 2,
             total_quantity: 8,
             unique_references: 2,
         },
@@ -562,6 +562,7 @@ test('stock lead creates the workshop reservation from the validated cutting lis
     await page.goto('/measure-missions/2');
     await page.getByRole('button', { name: '2. Fabrication & débit' }).click();
 
+    await expect(page.getByText('Lignes matière').locator('..').getByText('2', { exact: true })).toBeVisible();
     const executionFlow = page.getByLabel("Flux d'exécution atelier");
     await expect(executionFlow.getByText('RESA-2026-0089 · annulée, à recréer')).toBeVisible();
     await expect(executionFlow.getByText('Verrouillée avant réservation')).toBeVisible();

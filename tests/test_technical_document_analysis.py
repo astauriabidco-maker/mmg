@@ -26,6 +26,48 @@ Brut ( Q-U );70501;JOINT DE BAVETTE;50;ml
     assert [record["reference"] for record in analysis.records] == ["7007", "70501"]
 
 
+def test_proges_fabrication_pdf_is_detected_and_parsed_as_cutting(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "fiche-proges-anonymisee.pdf"
+    path.write_bytes(b"%PDF-test")
+    text = """Logiciel PROGES ©25
+FICHE DE FABRICATION
+Affaire : PVC-ANON-003
+LOT : REPERE : F03
+Référence Désignation Coloris Qté Débit Coupe
+K6
+76180---2 Dormant anonymisé WSWS 2 1645,0 45.0/ 45.0 u T
+QU
+CALE3 Cale anonymisée B 4 pièce
+"""
+    monkeypatch.setattr(
+        "backend.services.technical_document_analysis._document_text",
+        lambda _path: text,
+    )
+    monkeypatch.setattr(
+        "scripts.import_workshop_debits.extract_pdf_text",
+        lambda _path: text,
+    )
+
+    analysis = analyze_technical_document(
+        path,
+        "CUTTING",
+        "OTHER",
+        "PVC-ANON-003",
+    )
+
+    assert analysis.status == "PARSED"
+    assert analysis.detected_document_type == "CUTTING"
+    assert analysis.detected_source_system == "PROGES"
+    assert analysis.detected_project_reference == "PVC-ANON-003"
+    assert analysis.summary["raw_records"] == 2
+    assert analysis.summary["debit_lines"] == 2
+    assert analysis.records[0]["cut_left_deg"] == 45
+    assert analysis.records[0]["cut_right_deg"] == 45
+
+
 def test_fabrication_pdf_remains_consultable_without_stock_records(tmp_path, monkeypatch):
     path = tmp_path / "Bon d'atelier.pdf"
     path.write_bytes(b"%PDF-test")

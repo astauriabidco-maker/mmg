@@ -5,8 +5,11 @@ from scripts.import_workshop_debits import (
     consolidate_records,
     detect_project_reference,
     is_cortizo_order_text,
+    is_proges_fabrication_text,
     parse_cortizo_order_pdf,
     parse_orgadata_optimized_pdf,
+    parse_proges_fabrication_pdf,
+    parse_file,
     parse_progers_txt,
 )
 
@@ -31,12 +34,81 @@ RAL 8017S Satiné (+25%);70305;EMBOUT DE FAITAGE;4;unité
 
     assert not issues
     assert summary["raw_records"] == 3
+    assert summary["unique_references"] == 3
     assert summary["suppliers"] == {"SEPALUMIC": 3}
     assert summary["units"] == {"barre": 1, "ml": 1, "unité": 1}
     assert records[0].reference == "7007"
     assert records[0].quantity == 3
     assert records[0].length_mm == 6500
     assert detect_project_reference(path.read_text(encoding="latin-1")) == "VER DIMASCIO"
+
+
+def test_parse_proges_fabrication_pdf_extracts_profiles_and_accessories(tmp_path):
+    path = tmp_path / "PVC-ANON-001.pdf"
+    text = """29/07/2026 Logiciel PROGES ©25 page N° 1
+Utilisation : MMG
+FICHE DE FABRICATION
+Affaire : PVC-ANON-001 PVC-ANON-001
+Client : CLIENT ANONYMISE
+LOT : REPERE : F01
+Référence Désignation Coloris Qté Débit Coupe
+K6
+HFFO HAUTEUR fond de feuillure ouvr B 1 1930,0 90.0/ 90.0 M
+76177---2 Dormant réno anonymisé WSWS 2 1455,0 45.0/ 45.0 u T
+76281---2 Ouvrant anonymisé WSWS 4 689,0 45.0/ 45.0 u T
+QU
+CALE3 Cale de vitrage B 8 pièce
+RX
+POIG7-15 Poignée anonymisée B 1 unité
+"""
+
+    assert is_proges_fabrication_text(text)
+    records, issues = parse_proges_fabrication_pdf(path, text)
+
+    assert not issues
+    assert [record.reference for record in records] == [
+        "76177---2",
+        "76281---2",
+        "CALE3",
+        "POIG7-15",
+    ]
+    assert all(record.project_reference == "PVC-ANON-001" for record in records)
+    assert records[0].supplier == "KOMMERLING"
+    assert records[0].quantity == 2
+    assert records[0].length_mm == 1455
+    assert records[0].cut_left_deg == 45
+    assert records[0].cut_right_deg == 45
+    assert records[0].cut_orientation == "u T"
+    assert records[0].position == "F01"
+    assert records[2].supplier == "QUINCAILLERIE"
+    assert records[2].unit == "pce"
+    assert records[3].supplier == "ROTO"
+
+
+def test_parse_file_routes_proges_fabrication_pdf_automatically(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "fiche-proges-anonymisee.pdf"
+    path.write_bytes(b"%PDF-test")
+    text = """Logiciel PROGES ©25
+FICHE DE FABRICATION
+Affaire : PVC-ANON-002
+LOT : REPERE : F02
+Référence Désignation Coloris Qté Débit Coupe
+K6
+76180---2 Dormant anonymisé WSWS 2 1845,0 45.0/ 45.0 u M
+"""
+    monkeypatch.setattr(
+        "scripts.import_workshop_debits.extract_pdf_text",
+        lambda _path: text,
+    )
+
+    records, issues = parse_file(path)
+
+    assert not issues
+    assert len(records) == 1
+    assert records[0].reference == "76180---2"
 
 
 def test_parse_orgadata_optimized_pdf_text_extracts_bar_requirements(tmp_path):
