@@ -1204,6 +1204,11 @@ export default function MeasureMissionPage() {
 
                                     {(
                                         ['DRAFT', 'CORRECTION_REQUIRED'].includes(technicalStatus)
+                                        || (
+                                            technicalPhase === 'production'
+                                            && technicalStatus === 'LOCKED'
+                                            && productionUnlocked
+                                        )
                                         || (canImportPostLaunchRevision && technicalRevisionImportOpen)
                                     ) && (technicalPhase === 'quoting' || productionUnlocked) && (
                                         <div className="grid w-full gap-2 sm:grid-cols-2 xl:w-[560px]">

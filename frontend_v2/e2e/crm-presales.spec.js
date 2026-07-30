@@ -373,6 +373,14 @@ test('BE previews an anonymized PROGES quote before validation', async ({ page }
     await expect(page.getByText('Porte fenêtre PVC')).toBeVisible();
     await expect(page.getByText('2 000,00 €')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Envoyer au contrôle BE' })).toBeEnabled();
+
+    mission.sale_order_id = 5;
+    mission.sale_order_status = 'VALIDATED';
+    await page.reload();
+    await page.getByRole('button', { name: '2. Fabrication & débit' }).click();
+
+    await expect(page.getByText("Verrouillé jusqu'à la signature du devis client.")).toHaveCount(0);
+    await expect(page.getByText('Importer la fabrication')).toBeVisible();
 });
 
 
