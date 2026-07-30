@@ -37,7 +37,11 @@ from ..services.technical_dossier_governance import (
     build_document_matrix,
     compare_material_versions,
 )
-from ..services.stock_reservations import create_reservation, preview_records
+from ..services.stock_reservations import (
+    create_reservation,
+    preview_records,
+    reactivate_cancelled_reservation,
+)
 from ..core.time import utcnow
 from scripts.import_workshop_debits import DebitRecord
 
@@ -2792,6 +2796,17 @@ def reserve_measure_technical_cutting(
     if same_version:
         if same_version.status == "reserved":
             return _technical_governance_payload(db, mission)
+        if same_version.status == "cancelled":
+            try:
+                reactivate_cancelled_reservation(db, same_version)
+                if mission.sale_order.status in {"VALIDATED", "IN_DESIGN"}:
+                    mission.sale_order.status = "READY_FOR_PROD"
+                db.commit()
+                fresh_mission = _get_mission_or_404(db, mission_id)
+                return _technical_governance_payload(db, fresh_mission)
+            except ValueError as exc:
+                db.rollback()
+                raise HTTPException(409, str(exc)) from exc
         raise HTTPException(
             409,
             f"La version de débit validée a déjà une réservation {same_version.status} "
