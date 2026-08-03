@@ -18,6 +18,19 @@ OPEN_PREPARATION_STATUSES = {"draft", "ready"}
 
 
 def load_preparation(db: Session, preparation_id: int, *, for_update: bool = False) -> models.WorkshopPreparation | None:
+    if for_update:
+        # Lock only the preparation row. Applying FOR UPDATE to the eager-loaded
+        # query makes PostgreSQL try to lock nullable rows from LEFT OUTER JOINs,
+        # which it rejects before the preparation can be updated.
+        locked_preparation = (
+            db.query(models.WorkshopPreparation)
+            .filter(models.WorkshopPreparation.id == preparation_id)
+            .with_for_update()
+            .first()
+        )
+        if not locked_preparation:
+            return None
+
     query = (
         db.query(models.WorkshopPreparation)
         .options(
@@ -31,8 +44,6 @@ def load_preparation(db: Session, preparation_id: int, *, for_update: bool = Fal
         )
         .filter(models.WorkshopPreparation.id == preparation_id)
     )
-    if for_update:
-        query = query.with_for_update()
     return query.first()
 
 
