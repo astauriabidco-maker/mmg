@@ -74,8 +74,56 @@ Le module `backend/domain/ontology.py` expose :
 
 - `ENTITIES` : objets métiers canoniques ;
 - `RELATIONS` : liens officiels entre objets ;
+- `MODEL_BINDINGS` : correspondances avec les modèles SQLAlchemy ;
+- `ENTITY_STATUSES` : statuts métier par entité ;
 - `EXTERNAL_DOCUMENT_MAPPINGS` : mapping PROGES/ORGADATA ;
+- `BUSINESS_EVENTS` : événements métier clés ;
+- `STEP_RBAC` : permissions requises par étape/action ;
 - `WORKFLOW_GATES` : règles de passage critiques ;
 - `resolve_external_document()` : résolution d'un document externe ;
 - `validate_ontology()` : contrôle structurel utilisé par les tests.
 
+## API
+
+L'ontologie est exposée en lecture via :
+
+```http
+GET /v2/mmg/ontology
+```
+
+La réponse est pensée pour les écrans UI, les parseurs, les tests de recette et
+les futurs usages IA/RAG.
+
+## Statuts métier suivis
+
+| Entité | Statuts principaux |
+| --- | --- |
+| Opportunité avant-vente | nouvelle, qualifiée, métré à planifier, métré en cours, proposition à préparer, proposition à valider, proposition envoyée, négociation, gagnée, perdue |
+| Mission de métré | brouillon, planifiée, en cours, en contrôle BE, validée BE, annulée |
+| Dossier technique BE | brouillon, en contrôle BE, validé BE, à corriger |
+| Devis commercial MMG | brouillon, envoyé, signé, annulé |
+| Commande signée | signée, prête pour production, en production, terminée |
+| Réservation stock atelier | brouillon, active, consommée, annulée |
+| Ordre de fabrication | planifié, lancé, terminé |
+| Débit atelier réel | à débiter, débité |
+
+## Événements métier clés
+
+- Opportunité créée.
+- Métré soumis au BE.
+- Dossier technique validé BE.
+- Devis envoyé.
+- Devis signé.
+- Stock réservé.
+- Bon atelier préparé.
+- Fabrication lancée.
+- Débit consommé.
+
+## RBAC par étape
+
+| Zone | Permission de référence |
+| --- | --- |
+| CRM lecture | `SALES_VIEW` |
+| CRM écriture, devis, conversion commande | `SALES_EDIT` |
+| Validation BE et lancement fabrication | `PRODUCTION_MANAGE` |
+| Réservation, préparation atelier et débit réel | `STOCK_MANAGE` |

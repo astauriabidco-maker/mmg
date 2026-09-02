@@ -92,6 +92,31 @@ class WorkflowGate:
     rule: str
 
 
+@dataclass(frozen=True)
+class EntityStatus:
+    entity: str
+    code: str
+    label: str
+    final: bool = False
+
+
+@dataclass(frozen=True)
+class BusinessEvent:
+    code: str
+    label: str
+    source_entity: str
+    target_entity: str | None
+    description: str
+
+
+@dataclass(frozen=True)
+class StepPermission:
+    entity: str
+    action: str
+    permission: str
+    description: str
+
+
 ENTITIES: dict[str, Entity] = {
     "client": Entity(
         id="client",
@@ -406,6 +431,152 @@ PIPELINE: tuple[str, ...] = (
 BUSINESS_RULES: tuple[str, ...] = tuple(gate.rule for gate in WORKFLOW_GATES)
 
 
+MODEL_BINDINGS: dict[str, tuple[str, ...]] = {
+    entity_id: entity.source_models for entity_id, entity in ENTITIES.items()
+}
+
+
+ENTITY_STATUSES: dict[str, tuple[EntityStatus, ...]] = {
+    "crm_opportunity": (
+        EntityStatus("crm_opportunity", "nouveau", "Nouvelle"),
+        EntityStatus("crm_opportunity", "qualifie", "Qualifiée"),
+        EntityStatus("crm_opportunity", "metre_a_planifier", "Métré à planifier"),
+        EntityStatus("crm_opportunity", "metre_en_cours", "Métré en cours"),
+        EntityStatus("crm_opportunity", "proposition_a_preparer", "Proposition à préparer"),
+        EntityStatus("crm_opportunity", "proposition_a_valider", "Proposition à valider"),
+        EntityStatus("crm_opportunity", "proposition_envoyee", "Proposition envoyée"),
+        EntityStatus("crm_opportunity", "negociation", "Négociation"),
+        EntityStatus("crm_opportunity", "gagne", "Gagnée", final=True),
+        EntityStatus("crm_opportunity", "perdu", "Perdue", final=True),
+    ),
+    "measure_mission": (
+        EntityStatus("measure_mission", "DRAFT", "Brouillon"),
+        EntityStatus("measure_mission", "PLANNED", "Planifiée"),
+        EntityStatus("measure_mission", "IN_PROGRESS", "En cours"),
+        EntityStatus("measure_mission", "UNDER_REVIEW", "En contrôle BE"),
+        EntityStatus("measure_mission", "VALIDATED", "Validée BE", final=True),
+        EntityStatus("measure_mission", "CANCELLED", "Annulée", final=True),
+    ),
+    "technical_dossier": (
+        EntityStatus("technical_dossier", "DRAFT", "Brouillon"),
+        EntityStatus("technical_dossier", "UNDER_REVIEW", "En contrôle BE"),
+        EntityStatus("technical_dossier", "APPROVED", "Validé BE", final=True),
+        EntityStatus("technical_dossier", "REJECTED", "À corriger"),
+    ),
+    "commercial_quote": (
+        EntityStatus("commercial_quote", "DRAFT", "Brouillon"),
+        EntityStatus("commercial_quote", "SENT", "Envoyé"),
+        EntityStatus("commercial_quote", "SIGNED", "Signé", final=True),
+        EntityStatus("commercial_quote", "CANCELLED", "Annulé", final=True),
+    ),
+    "signed_order": (
+        EntityStatus("signed_order", "SIGNED", "Signée"),
+        EntityStatus("signed_order", "READY_FOR_PRODUCTION", "Prête pour production"),
+        EntityStatus("signed_order", "IN_PRODUCTION", "En production"),
+        EntityStatus("signed_order", "COMPLETED", "Terminée", final=True),
+    ),
+    "stock_reservation": (
+        EntityStatus("stock_reservation", "DRAFT", "Brouillon"),
+        EntityStatus("stock_reservation", "ACTIVE", "Active"),
+        EntityStatus("stock_reservation", "CONSUMED", "Consommée", final=True),
+        EntityStatus("stock_reservation", "CANCELLED", "Annulée", final=True),
+    ),
+    "production_order": (
+        EntityStatus("production_order", "PLANNED", "Planifié"),
+        EntityStatus("production_order", "LAUNCHED", "Lancé"),
+        EntityStatus("production_order", "DONE", "Terminé", final=True),
+    ),
+    "real_workshop_debit": (
+        EntityStatus("real_workshop_debit", "PENDING", "À débiter"),
+        EntityStatus("real_workshop_debit", "CONSUMED", "Débité", final=True),
+    ),
+}
+
+
+BUSINESS_EVENTS: tuple[BusinessEvent, ...] = (
+    BusinessEvent(
+        "crm_opportunity_created",
+        "Opportunité créée",
+        "crm_opportunity",
+        None,
+        "Création d'un dossier avant-vente rattaché à un client.",
+    ),
+    BusinessEvent(
+        "measure_submitted_to_be",
+        "Métré soumis au BE",
+        "measure_mission",
+        "technical_dossier",
+        "Passage des cotes terrain en contrôle technique.",
+    ),
+    BusinessEvent(
+        "technical_dossier_validated",
+        "Dossier technique validé BE",
+        "technical_dossier",
+        "commercial_quote",
+        "Validation technique permettant de préparer ou confirmer le devis.",
+    ),
+    BusinessEvent(
+        "quote_sent",
+        "Devis envoyé",
+        "commercial_quote",
+        "client",
+        "Transmission contrôlée de la proposition commerciale au client.",
+    ),
+    BusinessEvent(
+        "quote_signed",
+        "Devis signé",
+        "commercial_quote",
+        "signed_order",
+        "Acceptation client transformant la proposition en commande.",
+    ),
+    BusinessEvent(
+        "stock_reserved",
+        "Stock réservé",
+        "cutting_sheet",
+        "stock_reservation",
+        "Réservation des matières à partir d'une fiche de débit.",
+    ),
+    BusinessEvent(
+        "workshop_prepared",
+        "Bon atelier préparé",
+        "stock_reservation",
+        "workshop_preparation",
+        "Mise à disposition des matières réservées pour l'atelier.",
+    ),
+    BusinessEvent(
+        "production_launched",
+        "Fabrication lancée",
+        "production_order",
+        "real_workshop_debit",
+        "Autorisation atelier précédant la consommation matière réelle.",
+    ),
+    BusinessEvent(
+        "stock_consumed",
+        "Débit consommé",
+        "real_workshop_debit",
+        "stock_item",
+        "Sortie effective des quantités matière du stock.",
+    ),
+)
+
+
+STEP_RBAC: tuple[StepPermission, ...] = (
+    StepPermission("client", "read", "SALES_VIEW", "Consulter les fiches clients."),
+    StepPermission("client", "write", "SALES_EDIT", "Créer ou modifier les fiches clients."),
+    StepPermission("crm_opportunity", "read", "SALES_VIEW", "Consulter le pipeline avant-vente."),
+    StepPermission("crm_opportunity", "write", "SALES_EDIT", "Créer, qualifier ou déplacer une opportunité."),
+    StepPermission("measure_mission", "read", "SALES_VIEW", "Consulter les missions de métré depuis le CRM."),
+    StepPermission("measure_mission", "write", "SALES_EDIT", "Créer ou soumettre une mission de métré."),
+    StepPermission("technical_dossier", "review", "PRODUCTION_MANAGE", "Valider ou rejeter le dossier technique BE."),
+    StepPermission("commercial_quote", "write", "SALES_EDIT", "Préparer et envoyer un devis commercial."),
+    StepPermission("signed_order", "convert", "SALES_EDIT", "Transformer un devis accepté en commande."),
+    StepPermission("stock_reservation", "write", "STOCK_MANAGE", "Créer ou annuler une réservation matière."),
+    StepPermission("workshop_preparation", "write", "STOCK_MANAGE", "Préparer et remettre le bon atelier."),
+    StepPermission("production_order", "launch", "PRODUCTION_MANAGE", "Lancer la fabrication."),
+    StepPermission("real_workshop_debit", "consume", "STOCK_MANAGE", "Débiter réellement la matière."),
+)
+
+
 def document_type_can_feed_stock(document_type: str) -> bool:
     """Vrai uniquement pour une fiche de débit exploitable par le stock."""
 
@@ -479,9 +650,16 @@ def ontology_as_dict() -> dict[str, object]:
         "pipeline": list(PIPELINE),
         "entities": {key: entity.__dict__ for key, entity in ENTITIES.items()},
         "relations": [relation.__dict__ for relation in RELATIONS],
+        "model_bindings": MODEL_BINDINGS,
+        "entity_statuses": {
+            entity_id: [status.__dict__ for status in statuses]
+            for entity_id, statuses in ENTITY_STATUSES.items()
+        },
         "external_document_mappings": [
             mapping.__dict__ for mapping in EXTERNAL_DOCUMENT_MAPPINGS
         ],
+        "business_events": [event.__dict__ for event in BUSINESS_EVENTS],
+        "step_rbac": [permission.__dict__ for permission in STEP_RBAC],
         "workflow_gates": [gate.__dict__ for gate in WORKFLOW_GATES],
     }
 
@@ -568,5 +746,26 @@ def validate_ontology() -> list[str]:
         for required_entity in gate.required_entities:
             if required_entity not in entity_ids:
                 issues.append(f"Unknown gate requirement: {required_entity}")
+
+    for entity_id, statuses in ENTITY_STATUSES.items():
+        if entity_id not in entity_ids:
+            issues.append(f"Unknown status entity: {entity_id}")
+        for status in statuses:
+            if status.entity != entity_id:
+                issues.append(
+                    f"Status entity mismatch: {entity_id} != {status.entity}"
+                )
+
+    for event in BUSINESS_EVENTS:
+        if event.source_entity not in entity_ids:
+            issues.append(f"Unknown event source: {event.source_entity}")
+        if event.target_entity is not None and event.target_entity not in entity_ids:
+            issues.append(f"Unknown event target: {event.target_entity}")
+
+    for permission in STEP_RBAC:
+        if permission.entity not in entity_ids:
+            issues.append(f"Unknown RBAC entity: {permission.entity}")
+        if not permission.permission:
+            issues.append(f"Missing permission for {permission.entity}/{permission.action}")
 
     return issues
