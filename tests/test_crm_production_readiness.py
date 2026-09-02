@@ -177,6 +177,80 @@ def test_multiple_contacts_keep_one_primary_and_sync_legacy_fields(isolated_clie
     assert record["phone"] == "0607080910"
 
 
+def test_enriched_client_contact_fields_are_persisted_and_updatable(isolated_client):
+    client, session_factory = isolated_client
+    headers = _headers(
+        session_factory,
+        "crm-enriched-contact-editor",
+        ["SALES_VIEW", "SALES_EDIT"],
+    )
+    created = client.post(
+        "/v2/partners/clients",
+        json=_client_payload(
+            "Client Contact Enrichi",
+            email="legacy@example.test",
+            phone="0101010101",
+        ),
+        headers=headers,
+    ).json()
+    client_id = created["id"]
+
+    added = client.post(
+        f"/v2/partners/clients/{client_id}/contacts",
+        json={
+            "name": "Mme Prescription",
+            "role": "Architecte",
+            "priority": 1,
+            "influence_role": "prescriber",
+            "preferred_channel": "email",
+            "email_consent": True,
+            "email_consent_at": "2026-09-02T12:00:00Z",
+            "email": "prescription@example.test",
+            "phone": "0600000001",
+            "is_primary": True,
+            "notes": "Décide des prescriptions techniques.",
+        },
+        headers=headers,
+    )
+    assert added.status_code == 200, added.text
+    payload = added.json()
+    assert payload["priority"] == 1
+    assert payload["influence_role"] == "PRESCRIBER"
+    assert payload["preferred_channel"] == "EMAIL"
+    assert payload["email_consent"] is True
+    assert payload["email_consent_at"].startswith("2026-09-02T12:00:00")
+
+    updated = client.patch(
+        f"/v2/partners/clients/{client_id}/contacts/{payload['id']}",
+        json={
+            "priority": 2,
+            "influence_role": "decision_maker",
+            "preferred_channel": "phone",
+            "email_consent": False,
+        },
+        headers=headers,
+    )
+    assert updated.status_code == 200, updated.text
+    updated_payload = updated.json()
+    assert updated_payload["priority"] == 2
+    assert updated_payload["influence_role"] == "DECISION_MAKER"
+    assert updated_payload["preferred_channel"] == "PHONE"
+    assert updated_payload["email_consent"] is False
+    assert updated_payload["email_consent_at"] is None
+
+    invalid = client.patch(
+        f"/v2/partners/clients/{client_id}/contacts/{payload['id']}",
+        json={"preferred_channel": "fax"},
+        headers=headers,
+    )
+    assert invalid.status_code == 422
+
+    refreshed = client.get("/v2/partners/clients", headers=headers).json()
+    record = next(item for item in refreshed if item["id"] == client_id)
+    assert record["contact_name"] == "Mme Prescription"
+    assert record["email"] == "prescription@example.test"
+
+
 def test_duplicate_detection_merge_and_segmentation(isolated_client):
     client, session_factory = isolated_client
     headers = _headers(
@@ -473,3 +547,65 @@ def test_crm_client_migration_backfills_primary_contact(tmp_path):
         "0101010101",
         1,
     )
+
+
+def test_crm_contact_enrichment_migration_keeps_existing_contacts(tmp_path):
+    db_path = tmp_path / "crm-contact-enrichment.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE client_contacts (
+                    id INTEGER PRIMARY KEY,
+                    client_id INTEGER NOT NULL,
+                    name VARCHAR NOT NULL,
+                    role VARCHAR,
+                    email VARCHAR,
+                    phone VARCHAR,
+                    is_primary BOOLEAN NOT NULL,
+                    notes TEXT,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO client_contacts (
+                    id, client_id, name, role, email, phone, is_primary,
+                    created_at, updated_at
+                ) VALUES (
+                    1, 1, 'Mme Historique', 'Contact principal',
+                    'historique@example.test', '0101010101', 1,
+                    '2026-07-01 09:00:00', '2026-07-01 09:00:00'
+                )
+                """
+            )
+        )
+
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    command.stamp(config, "a2c4e6f8b103")
+    command.upgrade(config, "a3d9f2c8b601")
+
+    contact_columns = {
+        column["name"] for column in inspect(engine).get_columns("client_contacts")
+    }
+    assert {
+        "priority",
+        "influence_role",
+        "preferred_channel",
+        "email_consent",
+        "email_consent_at",
+    }.issubset(contact_columns)
+    with engine.connect() as connection:
+        contact = connection.execute(
+            text(
+                "SELECT priority, influence_role, preferred_channel, email_consent, email_consent_at "
+                "FROM client_contacts WHERE id = 1"
+            )
+        ).one()
+    assert contact == (3, None, None, 0, None)

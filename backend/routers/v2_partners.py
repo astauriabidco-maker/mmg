@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .. import models, schemas
 from ..core import security
+from ..core.time import utcnow
 from ..database import get_db
 from ..services.crm_clients import (
     duplicate_candidates,
@@ -43,6 +44,16 @@ CLIENT_CSV_FIELDS = (
     "tags",
     "is_active",
 )
+CONTACT_INFLUENCE_ROLES = {
+    "DECISION_MAKER",
+    "PRESCRIBER",
+    "BUYER",
+    "SITE_CONTACT",
+    "TECHNICAL_CONTACT",
+    "ACCOUNTING",
+    "OTHER",
+}
+CONTACT_CHANNELS = {"EMAIL", "PHONE", "SMS", "WHATSAPP", "IN_PERSON"}
 
 
 def _client_or_404(db: Session, client_id: int) -> models.Client:
@@ -80,6 +91,10 @@ def _create_primary_contact_from_client(
             client_id=client.id,
             name=client.contact_name or client.email or client.phone,
             role="Contact principal",
+            priority=1,
+            influence_role="DECISION_MAKER",
+            preferred_channel="EMAIL" if client.email else "PHONE" if client.phone else None,
+            email_consent=False,
             email=client.email,
             phone=client.phone,
             is_primary=True,
@@ -135,6 +150,29 @@ def _sync_primary_contact(
         client.contact_name = None
         client.email = None
         client.phone = None
+
+
+def _normalize_contact_payload(payload: dict) -> dict:
+    if "name" in payload:
+        payload["name"] = (payload["name"] or "").strip()
+        if not payload["name"]:
+            raise HTTPException(422, "Le nom du contact est obligatoire")
+    for field in ("role", "email", "phone", "notes"):
+        if field in payload and isinstance(payload[field], str):
+            payload[field] = payload[field].strip() or None
+    if "influence_role" in payload:
+        payload["influence_role"] = (payload["influence_role"] or "").strip().upper() or None
+        if payload["influence_role"] and payload["influence_role"] not in CONTACT_INFLUENCE_ROLES:
+            raise HTTPException(422, "Rôle d'influence contact invalide")
+    if "preferred_channel" in payload:
+        payload["preferred_channel"] = (payload["preferred_channel"] or "").strip().upper() or None
+        if payload["preferred_channel"] and payload["preferred_channel"] not in CONTACT_CHANNELS:
+            raise HTTPException(422, "Canal préféré contact invalide")
+    if payload.get("email_consent") is False:
+        payload["email_consent_at"] = None
+    if payload.get("email_consent") is True and not payload.get("email_consent_at"):
+        payload["email_consent_at"] = utcnow()
+    return payload
 
 
 def _find_import_match(db: Session, row: dict) -> Optional[models.Client]:
@@ -491,9 +529,7 @@ def create_client_contact(
     db: Session = Depends(get_db),
 ):
     client = _client_or_404(db, client_id)
-    name = item.name.strip()
-    if not name:
-        raise HTTPException(422, "Le nom du contact est obligatoire")
+    payload = _normalize_contact_payload(item.model_dump())
     existing_count = (
         db.query(models.ClientContact)
         .filter(models.ClientContact.client_id == client_id)
@@ -501,12 +537,17 @@ def create_client_contact(
     )
     contact = models.ClientContact(
         client_id=client_id,
-        name=name,
-        role=(item.role or "").strip() or None,
-        email=(item.email or "").strip() or None,
-        phone=(item.phone or "").strip() or None,
-        is_primary=item.is_primary or existing_count == 0,
-        notes=(item.notes or "").strip() or None,
+        name=payload["name"],
+        role=payload.get("role"),
+        priority=payload.get("priority") or 3,
+        influence_role=payload.get("influence_role"),
+        preferred_channel=payload.get("preferred_channel"),
+        email_consent=bool(payload.get("email_consent")),
+        email_consent_at=payload.get("email_consent_at") if payload.get("email_consent") else None,
+        email=payload.get("email"),
+        phone=payload.get("phone"),
+        is_primary=payload.get("is_primary") or existing_count == 0,
+        notes=payload.get("notes"),
     )
     db.add(contact)
     db.flush()
@@ -540,13 +581,7 @@ def update_client_contact(
     if not contact:
         raise HTTPException(404, "Contact introuvable")
     payload = item.model_dump(exclude_unset=True)
-    if "name" in payload:
-        payload["name"] = (payload["name"] or "").strip()
-        if not payload["name"]:
-            raise HTTPException(422, "Le nom du contact est obligatoire")
-    for field in ("role", "email", "phone", "notes"):
-        if field in payload and isinstance(payload[field], str):
-            payload[field] = payload[field].strip() or None
+    payload = _normalize_contact_payload(payload)
     for key, value in payload.items():
         setattr(contact, key, value)
     db.flush()

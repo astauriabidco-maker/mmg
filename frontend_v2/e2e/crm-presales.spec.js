@@ -217,9 +217,16 @@ test('commercial completes the CRM presales journey and merges a duplicate', asy
     await page.getByRole('button', { name: 'Ajouter un contact' }).click();
     await page.getByPlaceholder('Nom du contact').fill('M. Durand');
     await page.getByPlaceholder('Fonction / rôle').fill('Décisionnaire');
+    await page.getByRole('combobox').nth(1).selectOption('1');
+    await page.getByRole('combobox').nth(2).selectOption('DECISION_MAKER');
     await page.getByPlaceholder('Email').fill('durand@acme.test');
+    await page.getByRole('combobox').nth(3).selectOption('EMAIL');
+    await page.getByLabel('Consentement email').check();
     await page.getByRole('button', { name: 'Enregistrer' }).click();
     await expect(page.getByText('M. Durand', { exact: true })).toBeVisible();
+    await expect(page.locator('span.rounded-full').filter({ hasText: /^P1$/ }).first()).toBeVisible();
+    await expect(page.locator('span.rounded-full').filter({ hasText: /^Décisionnaire$/ }).first()).toBeVisible();
+    await expect(page.locator('span.rounded-full').filter({ hasText: /^Email OK$/ }).first()).toBeVisible();
 
     await page.getByRole('button', { name: 'Nouvelle opportunité' }).first().click();
     await page.getByPlaceholder('Ex. Menuiseries chantier Bonapriso').fill('Rénovation du siège');
