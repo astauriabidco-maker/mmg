@@ -1,4 +1,5 @@
 import io
+from datetime import timedelta
 
 import pytest
 from alembic import command
@@ -9,6 +10,7 @@ from backend import database, models
 from backend import main as backend_main
 from backend.core import security
 from backend.core.security import get_password_hash
+from backend.core.time import utcnow
 
 
 def _headers(session_factory, username, permissions):
@@ -304,6 +306,96 @@ def test_autonomous_reminder_sync_uses_application_session(isolated_client):
     assert result["created"] == 1
     with session_factory() as db:
         assert db.query(models.CRMReminderPlan).count() == 1
+
+
+def test_autonomous_reminder_worker_dispatches_due_email(isolated_client, monkeypatch):
+    _, session_factory = isolated_client
+    monkeypatch.setattr(
+        "backend.services.crm_reminders._send_smtp_email",
+        lambda recipient, subject, text_body, html_body: True,
+    )
+    entered_at = utcnow() - timedelta(days=5)
+    with session_factory() as db:
+        client = models.Client(
+            name="Client Relance Auto",
+            contact_name="Direction",
+            email="auto@example.test",
+        )
+        db.add(client)
+        db.flush()
+        db.add(
+            models.CRMOpportunity(
+                reference="OPP-AUTO-001",
+                client_id=client.id,
+                title="Projet relance automatique",
+                stage=models.CRMOpportunityStage.PROPOSAL_SENT.value,
+                stage_entered_at=entered_at,
+                created_at=entered_at,
+                probability=50,
+                created_by="test",
+            )
+        )
+        db.commit()
+
+    result = backend_main._sync_crm_reminders_once()
+
+    assert result["created"] == 1
+    assert result["processed"] == 1
+    assert result["sent"] == 1
+    with session_factory() as db:
+        plan = db.query(models.CRMReminderPlan).one()
+        delivery = db.query(models.CRMReminderDelivery).one()
+        activity = db.query(models.CRMActivity).one()
+        assert plan.status == "SENT"
+        assert plan.sent_delivery_id == delivery.id
+        assert delivery.status == "SENT"
+        assert delivery.activity_id == activity.id
+        assert activity.activity_type == models.CRMActivityType.EMAIL.value
+
+
+def test_autonomous_reminder_worker_skips_once_without_smtp(isolated_client, monkeypatch):
+    _, session_factory = isolated_client
+    monkeypatch.setattr(
+        "backend.services.crm_reminders._send_smtp_email",
+        lambda recipient, subject, text_body, html_body: False,
+    )
+    entered_at = utcnow() - timedelta(days=5)
+    with session_factory() as db:
+        client = models.Client(
+            name="Client Sans SMTP",
+            contact_name="Direction",
+            email="skip@example.test",
+        )
+        db.add(client)
+        db.flush()
+        db.add(
+            models.CRMOpportunity(
+                reference="OPP-SKIP-001",
+                client_id=client.id,
+                title="Projet relance sans SMTP",
+                stage=models.CRMOpportunityStage.PROPOSAL_SENT.value,
+                stage_entered_at=entered_at,
+                created_at=entered_at,
+                probability=50,
+                created_by="test",
+            )
+        )
+        db.commit()
+
+    first_result = backend_main._sync_crm_reminders_once()
+    second_result = backend_main._sync_crm_reminders_once()
+
+    assert first_result["processed"] == 1
+    assert first_result["skipped"] == 1
+    assert second_result["created"] == 0
+    assert second_result["processed"] == 0
+    with session_factory() as db:
+        plan = db.query(models.CRMReminderPlan).one()
+        delivery = db.query(models.CRMReminderDelivery).one()
+        assert plan.status == "SKIPPED"
+        assert plan.sent_delivery_id == delivery.id
+        assert delivery.status == "SKIPPED"
+        assert "SMTP non configuré" in delivery.error_message
 
 
 def test_production_requires_smtp_when_crm_reminders_are_enabled(monkeypatch):

@@ -5,6 +5,7 @@ from html import escape
 from sqlalchemy.exc import IntegrityError
 
 from .. import models
+from ..core.events import _send_smtp_email
 from ..core.time import utcnow
 
 
@@ -346,3 +347,165 @@ def plain_text_to_html(message):
         + "".join(paragraphs)
         + "</body></html>"
     )
+
+
+def _validate_recipient(recipient):
+    value = (recipient or "").strip()
+    if "@" not in value or value.startswith("@") or value.endswith("@"):
+        raise ValueError("Adresse email destinataire invalide")
+    return value
+
+
+def record_reminder_delivery(
+    db,
+    *,
+    client,
+    opportunity=None,
+    template=None,
+    plan=None,
+    reminder_key=None,
+    recipient=None,
+    subject,
+    message,
+    created_by="Système",
+    send_email=None,
+    close_plan_on_unsent=False,
+):
+    recipient = _validate_recipient(recipient)
+    delivery = models.CRMReminderDelivery(
+        reminder_key=(reminder_key or "").strip() or None,
+        client_id=client.id,
+        opportunity_id=opportunity.id if opportunity else None,
+        template_id=template.id if template else None,
+        recipient=recipient,
+        subject=subject.strip(),
+        message=message.strip(),
+        status="PREPARED",
+        created_by=created_by,
+    )
+    db.add(delivery)
+    db.flush()
+
+    try:
+        sender = send_email or _send_smtp_email
+        sent = sender(
+            recipient,
+            delivery.subject,
+            delivery.message,
+            plain_text_to_html(delivery.message),
+        )
+        if sent:
+            delivery.status = "SENT"
+            delivery.sent_at = utcnow()
+            activity = models.CRMActivity(
+                client_id=client.id,
+                opportunity_id=opportunity.id if opportunity else None,
+                activity_type=models.CRMActivityType.EMAIL.value,
+                subject=delivery.subject,
+                note=f"Relance email envoyée à {recipient}. Journal #{delivery.id}.",
+                status=models.CRMActivityStatus.COMPLETED.value,
+                author=created_by,
+                completed_at=delivery.sent_at,
+            )
+            db.add(activity)
+            db.flush()
+            delivery.activity_id = activity.id
+            notification = f"Relance envoyée à {recipient}."
+        else:
+            delivery.status = "SKIPPED"
+            delivery.error_message = (
+                "SMTP non configuré : le message est conservé dans l'historique sans être envoyé."
+            )
+            notification = "Message préparé mais non envoyé : SMTP non configuré."
+    except Exception as exc:
+        delivery.status = "FAILED"
+        delivery.error_message = str(exc)
+        notification = "Échec de l'envoi. Le message et l'erreur ont été journalisés."
+
+    if plan:
+        if delivery.status == "SENT" or close_plan_on_unsent:
+            plan.status = delivery.status
+            plan.sent_delivery_id = delivery.id
+        if delivery.status != "SENT" and close_plan_on_unsent:
+            plan.cancelled_reason = delivery.error_message
+
+    return delivery, notification
+
+
+def dispatch_due_reminder_plans(db, *, now=None, created_by="Planificateur CRM", limit=50):
+    now = now or utcnow()
+    ensure_default_templates(db)
+    due_plans = (
+        db.query(models.CRMReminderPlan)
+        .filter(
+            models.CRMReminderPlan.status == "PENDING",
+            models.CRMReminderPlan.due_at <= now,
+        )
+        .order_by(models.CRMReminderPlan.due_at.asc(), models.CRMReminderPlan.id.asc())
+        .limit(limit)
+        .all()
+    )
+    sent = 0
+    skipped = 0
+    failed = 0
+    invalid = 0
+
+    for plan in due_plans:
+        client = plan.client
+        opportunity = plan.opportunity
+        template = plan.rule.template if plan.rule else None
+        if not client or not opportunity or not template:
+            plan.status = "FAILED"
+            plan.cancelled_reason = "Contexte de relance incomplet"
+            failed += 1
+            continue
+        try:
+            recipient = _validate_recipient(client.email)
+        except ValueError as exc:
+            plan.status = "FAILED"
+            plan.cancelled_reason = str(exc)
+            invalid += 1
+            continue
+        context = build_template_context(
+            client,
+            opportunity,
+            sender_name=created_by,
+            due_at=plan.due_at,
+        )
+        try:
+            subject, message = render_email(template, context)
+            delivery, _notification = record_reminder_delivery(
+                db,
+                client=client,
+                opportunity=opportunity,
+                template=template,
+                plan=plan,
+                reminder_key=plan.plan_key,
+                recipient=recipient,
+                subject=subject,
+                message=message,
+                created_by=created_by,
+                close_plan_on_unsent=True,
+            )
+        except Exception as exc:
+            plan.status = "FAILED"
+            plan.cancelled_reason = str(exc)
+            failed += 1
+            continue
+
+        if delivery.status == "SENT":
+            sent += 1
+        elif delivery.status == "SKIPPED":
+            skipped += 1
+        else:
+            failed += 1
+
+    if due_plans:
+        db.commit()
+    return {
+        "processed": len(due_plans),
+        "sent": sent,
+        "skipped": skipped,
+        "failed": failed,
+        "invalid": invalid,
+    }

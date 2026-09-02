@@ -2,19 +2,28 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+from typing import List, Optional
 
 from backend import database, models
 from backend.core import security
 from backend.main import app
 
 
-def _auth_headers(session_factory, username: str, role: str = "ADMIN") -> dict:
+def _auth_headers(
+    session_factory,
+    username: str,
+    role: str = "ADMIN",
+    permissions: Optional[List[str]] = None,
+) -> dict:
     """Crée l'utilisateur en base si besoin, puis émet un JWT valide pour lui."""
     with session_factory() as db:
         if not db.query(models.User).filter(models.User.username == username).first():
             db.add(models.User(username=username, pin_hash="test-pin", role=role, is_active=True))
             db.commit()
-    token = security.create_access_token({"sub": username, "role": role})
+    payload = {"sub": username, "role": role}
+    if permissions is not None:
+        payload["permissions"] = permissions
+    token = security.create_access_token(payload)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -220,7 +229,12 @@ def test_in_production_cancellation_is_admin_only():
         with TestingSessionLocal() as db:
             sale_id = _create_sale(db, "IN_PRODUCTION")
 
-        manager_headers = _auth_headers(TestingSessionLocal, "statuts-manager", role="MANAGER")
+        manager_headers = _auth_headers(
+            TestingSessionLocal,
+            "statuts-manager",
+            role="MANAGER",
+            permissions=["SALES_EDIT"],
+        )
         refused = client.put(f"/v2/sales/{sale_id}/status", params={"status": "CANCELLED"}, headers=manager_headers)
         assert refused.status_code == 403
         assert "administrateur" in refused.text
