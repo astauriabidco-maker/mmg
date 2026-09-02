@@ -131,6 +131,8 @@ def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
         reservation = reserve_response.json()
         assert reservation["status"] == "reserved"
         assert reservation["sale_order_id"] == sale_id
+        assert reservation["sale_status"] == "READY_FOR_PROD"
+        assert reservation["sale_reference"] == "DEV-ATELIER-1"
         assert reservation["lines"][0]["reserved_quantity"] == 3
 
         with TestingSessionLocal() as db:
@@ -156,6 +158,18 @@ def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
             )
             assert source_quant.quantity == 2
             assert staging_quant.quantity == 3
+
+        early_consume_response = client.post(
+            f"/v2/stock/workshop-debits/reservations/{reservation['id']}/consume",
+            headers=headers,
+        )
+        assert early_consume_response.status_code == 400
+        assert "Lancez la fabrication" in early_consume_response.text
+
+        with TestingSessionLocal() as db:
+            sale_db = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_id).one()
+            sale_db.status = "IN_PRODUCTION"
+            db.commit()
 
         consume_response = client.post(
             f"/v2/stock/workshop-debits/reservations/{reservation['id']}/consume",

@@ -2255,7 +2255,8 @@ def list_workshop_reservations(
     user: dict = Depends(get_current_user),
 ):
     query = db.query(models.StockReservation).options(
-        joinedload(models.StockReservation.lines).joinedload(models.StockReservationLine.variant)
+        joinedload(models.StockReservation.lines).joinedload(models.StockReservationLine.variant),
+        joinedload(models.StockReservation.sale_order),
     ).order_by(models.StockReservation.created_at.desc())
     if status:
         query = query.filter(models.StockReservation.status == status)

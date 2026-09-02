@@ -1024,6 +1024,14 @@ class StockReservation(Base):
     technical_dossier_version = relationship("TechnicalDossierVersion")
     location = relationship("StockLocation")
 
+    @property
+    def sale_status(self):
+        return self.sale_order.status if self.sale_order else None
+
+    @property
+    def sale_reference(self):
+        return self.sale_order.reference if self.sale_order else None
+
 class StockReservationLine(Base):
     __tablename__ = "stock_reservation_lines"
     id = Column(Integer, primary_key=True, index=True)

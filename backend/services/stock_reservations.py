@@ -129,6 +129,34 @@ def assert_technical_launch_authorized(
         )
 
 
+def assert_workshop_consumption_after_production_launch(
+    db: Session,
+    reservation: models.StockReservation,
+) -> None:
+    """Le débit réel atelier ne peut intervenir qu'après lancement production.
+
+    La réservation et la remise magasin préparent physiquement le dossier. La
+    consommation, elle, est le débit réel : elle doit rester postérieure à la
+    transmission atelier, sinon le devis perd sa réservation active et ne peut
+    plus être lancé en production.
+    """
+    if reservation.production_order_id:
+        return
+    if not reservation.sale_order_id:
+        return
+
+    sale = (
+        reservation.sale_order
+        or db.query(models.SaleOrder)
+        .filter(models.SaleOrder.id == reservation.sale_order_id)
+        .first()
+    )
+    if sale and sale.status != "IN_PRODUCTION":
+        raise ValueError(
+            "Lancez la fabrication depuis la commande avant de confirmer le débit réel atelier."
+        )
+
+
 def get_default_internal_location(db: Session) -> models.StockLocation:
     """Emplacement interne principal : « WH/Stock » actif, sinon premier interne actif.
 
@@ -762,6 +790,7 @@ def consume_reservation(
     if reservation.status != ACTIVE_RESERVATION_STATUS:
         return {"created_moves": 0, "consumed_lines": 0}
     assert_technical_launch_authorized(db, reservation)
+    assert_workshop_consumption_after_production_launch(db, reservation)
 
     preparation = (
         db.query(models.WorkshopPreparation)
