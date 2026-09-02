@@ -472,6 +472,144 @@ CORTIZO_PRICE_SUFFIX_RE = re.compile(
 CORTIZO_COLORS = ("7016CM", "BLANC", "NOIR", "GRIS")
 
 
+ORGADATA_FABRICATION_HEADER_RE = re.compile(
+    r"\bPosition\s+Syst\S*me\s+Type\s+Dimensions\s+Finition\s+Quantit\S*",
+    re.IGNORECASE,
+)
+ORGADATA_FABRICATION_LINE_RE = re.compile(
+    r"^\s*(?P<position>[A-Z]{1,5}\d+[A-Z0-9._/-]*)\s+"
+    r"(?P<system>.+?)\s+"
+    r"(?P<opening_type>Fixe|Porte[- ]fen[eê]tre|Fen[eê]tre|Porte|Coulissant|"
+    r"Levant[- ]coulissant|Battant|Oscillo[- ]battant|Soufflet|Pivotant|"
+    r"Pliant(?:\s*/\s*accord[ée]on)?|Verri[eè]re|Fa[cç]ade)\s+"
+    r"(?P<width>\d+(?:[,.]\d+)?)\s*[x×]\s*"
+    r"(?P<height>\d+(?:[,.]\d+)?)\s*mm\s+"
+    r"(?P<finish>.+?)\s+"
+    r"(?P<quantity>\d+(?:[,.]\d+)?)\s*$",
+    re.IGNORECASE,
+)
+ORGADATA_FABRICATION_DETAIL_RE = re.compile(
+    r"^\s*(?P<label>Vitrage|Glass|Couleur|Coloris|Finition|Accessoires?|"
+    r"Quincaillerie|Remarques?|Notes?)\s*:\s*(?P<value>.+?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_orgadata_fabrication_text(text: str) -> bool:
+    upper = text.upper()
+    return (
+        ("ORGADATA" in upper or "LOGIKAL" in upper)
+        and "BON D'ATELIER" in upper
+        and bool(ORGADATA_FABRICATION_HEADER_RE.search(text))
+    )
+
+
+def _orgadata_fabrication_material(system: str, text: str) -> str | None:
+    haystack = f"{system} {text}".upper()
+    if any(token in haystack for token in ("ALU", "ALUMINIUM", "CORTIZO", "TECHNAL", "HYDRO", "SEPALUMIC")):
+        return "ALU"
+    if "PVC" in haystack or "KOMMERLING" in haystack or "KÖMMERLING" in haystack:
+        return "PVC"
+    return None
+
+
+def _apply_orgadata_detail(record: dict[str, Any], label: str, value: str) -> None:
+    key = clean_text(label).lower()
+    value = clean_text(value)
+    if not value:
+        return
+    if key in {"vitrage", "glass"}:
+        record["glazing"] = value
+    elif key in {"couleur", "coloris", "finition"}:
+        record["finish"] = value
+    elif key in {"accessoire", "accessoires", "quincaillerie"}:
+        record["accessories"] = [
+            clean_text(part) for part in re.split(r"[,;]", value) if clean_text(part)
+        ]
+    elif key in {"remarque", "remarques", "note", "notes"}:
+        record["remarks"] = value
+
+
+def parse_orgadata_fabrication_pdf(
+    path: Path,
+    text: str,
+) -> tuple[list[dict[str, Any]], list[DebitIssue]]:
+    """Parse ORGADATA/LogiKal workshop fabrication sheets.
+
+    These records describe manufactured openings and workshop instructions.
+    They are intentionally not DebitRecord instances because stock
+    reservations must continue to come from the dedicated CUTTING document.
+    """
+
+    project_reference = detect_project_reference(text)
+    records: list[dict[str, Any]] = []
+    issues: list[DebitIssue] = []
+    current: dict[str, Any] | None = None
+
+    for row_number, raw_line in enumerate(text.splitlines(), start=1):
+        line = clean_text(raw_line)
+        if not line:
+            continue
+
+        match = ORGADATA_FABRICATION_LINE_RE.match(line)
+        if match:
+            width = parse_number(match.group("width"))
+            height = parse_number(match.group("height"))
+            quantity = parse_number(match.group("quantity"))
+            if width is None or height is None or quantity is None:
+                issues.append(
+                    DebitIssue(
+                        "warning",
+                        "invalid_orgadata_fabrication_line",
+                        path.name,
+                        row_number,
+                        match.group("position"),
+                        f"Ligne fabrication ORGADATA ignorée: {line}",
+                    )
+                )
+                current = None
+                continue
+            current = {
+                "source": path.name,
+                "row": row_number,
+                "project_reference": project_reference,
+                "position": clean_text(match.group("position")),
+                "system": clean_text(match.group("system")),
+                "opening_type": clean_text(match.group("opening_type")),
+                "width_mm": width,
+                "height_mm": height,
+                "finish": clean_text(match.group("finish")),
+                "quantity": quantity,
+                "material": _orgadata_fabrication_material(match.group("system"), text),
+                "glazing": None,
+                "accessories": [],
+                "remarks": None,
+            }
+            records.append(current)
+            continue
+
+        detail_match = ORGADATA_FABRICATION_DETAIL_RE.match(line)
+        if detail_match and current is not None:
+            _apply_orgadata_detail(
+                current,
+                detail_match.group("label"),
+                detail_match.group("value"),
+            )
+
+    if is_orgadata_fabrication_text(text) and not records:
+        issues.append(
+            DebitIssue(
+                "error",
+                "no_orgadata_fabrication_records",
+                path.name,
+                None,
+                None,
+                "Aucune ligne d'ouvrage ORGADATA exploitable dans le bon d'atelier.",
+            )
+        )
+    return records, issues
+
+
 def is_cortizo_order_text(text: str) -> bool:
     upper = text.upper()
     has_columns = "CROQUIS QUANTITÉ / NUMÉRO" in upper

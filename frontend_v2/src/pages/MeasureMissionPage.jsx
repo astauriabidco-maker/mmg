@@ -854,9 +854,53 @@ export default function MeasureMissionPage() {
     const latestCuttingVersion = [...(mission?.technical_dossier?.versions || [])]
         .reverse()
         .find(version => version.document_type === 'CUTTING');
+    const latestFabricationVersion = [...(mission?.technical_dossier?.versions || [])]
+        .reverse()
+        .find(version => version.document_type === 'FABRICATION');
     const latestQuotingVersion = [...(mission?.technical_dossier?.versions || [])]
         .reverse()
         .find(version => version.document_type === 'QUOTING');
+    const fabricationCrossCheck = useMemo(() => {
+        const fabricationRecords = latestFabricationVersion?.parsed_records || [];
+        if (!fabricationRecords.length) return null;
+        const normalise = value => String(value || '').trim().toUpperCase();
+        const openingByLabel = new Map((mission?.openings || []).map(opening => [normalise(opening.label), opening]));
+        const quotePositions = new Set((latestQuotingVersion?.parsed_records || []).map(record => normalise(record.position)).filter(Boolean));
+        const issues = [];
+        fabricationRecords.forEach(record => {
+            const position = normalise(record.position);
+            const opening = openingByLabel.get(position);
+            if (!opening) {
+                issues.push(`Ouvrage ${record.position || 'sans repère'} absent du métré.`);
+                return;
+            }
+            if (Number(opening.width_mm) && Number(record.width_mm) && Number(opening.width_mm) !== Number(record.width_mm)) {
+                issues.push(`${record.position}: largeur fabrication ${record.width_mm} mm différente du métré ${opening.width_mm} mm.`);
+            }
+            if (Number(opening.height_mm) && Number(record.height_mm) && Number(opening.height_mm) !== Number(record.height_mm)) {
+                issues.push(`${record.position}: hauteur fabrication ${record.height_mm} mm différente du métré ${opening.height_mm} mm.`);
+            }
+            if (quotePositions.size && !quotePositions.has(position)) {
+                issues.push(`${record.position}: repère absent du chiffrage importé.`);
+            }
+        });
+        (mission?.openings || []).forEach(opening => {
+            if (!fabricationRecords.some(record => normalise(record.position) === normalise(opening.label))) {
+                issues.push(`${opening.label || 'Ouvrage'}: présent au métré mais absent du bon atelier.`);
+            }
+        });
+        if (!latestCuttingVersion?.parsed_records?.length) {
+            issues.push('Aucun débit matière exploitable associé au bon atelier.');
+        }
+        return {
+            status: issues.length ? 'warning' : 'ok',
+            issues,
+            checkedCount: fabricationRecords.length,
+            measureCount: mission?.openings?.length || 0,
+            quoteCount: quotePositions.size || 0,
+            cuttingCount: latestCuttingVersion?.parsed_records?.length || 0,
+        };
+    }, [latestFabricationVersion, latestQuotingVersion, latestCuttingVersion, mission?.openings]);
     const technicalReservation = technicalGovernance?.execution?.reservation;
     const technicalPreparation = technicalGovernance?.execution?.preparation;
     const technicalPreparationStatus = technicalPreparation?.status;
@@ -1703,6 +1747,135 @@ export default function MeasureMissionPage() {
                                         )}
                                     </div>
                                 </div>
+
+                                {technicalPhase === 'production' && latestFabricationVersion?.parsed_records?.length > 0 && (
+                                    <div className="mt-5 overflow-hidden border border-sky-200 bg-white">
+                                        <div className="flex flex-col gap-3 border-b border-sky-100 bg-sky-50/70 px-4 py-4 md:flex-row md:items-start md:justify-between md:px-5">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-sky-700">Prévisualisation fabrication importée</p>
+                                                <h3 className="mt-1 text-base font-black text-slate-950">
+                                                    {latestFabricationVersion.detected_source_system || latestFabricationVersion.source_system}
+                                                    {' · '}
+                                                    {latestFabricationVersion.detected_project_reference || latestFabricationVersion.source_reference || `V${latestFabricationVersion.version_number}`}
+                                                </h3>
+                                                <p className="mt-1 text-xs font-bold text-slate-500">
+                                                    Ouvrages, systèmes et consignes extraits du bon d’atelier. Le débit matière reste contrôlé séparément.
+                                                </p>
+                                            </div>
+                                            <span className={`border px-2 py-1 text-[10px] font-black uppercase ${ANALYSIS_STATUS_META[latestFabricationVersion.analysis_status]?.[1] || ANALYSIS_STATUS_META.PENDING[1]}`}>
+                                                {ANALYSIS_STATUS_META[latestFabricationVersion.analysis_status]?.[0] || latestFabricationVersion.analysis_status}
+                                            </span>
+                                        </div>
+
+                                        <div className="grid gap-2 border-b border-slate-100 p-4 sm:grid-cols-2 lg:grid-cols-5 md:p-5">
+                                            {[
+                                                ['Ouvrages', latestFabricationVersion.parsed_summary?.opening_count ?? latestFabricationVersion.parsed_records?.length ?? 0],
+                                                ['Quantité', latestFabricationVersion.parsed_summary?.total_quantity ?? 0],
+                                                ['Systèmes', Object.keys(latestFabricationVersion.parsed_summary?.systems || {}).length],
+                                                ['Vitrages', latestFabricationVersion.parsed_summary?.with_glazing ?? 0],
+                                                ['Accessoires', latestFabricationVersion.parsed_summary?.with_accessories ?? 0],
+                                            ].map(([label, value]) => (
+                                                <div key={label} className="border border-slate-200 bg-slate-50 px-3 py-3">
+                                                    <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">{label}</p>
+                                                    <p className="mt-1 text-lg font-black text-slate-900">{value}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        {fabricationCrossCheck && (
+                                            <div className={`border-b px-4 py-3 md:px-5 ${
+                                                fabricationCrossCheck.status === 'ok'
+                                                    ? 'border-emerald-200 bg-emerald-50'
+                                                    : 'border-amber-200 bg-amber-50'
+                                            }`}>
+                                                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                                    <div>
+                                                        <p className={`text-xs font-black ${
+                                                            fabricationCrossCheck.status === 'ok' ? 'text-emerald-950' : 'text-amber-950'
+                                                        }`}>
+                                                            Contrôle croisé métré / chiffrage / débit
+                                                        </p>
+                                                        <p className={`mt-1 text-xs font-semibold ${
+                                                            fabricationCrossCheck.status === 'ok' ? 'text-emerald-800' : 'text-amber-900'
+                                                        }`}>
+                                                            {fabricationCrossCheck.status === 'ok'
+                                                                ? 'Aucun écart automatique détecté entre la fiche fabrication importée et les données disponibles.'
+                                                                : 'Des écarts automatiques restent à contrôler avant certification sans réserve.'}
+                                                        </p>
+                                                    </div>
+                                                    <div className="grid grid-cols-4 gap-2 text-center text-[10px] font-black uppercase text-slate-500">
+                                                        {[
+                                                            ['Fab', fabricationCrossCheck.checkedCount],
+                                                            ['Métré', fabricationCrossCheck.measureCount],
+                                                            ['Chiffrage', fabricationCrossCheck.quoteCount],
+                                                            ['Débit', fabricationCrossCheck.cuttingCount],
+                                                        ].map(([label, value]) => (
+                                                            <span key={label} className="border border-white/70 bg-white/60 px-2 py-1">
+                                                                {label}<span className="block text-sm text-slate-900">{value}</span>
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                {!!fabricationCrossCheck.issues.length && (
+                                                    <ul className="mt-3 space-y-1 text-xs font-semibold text-amber-900">
+                                                        {fabricationCrossCheck.issues.slice(0, 6).map((issue, index) => (
+                                                            <li key={`fabrication-cross-check-${index}`}>• {issue}</li>
+                                                        ))}
+                                                    </ul>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {!!latestFabricationVersion.parsed_issues?.length && (
+                                            <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 md:px-5">
+                                                <p className="text-xs font-black text-amber-950">Écarts à contrôler sur le bon atelier</p>
+                                                <ul className="mt-2 space-y-1 text-xs font-semibold text-amber-900">
+                                                    {latestFabricationVersion.parsed_issues.slice(0, 5).map((issue, index) => (
+                                                        <li key={`${issue.code || 'issue'}-${index}`}>• {issue.message || issue.detail || String(issue)}</li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+
+                                        <div className="overflow-x-auto">
+                                            <table className="min-w-[980px] w-full text-left text-xs">
+                                                <thead className="bg-slate-50 text-[9px] font-black uppercase tracking-wider text-slate-400">
+                                                    <tr>
+                                                        <th className="px-4 py-2.5">Position</th>
+                                                        <th className="px-4 py-2.5">Système</th>
+                                                        <th className="px-4 py-2.5">Type</th>
+                                                        <th className="px-4 py-2.5 text-right">Dimensions</th>
+                                                        <th className="px-4 py-2.5">Finition</th>
+                                                        <th className="px-4 py-2.5">Vitrage</th>
+                                                        <th className="px-4 py-2.5">Accessoires / remarques</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100">
+                                                    {latestFabricationVersion.parsed_records.slice(0, 12).map((record, index) => (
+                                                        <tr key={`${record.position || 'fab'}-${index}`}>
+                                                            <td className="px-4 py-3 font-black text-sky-700">{record.position || `Ouvrage ${index + 1}`}</td>
+                                                            <td className="px-4 py-3 font-bold text-slate-800">{record.system || '—'}</td>
+                                                            <td className="px-4 py-3 font-bold text-slate-600">{record.opening_type || '—'}</td>
+                                                            <td className="px-4 py-3 text-right font-black text-slate-800">
+                                                                {record.width_mm && record.height_mm ? `${record.width_mm} × ${record.height_mm} mm` : '—'}
+                                                            </td>
+                                                            <td className="px-4 py-3 font-bold text-slate-600">{record.finish || '—'}</td>
+                                                            <td className="px-4 py-3 font-bold text-slate-600">{record.glazing || '—'}</td>
+                                                            <td className="max-w-sm px-4 py-3 font-bold text-slate-600">
+                                                                {record.accessories?.length ? record.accessories.join(', ') : record.remarks || '—'}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                            {latestFabricationVersion.parsed_records.length > 12 && (
+                                                <p className="border-t border-slate-100 px-4 py-2 text-[10px] font-bold text-slate-500">
+                                                    {latestFabricationVersion.parsed_records.length - 12} ouvrage(s) supplémentaire(s) conservé(s) dans cette version.
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
 
                                 {technicalPhase === 'production' && latestCuttingVersion && (
                                     <div className="mt-5 border border-slate-200 bg-white p-4 md:p-5">

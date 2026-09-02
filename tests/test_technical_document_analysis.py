@@ -85,6 +85,44 @@ def test_fabrication_pdf_remains_consultable_without_stock_records(tmp_path, mon
     assert analysis.records == []
 
 
+def test_orgadata_fabrication_pdf_extracts_previewable_workshop_data(tmp_path, monkeypatch):
+    path = tmp_path / "Bon atelier ORGADATA.pdf"
+    path.write_bytes(b"%PDF-test")
+    text = """RECETTE LOGICIELLE - DOCUMENT FICTIF - NE PAS FABRIQUER
+ORGADATA LogiKal - Bon d'atelier
+Affaire: ALU-RECETTE-2026-001
+BON D'ATELIER
+Position Systeme Type Dimensions Finition Quantite
+CH1 Cortizo COR 70 INDUSTRIAL Fixe 900 x 2100 mm RAL 7016 mat 1
+Vitrage: 44.2 clair / 16 argon / 4 faible emissivite
+Accessoires: Paumelles invisibles, Poignee noire
+Remarques: Controle equerrage avant vitrage
+PF1 Cortizo COR 70 INDUSTRIAL Porte-fenetre 1200 x 2380 mm RAL 7016 mat 1
+"""
+    monkeypatch.setattr(
+        "backend.services.technical_document_analysis._document_text",
+        lambda _path: text,
+    )
+
+    analysis = analyze_technical_document(
+        path,
+        "FABRICATION",
+        "ORGADATA",
+        "ALU-RECETTE-2026-001",
+    )
+
+    assert analysis.status == "PARSED"
+    assert analysis.detected_document_type == "FABRICATION"
+    assert analysis.detected_source_system == "ORGADATA"
+    assert analysis.summary["fabrication_lines"] == 2
+    assert analysis.summary["opening_count"] == 2
+    assert analysis.summary["systems"] == {"Cortizo COR 70 INDUSTRIAL": 2}
+    assert analysis.summary["with_glazing"] == 1
+    assert analysis.summary["with_accessories"] == 1
+    assert [record["position"] for record in analysis.records] == ["CH1", "PF1"]
+    assert analysis.records[0]["glazing"] == "44.2 clair / 16 argon / 4 faible emissivite"
+
+
 def test_unrecognized_cutting_document_is_not_approvable(tmp_path):
     path = tmp_path / "debit-inconnu.txt"
     path.write_text("document libre sans lignes matière", encoding="utf-8")
