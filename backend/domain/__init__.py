@@ -1,0 +1,2 @@
+"""Référentiels métier transverses MMG."""
+
