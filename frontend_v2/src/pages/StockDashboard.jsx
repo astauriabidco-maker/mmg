@@ -76,6 +76,12 @@ const normalizedOptions = (values) => Array.from(
     new Set(values.map(value => String(value || '').trim()).filter(Boolean))
 ).sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' }));
 
+const isReservationProductionLaunched = (reservation) => (
+    !reservation?.sale_order_id
+    || reservation?.sale_status === 'IN_PRODUCTION'
+    || !!reservation?.production_order_id
+);
+
 export default function StockDashboard() {
     const queryClient = useQueryClient();
     const { user } = useAuth();
@@ -878,6 +884,9 @@ export default function StockDashboard() {
     };
 
     const consumeWorkshopReservation = async (reservation) => {
+        if (!isReservationProductionLaunched(reservation)) {
+            return alert("Lancez la fabrication depuis la commande avant de confirmer le débit réel atelier.");
+        }
         if (!window.confirm(`Confirmer le débit réel atelier pour ${reservation.reference} ? Le stock physique sera décrémenté.`)) return;
         setReservationActionId(reservation.id);
         try {
@@ -2605,6 +2614,7 @@ export default function StockDashboard() {
                                                     const totalReserved = reservation.lines?.reduce((sum, line) => sum + (line.reserved_quantity || 0), 0) || 0;
                                                     const preparation = workshopPreparations.find(item => item.reservation_id === reservation.id);
                                                     const preparedQuantity = preparation?.lines?.reduce((sum, line) => sum + Number(line.prepared_quantity || 0), 0) || 0;
+                                                    const productionLaunched = isReservationProductionLaunched(reservation);
                                                     const preparationStatus = {
                                                         draft: 'En préparation',
                                                         ready: 'Prêt à remettre',
@@ -2653,9 +2663,15 @@ export default function StockDashboard() {
                                                                 )}
                                                                 {preparation?.status === 'handed_over' && (
                                                                     <>
-                                                                        <button onClick={() => consumeWorkshopReservation(reservation)} disabled={!stockPermissions.consumeWorkshop || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white text-sm font-black">
-                                                                            Débit réel
-                                                                        </button>
+                                                                        {productionLaunched ? (
+                                                                            <button onClick={() => consumeWorkshopReservation(reservation)} disabled={!stockPermissions.consumeWorkshop || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white text-sm font-black">
+                                                                                Débit réel
+                                                                            </button>
+                                                                        ) : (
+                                                                            <button type="button" disabled className="px-4 py-2 rounded-xl bg-slate-200 text-slate-500 text-sm font-black cursor-not-allowed" title="Lancez la fabrication depuis la commande avant le débit réel.">
+                                                                                Fabrication à lancer
+                                                                            </button>
+                                                                        )}
                                                                         <button onClick={() => returnWorkshopPreparation(reservation, preparation)} disabled={!stockPermissions.transfer || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 disabled:bg-slate-100 text-slate-700 text-sm font-black border border-slate-200">
                                                                             Retour magasin
                                                                         </button>
@@ -5020,12 +5036,20 @@ function StockTodoView({
                                 badgeClass="bg-amber-100 text-amber-700"
                                 title={`Débit réel à confirmer ${reservation.reference || ''}`}
                                 subtitle={reservation.order_reference || 'Réservation atelier active'}
-                                meta={`${reservation.lines?.length || 0} ligne(s) réservée(s)`}
-                                actionLabel="Débiter"
+                                meta={
+                                    isReservationProductionLaunched(reservation)
+                                        ? `${reservation.lines?.length || 0} ligne(s) réservée(s)`
+                                        : `${reservation.lines?.length || 0} ligne(s) réservée(s) · fabrication à lancer`
+                                }
+                                actionLabel={isReservationProductionLaunched(reservation) ? 'Débiter' : 'Fabrication à lancer'}
                                 onAction={() => actions.consumeReservation(reservation)}
                                 secondaryLabel="Annuler"
                                 onSecondary={() => actions.cancelReservation(reservation)}
-                                disabled={reservationActionId === reservation.id || !permissions.consumeWorkshop}
+                                disabled={
+                                    reservationActionId === reservation.id
+                                    || !permissions.consumeWorkshop
+                                    || !isReservationProductionLaunched(reservation)
+                                }
                                 secondaryDisabled={reservationActionId === reservation.id || !permissions.reserveWorkshop}
                             />
                         ))}
@@ -5096,7 +5120,7 @@ function StockTodoView({
                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Règle d’usage</p>
                         <div className="space-y-3">
                             <RoleRule icon={Truck} title="Magasin" text="réceptionne, range, transfère et traite les ruptures." />
-                            <RoleRule icon={ArrowRight} title="Atelier" text="confirme le débit réel seulement après réservation validée." />
+                            <RoleRule icon={ArrowRight} title="Atelier" text="prépare et remet le bon, puis confirme le débit réel après lancement fabrication." />
                             <RoleRule icon={FileEdit} title="Catalogue" text="qualifie les brouillons avant toute exploitation stock." />
                             <RoleRule icon={ClipboardCheck} title="Manager" text="valide les inventaires, lit les écarts et audite les mouvements." />
                         </div>

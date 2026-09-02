@@ -131,6 +131,8 @@ def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
         reservation = reserve_response.json()
         assert reservation["status"] == "reserved"
         assert reservation["sale_order_id"] == sale_id
+        assert reservation["sale_status"] == "READY_FOR_PROD"
+        assert reservation["sale_reference"] == "DEV-ATELIER-1"
         assert reservation["lines"][0]["reserved_quantity"] == 3
 
         with TestingSessionLocal() as db:
@@ -156,6 +158,18 @@ def test_workshop_debit_reservation_is_consumed_only_when_confirmed():
             )
             assert source_quant.quantity == 2
             assert staging_quant.quantity == 3
+
+        early_consume_response = client.post(
+            f"/v2/stock/workshop-debits/reservations/{reservation['id']}/consume",
+            headers=headers,
+        )
+        assert early_consume_response.status_code == 400
+        assert "Lancez la fabrication" in early_consume_response.text
+
+        with TestingSessionLocal() as db:
+            sale_db = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_id).one()
+            sale_db.status = "IN_PRODUCTION"
+            db.commit()
 
         consume_response = client.post(
             f"/v2/stock/workshop-debits/reservations/{reservation['id']}/consume",
@@ -1351,6 +1365,92 @@ def test_full_flow_reservation_then_launch_production():
         assert sale_db.status == "IN_PRODUCTION"
         assert order.sale_order_id == sale_id
         assert reservation_db.production_order_id == order.id
+    finally:
+        _cleanup_test_client(engine)
+
+
+def test_launch_production_uses_validated_measure_openings_when_quote_lines_have_no_dimensions():
+    engine, TestingSessionLocal, client = _make_test_client()
+    try:
+        with TestingSessionLocal() as db:
+            sale_id = _seed_stock_and_sale(
+                db,
+                "VALIDATED",
+                "DEV-METRE-FALLBACK",
+                workflow_type="FABRICATION_FROM_MEASURE",
+                with_visual_config=False,
+            )
+            mission_id, _dossier_id, _cutting_id = _attach_validated_technical_dossier(
+                db,
+                sale_id,
+                launch_status="VALIDATED",
+            )
+            openings = [
+                models.MeasureOpening(
+                    mission_id=mission_id,
+                    sequence=1,
+                    label="CH1",
+                    room="Salon",
+                    product_type="WINDOW",
+                    width_mm=900,
+                    height_mm=2100,
+                    passage_height_mm=900,
+                    material="ALU",
+                    opening_type="Fixe",
+                    opening_side="Non applicable",
+                    sash_count=1,
+                    installation_type="Tunnel",
+                    status="VALIDATED",
+                ),
+                models.MeasureOpening(
+                    mission_id=mission_id,
+                    sequence=2,
+                    label="PF1",
+                    room="Cuisine",
+                    product_type="DOOR",
+                    width_mm=1200,
+                    height_mm=2380,
+                    passage_height_mm=1100,
+                    material="ALU",
+                    opening_type="Battant",
+                    opening_side="Droite tirant",
+                    sash_count=1,
+                    installation_type="Tunnel",
+                    status="VALIDATED",
+                ),
+            ]
+            db.add_all(openings)
+            db.commit()
+
+        headers = _auth_headers(TestingSessionLocal, "atelier-manager")
+        reserve_response = client.post(
+            "/v2/stock/workshop-debits/reservations",
+            headers=headers,
+            data={"sale_order_id": str(sale_id)},
+            files=[("files", ("SEPVER.TXT", SEPALUMIC_CONTENT, "text/plain"))],
+        )
+        assert reserve_response.status_code == 200, reserve_response.text
+
+        launch_response = client.post(f"/v2/sales/{sale_id}/launch-production", headers=headers)
+        assert launch_response.status_code == 200, launch_response.text
+        assert launch_response.json()["created_orders"] == 2
+        assert launch_response.json()["linked_reservations"] == 1
+
+        with TestingSessionLocal() as db:
+            sale_db = db.query(models.SaleOrder).filter(models.SaleOrder.id == sale_id).one()
+            orders = db.query(models.Order).order_by(models.Order.reference.asc()).all()
+            reservation = db.query(models.StockReservation).one()
+
+        assert sale_db.status == "IN_PRODUCTION"
+        assert [order.reference for order in orders] == [
+            "PROD-METRE-FALLBACK-CH1",
+            "PROD-METRE-FALLBACK-PF1",
+        ]
+        assert [(order.width, order.height, order.material) for order in orders] == [
+            (900, 2100, "ALU"),
+            (1200, 2380, "ALU"),
+        ]
+        assert reservation.production_order_id == orders[0].id
     finally:
         _cleanup_test_client(engine)
 

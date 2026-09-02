@@ -452,7 +452,31 @@ def _mmg_spec(dossier: models.MMG) -> Optional[Dict]:
         "color": dossier.color_ral,
     }
 
-def _fabricable_specs_from_sale(sale: models.SaleOrder) -> List[Dict]:
+def _measure_opening_spec(opening: models.MeasureOpening) -> Optional[Dict]:
+    if not opening.width_mm or not opening.height_mm:
+        return None
+    try:
+        width = float(opening.width_mm)
+        height = float(opening.height_mm)
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    material = _material_from_value(opening.material) or _material_from_text(opening.material) or "ALU"
+    label = (opening.label or f"O{opening.sequence or opening.id}").replace("/", "-")
+    return {
+        "source": "measure_opening",
+        "sale_order_line_id": None,
+        "reference_suffix": label,
+        "width": width,
+        "height": height,
+        "material": material,
+        "quantity": 1,
+        "system_type": opening.opening_type or opening.product_type or "Menuiserie",
+        "color": (opening.configuration or {}).get("color") if isinstance(opening.configuration, dict) else None,
+    }
+
+def _fabricable_specs_from_sale(sale: models.SaleOrder, db: Optional[Session] = None) -> List[Dict]:
     specs = []
     for dossier in sale.mmg_dossiers or []:
         spec = _mmg_spec(dossier)
@@ -464,6 +488,21 @@ def _fabricable_specs_from_sale(sale: models.SaleOrder) -> List[Dict]:
         spec = _line_visual_spec(line)
         if spec:
             specs.append(spec)
+    if specs or db is None:
+        return specs
+    missions = (
+        db.query(models.MeasureMission)
+        .filter(models.MeasureMission.sale_order_id == sale.id)
+        .order_by(models.MeasureMission.id.asc())
+        .all()
+    )
+    for mission in missions:
+        for opening in mission.openings or []:
+            if opening.status != schemas.MeasureOpeningStatus.VALIDATED.value:
+                continue
+            spec = _measure_opening_spec(opening)
+            if spec:
+                specs.append(spec)
     return specs
 
 def _ensure_first_planning_step(db: Session, order: models.Order) -> None:
@@ -1626,7 +1665,7 @@ def launch_production(
             detail="Transmettre à l'atelier nécessite une réservation atelier active. Préparez l'atelier et réservez le stock avant lancement.",
         )
 
-    specs = _fabricable_specs_from_sale(sale)
+    specs = _fabricable_specs_from_sale(sale, db=db)
     if not specs:
         raise HTTPException(
             status_code=400,

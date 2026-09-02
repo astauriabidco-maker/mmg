@@ -1472,6 +1472,8 @@ class StockReservationResponse(BaseModel):
     id: int
     reference: str
     sale_order_id: Optional[int] = None
+    sale_status: Optional[str] = None
+    sale_reference: Optional[str] = None
     production_order_id: Optional[int] = None
     technical_dossier_version_id: Optional[int] = None
     order_reference: Optional[str] = None
