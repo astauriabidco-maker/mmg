@@ -9,8 +9,10 @@ import {
 } from 'lucide-react';
 import ChatterWidget from '../components/ChatterWidget';
 import StockValuationView from '../components/StockValuationView';
+import OntologyGuidance from '../components/OntologyGuidance';
 import { useAuth } from '../context/AuthContext';
 import { userHasAnyRole } from '../utils/roleNavigation';
+import { useMMGOntology } from '../services/ontology';
 
 const DEFAULT_CATALOG_CATEGORIES = [
     'PROFIL',
@@ -85,6 +87,7 @@ const isReservationProductionLaunched = (reservation) => (
 export default function StockDashboard() {
     const queryClient = useQueryClient();
     const { user } = useAuth();
+    const ontologyQuery = useMMGOntology();
     const isManager = userHasAnyRole(user, ['ADMIN', 'MANAGER']);
     const isAdmin = userHasAnyRole(user, ['ADMIN']);
     const can = (permission) => user?.permissions?.includes('*') || user?.permissions?.includes(permission);
@@ -1642,6 +1645,16 @@ export default function StockDashboard() {
                             <p className="text-sm font-bold text-slate-500 mt-0.5">
                                 Piloter les priorités, le catalogue, le stock physique et la traçabilité.
                             </p>
+                            <OntologyGuidance
+                                ontology={ontologyQuery.data}
+                                title="Garde-fou stock / atelier"
+                                subtitle="Le stock réel est consommé uniquement après réservation, préparation atelier et lancement fabrication."
+                                entityCodes={['stock_item', 'stock_reservation', 'workshop_preparation', 'production_order', 'real_workshop_debit']}
+                                permissionEntities={['stock_reservation', 'workshop_preparation', 'real_workshop_debit']}
+                                eventCodes={['stock_reserved', 'workshop_prepared', 'stock_consumed']}
+                                compact
+                                className="mt-3 max-w-4xl"
+                            />
                         </div>
 
                         <div className="flex flex-1 flex-wrap items-center justify-end gap-2 min-w-[280px]">

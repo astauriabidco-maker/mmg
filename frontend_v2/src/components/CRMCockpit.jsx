@@ -22,7 +22,9 @@ import {
     UserPlus,
     X,
 } from 'lucide-react';
+import OntologyGuidance from './OntologyGuidance';
 import api from '../services/api';
+import { useMMGOntology } from '../services/ontology';
 
 const STAGE_LABELS = {
     nouveau: 'Nouvelles',
@@ -94,6 +96,7 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
     const [showRules, setShowRules] = useState(false);
     const [savingRuleId, setSavingRuleId] = useState(null);
     const [cockpitAction, setCockpitAction] = useState(null);
+    const ontologyQuery = useMMGOntology();
 
     const cockpitQuery = useQuery({
         queryKey: ['crm-cockpit', horizonDays, selectedOwnerId],
@@ -431,6 +434,15 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                         </button>
                     </div>
                 </header>
+
+                <OntologyGuidance
+                    ontology={ontologyQuery.data}
+                    title="Flux avant-vente certifié"
+                    subtitle="Le CRM pilote l’opportunité, déclenche le métré/BE, prépare le devis commercial puis trace l’envoi et la signature."
+                    entityCodes={['crm_opportunity', 'measure_mission', 'technical_dossier', 'commercial_quote']}
+                    permissionEntities={['crm_opportunity', 'measure_mission', 'commercial_quote']}
+                    eventCodes={['crm_opportunity_created', 'measure_submitted_to_be', 'quote_sent', 'quote_signed']}
+                />
 
                 <section className="grid border-y border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                     <Metric icon={Target} label="Opportunités" value={metrics.open_opportunities} />

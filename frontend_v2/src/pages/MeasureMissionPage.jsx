@@ -27,8 +27,10 @@ import {
     UserRound,
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
+import OntologyGuidance from '../components/OntologyGuidance';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useMMGOntology } from '../services/ontology';
 
 const STATUS_META = {
     DRAFT: ['Brouillon', 'bg-slate-100 text-slate-700'],
@@ -212,6 +214,7 @@ export default function MeasureMissionPage() {
     const { missionId } = useParams();
     const [searchParams] = useSearchParams();
     const { user } = useAuth();
+    const ontologyQuery = useMMGOntology();
     const isNew = !missionId;
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -1227,6 +1230,25 @@ export default function MeasureMissionPage() {
                                         <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
                                             Le chiffrage précède la signature client. Les fiches de fabrication et de débit ne sont importées qu'après signature.
                                         </p>
+                                        <OntologyGuidance
+                                            ontology={ontologyQuery.data}
+                                            title={technicalPhase === 'quoting' ? 'Repère BE → devis' : 'Repère fabrication → stock → débit'}
+                                            subtitle={technicalPhase === 'quoting'
+                                                ? 'Le chiffrage technique prépare le devis commercial, sans valoir commande ni consommation matière.'
+                                                : 'La fiche fabrication décrit les ouvrages ; seule la fiche de débit alimente la réservation puis le débit réel.'}
+                                            entityCodes={technicalPhase === 'quoting'
+                                                ? ['measure_mission', 'technical_dossier', 'technical_quotation', 'commercial_quote']
+                                                : ['fabrication_sheet', 'cutting_sheet', 'stock_reservation', 'production_order', 'real_workshop_debit']}
+                                            permissionEntities={technicalPhase === 'quoting'
+                                                ? ['technical_dossier', 'commercial_quote']
+                                                : ['technical_dossier', 'stock_reservation', 'production_order', 'real_workshop_debit']}
+                                            eventCodes={technicalPhase === 'quoting'
+                                                ? ['measure_submitted_to_be', 'technical_dossier_validated', 'quote_sent']
+                                                : ['stock_reserved', 'workshop_prepared', 'production_launched', 'stock_consumed']}
+                                            sourceSystem={technicalForm.source_system}
+                                            documentType={technicalForm.document_type}
+                                            className="mt-4"
+                                        />
                                         <div className="mt-4 inline-flex border border-indigo-200 bg-white p-1">
                                             <button type="button" onClick={() => setTechnicalForm(current => ({ ...current, document_type: 'QUOTING' }))} className={`px-3 py-2 text-xs font-black ${technicalPhase === 'quoting' ? 'bg-indigo-600 text-white' : 'text-slate-600'}`}>1. Chiffrage</button>
                                             <button type="button" onClick={() => setTechnicalForm(current => ({ ...current, document_type: 'FABRICATION' }))} className={`px-3 py-2 text-xs font-black ${technicalPhase === 'production' ? 'bg-emerald-600 text-white' : 'text-slate-600'}`}>2. Fabrication & débit</button>
@@ -1434,6 +1456,15 @@ export default function MeasureMissionPage() {
                                                     ))}
                                                 </div>
                                                 <div className="mt-4 border border-slate-200" aria-label="Flux d'exécution atelier">
+                                                    <OntologyGuidance
+                                                        ontology={ontologyQuery.data}
+                                                        title="Ordre métier verrouillé"
+                                                        subtitle="Réserver stock → préparer/remettre le bon atelier → lancer fabrication → consommer le débit réel."
+                                                        entityCodes={['stock_reservation', 'workshop_preparation', 'production_order', 'real_workshop_debit']}
+                                                        permissionEntities={['stock_reservation', 'workshop_preparation', 'production_order', 'real_workshop_debit']}
+                                                        compact
+                                                        className="m-3 bg-slate-50"
+                                                    />
                                                     {[
                                                         {
                                                             label: '1. Réservation atelier',
