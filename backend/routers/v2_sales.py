@@ -776,7 +776,7 @@ def get_pipeline_stages(db: Session = Depends(get_db)):
     return DEFAULT_PIPELINE_STAGES
 
 
-@router.post("/stages", dependencies=AUTH_DEPENDENCIES)
+@router.post("/stages", dependencies=SALES_EDIT_DEPENDENCIES)
 def save_pipeline_stages(
     stages: List[PipelineStagePayload],
     db: Session = Depends(get_db),
@@ -880,7 +880,7 @@ def get_sale_order(order_id: int, db: Session = Depends(get_db)):
     _attach_sale_traceability(db, order)
     return order
 
-@router.post("/{order_id}/prepare-workshop/preview", dependencies=AUTH_DEPENDENCIES)
+@router.post("/{order_id}/prepare-workshop/preview", dependencies=SALES_EDIT_DEPENDENCIES)
 async def preview_sale_workshop_preparation(
     order_id: int,
     files: List[UploadFile] = File(...),
@@ -900,7 +900,7 @@ async def preview_sale_workshop_preparation(
         sale_order_id=sale.id,
     )
 
-@router.post("/{order_id}/prepare-workshop/reserve", dependencies=AUTH_DEPENDENCIES)
+@router.post("/{order_id}/prepare-workshop/reserve", dependencies=SALES_EDIT_DEPENDENCIES)
 async def reserve_sale_workshop_preparation(
     order_id: int,
     files: List[UploadFile] = File(...),
@@ -1063,6 +1063,7 @@ def _send_quote_for_signature(
 
 @router.put(
     "/{order_id}/status",
+    dependencies=SALES_EDIT_DEPENDENCIES,
 )
 def update_sale_status(
     order_id: int,
@@ -1322,7 +1323,7 @@ def sign_quote(token: str, request: Request, background_tasks: BackgroundTasks, 
     }
 
 
-@router.post("/{order_id}/deliver-free-sale", dependencies=AUTH_DEPENDENCIES)
+@router.post("/{order_id}/deliver-free-sale", dependencies=SALES_EDIT_DEPENDENCIES)
 def deliver_free_sale_order(
     order_id: int,
     db: Session = Depends(get_db),
@@ -1514,7 +1515,7 @@ def create_deposit_invoice(
     }
 
 
-@router.post("/{order_id}/return-free-sale", dependencies=AUTH_DEPENDENCIES)
+@router.post("/{order_id}/return-free-sale", dependencies=SALES_EDIT_DEPENDENCIES)
 def return_free_sale_delivery(
     order_id: int,
     db: Session = Depends(get_db),
@@ -1602,7 +1603,7 @@ def return_free_sale_delivery(
     }
 
 
-@router.post("/{order_id}/launch-production", dependencies=AUTH_DEPENDENCIES)
+@router.post("/{order_id}/launch-production", dependencies=SALES_EDIT_DEPENDENCIES)
 def launch_production(
     order_id: int,
     db: Session = Depends(get_db),

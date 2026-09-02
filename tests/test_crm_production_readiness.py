@@ -97,6 +97,30 @@ def test_crm_read_and_write_permissions_are_enforced(isolated_client):
     assert allowed_opportunity.status_code == 201, allowed_opportunity.text
 
 
+def test_legacy_presales_mutations_require_sales_edit(isolated_client):
+    client, session_factory = isolated_client
+    viewer = _headers(session_factory, "legacy-crm-viewer", ["SALES_VIEW"])
+
+    checks = [
+        ("post", "/v2/sales/stages", [{"id": "draft", "title": "Brouillon"}], None),
+        ("put", "/v2/sales/999/status?status=SENT", None, None),
+        ("post", "/v2/sales/999/deliver-free-sale", None, None),
+        ("post", "/v2/sales/999/return-free-sale", None, None),
+        ("post", "/v2/sales/999/launch-production", None, None),
+        ("post", "/v2/mmg/from-sale/999", None, None),
+        ("post", "/v2/mmg/999/send-quote", None, None),
+        ("post", "/v2/mmg/missions/999/technical-dossier/reservation", None, None),
+    ]
+    for method, url, json_payload, data_payload in checks:
+        response = getattr(client, method)(
+            url,
+            headers=viewer,
+            json=json_payload,
+            data=data_payload,
+        )
+        assert response.status_code == 403, f"{method.upper()} {url}: {response.text}"
+
+
 def test_multiple_contacts_keep_one_primary_and_sync_legacy_fields(isolated_client):
     client, session_factory = isolated_client
     headers = _headers(
