@@ -234,6 +234,70 @@ def test_preview_uses_primary_contact_email_when_client_email_is_empty(db):
     assert "OPP-CONTACT-EMAIL" in result["subject"]
 
 
+def test_planned_preview_uses_primary_contact_email_when_plan_email_is_empty(db):
+    client = models.Client(
+        name="Client Plan Contact Principal",
+        contact_name="Mme Plan",
+        email="",
+    )
+    db.add(client)
+    db.flush()
+    db.add(
+        models.ClientContact(
+            client_id=client.id,
+            name="Contact plan",
+            email="plan-principal@example.test",
+            is_primary=True,
+        )
+    )
+    opportunity = models.CRMOpportunity(
+        reference="OPP-PLAN-CONTACT",
+        client_id=client.id,
+        title="Projet relance planifiée",
+        stage=models.CRMOpportunityStage.PROPOSAL_TO_VALIDATE.value,
+        probability=65,
+        next_milestone="Valider la proposition",
+        created_by="commercial",
+    )
+    db.add(opportunity)
+    db.flush()
+    ensure_default_rules(db)
+    ensure_default_templates(db)
+    rule = db.query(models.CRMReminderRule).first()
+    template = (
+        db.query(models.CRMReminderTemplate)
+        .filter(models.CRMReminderTemplate.code == "PROPOSAL_FOLLOW_UP")
+        .one()
+    )
+    plan = models.CRMReminderPlan(
+        plan_key="test:planned-contact-email",
+        rule_id=rule.id,
+        client_id=client.id,
+        opportunity_id=opportunity.id,
+        stage_snapshot=opportunity.stage,
+        due_at=datetime(2026, 9, 3, 12, 0),
+        status="PENDING",
+        created_by="test",
+    )
+    db.add(plan)
+    db.commit()
+
+    result = v2_mmg.preview_crm_reminder(
+        schemas.CRMReminderPreviewRequest(
+            client_id=client.id,
+            opportunity_id=opportunity.id,
+            plan_id=plan.id,
+            template_id=template.id,
+            reminder_kind="PROPOSAL_FOLLOW_UP",
+        ),
+        db=db,
+        current_user={"sub": "alice"},
+    )
+
+    assert result["recipient"] == "plan-principal@example.test"
+    assert "OPP-PLAN-CONTACT" in result["subject"]
+
+
 def test_skipped_send_is_logged_without_fake_activity(
     db,
     crm_records,
