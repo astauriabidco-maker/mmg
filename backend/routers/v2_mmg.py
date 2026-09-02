@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, File, Form, UploadFile
 from fastapi.responses import FileResponse, Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
@@ -858,7 +858,12 @@ def _crm_reminder_context(
     client_id: int,
     opportunity_id: Optional[int],
 ):
-    client = db.query(models.Client).filter(models.Client.id == client_id).first()
+    client = (
+        db.query(models.Client)
+        .options(selectinload(models.Client.contacts))
+        .filter(models.Client.id == client_id)
+        .first()
+    )
     if not client:
         raise HTTPException(404, "Client introuvable")
     opportunity = None
