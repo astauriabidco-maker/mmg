@@ -1951,7 +1951,11 @@ def list_measure_missions(
     return [_serialize_mission(mission) for mission in missions]
 
 
-@router.post("/missions", response_model=schemas.MeasureMissionResponse)
+@router.post(
+    "/missions",
+    response_model=schemas.MeasureMissionResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def create_measure_mission(
     item: schemas.MeasureMissionCreate,
     db: Session = Depends(get_db),
@@ -2030,7 +2034,11 @@ def get_measure_mission(mission_id: int, db: Session = Depends(get_db)):
     return _serialize_mission(mission)
 
 
-@router.put("/missions/{mission_id}", response_model=schemas.MeasureMissionResponse)
+@router.put(
+    "/missions/{mission_id}",
+    response_model=schemas.MeasureMissionResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def update_measure_mission(
     mission_id: int,
     item: schemas.MeasureMissionUpdate,
@@ -2103,6 +2111,7 @@ def list_measure_openings(mission_id: int, db: Session = Depends(get_db)):
 @router.post(
     "/missions/{mission_id}/openings",
     response_model=schemas.MeasureOpeningResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def create_measure_opening(
     mission_id: int,
@@ -2138,6 +2147,7 @@ def create_measure_opening(
 @router.put(
     "/missions/{mission_id}/openings/{opening_id}",
     response_model=schemas.MeasureOpeningResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def update_measure_opening(
     mission_id: int,
@@ -2168,7 +2178,10 @@ def update_measure_opening(
     return opening
 
 
-@router.delete("/missions/{mission_id}/openings/{opening_id}")
+@router.delete(
+    "/missions/{mission_id}/openings/{opening_id}",
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def delete_measure_opening(
     mission_id: int,
     opening_id: int,
@@ -2191,7 +2204,11 @@ def delete_measure_opening(
     return {"status": "deleted"}
 
 
-@router.patch("/missions/{mission_id}/status", response_model=schemas.MeasureMissionResponse)
+@router.patch(
+    "/missions/{mission_id}/status",
+    response_model=schemas.MeasureMissionResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def update_measure_mission_status(
     mission_id: int,
     item: schemas.MeasureMissionStatusUpdate,
@@ -2293,6 +2310,7 @@ def get_measure_technical_dossier(
 @router.post(
     "/missions/{mission_id}/technical-dossier",
     response_model=schemas.TechnicalDossierResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def create_measure_technical_dossier(
     mission_id: int,
@@ -2319,6 +2337,7 @@ def create_measure_technical_dossier(
 @router.post(
     "/missions/{mission_id}/technical-dossier/versions",
     response_model=schemas.TechnicalDossierResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 async def upload_measure_technical_version(
     mission_id: int,
@@ -2660,6 +2679,7 @@ def export_measure_technical_handoff(
 @router.patch(
     "/missions/{mission_id}/technical-dossier/submit",
     response_model=schemas.TechnicalDossierResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def submit_measure_technical_dossier(
     mission_id: int,
@@ -2722,6 +2742,7 @@ def submit_measure_technical_dossier(
 @router.patch(
     "/missions/{mission_id}/technical-dossier/review",
     response_model=schemas.TechnicalDossierResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def review_measure_technical_dossier(
     mission_id: int,
@@ -2796,7 +2817,10 @@ def get_measure_technical_governance(
     return _technical_governance_payload(db, mission)
 
 
-@router.post("/missions/{mission_id}/technical-dossier/reservation")
+@router.post(
+    "/missions/{mission_id}/technical-dossier/reservation",
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def reserve_measure_technical_cutting(
     mission_id: int,
     db: Session = Depends(get_db),
@@ -2931,6 +2955,7 @@ def reserve_measure_technical_cutting(
 @router.patch(
     "/missions/{mission_id}/technical-dossier/gate-review",
     response_model=schemas.TechnicalDossierResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def review_measure_technical_gate(
     mission_id: int,
@@ -3036,6 +3061,7 @@ def review_measure_technical_gate(
 @router.patch(
     "/missions/{mission_id}/technical-dossier/versions/{version_id}/revision-review",
     response_model=schemas.TechnicalDossierResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def review_measure_technical_revision(
     mission_id: int,
@@ -3104,6 +3130,7 @@ def download_measure_technical_version(
 @router.patch(
     "/missions/{mission_id}/verification",
     response_model=schemas.MeasureMissionResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def update_measure_mission_verification(
     mission_id: int,
@@ -3140,6 +3167,7 @@ def update_measure_mission_verification(
 @router.post(
     "/missions/{mission_id}/generate-quote",
     response_model=schemas.MeasureMissionQuoteResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def generate_measure_mission_quote(
     mission_id: int,
@@ -3277,6 +3305,7 @@ def generate_measure_mission_quote(
 @router.post(
     "/missions/{mission_id}/documents",
     response_model=schemas.MeasureMissionResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 async def upload_measure_mission_document(
     mission_id: int,
@@ -3352,6 +3381,7 @@ def download_measure_mission_document(
 @router.delete(
     "/missions/{mission_id}/documents/{document_id}",
     response_model=schemas.MeasureMissionResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
 )
 def delete_measure_mission_document(
     mission_id: int,
@@ -3378,7 +3408,11 @@ def delete_measure_mission_document(
     db.refresh(mission)
     return _serialize_mission(mission)
 
-@router.post("/", response_model=schemas.MMGResponse)
+@router.post(
+    "/",
+    response_model=schemas.MMGResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 async def create_dossier(
     item: schemas.MMGCreate,
     db: Session = Depends(get_db),
@@ -3509,7 +3543,11 @@ async def create_dossier(
     
     return db_item
 
-@router.post("/from-sale/{sale_id}", response_model=schemas.MMGResponse)
+@router.post(
+    "/from-sale/{sale_id}",
+    response_model=schemas.MMGResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def create_from_sale(
     sale_id: int,
     db: Session = Depends(get_db),
@@ -3602,7 +3640,11 @@ def get_dossier(dossier_id: int, db: Session = Depends(get_db)):
 
     return _serialize_detail(db_item)
 
-@router.patch("/{dossier_id}/status", response_model=schemas.MMGResponse)
+@router.patch(
+    "/{dossier_id}/status",
+    response_model=schemas.MMGResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def update_status(dossier_id: int, update: schemas.MMGStatusUpdate, db: Session = Depends(get_db)):
     db_item = db.query(models.MMG).filter(models.MMG.id == dossier_id).first()
     if not db_item:
@@ -3631,7 +3673,10 @@ def update_status(dossier_id: int, update: schemas.MMGStatusUpdate, db: Session 
     db.refresh(db_item)
     return db_item
 
-@router.post("/{dossier_id}/send-quote")
+@router.post(
+    "/{dossier_id}/send-quote",
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
 def send_quote(dossier_id: int, db: Session = Depends(get_db)):
     db_item = db.query(models.MMG).filter(models.MMG.id == dossier_id).first()
     if not db_item:
