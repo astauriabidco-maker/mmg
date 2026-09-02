@@ -12,6 +12,7 @@ from ..core import security
 from ..core.time import utcnow
 from ..database import get_db
 from ..services.crm_clients import (
+    contact_duplicate_groups,
     duplicate_candidates,
     duplicate_groups,
     merge_clients,
@@ -516,6 +517,32 @@ def list_client_contacts(client_id: int, db: Session = Depends(get_db)):
         )
         .all()
     )
+
+
+@router.get(
+    "/clients/{client_id}/contacts/duplicates",
+    response_model=List[schemas.ClientContactDuplicateGroup],
+    dependencies=CRM_VIEW,
+)
+def list_client_contact_duplicate_groups(
+    client_id: int,
+    db: Session = Depends(get_db),
+):
+    _client_or_404(db, client_id)
+    contacts = (
+        db.query(models.ClientContact)
+        .filter(models.ClientContact.client_id == client_id)
+        .order_by(
+            models.ClientContact.is_primary.desc(),
+            models.ClientContact.priority.asc(),
+            models.ClientContact.name.asc(),
+        )
+        .all()
+    )
+    return [
+        {"contacts": group, "score": score, "reasons": reasons}
+        for group, score, reasons in contact_duplicate_groups(contacts)
+    ]
 
 
 @router.post(
