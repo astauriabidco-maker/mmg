@@ -357,6 +357,11 @@ class ClientDuplicateGroup(BaseModel):
     score: int
     reasons: List[str]
 
+class ClientContactDuplicateGroup(BaseModel):
+    contacts: List[ClientContactResponse]
+    score: int
+    reasons: List[str]
+
 class ClientMergeRequest(BaseModel):
     source_client_ids: List[int]
     confirm: bool = False

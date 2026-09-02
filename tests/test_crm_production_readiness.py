@@ -251,6 +251,68 @@ def test_enriched_client_contact_fields_are_persisted_and_updatable(isolated_cli
     assert record["email"] == "prescription@example.test"
 
 
+def test_contact_duplicate_detection_flags_same_person_inside_client(isolated_client):
+    client, session_factory = isolated_client
+    headers = _headers(
+        session_factory,
+        "crm-contact-duplicate-editor",
+        ["SALES_VIEW", "SALES_EDIT"],
+    )
+    created = client.post(
+        "/v2/partners/clients",
+        json=_client_payload("Client Contacts Doublons"),
+        headers=headers,
+    )
+    assert created.status_code == 200, created.text
+    client_id = created.json()["id"]
+
+    first = client.post(
+        f"/v2/partners/clients/{client_id}/contacts",
+        json={
+            "name": "Mme Décision",
+            "role": "Direction",
+            "email": "decision@example.test",
+            "phone": "06 01 02 03 04",
+            "priority": 1,
+            "influence_role": "DECISION_MAKER",
+            "preferred_channel": "EMAIL",
+            "email_consent": True,
+        },
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+    second = client.post(
+        f"/v2/partners/clients/{client_id}/contacts",
+        json={
+            "name": "Mme Decision",
+            "role": "Direction",
+            "email": "DECISION@example.test",
+            "phone": "+33 6 01 02 03 04",
+            "priority": 2,
+            "influence_role": "BUYER",
+            "preferred_channel": "PHONE",
+        },
+        headers=headers,
+    )
+    assert second.status_code == 200, second.text
+
+    duplicates = client.get(
+        f"/v2/partners/clients/{client_id}/contacts/duplicates",
+        headers=headers,
+    )
+    assert duplicates.status_code == 200, duplicates.text
+    payload = duplicates.json()
+    assert len(payload) == 1
+    assert payload[0]["score"] == 100
+    assert {"Même email contact", "Même téléphone contact"}.issubset(
+        set(payload[0]["reasons"])
+    )
+    assert {contact["id"] for contact in payload[0]["contacts"]} == {
+        first.json()["id"],
+        second.json()["id"],
+    }
+
+
 def test_duplicate_detection_merge_and_segmentation(isolated_client):
     client, session_factory = isolated_client
     headers = _headers(

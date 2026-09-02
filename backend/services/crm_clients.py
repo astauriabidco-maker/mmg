@@ -98,6 +98,103 @@ def duplicate_candidates(
     return sorted(matches, key=lambda item: (-item[1], item[0].name.lower()))
 
 
+def contact_duplicate_score(
+    first: models.ClientContact,
+    second: models.ClientContact,
+) -> tuple[int, list[str]]:
+    score = 0
+    reasons: list[str] = []
+
+    first_email = normalize_email(first.email)
+    second_email = normalize_email(second.email)
+    if first_email and first_email == second_email:
+        score += 100
+        reasons.append("Même email contact")
+
+    first_phone = normalize_phone(first.phone)
+    second_phone = normalize_phone(second.phone)
+    if first_phone and first_phone == second_phone:
+        score += 90
+        reasons.append("Même téléphone contact")
+
+    first_name = normalize_text(first.name)
+    second_name = normalize_text(second.name)
+    if first_name and first_name == second_name:
+        score += 55
+        reasons.append("Même nom contact")
+        first_role = normalize_text(first.role)
+        second_role = normalize_text(second.role)
+        if first_role and first_role == second_role:
+            score += 20
+            reasons.append("Même fonction contact")
+
+    return min(score, 100), reasons
+
+
+def contact_duplicate_groups(
+    contacts: list[models.ClientContact],
+    *,
+    minimum_score: int = 80,
+) -> list[tuple[list[models.ClientContact], int, list[str]]]:
+    parents = {contact.id: contact.id for contact in contacts}
+    pair_details: dict[tuple[int, int], tuple[int, list[str]]] = {}
+
+    def find(contact_id: int) -> int:
+        while parents[contact_id] != contact_id:
+            parents[contact_id] = parents[parents[contact_id]]
+            contact_id = parents[contact_id]
+        return contact_id
+
+    def union(first_id: int, second_id: int) -> None:
+        first_root = find(first_id)
+        second_root = find(second_id)
+        if first_root != second_root:
+            parents[second_root] = first_root
+
+    for index, first in enumerate(contacts):
+        for second in contacts[index + 1 :]:
+            score, reasons = contact_duplicate_score(first, second)
+            if score < minimum_score:
+                continue
+            pair_details[(first.id, second.id)] = (score, reasons)
+            union(first.id, second.id)
+
+    grouped: dict[int, list[models.ClientContact]] = defaultdict(list)
+    for contact in contacts:
+        grouped[find(contact.id)].append(contact)
+
+    result = []
+    for group in grouped.values():
+        if len(group) < 2:
+            continue
+        group_ids = {contact.id for contact in group}
+        group_scores = []
+        reasons = set()
+        for (first_id, second_id), (score, pair_reasons) in pair_details.items():
+            if first_id in group_ids and second_id in group_ids:
+                group_scores.append(score)
+                reasons.update(pair_reasons)
+        result.append(
+            (
+                sorted(
+                    group,
+                    key=lambda contact: (
+                        not contact.is_primary,
+                        contact.priority or 3,
+                        contact.created_at or utcnow(),
+                        contact.id,
+                    ),
+                ),
+                max(group_scores or [0]),
+                sorted(reasons),
+            )
+        )
+    return sorted(
+        result,
+        key=lambda item: (-item[1], item[0][0].priority or 3, item[0][0].name.lower()),
+    )
+
+
 def duplicate_groups(
     clients: list[models.Client],
     *,

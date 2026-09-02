@@ -179,9 +179,18 @@ export default function CRMClientActionWorkspace({
         },
     });
 
+    const contactDuplicatesQuery = useQuery({
+        queryKey: ['crm-client-contacts', client.id, 'duplicates'],
+        queryFn: async () => {
+            const response = await api.get(`/v2/partners/clients/${client.id}/contacts/duplicates`);
+            return asList(response.data);
+        },
+    });
+
     const opportunities = opportunitiesQuery.data || [];
     const activities = activitiesQuery.data || [];
     const contacts = contactsQuery.data || [];
+    const contactDuplicateGroups = contactDuplicatesQuery.data || [];
     const openOpportunities = useMemo(
         () => opportunities.filter(isOpenOpportunity).sort((a, b) => new Date(a.nextDate || '2999-12-31') - new Date(b.nextDate || '2999-12-31')),
         [opportunities],
@@ -322,7 +331,7 @@ export default function CRMClientActionWorkspace({
                 is_primary: contactDraft.is_primary,
                 notes: contactDraft.notes.trim() || null,
             });
-            await Promise.all([contactsQuery.refetch(), onClientChanged?.()]);
+            await Promise.all([contactsQuery.refetch(), contactDuplicatesQuery.refetch(), onClientChanged?.()]);
             setContactDraft({
                 name: '',
                 role: '',
@@ -350,7 +359,7 @@ export default function CRMClientActionWorkspace({
                 `/v2/partners/clients/${client.id}/contacts/${contact.id}`,
                 { is_primary: true },
             );
-            await Promise.all([contactsQuery.refetch(), onClientChanged?.()]);
+            await Promise.all([contactsQuery.refetch(), contactDuplicatesQuery.refetch(), onClientChanged?.()]);
         } catch (error) {
             setSubmitError(readableError(error));
         }
@@ -361,7 +370,7 @@ export default function CRMClientActionWorkspace({
         setSubmitError('');
         try {
             await api.delete(`/v2/partners/clients/${client.id}/contacts/${contact.id}`);
-            await Promise.all([contactsQuery.refetch(), onClientChanged?.()]);
+            await Promise.all([contactsQuery.refetch(), contactDuplicatesQuery.refetch(), onClientChanged?.()]);
         } catch (error) {
             setSubmitError(readableError(error));
         }
@@ -471,6 +480,33 @@ export default function CRMClientActionWorkspace({
                         </button>
                     )}
                 />
+                {!!contactDuplicateGroups.length && (
+                    <div className="border-b border-amber-200 bg-amber-50 px-4 py-3">
+                        <div className="flex items-start gap-3">
+                            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                            <div className="min-w-0">
+                                <p className="text-xs font-black uppercase tracking-widest text-amber-800">
+                                    Doublons contacts suspectés
+                                </p>
+                                <p className="mt-1 text-xs font-semibold text-amber-900">
+                                    Vérifiez avant relance : un même décideur ou téléphone peut apparaître plusieurs fois sur cette fiche.
+                                </p>
+                                <div className="mt-2 grid gap-2">
+                                    {contactDuplicateGroups.map((group, index) => (
+                                        <div key={`${group.score}-${index}`} className="rounded-lg border border-amber-200 bg-white/70 px-3 py-2">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                                                Score {group.score}% · {(group.reasons || []).join(' · ')}
+                                            </p>
+                                            <p className="mt-1 text-xs font-bold text-slate-700">
+                                                {(group.contacts || []).map(contact => `${contact.name}${contact.email ? ` <${contact.email}>` : ''}`).join(' ↔ ')}
+                                            </p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 {showContactForm && (
                     <form onSubmit={createContact} className="grid gap-3 border-b border-slate-200 bg-blue-50/40 p-4 md:grid-cols-2 xl:grid-cols-4">
                         <input
