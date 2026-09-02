@@ -1125,6 +1125,11 @@ export default function MeasureMissionPage() {
                                     <p className="mt-1 text-sm font-bold text-slate-500">{mission.purpose || 'Mission de prise de côtes'}</p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
+                                    {mission.status === 'DRAFT' && (
+                                        <button onClick={() => changeStatus('IN_CAPTURE')} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-black text-white">
+                                            {isSiteVisit ? 'Démarrer le relevé' : 'Démarrer le contrôle des cotes'}
+                                        </button>
+                                    )}
                                     {mission.status === 'SCHEDULED' && <button onClick={() => changeStatus('IN_CAPTURE')} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-black text-white">Démarrer le relevé</button>}
                                     {['IN_CAPTURE', 'ON_SITE', 'CORRECTION_REQUIRED'].includes(mission.status) && <button onClick={() => changeStatus('TO_REVIEW')} className="rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-black text-white">Envoyer au contrôle BE</button>}
                                     {mission.status === 'TO_REVIEW' && canReview && (
