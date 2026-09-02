@@ -21,6 +21,8 @@ Brut ( Q-U );70501;JOINT DE BAVETTE;50;ml
     assert analysis.detected_document_type == "CUTTING"
     assert analysis.detected_source_system == "PROGES"
     assert analysis.detected_project_reference == "VER DIMASCIO"
+    assert analysis.summary["canonical_entity"] == "cutting_sheet"
+    assert analysis.summary["stock_source"] is True
     assert analysis.summary["debit_lines"] == 2
     assert analysis.summary["total_quantity"] == 53
     assert [record["reference"] for record in analysis.records] == ["7007", "70501"]
@@ -82,6 +84,9 @@ def test_fabrication_pdf_remains_consultable_without_stock_records(tmp_path, mon
     assert analysis.detected_document_type == "FABRICATION"
     assert analysis.detected_source_system == "ORGADATA"
     assert analysis.detected_project_reference == "MMG26020068NC"
+    assert analysis.summary["canonical_entity"] == "fabrication_sheet"
+    assert analysis.summary["stock_source"] is False
+    assert "cutting_sheet" in analysis.summary["forbidden_confusions"]
     assert analysis.records == []
 
 
@@ -114,6 +119,8 @@ PF1 Cortizo COR 70 INDUSTRIAL Porte-fenetre 1200 x 2380 mm RAL 7016 mat 1
     assert analysis.status == "PARSED"
     assert analysis.detected_document_type == "FABRICATION"
     assert analysis.detected_source_system == "ORGADATA"
+    assert analysis.summary["canonical_entity"] == "fabrication_sheet"
+    assert analysis.summary["stock_source"] is False
     assert analysis.summary["fabrication_lines"] == 2
     assert analysis.summary["opening_count"] == 2
     assert analysis.summary["systems"] == {"Cortizo COR 70 INDUSTRIAL": 2}

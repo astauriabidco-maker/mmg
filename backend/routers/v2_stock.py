@@ -39,7 +39,7 @@ from ..services.workshop_preparations import (
     return_preparation,
     update_prepared_quantity,
 )
-from scripts.import_workshop_debits import parse_file
+from scripts.import_workshop_debits import DebitIssue, classify_file, parse_file
 from ..core.time import utcnow
 
 router = APIRouter(
@@ -189,6 +189,24 @@ async def _parse_workshop_uploads(files: List[UploadFile]):
             tmp.write(await file.read())
             tmp_path = Path(tmp.name)
         try:
+            classification = classify_file(tmp_path)
+            if classification.document_type and not classification.stock_source:
+                issues.append(
+                    DebitIssue(
+                        "error",
+                        "ontology_document_type_not_stock_source",
+                        source_name := (file.filename or tmp_path.name),
+                        None,
+                        None,
+                        (
+                            f"{classification.label or classification.document_type} "
+                            "n'est pas une fiche de débit. Seul un document CUTTING "
+                            "peut alimenter le contrôle stock, la réservation ou le débit réel."
+                        ),
+                    )
+                )
+                source_names.append(source_name)
+                continue
             parsed_records, parsed_issues = parse_file(tmp_path)
             source_name = file.filename or tmp_path.name
             for record in parsed_records:

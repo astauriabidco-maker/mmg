@@ -31,6 +31,10 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from backend import models
 from backend.database import SessionLocal
+from backend.domain.ontology import (
+    document_type_can_feed_stock,
+    resolve_external_document,
+)
 from backend.services.stock_service import InventoryService
 
 
@@ -85,6 +89,16 @@ class StockMatch:
     available_quantity: float
     missing_quantity: float
     status: str
+
+
+@dataclass(frozen=True)
+class WorkshopDocumentClassification:
+    source_system: str | None
+    document_type: str | None
+    canonical_entity: str | None
+    stock_source: bool
+    label: str | None = None
+    forbidden_confusions: tuple[str, ...] = ()
 
 
 def clean_text(value: Any) -> str:
@@ -821,12 +835,96 @@ def parse_orgadata_optimized_pdf(path: Path, text: str) -> tuple[list[DebitRecor
     return records, issues
 
 
+def classify_workshop_text(path: Path, text: str) -> WorkshopDocumentClassification:
+    """Classifie un document atelier via l'ontologie MMG."""
+
+    suffix = path.suffix.lower()
+    upper = f"{path.name}\n{text[:12000]}".upper()
+    source_system: str | None = None
+    document_type: str | None = None
+
+    if suffix == ".txt":
+        source_system = "PROGES"
+        document_type = "CUTTING"
+    elif is_proges_fabrication_text(text):
+        source_system = "PROGES"
+        # Les fiches PROGES fournies à l'atelier portent parfois le titre
+        # "FICHE DE FABRICATION" tout en contenant le tableau matière
+        # Référence/Désignation/Qté/Débit/Coupe. Dans le contexte débit
+        # atelier, ce tableau est la source stock officielle.
+        document_type = "CUTTING"
+    elif "DÉBIT OPTIMISÉ" in upper:
+        source_system = "ORGADATA"
+        document_type = "CUTTING"
+    elif "VALORISATION DE COMMANDE" in upper:
+        source_system = "PROGES" if "PROGES" in upper or "SEPALUMIC" in upper else "OTHER"
+        document_type = "VALUATION"
+    elif "DEVIS N°" in upper or "DEVIS NO" in upper or "OFFRE NOUVEAU DOCUMENT" in upper:
+        source_system = (
+            "ORGADATA"
+            if "ORGADATA" in upper or "LOGIKAL" in upper
+            else "PROGES"
+            if "PROGES" in upper or "PVC" in upper
+            else "OTHER"
+        )
+        document_type = "QUOTING"
+    elif is_orgadata_fabrication_text(text) or "BON D'ATELIER" in upper:
+        source_system = "ORGADATA" if ("ORGADATA" in upper or "LOGIKAL" in upper) else None
+        document_type = "FABRICATION"
+    elif is_cortizo_order_text(text):
+        source_system = "INTERNAL"
+        document_type = "CUTTING"
+
+    mapping = (
+        resolve_external_document(source_system, document_type)
+        if source_system and document_type
+        else None
+    )
+    return WorkshopDocumentClassification(
+        source_system=source_system,
+        document_type=document_type,
+        canonical_entity=mapping.canonical_entity if mapping else None,
+        stock_source=document_type_can_feed_stock(document_type or ""),
+        label=mapping.label if mapping else None,
+        forbidden_confusions=mapping.forbidden_confusions if mapping else (),
+    )
+
+
+def classify_file(path: Path) -> WorkshopDocumentClassification:
+    if path.suffix.lower() == ".pdf":
+        return classify_workshop_text(path, extract_pdf_text(path))
+    if path.suffix.lower() in {".txt", ".csv", ".dat", ".cut"}:
+        return classify_workshop_text(path, read_text_file(path))
+    return WorkshopDocumentClassification(
+        source_system=None,
+        document_type=None,
+        canonical_entity=None,
+        stock_source=False,
+    )
+
+
 def parse_file(path: Path) -> tuple[list[DebitRecord], list[DebitIssue]]:
     suffix = path.suffix.lower()
     if suffix == ".txt":
         return parse_progers_txt(path, read_text_file(path))
     if suffix == ".pdf":
         text = extract_pdf_text(path)
+        classification = classify_workshop_text(path, text)
+        if classification.document_type and not classification.stock_source:
+            return [], [
+                DebitIssue(
+                    "error",
+                    "ontology_document_type_not_stock_source",
+                    path.name,
+                    None,
+                    None,
+                    (
+                        f"{classification.label or classification.document_type} "
+                        "n'est pas une fiche de débit. Seul un document CUTTING "
+                        "peut alimenter le contrôle stock, la réservation ou le débit réel."
+                    ),
+                )
+            ]
         if is_proges_fabrication_text(text):
             return parse_proges_fabrication_pdf(path, text)
         if "Débit optimisé" in text:

@@ -94,6 +94,22 @@ GET /v2/mmg/ontology
 La réponse est pensée pour les écrans UI, les parseurs, les tests de recette et
 les futurs usages IA/RAG.
 
+## Utilisation par les parseurs
+
+Les imports techniques utilisent l'ontologie pour rattacher chaque document à
+un objet canonique :
+
+- `PROGES/CUTTING` et `ORGADATA/CUTTING` alimentent `cutting_sheet` et peuvent
+  servir au contrôle stock.
+- `ORGADATA/FABRICATION` alimente `fabrication_sheet` et ne peut pas être
+  utilisé comme source de réservation ou débit réel.
+- `PROGES/QUOTING`, `ORGADATA/QUOTING` et les valorisations alimentent
+  `technical_quotation`, pas le devis commercial MMG.
+
+Les résumés d'analyse exposent `canonical_entity`, `stock_source` et
+`forbidden_confusions` pour que l'UI et les contrôles BE puissent afficher le
+rôle métier exact du fichier importé.
+
 ## Statuts métier suivis
 
 | Entité | Statuts principaux |
