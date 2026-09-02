@@ -44,13 +44,20 @@ def test_compare_material_versions_aggregates_duplicate_lines():
 
 
 class _Version:
-    def __init__(self, document_type, version_number, filename, status="DOCUMENT_ONLY"):
+    def __init__(
+        self,
+        document_type,
+        version_number,
+        filename,
+        status="DOCUMENT_ONLY",
+        reference="AFF-42",
+    ):
         self.document_type = document_type
         self.version_number = version_number
         self.original_filename = filename
         self.analysis_status = status
         self.source_system = "PROGES"
-        self.detected_project_reference = "AFF-42"
+        self.detected_project_reference = reference
         self.source_reference = None
 
 
@@ -67,6 +74,21 @@ def test_document_matrix_requires_fabrication_and_cutting():
     )
     assert complete["complete"] is True
     assert complete["reference_consistent"] is True
+
+
+def test_document_matrix_reference_consistency_uses_latest_versions_only():
+    matrix = build_document_matrix(
+        [
+            _Version("FABRICATION", 1, "old-atelier.pdf", reference="OLD-001"),
+            _Version("CUTTING", 2, "old-cutting.pdf", "PARSED", reference="OLD-001"),
+            _Version("FABRICATION", 3, "atelier.pdf", "PARSED", reference="NEW-002"),
+            _Version("CUTTING", 4, "cutting.pdf", "PARSED", reference="NEW-002"),
+        ]
+    )
+
+    assert matrix["complete"] is True
+    assert matrix["external_references"] == ["NEW-002"]
+    assert matrix["reference_consistent"] is True
 
 
 def test_legacy_parsed_records_are_normalized_for_stock_preview():
