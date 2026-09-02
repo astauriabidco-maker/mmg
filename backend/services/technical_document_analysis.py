@@ -10,8 +10,10 @@ from scripts.import_workshop_debits import (
     build_summary,
     consolidate_records,
     extract_pdf_text,
+    is_orgadata_fabrication_text,
     is_proges_fabrication_text,
     parse_file,
+    parse_orgadata_fabrication_pdf,
     read_text_file,
 )
 
@@ -106,6 +108,33 @@ def _detect_type(text: str, filename: str, declared_type: str) -> str:
     return declared_type
 
 
+def _build_fabrication_summary(records: list[dict[str, Any]], issues: list[dict[str, Any]], path: Path) -> dict[str, Any]:
+    systems: dict[str, int] = {}
+    finishes: dict[str, int] = {}
+    opening_types: dict[str, int] = {}
+    for record in records:
+        if record.get("system"):
+            systems[record["system"]] = systems.get(record["system"], 0) + 1
+        if record.get("finish"):
+            finishes[record["finish"]] = finishes.get(record["finish"], 0) + 1
+        if record.get("opening_type"):
+            opening_types[record["opening_type"]] = opening_types.get(record["opening_type"], 0) + 1
+    return {
+        "raw_records": len(records),
+        "fabrication_lines": len(records),
+        "opening_count": len({record.get("position") for record in records if record.get("position")}),
+        "total_quantity": sum(float(record.get("quantity") or 0) for record in records),
+        "systems": dict(sorted(systems.items())),
+        "finishes": dict(sorted(finishes.items())),
+        "opening_types": dict(sorted(opening_types.items())),
+        "with_glazing": sum(1 for record in records if record.get("glazing")),
+        "with_accessories": sum(1 for record in records if record.get("accessories")),
+        "sources": {path.name: 1},
+        "issues": {},
+        "issue_count": len(issues),
+    }
+
+
 def analyze_technical_document(
     path: Path,
     declared_type: str,
@@ -163,6 +192,17 @@ def analyze_technical_document(
             status = "PARSED_WITH_WARNINGS" if issues else "PARSED"
         else:
             status = "FAILED"
+    elif declared_type == "FABRICATION" and (
+        detected_source == "ORGADATA" or declared_source == "ORGADATA" or is_orgadata_fabrication_text(text)
+    ):
+        parsed_records, parsed_issues = parse_orgadata_fabrication_pdf(path, text)
+        records = parsed_records
+        issues.extend(asdict(issue) for issue in parsed_issues)
+        summary = _build_fabrication_summary(records, issues, path)
+        if records:
+            status = "PARSED_WITH_WARNINGS" if issues else "PARSED"
+        else:
+            status = "FAILED" if any(issue.get("severity") == "error" for issue in issues) else "DOCUMENT_ONLY"
     elif declared_type == "CUTTING":
         try:
             parsed_records, parsed_issues = parse_file(path)

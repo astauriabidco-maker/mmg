@@ -5,8 +5,10 @@ from scripts.import_workshop_debits import (
     consolidate_records,
     detect_project_reference,
     is_cortizo_order_text,
+    is_orgadata_fabrication_text,
     is_proges_fabrication_text,
     parse_cortizo_order_pdf,
+    parse_orgadata_fabrication_pdf,
     parse_orgadata_optimized_pdf,
     parse_proges_fabrication_pdf,
     parse_file,
@@ -135,6 +137,39 @@ def test_parse_orgadata_optimized_pdf_text_extracts_bar_requirements(tmp_path):
     assert consolidated[0].project_reference == "MMG26020068NC"
     assert consolidated[1].reference == "2022"
     assert consolidated[1].length_mm == 6500
+
+
+def test_parse_orgadata_fabrication_pdf_extracts_workshop_openings(tmp_path):
+    path = tmp_path / "bon-atelier-orgadata-anonymise.pdf"
+    text = """ORGADATA LogiKal - Bon d'atelier
+Affaire: ALU-RECETTE-2026-001
+BON D'ATELIER
+Position Systeme Type Dimensions Finition Quantite
+CH1 Cortizo COR 70 INDUSTRIAL Fixe 900 x 2100 mm RAL 7016 mat 1
+Vitrage: 44.2 clair / 16 argon / 4 faible emissivite
+Accessoires: Paumelles invisibles, Poignee noire
+Remarques: Controle equerrage avant vitrage
+PF1 Cortizo COR 70 INDUSTRIAL Porte-fenetre 1200 x 2380 mm RAL 7016 mat 1
+"""
+
+    assert is_orgadata_fabrication_text(text)
+    records, issues = parse_orgadata_fabrication_pdf(path, text)
+
+    assert not issues
+    assert len(records) == 2
+    assert records[0]["position"] == "CH1"
+    assert records[0]["system"] == "Cortizo COR 70 INDUSTRIAL"
+    assert records[0]["opening_type"] == "Fixe"
+    assert records[0]["width_mm"] == 900
+    assert records[0]["height_mm"] == 2100
+    assert records[0]["finish"] == "RAL 7016 mat"
+    assert records[0]["quantity"] == 1
+    assert records[0]["material"] == "ALU"
+    assert records[0]["glazing"] == "44.2 clair / 16 argon / 4 faible emissivite"
+    assert records[0]["accessories"] == ["Paumelles invisibles", "Poignee noire"]
+    assert records[0]["remarks"] == "Controle equerrage avant vitrage"
+    assert records[1]["position"] == "PF1"
+    assert records[1]["opening_type"] == "Porte-fenetre"
 
 
 def test_parse_cortizo_order_uses_required_quantity_not_purchase_pack(tmp_path):
