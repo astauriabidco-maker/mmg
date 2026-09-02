@@ -342,6 +342,44 @@ def _records_from_technical_version(
     return records
 
 
+def _material_signature_from_records(records: list[DebitRecord]) -> dict[tuple[str, str, str], float]:
+    signature: dict[tuple[str, str, str], float] = {}
+    for record in records:
+        key = (
+            (record.supplier or "").strip().upper(),
+            (record.reference or "").strip().upper(),
+            (record.unit or "").strip().lower(),
+        )
+        signature[key] = signature.get(key, 0.0) + float(record.quantity or 0)
+    return signature
+
+
+def _material_signature_from_reservation(
+    reservation: models.StockReservation,
+) -> dict[tuple[str, str, str], float]:
+    signature: dict[tuple[str, str, str], float] = {}
+    for line in reservation.lines or []:
+        key = (
+            (line.supplier or "").strip().upper(),
+            (line.supplier_reference or "").strip().upper(),
+            (line.unit or "").strip().lower(),
+        )
+        quantity = float(line.consumed_quantity or line.reserved_quantity or 0)
+        signature[key] = signature.get(key, 0.0) + quantity
+    return signature
+
+
+def _consumed_reservation_matches_cutting(
+    reservation: Optional[models.StockReservation],
+    cutting: models.TechnicalDossierVersion,
+) -> bool:
+    if not reservation or reservation.status != "consumed":
+        return False
+    return _material_signature_from_reservation(reservation) == _material_signature_from_records(
+        _records_from_technical_version(cutting)
+    )
+
+
 def _technical_stock_snapshot(
     db: Session,
     dossier: models.TechnicalDossier,
@@ -2957,10 +2995,28 @@ def review_measure_technical_gate(
             execution = _technical_execution_context(db, mission)
             cutting = _validate_production_document_analysis(dossier)
             reservation = execution["reservation"]
+            consumed_material_already_matches = (
+                reservation
+                and reservation["status"] == "consumed"
+                and reservation["technical_dossier_version_id"] != cutting.id
+                and _consumed_reservation_matches_cutting(
+                    db.query(models.StockReservation)
+                    .filter(models.StockReservation.id == reservation["id"])
+                    .first(),
+                    cutting,
+                )
+                and execution["preparation"]
+                and execution["preparation"]["status"] == "consumed"
+            )
             if (
                 not reservation
-                or reservation["status"] != "reserved"
-                or reservation["technical_dossier_version_id"] != cutting.id
+                or (
+                    not consumed_material_already_matches
+                    and (
+                        reservation["status"] != "reserved"
+                        or reservation["technical_dossier_version_id"] != cutting.id
+                    )
+                )
             ):
                 raise HTTPException(
                     409,

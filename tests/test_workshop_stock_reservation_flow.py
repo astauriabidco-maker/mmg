@@ -1424,10 +1424,8 @@ def test_launch_production_uses_validated_measure_openings_when_quote_lines_have
 
         headers = _auth_headers(TestingSessionLocal, "atelier-manager")
         reserve_response = client.post(
-            "/v2/stock/workshop-debits/reservations",
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/reservation",
             headers=headers,
-            data={"sale_order_id": str(sale_id)},
-            files=[("files", ("SEPVER.TXT", SEPALUMIC_CONTENT, "text/plain"))],
         )
         assert reserve_response.status_code == 200, reserve_response.text
 
@@ -1638,6 +1636,15 @@ def test_technical_physical_moves_wait_for_current_launch_authorization():
             headers=headers,
         )
         assert handed_over.status_code == 200, handed_over.text
+        with TestingSessionLocal() as db:
+            sale_db = (
+                db.query(models.SaleOrder)
+                .filter(models.SaleOrder.id == sale_id)
+                .one()
+            )
+            sale_db.status = "IN_PRODUCTION"
+            db.commit()
+
         consumed = client.post(
             f"/v2/stock/workshop-debits/reservations/{reservation['id']}/consume",
             headers=headers,
@@ -1691,6 +1698,24 @@ def test_technical_physical_moves_wait_for_current_launch_authorization():
         )
         assert revision.status_code == 409
         assert "régularisation de stock" in revision.text
+
+        with TestingSessionLocal() as db:
+            dossier = (
+                db.query(models.TechnicalDossier)
+                .filter(models.TechnicalDossier.id == dossier_id)
+                .one()
+            )
+            dossier.launch_status = "TO_REVIEW"
+            dossier.stock_status = "VALIDATED"
+            db.commit()
+
+        relaunch_authorized = client.patch(
+            f"/v2/mmg/missions/{mission_id}/technical-dossier/gate-review",
+            headers=headers,
+            json={"gate": "LAUNCH", "action": "VALIDATE"},
+        )
+        assert relaunch_authorized.status_code == 200, relaunch_authorized.text
+        assert relaunch_authorized.json()["launch_status"] == "VALIDATED"
         with TestingSessionLocal() as db:
             assert db.query(models.StockReservation).count() == 1
     finally:
