@@ -948,6 +948,20 @@ def _serialize_crm_plan(plan):
     }
 
 
+def _crm_reminder_recipient(client: models.Client) -> str:
+    direct_email = (client.email or "").strip()
+    if direct_email:
+        return direct_email
+    for contact in sorted(
+        client.contacts or [],
+        key=lambda item: (not item.is_primary, item.name or "", item.id or 0),
+    ):
+        contact_email = (contact.email or "").strip()
+        if contact_email:
+            return contact_email
+    return ""
+
+
 @router.get(
     "/crm/reminder-templates",
     response_model=List[schemas.CRMReminderTemplateResponse],
@@ -1164,7 +1178,7 @@ def preview_crm_reminder(
         "template_id": template.id,
         "template_code": template.code,
         "template_name": template.name,
-        "recipient": (client.email or "").strip(),
+        "recipient": _crm_reminder_recipient(client),
         "subject": subject,
         "message": message,
         "smtp_configured": bool(_smtp_settings()),
