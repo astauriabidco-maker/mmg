@@ -90,11 +90,14 @@ def compare_material_versions(
 def build_document_matrix(versions: Iterable[Any]) -> dict[str, Any]:
     latest_by_type: dict[str, Any] = {}
     source_counts: dict[str, int] = defaultdict(int)
-    references: set[str] = set()
     for version in versions or []:
         latest_by_type[version.document_type] = version
         source_counts[version.source_system] += 1
-        if version.document_type not in {*PRODUCTION_DOCUMENT_TYPES, "VALUATION"}:
+
+    references: set[str] = set()
+    for document_type in {*PRODUCTION_DOCUMENT_TYPES, "VALUATION"}:
+        version = latest_by_type.get(document_type)
+        if not version:
             continue
         reference = (
             version.detected_project_reference
