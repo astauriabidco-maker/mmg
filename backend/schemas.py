@@ -308,6 +308,11 @@ class ClientCreate(ClientBase):
 class ClientContactBase(BaseModel):
     name: str
     role: Optional[str] = None
+    priority: int = Field(default=3, ge=1, le=5)
+    influence_role: Optional[str] = None
+    preferred_channel: Optional[str] = None
+    email_consent: bool = False
+    email_consent_at: Optional[datetime] = None
     email: Optional[str] = None
     phone: Optional[str] = None
     is_primary: bool = False
@@ -319,6 +324,11 @@ class ClientContactCreate(ClientContactBase):
 class ClientContactUpdate(BaseModel):
     name: Optional[str] = None
     role: Optional[str] = None
+    priority: Optional[int] = Field(default=None, ge=1, le=5)
+    influence_role: Optional[str] = None
+    preferred_channel: Optional[str] = None
+    email_consent: Optional[bool] = None
+    email_consent_at: Optional[datetime] = None
     email: Optional[str] = None
     phone: Optional[str] = None
     is_primary: Optional[bool] = None

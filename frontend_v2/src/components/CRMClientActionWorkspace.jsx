@@ -66,6 +66,37 @@ const isOpenOpportunity = (opportunity) => (
     && !CLOSED_OPPORTUNITY_STATUSES.has(String(opportunity.stage || '').toUpperCase())
 );
 
+const CONTACT_PRIORITY_OPTIONS = [
+    [1, 'Priorité 1 · décision rapide'],
+    [2, 'Priorité 2 · important'],
+    [3, 'Priorité 3 · standard'],
+    [4, 'Priorité 4 · secondaire'],
+    [5, 'Priorité 5 · information'],
+];
+
+const CONTACT_INFLUENCE_OPTIONS = [
+    ['', 'Influence à qualifier'],
+    ['DECISION_MAKER', 'Décisionnaire'],
+    ['PRESCRIBER', 'Prescripteur'],
+    ['BUYER', 'Acheteur'],
+    ['SITE_CONTACT', 'Contact chantier'],
+    ['TECHNICAL_CONTACT', 'Contact technique'],
+    ['ACCOUNTING', 'Comptabilité'],
+    ['OTHER', 'Autre'],
+];
+
+const CONTACT_CHANNEL_OPTIONS = [
+    ['', 'Canal préféré'],
+    ['EMAIL', 'Email'],
+    ['PHONE', 'Téléphone'],
+    ['SMS', 'SMS'],
+    ['WHATSAPP', 'WhatsApp'],
+    ['IN_PERSON', 'Rendez-vous'],
+];
+
+const influenceLabel = value => CONTACT_INFLUENCE_OPTIONS.find(([code]) => code === value)?.[1] || value;
+const channelLabel = value => CONTACT_CHANNEL_OPTIONS.find(([code]) => code === value)?.[1] || value;
+
 export default function CRMClientActionWorkspace({
     client,
     sites,
@@ -99,6 +130,10 @@ export default function CRMClientActionWorkspace({
     const [contactDraft, setContactDraft] = useState({
         name: '',
         role: '',
+        priority: 3,
+        influence_role: '',
+        preferred_channel: '',
+        email_consent: false,
         email: '',
         phone: '',
         is_primary: false,
@@ -277,6 +312,11 @@ export default function CRMClientActionWorkspace({
             await api.post(`/v2/partners/clients/${client.id}/contacts`, {
                 name: contactDraft.name.trim(),
                 role: contactDraft.role.trim() || null,
+                priority: Number(contactDraft.priority || 3),
+                influence_role: contactDraft.influence_role || null,
+                preferred_channel: contactDraft.preferred_channel || null,
+                email_consent: contactDraft.email_consent,
+                email_consent_at: contactDraft.email_consent ? new Date().toISOString() : null,
                 email: contactDraft.email.trim() || null,
                 phone: contactDraft.phone.trim() || null,
                 is_primary: contactDraft.is_primary,
@@ -286,6 +326,10 @@ export default function CRMClientActionWorkspace({
             setContactDraft({
                 name: '',
                 role: '',
+                priority: 3,
+                influence_role: '',
+                preferred_channel: '',
+                email_consent: false,
                 email: '',
                 phone: '',
                 is_primary: false,
@@ -442,6 +486,24 @@ export default function CRMClientActionWorkspace({
                             placeholder="Fonction / rôle"
                             className={inputClass}
                         />
+                        <select
+                            value={contactDraft.priority}
+                            onChange={event => setContactDraft(current => ({ ...current, priority: Number(event.target.value) }))}
+                            className={inputClass}
+                        >
+                            {CONTACT_PRIORITY_OPTIONS.map(([value, label]) => (
+                                <option key={value} value={value}>{label}</option>
+                            ))}
+                        </select>
+                        <select
+                            value={contactDraft.influence_role}
+                            onChange={event => setContactDraft(current => ({ ...current, influence_role: event.target.value }))}
+                            className={inputClass}
+                        >
+                            {CONTACT_INFLUENCE_OPTIONS.map(([value, label]) => (
+                                <option key={value} value={value}>{label}</option>
+                            ))}
+                        </select>
                         <input
                             type="email"
                             value={contactDraft.email}
@@ -455,6 +517,15 @@ export default function CRMClientActionWorkspace({
                             placeholder="Téléphone"
                             className={inputClass}
                         />
+                        <select
+                            value={contactDraft.preferred_channel}
+                            onChange={event => setContactDraft(current => ({ ...current, preferred_channel: event.target.value }))}
+                            className={inputClass}
+                        >
+                            {CONTACT_CHANNEL_OPTIONS.map(([value, label]) => (
+                                <option key={value} value={value}>{label}</option>
+                            ))}
+                        </select>
                         <label className="inline-flex items-center gap-2 text-xs font-black text-slate-700">
                             <input
                                 type="checkbox"
@@ -462,6 +533,14 @@ export default function CRMClientActionWorkspace({
                                 onChange={event => setContactDraft(current => ({ ...current, is_primary: event.target.checked }))}
                             />
                             Contact principal
+                        </label>
+                        <label className="inline-flex items-center gap-2 text-xs font-black text-slate-700">
+                            <input
+                                type="checkbox"
+                                checked={contactDraft.email_consent}
+                                onChange={event => setContactDraft(current => ({ ...current, email_consent: event.target.checked }))}
+                            />
+                            Consentement email
                         </label>
                         <input
                             value={contactDraft.notes}
@@ -494,6 +573,12 @@ export default function CRMClientActionWorkspace({
                                             {contact.is_primary && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-amber-800">Principal</span>}
                                         </div>
                                         <p className="mt-1 truncate text-xs font-semibold text-slate-500">{contact.role || 'Interlocuteur'}</p>
+                                        <div className="mt-2 flex flex-wrap gap-1.5">
+                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-slate-600">P{contact.priority || 3}</span>
+                                            {contact.influence_role && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-blue-700">{influenceLabel(contact.influence_role)}</span>}
+                                            {contact.preferred_channel && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-700">{channelLabel(contact.preferred_channel)}</span>}
+                                            {contact.email_consent && <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-purple-700">Email OK</span>}
+                                        </div>
                                     </div>
                                     <div className="flex shrink-0 items-center gap-1">
                                         {!contact.is_primary && (
