@@ -2,6 +2,7 @@ from pathlib import Path
 
 from scripts.import_workshop_debits import (
     build_summary,
+    classify_workshop_text,
     consolidate_records,
     detect_project_reference,
     is_cortizo_order_text,
@@ -170,6 +171,62 @@ PF1 Cortizo COR 70 INDUSTRIAL Porte-fenetre 1200 x 2380 mm RAL 7016 mat 1
     assert records[0]["remarks"] == "Controle equerrage avant vitrage"
     assert records[1]["position"] == "PF1"
     assert records[1]["opening_type"] == "Porte-fenetre"
+
+
+def test_ontology_classifies_orgadata_fabrication_as_non_stock_source(tmp_path):
+    path = tmp_path / "bon-atelier-orgadata.pdf"
+    text = """ORGADATA LogiKal - Bon d'atelier
+BON D'ATELIER
+Position Systeme Type Dimensions Finition Quantite
+CH1 Cortizo COR 70 Fixe 900 x 2100 mm RAL 7016 1
+"""
+
+    classification = classify_workshop_text(path, text)
+
+    assert classification.source_system == "ORGADATA"
+    assert classification.document_type == "FABRICATION"
+    assert classification.canonical_entity == "fabrication_sheet"
+    assert classification.stock_source is False
+    assert "cutting_sheet" in classification.forbidden_confusions
+
+
+def test_parse_file_rejects_fabrication_sheet_as_workshop_debit(tmp_path, monkeypatch):
+    path = tmp_path / "bon-atelier-orgadata.pdf"
+    path.write_bytes(b"%PDF-test")
+    text = """ORGADATA LogiKal - Bon d'atelier
+BON D'ATELIER
+Position Systeme Type Dimensions Finition Quantite
+CH1 Cortizo COR 70 Fixe 900 x 2100 mm RAL 7016 1
+"""
+    monkeypatch.setattr(
+        "scripts.import_workshop_debits.extract_pdf_text",
+        lambda _path: text,
+    )
+
+    records, issues = parse_file(path)
+
+    assert records == []
+    assert issues[0].code == "ontology_document_type_not_stock_source"
+    assert issues[0].severity == "error"
+
+
+def test_parse_file_rejects_technical_quote_as_workshop_debit(tmp_path, monkeypatch):
+    path = tmp_path / "devis-proges-anonymise.pdf"
+    path.write_bytes(b"%PDF-test")
+    text = """Logiciel PROGES ©25
+DEVIS N° PVC260000
+Client: CLIENT ANONYMISE
+"""
+    monkeypatch.setattr(
+        "scripts.import_workshop_debits.extract_pdf_text",
+        lambda _path: text,
+    )
+
+    records, issues = parse_file(path)
+
+    assert records == []
+    assert issues[0].code == "ontology_document_type_not_stock_source"
+    assert "Seul un document CUTTING" in issues[0].message
 
 
 def test_parse_cortizo_order_uses_required_quantity_not_purchase_pack(tmp_path):

@@ -5,6 +5,10 @@ from pathlib import Path
 import re
 from typing import Any
 
+from backend.domain.ontology import (
+    document_type_can_feed_stock,
+    resolve_external_document,
+)
 from backend.services.commercial_quote_analysis import analyze_commercial_quote
 from scripts.import_workshop_debits import (
     build_summary,
@@ -132,6 +136,22 @@ def _build_fabrication_summary(records: list[dict[str, Any]], issues: list[dict[
         "sources": {path.name: 1},
         "issues": {},
         "issue_count": len(issues),
+    }
+
+
+def _ontology_context(source_system: str | None, document_type: str | None) -> dict[str, Any]:
+    mapping = (
+        resolve_external_document(source_system, document_type)
+        if source_system and document_type
+        else None
+    )
+    return {
+        "ontology_source_system": source_system,
+        "ontology_document_type": document_type,
+        "canonical_entity": mapping.canonical_entity if mapping else None,
+        "canonical_label": mapping.label if mapping else None,
+        "stock_source": document_type_can_feed_stock(document_type or ""),
+        "forbidden_confusions": list(mapping.forbidden_confusions) if mapping else [],
     }
 
 
@@ -276,6 +296,7 @@ def analyze_technical_document(
     summary["detected_project_reference"] = detected_reference
     summary["detected_source_system"] = detected_source
     summary["detected_document_type"] = detected_type
+    summary.update(_ontology_context(detected_source, detected_type))
     summary["issue_count"] = len(issues)
     return TechnicalDocumentAnalysis(
         status=status,
