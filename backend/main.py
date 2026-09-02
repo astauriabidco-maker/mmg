@@ -78,20 +78,39 @@ def _validate_crm_email_configuration() -> None:
 
 
 def _sync_crm_reminders_once() -> dict:
-    from .services.crm_reminders import sync_reminder_plans
+    from .services.crm_reminders import dispatch_due_reminder_plans, sync_reminder_plans
 
     db = database.SessionLocal()
     try:
-        result = sync_reminder_plans(
+        sync_result = sync_reminder_plans(
             db,
             created_by="Planificateur CRM",
             now=utcnow(),
         )
-        if result.get("created") or result.get("cancelled"):
+        dispatch_result = dispatch_due_reminder_plans(
+            db,
+            created_by="Planificateur CRM",
+            now=utcnow(),
+            limit=int(os.environ.get("CRM_REMINDER_DISPATCH_LIMIT", "50")),
+        )
+        result = {**sync_result, **dispatch_result}
+        if (
+            result.get("created")
+            or result.get("cancelled")
+            or result.get("processed")
+        ):
             logger.info(
-                "crm_reminder_plans_synchronized created=%s cancelled=%s",
+                (
+                    "crm_reminder_worker_completed created=%s cancelled=%s "
+                    "processed=%s sent=%s skipped=%s failed=%s invalid=%s"
+                ),
                 result.get("created", 0),
                 result.get("cancelled", 0),
+                result.get("processed", 0),
+                result.get("sent", 0),
+                result.get("skipped", 0),
+                result.get("failed", 0),
+                result.get("invalid", 0),
             )
         return result
     except Exception:

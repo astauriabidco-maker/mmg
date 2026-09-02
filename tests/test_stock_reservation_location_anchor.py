@@ -157,7 +157,27 @@ def test_reservation_is_anchored_to_source_location(stock_client):
 
     with TestingSessionLocal() as db:
         variant_id, wh_id, rack_id = _seed_variant_with_two_locations(db, stock_wh=0, stock_rack=5)
-        sale_id = _seed_sale(db, "DEV-ANCRE-1")
+        sale_id = _seed_sale(
+            db,
+            "DEV-ANCRE-1",
+            workflow_type="FABRICATION_ESTIMATE",
+        )
+        db.add(
+            models.MMG(
+                reference="MMG-ANCRE-1",
+                sale_order_id=sale_id,
+                client_name="Client ancrage",
+                width=1200,
+                height=1400,
+                passage_height=0,
+                material="ALU",
+                product_series="Test",
+                opening_type="Fenêtre",
+                sash_count=1,
+                status=models.MMGStatus.VALIDATED,
+            )
+        )
+        db.commit()
 
     # Le stock est sur « Rack ALU A » : la prévisualisation sur WH/Stock voit
     # une pénurie (plus de disponible agrégé tous emplacements).
@@ -189,6 +209,9 @@ def test_reservation_is_anchored_to_source_location(stock_client):
     preparation = _prepare(client, headers, reservation)
     handover_response = _handover(client, headers, preparation)
     assert handover_response.status_code == 200, handover_response.text
+
+    launch_response = client.post(f"/v2/sales/{sale_id}/launch-production", headers=headers)
+    assert launch_response.status_code == 200, launch_response.text
 
     consume_response = client.post(
         f"/v2/stock/workshop-debits/reservations/{reservation['id']}/consume",

@@ -21,9 +21,9 @@ from ..services.commercial_quote_analysis import compare_commercial_quote_versio
 from ..services.crm_cockpit import build_crm_cockpit
 from ..services.crm_reminders import (
     build_template_context,
+    record_reminder_delivery,
     ensure_default_rules,
     ensure_default_templates,
-    plain_text_to_html,
     reminder_template_code,
     render_email,
     sync_reminder_plans,
@@ -1209,58 +1209,19 @@ def send_crm_reminder(
         if not template:
             raise HTTPException(404, "Modèle de relance introuvable")
 
-    delivery = models.CRMReminderDelivery(
-        reminder_key=(item.reminder_key or "").strip() or None,
-        client_id=client.id,
-        opportunity_id=opportunity.id if opportunity else None,
-        template_id=template.id if template else None,
+    delivery, notification = record_reminder_delivery(
+        db,
+        client=client,
+        opportunity=opportunity,
+        template=template,
+        plan=plan,
+        reminder_key=item.reminder_key,
         recipient=recipient,
-        subject=item.subject.strip(),
-        message=item.message.strip(),
-        status="PREPARED",
+        subject=item.subject,
+        message=item.message,
         created_by=current_user.get("sub", "Système"),
+        send_email=_send_smtp_email,
     )
-    db.add(delivery)
-    db.flush()
-
-    notification = ""
-    try:
-        sent = _send_smtp_email(
-            recipient,
-            delivery.subject,
-            delivery.message,
-            plain_text_to_html(delivery.message),
-        )
-        if sent:
-            delivery.status = "SENT"
-            delivery.sent_at = utcnow()
-            activity = models.CRMActivity(
-                client_id=client.id,
-                opportunity_id=opportunity.id if opportunity else None,
-                activity_type=models.CRMActivityType.EMAIL.value,
-                subject=delivery.subject,
-                note=f"Relance email envoyée à {recipient}. Journal #{delivery.id}.",
-                status=models.CRMActivityStatus.COMPLETED.value,
-                author=current_user.get("sub", "Système"),
-                completed_at=delivery.sent_at,
-            )
-            db.add(activity)
-            db.flush()
-            delivery.activity_id = activity.id
-            if plan:
-                plan.status = "SENT"
-                plan.sent_delivery_id = delivery.id
-            notification = f"Relance envoyée à {recipient}."
-        else:
-            delivery.status = "SKIPPED"
-            delivery.error_message = (
-                "SMTP non configuré : le message est conservé dans l'historique sans être envoyé."
-            )
-            notification = "Message préparé mais non envoyé : SMTP non configuré."
-    except Exception as exc:
-        delivery.status = "FAILED"
-        delivery.error_message = str(exc)
-        notification = "Échec de l'envoi. Le message et l'erreur ont été journalisés."
 
     db.commit()
     db.refresh(delivery)
