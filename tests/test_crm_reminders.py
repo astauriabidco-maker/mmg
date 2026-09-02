@@ -184,6 +184,56 @@ def test_send_requires_explicit_confirmation(db, crm_records):
     assert db.query(models.CRMReminderDelivery).count() == 0
 
 
+def test_preview_uses_primary_contact_email_when_client_email_is_empty(db):
+    client = models.Client(
+        name="Client Contact Principal",
+        contact_name="Mme Contact",
+        email="",
+    )
+    db.add(client)
+    db.flush()
+    db.add(
+        models.ClientContact(
+            client_id=client.id,
+            name="Contact secondaire",
+            email="secondaire@example.test",
+            is_primary=False,
+        )
+    )
+    db.add(
+        models.ClientContact(
+            client_id=client.id,
+            name="Contact principal",
+            email="principal@example.test",
+            is_primary=True,
+        )
+    )
+    opportunity = models.CRMOpportunity(
+        reference="OPP-CONTACT-EMAIL",
+        client_id=client.id,
+        title="Projet relance contact",
+        stage=models.CRMOpportunityStage.PROPOSAL_TO_VALIDATE.value,
+        probability=65,
+        next_milestone="Envoyer la proposition",
+        created_by="commercial",
+    )
+    db.add(opportunity)
+    db.commit()
+
+    result = v2_mmg.preview_crm_reminder(
+        schemas.CRMReminderPreviewRequest(
+            client_id=client.id,
+            opportunity_id=opportunity.id,
+            reminder_kind="STALE_OPPORTUNITY",
+        ),
+        db=db,
+        current_user={"sub": "alice"},
+    )
+
+    assert result["recipient"] == "principal@example.test"
+    assert "OPP-CONTACT-EMAIL" in result["subject"]
+
+
 def test_skipped_send_is_logged_without_fake_activity(
     db,
     crm_records,
