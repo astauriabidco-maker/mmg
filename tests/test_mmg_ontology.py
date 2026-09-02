@@ -1,9 +1,13 @@
 from backend.domain.ontology import (
+    BUSINESS_EVENTS,
     DOCUMENT_TYPES,
     ENTITIES,
+    ENTITY_STATUSES,
     EXTERNAL_DOCUMENT_MAPPINGS,
+    MODEL_BINDINGS,
     PIPELINE,
     RELATIONS,
+    STEP_RBAC,
     WORKFLOW_GATES,
     document_type_can_feed_stock,
     ontology_as_dict,
@@ -107,3 +111,55 @@ def test_ontology_serializes_for_api_or_rag_usage():
     assert payload["entities"]["cutting_sheet"]["module"] == "DEBIT"
     assert "Fiche fabrication" in ENTITIES["fabrication_sheet"].label
     assert payload["workflow_gates"]
+    assert payload["entity_statuses"]["crm_opportunity"]
+    assert payload["business_events"]
+    assert payload["step_rbac"]
+    assert payload["model_bindings"]["crm_opportunity"] == ("CRMOpportunity",)
+
+
+def test_ontology_declares_sqlalchemy_model_bindings():
+    assert MODEL_BINDINGS["client"] == ("Client",)
+    assert MODEL_BINDINGS["contact"] == ("ClientContact",)
+    assert "TechnicalDossierVersion" in MODEL_BINDINGS["cutting_sheet"]
+    assert "StockReservation" in MODEL_BINDINGS["stock_reservation"]
+    assert "StockMove" in MODEL_BINDINGS["real_workshop_debit"]
+
+
+def test_ontology_declares_detailed_statuses_by_entity():
+    opportunity_status_codes = {
+        status.code for status in ENTITY_STATUSES["crm_opportunity"]
+    }
+    reservation_status_codes = {
+        status.code for status in ENTITY_STATUSES["stock_reservation"]
+    }
+
+    assert "proposition_a_valider" in opportunity_status_codes
+    assert "gagne" in opportunity_status_codes
+    assert "ACTIVE" in reservation_status_codes
+    assert "CONSUMED" in reservation_status_codes
+    assert any(status.final for status in ENTITY_STATUSES["commercial_quote"])
+
+
+def test_ontology_declares_business_events():
+    event_codes = {event.code for event in BUSINESS_EVENTS}
+
+    assert {
+        "quote_sent",
+        "quote_signed",
+        "technical_dossier_validated",
+        "stock_reserved",
+        "production_launched",
+        "stock_consumed",
+    }.issubset(event_codes)
+
+
+def test_ontology_declares_step_rbac_rules():
+    permissions_by_entity_action = {
+        (item.entity, item.action): item.permission for item in STEP_RBAC
+    }
+
+    assert permissions_by_entity_action[("crm_opportunity", "write")] == "SALES_EDIT"
+    assert permissions_by_entity_action[("technical_dossier", "review")] == "PRODUCTION_MANAGE"
+    assert permissions_by_entity_action[("stock_reservation", "write")] == "STOCK_MANAGE"
+    assert permissions_by_entity_action[("production_order", "launch")] == "PRODUCTION_MANAGE"
+    assert permissions_by_entity_action[("real_workshop_debit", "consume")] == "STOCK_MANAGE"
