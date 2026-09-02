@@ -11,6 +11,27 @@ def client(name="Menuiserie Test"):
     return SimpleNamespace(name=name)
 
 
+def client_with_primary_contact_email():
+    return SimpleNamespace(
+        name="Client contact",
+        email="",
+        contacts=[
+            SimpleNamespace(
+                id=2,
+                name="Secondaire",
+                email="secondaire@example.test",
+                is_primary=False,
+            ),
+            SimpleNamespace(
+                id=1,
+                name="Principal",
+                email="principal@example.test",
+                is_primary=True,
+            ),
+        ],
+    )
+
+
 def opportunity(
     item_id,
     *,
@@ -169,6 +190,27 @@ def test_cockpit_detects_stale_opportunity_without_open_activity():
     reminder = next(item for item in result["reminders"] if item["kind"] == "STALE_OPPORTUNITY")
     assert reminder["severity"] == "HIGH"
     assert reminder["client_id"] == 1
+
+
+def test_cockpit_reminder_uses_primary_contact_email_when_client_email_is_empty():
+    item = opportunity(
+        1,
+        stage="proposition_envoyee",
+        updated_at=NOW - timedelta(days=10),
+        milestone_at=NOW + timedelta(days=2),
+    )
+    item.client = client_with_primary_contact_email()
+
+    result = build_crm_cockpit(
+        [item],
+        [],
+        [],
+        now=NOW,
+        stale_days=7,
+    )
+
+    reminder = next(item for item in result["reminders"] if item["kind"] == "STALE_OPPORTUNITY")
+    assert reminder["client_email"] == "principal@example.test"
 
 
 def test_open_activity_prevents_duplicate_stale_reminder():

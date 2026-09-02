@@ -60,7 +60,22 @@ def _client_name(item):
 
 def _client_email(item):
     client = getattr(item, "client", None)
-    return getattr(client, "email", None) or getattr(item, "client_email", None)
+    direct_email = (getattr(client, "email", None) or "").strip() if client else ""
+    if direct_email:
+        return direct_email
+    contacts = sorted(
+        getattr(client, "contacts", None) or [],
+        key=lambda contact: (
+            not getattr(contact, "is_primary", False),
+            getattr(contact, "name", "") or "",
+            getattr(contact, "id", 0) or 0,
+        ),
+    )
+    for contact in contacts:
+        contact_email = (getattr(contact, "email", None) or "").strip()
+        if contact_email:
+            return contact_email
+    return getattr(item, "client_email", None)
 
 
 def _owner_name(opportunity):

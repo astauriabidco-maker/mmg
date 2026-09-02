@@ -205,6 +205,7 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
             setEmailComposer({
                 reminder,
                 ...response.data,
+                recipient: response.data.recipient || reminder.client_email || '',
             });
         } catch (error) {
             setActionError(error?.response?.data?.detail || "La prévisualisation de l'email a échoué.");
