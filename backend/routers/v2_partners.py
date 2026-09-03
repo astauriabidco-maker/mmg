@@ -46,6 +46,19 @@ CLIENT_CSV_FIELDS = (
     "tags",
     "is_active",
 )
+CLIENT_CONTACT_CSV_FIELDS = (
+    "contact_full_name",
+    "contact_role",
+    "contact_email",
+    "contact_phone",
+    "contact_priority",
+    "contact_influence_role",
+    "contact_preferred_channel",
+    "contact_email_consent",
+    "contact_is_primary",
+    "contact_notes",
+)
+CLIENT_EXPORT_CSV_FIELDS = CLIENT_CSV_FIELDS + CLIENT_CONTACT_CSV_FIELDS
 CONTACT_INFLUENCE_ROLES = {
     "DECISION_MAKER",
     "PRESCRIBER",
@@ -178,17 +191,249 @@ def _normalize_contact_payload(payload: dict) -> dict:
 
 
 def _find_import_match(db: Session, row: dict) -> Optional[models.Client]:
+    match, _ = _find_import_match_with_reasons(db, row)
+    return match
+
+
+def _find_import_match_with_reasons(
+    db: Session,
+    row: dict,
+) -> tuple[Optional[models.Client], list[str]]:
     email = normalize_email(row.get("email"))
     phone = normalize_phone(row.get("phone"))
     name = normalize_text(row.get("name"))
-    for client in db.query(models.Client).all():
+    for client in db.query(models.Client).options(selectinload(models.Client.contacts)).all():
+        reasons: list[str] = []
         if email and normalize_email(client.email) == email:
-            return client
+            reasons.append("Même email client")
         if phone and normalize_phone(client.phone) == phone:
-            return client
+            reasons.append("Même téléphone client")
         if name and normalize_text(client.name) == name:
-            return client
-    return None
+            reasons.append("Même nom client")
+        for contact in client.contacts or []:
+            if email and normalize_email(contact.email) == email:
+                reasons.append("Même email contact")
+                break
+        for contact in client.contacts or []:
+            if phone and normalize_phone(contact.phone) == phone:
+                reasons.append("Même téléphone contact")
+                break
+        if reasons:
+            return client, reasons
+    return None, []
+
+
+def _csv_bool(value, default: bool = False) -> bool:
+    if value in (None, ""):
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "oui", "o", "y"}
+
+
+def _csv_int(value, default: int) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        return int(str(value).strip())
+    except ValueError as exc:
+        raise HTTPException(422, "Valeur numérique invalide") from exc
+
+
+def _contact_payload_from_import_row(row: dict) -> Optional[dict]:
+    contact_name = row.get("contact_full_name") or row.get("contact_name")
+    contact_email = row.get("contact_email") or row.get("email")
+    contact_phone = row.get("contact_phone") or row.get("phone")
+    contact_role = row.get("contact_role") or ("Contact principal" if contact_name else None)
+    if not any((contact_name, contact_email, contact_phone, contact_role, row.get("contact_notes"))):
+        return None
+    payload = {
+        "name": contact_name or contact_email or contact_phone,
+        "role": contact_role,
+        "priority": _csv_int(row.get("contact_priority"), 1 if _csv_bool(row.get("contact_is_primary")) else 3),
+        "influence_role": row.get("contact_influence_role") or None,
+        "preferred_channel": row.get("contact_preferred_channel") or None,
+        "email_consent": _csv_bool(row.get("contact_email_consent")),
+        "email": contact_email or None,
+        "phone": contact_phone or None,
+        "is_primary": _csv_bool(row.get("contact_is_primary")),
+        "notes": row.get("contact_notes") or None,
+    }
+    return _normalize_contact_payload(payload)
+
+
+def _upsert_import_contact(
+    db: Session,
+    client: models.Client,
+    contact_payload: Optional[dict],
+) -> tuple[str, Optional[int]]:
+    if not contact_payload:
+        return "none", None
+    email = normalize_email(contact_payload.get("email"))
+    phone = normalize_phone(contact_payload.get("phone"))
+    name = normalize_text(contact_payload.get("name"))
+    contacts = (
+        db.query(models.ClientContact)
+        .filter(models.ClientContact.client_id == client.id)
+        .all()
+    )
+    existing = next(
+        (
+            contact
+            for contact in contacts
+            if (email and normalize_email(contact.email) == email)
+            or (phone and normalize_phone(contact.phone) == phone)
+            or (name and normalize_text(contact.name) == name)
+        ),
+        None,
+    )
+    if existing:
+        for key, value in contact_payload.items():
+            setattr(existing, key, value)
+        db.flush()
+        if existing.is_primary:
+            _sync_primary_contact(db, client, existing)
+        return "updated", existing.id
+    contact = models.ClientContact(client_id=client.id, **contact_payload)
+    db.add(contact)
+    db.flush()
+    if contact.is_primary or not contacts:
+        _sync_primary_contact(db, client, contact)
+    return "created", contact.id
+
+
+def _parse_client_import_csv(content: bytes) -> list[tuple[int, dict]]:
+    try:
+        text_content = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(422, "Le fichier CSV doit être encodé en UTF-8") from exc
+
+    reader = csv.DictReader(io.StringIO(text_content))
+    if not reader.fieldnames or "name" not in {
+        (field or "").strip().lower() for field in reader.fieldnames
+    }:
+        raise HTTPException(422, "La colonne « name » est obligatoire")
+    rows: list[tuple[int, dict]] = []
+    for line_number, raw_row in enumerate(reader, start=2):
+        rows.append(
+            (
+                line_number,
+                {
+                    str(key or "").strip().lower(): str(value or "").strip()
+                    for key, value in raw_row.items()
+                },
+            )
+        )
+    return rows
+
+
+def _analyze_client_import(
+    db: Session,
+    content: bytes,
+    *,
+    update_existing: bool,
+    apply: bool,
+) -> dict:
+    created = updated = skipped = rejected = 0
+    errors: list[str] = []
+    row_reports: list[dict] = []
+    for line_number, row in _parse_client_import_csv(content):
+        row_report = {
+            "line": line_number,
+            "name": row.get("name") or "",
+            "status": "accepted",
+            "action": "would_create",
+            "matched_client_id": None,
+            "matched_client_name": None,
+            "contact_action": "none",
+            "reasons": [],
+        }
+        if not row.get("name"):
+            rejected += 1
+            message = f"Ligne {line_number}: nom client manquant"
+            errors.append(message)
+            row_report.update({"status": "rejected", "action": "reject", "reasons": [message]})
+            row_reports.append(row_report)
+            continue
+        try:
+            tags = normalize_tags(
+                part
+                for part in row.get("tags", "").replace(",", ";").split(";")
+            )
+            active_label = row.get("is_active", "true").lower()
+            payload = {
+                "name": row["name"],
+                "contact_name": row.get("contact_name") or row.get("contact_full_name") or None,
+                "email": row.get("email") or row.get("contact_email") or None,
+                "phone": row.get("phone") or row.get("contact_phone") or None,
+                "address": row.get("address") or None,
+                "country": row.get("country") or "FR",
+                "tax_id": row.get("tax_id") or None,
+                "customer_type": row.get("customer_type") or "B2B",
+                "segment": row.get("segment") or None,
+                "tags": tags,
+                "is_active": active_label not in {"0", "false", "no", "non"},
+            }
+            contact_payload = _contact_payload_from_import_row(row)
+        except HTTPException as exc:
+            rejected += 1
+            message = f"Ligne {line_number}: {exc.detail}"
+            errors.append(message)
+            row_report.update({"status": "rejected", "action": "reject", "reasons": [message]})
+            row_reports.append(row_report)
+            continue
+
+        existing, reasons = _find_import_match_with_reasons(db, row | payload)
+        if existing:
+            row_report.update(
+                {
+                    "matched_client_id": existing.id,
+                    "matched_client_name": existing.name,
+                    "reasons": reasons,
+                }
+            )
+            if not update_existing:
+                skipped += 1
+                row_report.update({"status": "duplicate", "action": "skip"})
+                row_reports.append(row_report)
+                continue
+            updated += 1
+            row_report["action"] = "updated" if apply else "would_update"
+            if apply:
+                for field, value in payload.items():
+                    if value not in (None, "", []):
+                        setattr(existing, field, value)
+                contact_action, contact_id = _upsert_import_contact(db, existing, contact_payload)
+                _update_primary_contact_from_client(db, existing)
+                row_report.update({"contact_action": contact_action, "contact_id": contact_id})
+        else:
+            created += 1
+            row_report["action"] = "created" if apply else "would_create"
+            if apply:
+                client = models.Client(**payload)
+                db.add(client)
+                db.flush()
+                contact_action, contact_id = _upsert_import_contact(db, client, contact_payload)
+                if contact_action == "none":
+                    _create_primary_contact_from_client(db, client)
+                row_report.update(
+                    {
+                        "matched_client_id": client.id,
+                        "matched_client_name": client.name,
+                        "contact_action": contact_action,
+                        "contact_id": contact_id,
+                    }
+                )
+        row_reports.append(row_report)
+    if apply:
+        db.commit()
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "rejected": rejected,
+        "preview": not apply,
+        "rows": row_reports,
+        "errors": errors,
+    }
 
 
 def _is_recipe_fixture_client(client: models.Client) -> bool:
@@ -415,29 +660,70 @@ def export_clients_csv(db: Session = Depends(get_db)):
         .all()
     )
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=CLIENT_CSV_FIELDS)
+    writer = csv.DictWriter(output, fieldnames=CLIENT_EXPORT_CSV_FIELDS)
     writer.writeheader()
     for client in clients:
-        writer.writerow(
-            {
-                "name": client.name,
-                "contact_name": client.contact_name or "",
-                "email": client.email or "",
-                "phone": client.phone or "",
-                "address": client.address or "",
-                "country": client.country or "",
-                "tax_id": client.tax_id or "",
-                "customer_type": client.customer_type or "",
-                "segment": client.segment or "",
-                "tags": ";".join(client.tags or []),
-                "is_active": "true" if client.is_active else "false",
-            }
-        )
+        base_row = {
+            "name": client.name,
+            "contact_name": client.contact_name or "",
+            "email": client.email or "",
+            "phone": client.phone or "",
+            "address": client.address or "",
+            "country": client.country or "",
+            "tax_id": client.tax_id or "",
+            "customer_type": client.customer_type or "",
+            "segment": client.segment or "",
+            "tags": ";".join(client.tags or []),
+            "is_active": "true" if client.is_active else "false",
+        }
+        contacts = client.contacts or []
+        if not contacts:
+            writer.writerow(base_row | {field: "" for field in CLIENT_CONTACT_CSV_FIELDS})
+            continue
+        for contact in contacts:
+            writer.writerow(
+                base_row
+                | {
+                    "contact_full_name": contact.name or "",
+                    "contact_role": contact.role or "",
+                    "contact_email": contact.email or "",
+                    "contact_phone": contact.phone or "",
+                    "contact_priority": contact.priority or "",
+                    "contact_influence_role": contact.influence_role or "",
+                    "contact_preferred_channel": contact.preferred_channel or "",
+                    "contact_email_consent": "true" if contact.email_consent else "false",
+                    "contact_is_primary": "true" if contact.is_primary else "false",
+                    "contact_notes": contact.notes or "",
+                }
+            )
     content = "\ufeff" + output.getvalue()
     return Response(
         content=content.encode("utf-8"),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="clients-crm.csv"'},
+    )
+
+
+@router.post(
+    "/clients/import/preview",
+    response_model=schemas.ClientImportResponse,
+    dependencies=CRM_EDIT,
+)
+async def preview_clients_csv_import(
+    file: UploadFile = File(...),
+    update_existing: bool = False,
+    db: Session = Depends(get_db),
+):
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(422, "Importez un fichier CSV")
+    content = await file.read(MAX_CLIENT_IMPORT_BYTES + 1)
+    if len(content) > MAX_CLIENT_IMPORT_BYTES:
+        raise HTTPException(413, "Le fichier CSV dépasse 2 Mo")
+    return _analyze_client_import(
+        db,
+        content,
+        update_existing=update_existing,
+        apply=False,
     )
 
 
@@ -456,68 +742,12 @@ async def import_clients_csv(
     content = await file.read(MAX_CLIENT_IMPORT_BYTES + 1)
     if len(content) > MAX_CLIENT_IMPORT_BYTES:
         raise HTTPException(413, "Le fichier CSV dépasse 2 Mo")
-    try:
-        text_content = content.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(422, "Le fichier CSV doit être encodé en UTF-8") from exc
-
-    reader = csv.DictReader(io.StringIO(text_content))
-    if not reader.fieldnames or "name" not in {
-        (field or "").strip().lower() for field in reader.fieldnames
-    }:
-        raise HTTPException(422, "La colonne « name » est obligatoire")
-
-    created = updated = skipped = 0
-    errors: list[str] = []
-    for line_number, raw_row in enumerate(reader, start=2):
-        row = {
-            str(key or "").strip().lower(): str(value or "").strip()
-            for key, value in raw_row.items()
-        }
-        if not row.get("name"):
-            errors.append(f"Ligne {line_number}: nom client manquant")
-            continue
-        existing = _find_import_match(db, row)
-        if existing and not update_existing:
-            skipped += 1
-            continue
-        tags = normalize_tags(
-            part
-            for part in row.get("tags", "").replace(",", ";").split(";")
-        )
-        active_label = row.get("is_active", "true").lower()
-        payload = {
-            "name": row["name"],
-            "contact_name": row.get("contact_name") or None,
-            "email": row.get("email") or None,
-            "phone": row.get("phone") or None,
-            "address": row.get("address") or None,
-            "country": row.get("country") or "FR",
-            "tax_id": row.get("tax_id") or None,
-            "customer_type": row.get("customer_type") or "B2B",
-            "segment": row.get("segment") or None,
-            "tags": tags,
-            "is_active": active_label not in {"0", "false", "no", "non"},
-        }
-        if existing:
-            for field, value in payload.items():
-                if value not in (None, "", []):
-                    setattr(existing, field, value)
-            _update_primary_contact_from_client(db, existing)
-            updated += 1
-        else:
-            client = models.Client(**payload)
-            db.add(client)
-            db.flush()
-            _create_primary_contact_from_client(db, client)
-            created += 1
-    db.commit()
-    return {
-        "created": created,
-        "updated": updated,
-        "skipped": skipped,
-        "errors": errors,
-    }
+    return _analyze_client_import(
+        db,
+        content,
+        update_existing=update_existing,
+        apply=True,
+    )
 
 
 @router.get(

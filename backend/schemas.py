@@ -375,6 +375,9 @@ class ClientImportResponse(BaseModel):
     created: int
     updated: int
     skipped: int
+    rejected: int = 0
+    preview: bool = False
+    rows: List[Dict[str, Any]] = Field(default_factory=list)
     errors: List[str] = Field(default_factory=list)
 
 class SupplierBase(BaseModel):

@@ -546,18 +546,36 @@ def test_client_csv_import_export_and_filters(isolated_client):
         "Client CSV,Mme CSV,csv@example.test,0600000000,2 rue CSV,FR,,B2B,"
         "Architectes,Prescription;Actif,true\n"
     )
+    preview = client.post(
+        "/v2/partners/clients/import/preview",
+        files={"file": ("clients.csv", io.BytesIO(csv_content.encode()), "text/csv")},
+        headers=headers,
+    )
+    assert preview.status_code == 200, preview.text
+    preview_payload = preview.json()
+    assert preview_payload["preview"] is True
+    assert preview_payload["created"] == 1
+    assert preview_payload["rows"][0]["action"] == "would_create"
+    assert client.get(
+        "/v2/partners/clients",
+        params={"search": "Client CSV"},
+        headers=headers,
+    ).json() == []
+
     imported = client.post(
         "/v2/partners/clients/import",
         files={"file": ("clients.csv", io.BytesIO(csv_content.encode()), "text/csv")},
         headers=headers,
     )
     assert imported.status_code == 200, imported.text
-    assert imported.json() == {
-        "created": 1,
-        "updated": 0,
-        "skipped": 0,
-        "errors": [],
-    }
+    imported_payload = imported.json()
+    assert imported_payload["created"] == 1
+    assert imported_payload["updated"] == 0
+    assert imported_payload["skipped"] == 0
+    assert imported_payload["rejected"] == 0
+    assert imported_payload["preview"] is False
+    assert imported_payload["rows"][0]["action"] == "created"
+    assert imported_payload["errors"] == []
 
     filtered = client.get(
         "/v2/partners/clients",
@@ -570,7 +588,67 @@ def test_client_csv_import_export_and_filters(isolated_client):
     exported = client.get("/v2/partners/clients/export.csv", headers=headers)
     assert exported.status_code == 200
     assert "attachment; filename=\"clients-crm.csv\"" == exported.headers["content-disposition"]
-    assert "Client CSV" in exported.content.decode("utf-8-sig")
+    exported_csv = exported.content.decode("utf-8-sig")
+    assert "Client CSV" in exported_csv
+    assert "contact_full_name" in exported_csv
+
+
+def test_client_csv_import_reports_duplicates_and_enriched_contacts(isolated_client):
+    client, session_factory = isolated_client
+    headers = _headers(
+        session_factory,
+        "crm-import-contacts-editor",
+        ["SALES_VIEW", "SALES_EDIT"],
+    )
+    created = client.post(
+        "/v2/partners/clients",
+        json=_client_payload("Client Import Existant", email="existing@example.test"),
+        headers=headers,
+    )
+    assert created.status_code == 200, created.text
+    csv_content = (
+        "name,contact_name,email,phone,address,country,tax_id,customer_type,"
+        "segment,tags,is_active,contact_full_name,contact_role,contact_email,"
+        "contact_phone,contact_priority,contact_influence_role,contact_preferred_channel,"
+        "contact_email_consent,contact_is_primary,contact_notes\n"
+        "Client Import Existant,Mme Existante,existing@example.test,0100000001,,FR,,B2B,"
+        "Architectes,VIP,true,Mme Achats,Acheteuse,achats-import@example.test,"
+        "0600000001,1,buyer,email,true,true,Contact décideur\n"
+    )
+
+    duplicate_preview = client.post(
+        "/v2/partners/clients/import/preview",
+        files={"file": ("clients.csv", io.BytesIO(csv_content.encode()), "text/csv")},
+        headers=headers,
+    )
+    assert duplicate_preview.status_code == 200, duplicate_preview.text
+    duplicate_payload = duplicate_preview.json()
+    assert duplicate_payload["skipped"] == 1
+    assert duplicate_payload["rows"][0]["status"] == "duplicate"
+    assert "Même email client" in duplicate_payload["rows"][0]["reasons"]
+
+    applied = client.post(
+        "/v2/partners/clients/import",
+        params={"update_existing": True},
+        files={"file": ("clients.csv", io.BytesIO(csv_content.encode()), "text/csv")},
+        headers=headers,
+    )
+    assert applied.status_code == 200, applied.text
+    payload = applied.json()
+    assert payload["updated"] == 1
+    assert payload["rows"][0]["contact_action"] in {"created", "updated"}
+
+    contacts = client.get(
+        f"/v2/partners/clients/{created.json()['id']}/contacts",
+        headers=headers,
+    )
+    assert contacts.status_code == 200
+    contact = next(item for item in contacts.json() if item["email"] == "achats-import@example.test")
+    assert contact["is_primary"] is True
+    assert contact["priority"] == 1
+    assert contact["influence_role"] == "BUYER"
+    assert contact["preferred_channel"] == "EMAIL"
+    assert contact["email_consent"] is True
 
 
 def test_autonomous_reminder_sync_uses_application_session(isolated_client):
