@@ -589,7 +589,11 @@ export default function StockDashboard() {
             image_url: product.image_url || '',
             technical_doc_url: product.technical_doc_url || '',
             compatible_series: product.compatible_series || '',
-            catalog_status: product.catalog_status || 'ACTIVE'
+            catalog_status: product.catalog_status || 'ACTIVE',
+            original_catalog_status: product.catalog_status || 'ACTIVE',
+            qualification_reason: '',
+            qualification_missing: getCatalogActivationIssues(product),
+            variants_snapshot: product.variants || [],
         });
         setShowEditProductModal(true);
     };
@@ -611,13 +615,40 @@ export default function StockDashboard() {
             technical_doc_url: product.technical_doc_url || '',
             compatible_series: product.compatible_series || '',
             catalog_status: suggestion.catalog_status,
+            original_catalog_status: product.catalog_status || 'ACTIVE',
             qualification_source: suggestion.source,
-            qualification_missing: getCatalogQuality(product).missing,
+            qualification_reason: '',
+            qualification_missing: getCatalogActivationIssues({
+                ...product,
+                category: product.category || suggestion.category || '',
+                material_type: product.material_type || suggestion.material_type || '',
+                unit: product.unit || suggestion.unit,
+                supplier: product.supplier || suggestion.supplier,
+            }),
+            variants_snapshot: product.variants || [],
         });
         setShowEditProductModal(true);
     };
 
     const submitEditProduct = async () => {
+        const targetStatus = String(editProductForm.catalog_status || 'ACTIVE').toUpperCase();
+        const originalStatus = String(editProductForm.original_catalog_status || targetStatus).toUpperCase();
+        const statusChanged = targetStatus !== originalStatus;
+        const activationIssues = getCatalogActivationIssues({
+            ...editProductForm,
+            variants: editProductForm.variants_snapshot || [],
+        });
+        const reason = String(editProductForm.qualification_reason || '').trim();
+
+        if (statusChanged && targetStatus === 'ACTIVE' && activationIssues.length > 0) {
+            alert(`Activation impossible. À compléter : ${activationIssues.join(', ')}.`);
+            return;
+        }
+        if (statusChanged && ['BLOCKED', 'ARCHIVED'].includes(targetStatus) && !reason) {
+            alert("Motif obligatoire pour bloquer ou archiver une fiche catalogue.");
+            return;
+        }
+
         try {
             await api.put(`/v2/stock/products/${editProductForm.id}`, {
                 reference_base: editProductForm.reference_base,
@@ -631,10 +662,17 @@ export default function StockDashboard() {
                 image_url: editProductForm.image_url,
                 technical_doc_url: editProductForm.technical_doc_url,
                 compatible_series: editProductForm.compatible_series,
-                catalog_status: editProductForm.catalog_status || 'ACTIVE'
+                catalog_status: statusChanged ? originalStatus : targetStatus
             });
+            if (statusChanged) {
+                await api.post(`/v2/stock/products/${editProductForm.id}/status`, {
+                    status: targetStatus,
+                    reason: reason || (targetStatus === 'ACTIVE' ? 'Qualification catalogue validée depuis l’assistant.' : null),
+                });
+            }
             setShowEditProductModal(false);
             queryClient.invalidateQueries();
+            await queryClient.invalidateQueries({ queryKey: ['product-history', editProductForm.id] });
         } catch (e) { alert("Erreur lors de la modification du produit"); }
     };
 
@@ -1025,6 +1063,15 @@ export default function StockDashboard() {
 
     const changeCatalogStatus = async (product, action) => {
         let reason = null;
+        if (action.status === 'ACTIVE') {
+            const activationIssues = getCatalogActivationIssues(product);
+            if (activationIssues.length > 0) {
+                alert(`Activation impossible. À compléter : ${activationIssues.join(', ')}.`);
+                return;
+            }
+            reason = window.prompt(`Commentaire de qualification pour "${action.label}" :`, 'Qualification catalogue validée.');
+            if (reason === null) return;
+        }
         if (action.requiresReason) {
             reason = window.prompt(`Motif obligatoire pour "${action.label}" :`);
             if (!reason?.trim()) return;
@@ -1272,6 +1319,33 @@ export default function StockDashboard() {
             score: Math.round((completed / checks.length) * 100),
             missing: checks.filter(check => !check.ok).map(check => check.label),
         };
+    };
+
+    const getCatalogActivationIssues = (product) => {
+        const issues = [];
+        const variants = product?.variants || product?.variants_snapshot || [];
+        const productType = String(product?.product_type || 'stockable').toLowerCase();
+        const addIssue = (condition, label) => {
+            if (condition && !issues.includes(label)) issues.push(label);
+        };
+
+        addIssue(!String(product?.reference_base || '').trim(), 'référence famille');
+        addIssue(!String(product?.name || '').trim() || isProductToIdentify({ ...product, catalog_status: 'ACTIVE' }), 'désignation métier fiable');
+        addIssue(!String(product?.category || product?.material_type || '').trim(), 'famille/catégorie');
+        addIssue(!String(product?.unit || '').trim(), 'unité');
+
+        if (productType !== 'service') {
+            addIssue(!String(product?.material_type || '').trim(), 'matière');
+            addIssue(!String(product?.supplier || '').trim(), 'fournisseur principal');
+            addIssue(variants.length === 0, 'au moins une déclinaison');
+            addIssue(variants.length > 0 && variants.some(variant => !String(variant.reference || '').trim()), 'référence variante');
+            addIssue(variants.length > 0 && variants.every(variant => Number(variant.min_threshold || 0) <= 0), 'seuil stock');
+            if (String(product?.unit || '').toLowerCase() === 'barre') {
+                addIssue(variants.some(variant => !Number(variant.length_per_unit || 0)), 'longueur barre');
+            }
+        }
+
+        return issues;
     };
 
     const getGuidedCatalogPatch = (product) => {
@@ -1776,6 +1850,29 @@ export default function StockDashboard() {
     const activeNavItem = stockNavGroups
         .flatMap(group => group.items.map(item => ({ ...item, group: group.label })))
         .find(item => item.key === currentMenu);
+    const editProductActivationIssues = editProductForm
+        ? getCatalogActivationIssues({
+            ...editProductForm,
+            variants: editProductForm.variants_snapshot || [],
+        })
+        : [];
+    const editProductTargetStatus = String(editProductForm?.catalog_status || '').toUpperCase();
+    const editProductOriginalStatus = String(editProductForm?.original_catalog_status || editProductTargetStatus || 'DRAFT').toUpperCase();
+    const editProductAllowedStatuses = editProductForm
+        ? Array.from(new Set([
+            editProductOriginalStatus,
+            ...(CATALOG_STATUS_ACTIONS[editProductOriginalStatus] || []).map(action => action.status),
+        ]))
+        : [];
+    const editProductStatusChanged = Boolean(editProductForm)
+        && editProductTargetStatus !== editProductOriginalStatus;
+    const editProductNeedsReason = editProductStatusChanged && ['BLOCKED', 'ARCHIVED'].includes(editProductTargetStatus);
+    const editProductSaveBlocked = Boolean(editProductForm)
+        && (
+            (editProductStatusChanged && editProductTargetStatus === 'ACTIVE' && editProductActivationIssues.length > 0)
+            || (editProductNeedsReason && !String(editProductForm.qualification_reason || '').trim())
+        );
+    const selectedProductActivationIssues = selectedProduct ? getCatalogActivationIssues(selectedProduct) : [];
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
@@ -2355,6 +2452,34 @@ export default function StockDashboard() {
                                         )}
                                     </div>
                                 </div>
+
+                                {selectedProductActivationIssues.length > 0 && selectedProduct.catalog_status !== 'ACTIVE' && (
+                                    <div className="mx-6 mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Cycle de qualification contrôlé</p>
+                                                <h3 className="mt-1 text-base font-black text-amber-950">Activation verrouillée tant que la fiche est incomplète</h3>
+                                                <p className="mt-1 text-xs font-bold text-amber-700">
+                                                    Complétez les points ci-dessous, puis activez la fiche avec un commentaire de qualification.
+                                                </p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={(event) => openGuidedProductQualification(event, selectedProduct)}
+                                                className="rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-black text-white hover:bg-amber-500"
+                                            >
+                                                Qualifier maintenant
+                                            </button>
+                                        </div>
+                                        <div className="mt-3 flex flex-wrap gap-1.5">
+                                            {selectedProductActivationIssues.map(issue => (
+                                                <span key={issue} className="rounded-lg border border-amber-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700">
+                                                    {issue}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
 
                                 <div className="p-6 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
                                     <div className="space-y-4">
@@ -3906,9 +4031,9 @@ export default function StockDashboard() {
                                             Fiche guidée
                                         </span>
                                     </div>
-                                    {editProductForm.qualification_missing?.length > 0 && (
+                                    {editProductActivationIssues.length > 0 && (
                                         <div className="mt-3 flex flex-wrap gap-1.5">
-                                            {editProductForm.qualification_missing.map(item => (
+                                            {editProductActivationIssues.map(item => (
                                                 <span key={item} className="rounded-lg border border-blue-200 bg-white px-2 py-1 text-[9px] font-black uppercase tracking-wide text-blue-700">
                                                     À compléter : {item}
                                                 </span>
@@ -3963,14 +4088,32 @@ export default function StockDashboard() {
                             <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
                                 <label className="text-xs font-black text-blue-800 mb-1 block">Statut catalogue</label>
                                 <select value={editProductForm.catalog_status} onChange={e=>setEditProductForm({...editProductForm, catalog_status: e.target.value})} className="w-full rounded-xl border border-blue-100 bg-white p-3 text-sm font-black text-blue-900">
-                                    {Object.entries(CATALOG_STATUS_META).map(([status, meta]) => (
-                                        <option key={status} value={status}>{meta.label || status}</option>
+                                    {editProductAllowedStatuses.map(status => (
+                                        <option key={status} value={status}>{CATALOG_STATUS_META[status]?.label || status}</option>
                                     ))}
                                     {!CATALOG_STATUS_META[editProductForm.catalog_status] && <option value={editProductForm.catalog_status}>{editProductForm.catalog_status}</option>}
                                 </select>
                                 <p className="mt-2 text-xs font-bold text-blue-600">
                                     Passez en actif seulement quand la référence, la famille, l’unité, le fournisseur et les seuils sont fiables.
                                 </p>
+                                {editProductStatusChanged && (
+                                    <div className="mt-3 rounded-xl border border-blue-100 bg-white p-3">
+                                        <label className="mb-1 block text-xs font-black text-blue-800">
+                                            {editProductNeedsReason ? 'Motif obligatoire' : 'Commentaire de qualification'}
+                                        </label>
+                                        <textarea
+                                            value={editProductForm.qualification_reason}
+                                            onChange={e=>setEditProductForm({...editProductForm, qualification_reason: e.target.value})}
+                                            className="w-full min-h-[82px] rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm font-bold text-blue-950 outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder={editProductNeedsReason ? 'Expliquez pourquoi la fiche est bloquée ou archivée…' : 'Ex: famille, fournisseur, unité et seuils contrôlés.'}
+                                        />
+                                        {editProductTargetStatus === 'ACTIVE' && editProductActivationIssues.length > 0 && (
+                                            <p className="mt-2 text-xs font-black text-red-600">
+                                                Activation verrouillée : complétez d’abord les champs listés ci-dessus.
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                             <div className="col-span-2 border-t border-slate-100 my-2 pt-4 flex gap-4">
                                 <div className="flex-1">
@@ -4000,7 +4143,13 @@ export default function StockDashboard() {
                             </div>
 
                         </div>
-                        <button onClick={submitEditProduct} className="w-full mt-6 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black text-lg shadow-lg">Enregistrer</button>
+                        <button
+                            onClick={submitEditProduct}
+                            disabled={editProductSaveBlocked}
+                            className="w-full mt-6 py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-xl font-black text-lg shadow-lg"
+                        >
+                            {editProductStatusChanged ? 'Enregistrer et tracer le statut' : 'Enregistrer'}
+                        </button>
                     </div>
                 </div>
             )}
