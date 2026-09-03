@@ -156,7 +156,7 @@ export default function StockDashboard({ surface = 'management' }) {
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
     const isDashboardSurface = surface === 'dashboard';
-    const [currentMenu, setCurrentMenu] = useState(isDashboardSurface ? 'todo' : 'catalog'); // 'todo' | 'risk' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation' | 'product-detail' | 'location-detail'
+    const [currentMenu, setCurrentMenu] = useState(isDashboardSurface ? 'todo' : 'management-home'); // 'management-home' | 'todo' | 'risk' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation' | 'product-detail' | 'location-detail'
     const [inventoryFocus, setInventoryFocus] = useState('catalog'); // 'catalog' | 'stock' | 'drafts' | 'services'
     const [todoRoleFilter, setTodoRoleFilter] = useState('me'); // 'me' | 'stock' | 'atelier' | 'catalogue' | 'achats' | 'manager'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
@@ -174,7 +174,7 @@ export default function StockDashboard({ surface = 'management' }) {
     const [productDetailReturnMenu, setProductDetailReturnMenu] = useState(null);
 
     useEffect(() => {
-        setCurrentMenu(isDashboardSurface ? 'todo' : 'catalog');
+        setCurrentMenu(isDashboardSurface ? 'todo' : 'management-home');
         setInventoryFocus('catalog');
         setSelectedProductId(null);
         setSelectedLocationId(null);
@@ -1828,6 +1828,12 @@ export default function StockDashboard({ surface = 'management' }) {
     }), { physicalStock: 0, reserved: 0, available: 0, valuation: 0 });
     const stockNavGroups = [
         {
+            label: 'Accueil',
+            items: [
+                { key: 'management-home', label: 'Parcours', Icon: LayoutGrid, tone: 'slate', onClick: () => setCurrentMenu('management-home') },
+            ],
+        },
+        {
             label: 'Priorités',
             items: [
                 { key: 'todo', label: 'À traiter', Icon: AlertTriangle, count: todoTotal, tone: 'slate', onClick: selectTodo },
@@ -2092,7 +2098,22 @@ export default function StockDashboard({ surface = 'management' }) {
             {/* MAIN CONTENT : GRID / AUDIT */}
             <div className={`${isDashboardSurface ? 'hidden' : ''} flex-1 flex flex-col bg-white relative min-h-0`}>
 
-                {currentMenu === 'stock' && (
+                {currentMenu === 'management-home' ? (
+                    <div className="flex-1 overflow-y-auto bg-white p-4">
+                        <StockManagementHome
+                            productsCount={products.length}
+                            stockCount={groupedData.length}
+                            movementCount={transactions.length}
+                            inventoryCount={openInventorySessions.length}
+                            draftCount={totalDraftCount}
+                            currentMenu={currentMenu}
+                            onCatalog={() => selectInventoryFocus('catalog')}
+                            onStock={() => selectInventoryFocus('stock')}
+                            onMovements={() => setCurrentMenu('audit')}
+                            onInventory={() => setCurrentMenu('physical-inventory')}
+                        />
+                    </div>
+                ) : currentMenu === 'stock' && (
                     <div className="px-6 py-3 bg-white border-b border-slate-200 shrink-0">
                         <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
                             <div>
@@ -3449,10 +3470,11 @@ export default function StockDashboard({ surface = 'management' }) {
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-50/80 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-10">
                                     <tr>
-                                        <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest w-1/3">Famille PIM</th>
-                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">{inventoryFocus === 'services' ? 'Famille' : 'Catégorie'}</th>
-                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">{inventoryFocus === 'services' ? 'Unité' : 'Fournisseur'}</th>
-                                        <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Contenu & Actions</th>
+                                        <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest w-2/5">Article</th>
+                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Fournisseur</th>
+                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Statut</th>
+                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Stock total</th>
+                                        <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
@@ -3461,6 +3483,8 @@ export default function StockDashboard({ surface = 'management' }) {
                                         const draftProduct = isDraftProduct(product);
                                         const catalogQuality = getCatalogQuality(product);
                                         const catalogSource = getCatalogSource(product);
+                                        const totalProductStock = variants.reduce((sum, variant) => sum + Number(variant.stockToDisplay || 0), 0);
+                                        const statusMeta = CATALOG_STATUS_META[String(product.catalog_status || (draftProduct ? 'DRAFT' : 'ACTIVE')).toUpperCase()] || CATALOG_STATUS_META.ACTIVE;
                                         return (
                                             <React.Fragment key={product.id}>
                                                 <tr className="group hover:bg-slate-50 transition-colors cursor-pointer border-l-4 border-l-transparent hover:border-l-blue-400" onClick={() => toggleExpand(product.id)}>
@@ -3477,9 +3501,6 @@ export default function StockDashboard({ surface = 'management' }) {
                                                         <div>
                                                             <div className="flex items-center gap-2">
                                                                 <p className="font-bold text-slate-800 text-lg group-hover:text-blue-700 transition-colors">{product.name}</p>
-                                                                {draftProduct && (
-                                                                    <span className="text-[9px] uppercase font-black bg-amber-100 text-amber-700 px-2 py-1 rounded-md border border-amber-200">Brouillon</span>
-                                                                )}
                                                             </div>
                                                             <div className="flex items-center gap-2 mt-0.5">
                                                                 <p className="text-xs font-bold text-slate-400">Réf : {product.reference_base}</p>
@@ -3505,17 +3526,33 @@ export default function StockDashboard({ surface = 'management' }) {
                                                             )}
                                                         </div>
                                                     </td>
-                                                    <td className="py-4 px-4 text-center">
-                                                        <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider">{product.category || product.material_type}</span>
-                                                    </td>
-                                                    <td className="py-4 px-4 text-center">
+                                                    <td className="py-4 px-4">
                                                         {inventoryFocus === 'services' ? (
                                                             <span className="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg text-xs uppercase tracking-wide font-black border border-emerald-100">{product.unit || 'forfait'}</span>
-                                                        ) : product.supplier ? <span className="bg-slate-800 text-white px-3 py-1.5 rounded-lg text-xs uppercase tracking-wide font-black">{product.supplier}</span> : <span className="text-slate-300">-</span>}
+                                                        ) : product.supplier ? (
+                                                            <span className="bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg text-xs uppercase tracking-wide font-black border border-slate-200">{product.supplier}</span>
+                                                        ) : (
+                                                            <span className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-1.5 text-xs font-black text-amber-700">À renseigner</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="py-4 px-4">
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <span className={`rounded-lg border px-3 py-1.5 text-xs font-black uppercase tracking-wide ${statusMeta.className}`}>{statusMeta.label}</span>
+                                                            <span className={`rounded-lg border px-3 py-1.5 text-xs font-black ${catalogQuality.score >= 80 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : catalogQuality.score >= 55 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                                                {catalogQuality.score}%
+                                                            </span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="py-4 px-4 text-right">
+                                                        <p className={`text-xl font-black ${totalProductStock > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                            {inventoryFocus === 'services' ? '-' : formatQty(totalProductStock)}
+                                                        </p>
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                                            {variants.length} {variants.length > 1 ? 'déclinaisons' : 'déclinaison'}
+                                                        </p>
                                                     </td>
                                                     <td className="py-4 px-6 text-right">
-                                                        <div className="flex items-center justify-end gap-3">
-                                                            <span className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-black border border-blue-100">{variants.length} {variants.length > 1 ? 'déclinaisons' : 'déclinaison'}</span>
+                                                        <div className="flex flex-wrap items-center justify-end gap-2">
                                                             <button
                                                                 type="button"
                                                                 onClick={(e) => openProductDetail(e, product)}
@@ -3528,20 +3565,20 @@ export default function StockDashboard({ surface = 'management' }) {
                                                                 <>
                                                                     <button
                                                                         onClick={(e) => { e.stopPropagation(); openAddVariant(e, product); }}
-                                                                        className="px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-lg border border-emerald-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
+                                                                        className="hidden xl:flex px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-lg border border-emerald-200 transition-colors text-xs font-bold shadow-sm items-center gap-1"
                                                                         title="Ajouter une déclinaison"
                                                                     >
                                                                         <Plus className="w-3.5 h-3.5"/> Ajouter Variante
                                                                     </button>
                                                                     <button
                                                                         onClick={(e) => { e.stopPropagation(); openEditProduct(e, product); }}
-                                                                        className="px-3 py-1.5 bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-800 rounded-lg border border-slate-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
+                                                                        className="hidden 2xl:flex px-3 py-1.5 bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-800 rounded-lg border border-slate-200 transition-colors text-xs font-bold shadow-sm items-center gap-1"
                                                                     >
                                                                         <Edit3 className="w-3.5 h-3.5"/> Modifier
                                                                     </button>
                                                                     <button
                                                                         onClick={(e) => openGuidedProductQualification(e, product)}
-                                                                        className="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg border border-blue-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
+                                                                        className="hidden xl:flex px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg border border-blue-200 transition-colors text-xs font-bold shadow-sm items-center gap-1"
                                                                     >
                                                                         <Check className="w-3.5 h-3.5"/> Qualifier
                                                                     </button>
@@ -3558,7 +3595,7 @@ export default function StockDashboard({ surface = 'management' }) {
                                                     const variantTransactions = getVariantTransactions(v.variantId);
                                                     return (
                                                         <tr key={v.variantId} className="bg-slate-50/40 transition-colors border-l-4 border-l-blue-400">
-                                                            <td colSpan="4" className="py-0 px-0">
+                                                            <td colSpan="5" className="py-0 px-0">
                                                                 <div className="pl-24 pr-6 py-4 border-b border-slate-100/50 hover:bg-white transition-colors group/var">
                                                                     <div className="flex items-center justify-between">
                                                                         <div className="flex flex-col">
@@ -5326,6 +5363,127 @@ function InsightList({ title, eyebrow, empty, items, renderItem }) {
                 )}
             </div>
         </div>
+    );
+}
+
+function StockManagementHome({
+    productsCount,
+    stockCount,
+    movementCount,
+    inventoryCount,
+    draftCount,
+    currentMenu,
+    onCatalog,
+    onStock,
+    onMovements,
+    onInventory,
+}) {
+    const cards = [
+        {
+            key: 'catalog',
+            title: 'Articles / catalogue',
+            detail: 'Créer, qualifier et retrouver une référence.',
+            metric: productsCount,
+            suffix: draftCount > 0 ? `${draftCount} brouillon(s)` : 'catalogue',
+            Icon: Package,
+            tone: 'blue',
+            action: 'Gérer les articles',
+            onClick: onCatalog,
+        },
+        {
+            key: 'stock',
+            title: 'Stock réel',
+            detail: 'Contrôler les quantités par zone physique.',
+            metric: stockCount,
+            suffix: 'fiche(s) visibles',
+            Icon: MapPin,
+            tone: 'emerald',
+            action: 'Voir le stock',
+            onClick: onStock,
+        },
+        {
+            key: 'audit',
+            title: 'Mouvements',
+            detail: 'Comprendre entrées, sorties, transferts et débits.',
+            metric: movementCount,
+            suffix: 'mouvement(s)',
+            Icon: Layers,
+            tone: 'slate',
+            action: 'Auditer',
+            onClick: onMovements,
+        },
+        {
+            key: 'physical-inventory',
+            title: 'Inventaire physique',
+            detail: 'Créer une campagne, compter, justifier, valider.',
+            metric: inventoryCount,
+            suffix: 'ouverte(s)',
+            Icon: ClipboardCheck,
+            tone: 'amber',
+            action: 'Compter',
+            onClick: onInventory,
+        },
+    ];
+    const toneClasses = {
+        blue: 'border-blue-100 bg-blue-50 text-blue-900',
+        emerald: 'border-emerald-100 bg-emerald-50 text-emerald-900',
+        slate: 'border-slate-200 bg-slate-50 text-slate-900',
+        amber: 'border-amber-100 bg-amber-50 text-amber-900',
+    };
+    const activeKeys = {
+        catalog: ['catalog', 'drafts', 'services', 'product-detail'],
+        stock: ['stock', 'locations', 'location-detail'],
+        audit: ['audit'],
+        'physical-inventory': ['physical-inventory'],
+    };
+
+    return (
+        <section className="px-6 pb-3">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Accueil gestion stock</p>
+                        <h3 className="text-lg font-black text-slate-950">Choisissez le parcours, puis exécutez l’action.</h3>
+                    </div>
+                    <p className="text-xs font-bold text-slate-500">Simple par défaut · détails disponibles dans les fiches</p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    {cards.map(card => {
+                        const Icon = card.Icon;
+                        const active = (activeKeys[card.key] || [card.key]).includes(currentMenu);
+                        return (
+                            <button
+                                key={card.key}
+                                type="button"
+                                onClick={card.onClick}
+                                className={`rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
+                                    active ? `${toneClasses[card.tone]} ring-2 ring-slate-900/10` : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                                }`}
+                            >
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <p className="truncate text-sm font-black">{card.title}</p>
+                                        <p className="mt-1 min-h-[36px] text-xs font-bold opacity-70">{card.detail}</p>
+                                    </div>
+                                    <span className="rounded-xl bg-white/70 p-2 shadow-sm">
+                                        <Icon className="h-4 w-4" />
+                                    </span>
+                                </div>
+                                <div className="mt-4 flex items-end justify-between gap-3">
+                                    <div>
+                                        <p className="text-2xl font-black">{Number(card.metric || 0).toLocaleString('fr-FR')}</p>
+                                        <p className="text-[10px] font-black uppercase tracking-widest opacity-60">{card.suffix}</p>
+                                    </div>
+                                    <span className="rounded-xl bg-slate-950 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white">
+                                        {card.action}
+                                    </span>
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+        </section>
     );
 }
 
