@@ -382,6 +382,36 @@ def test_recipe_fixture_client_cleanup_is_admin_only_and_guarded(isolated_client
         )
         db.add(mission)
         db.flush()
+        dossier = models.TechnicalDossier(
+            reference="TD-RECETTE-CLEANUP",
+            mission_id=mission.id,
+            created_by="pytest",
+        )
+        db.add(dossier)
+        db.flush()
+        version = models.TechnicalDossierVersion(
+            dossier_id=dossier.id,
+            version_number=1,
+            document_type="CUTTING",
+            source_system="PROGES",
+            original_filename="recette-cleanup.pdf",
+            stored_filename="recette-cleanup.pdf",
+            content_type="application/pdf",
+            file_path="/tmp/recette-cleanup.pdf",
+            file_size=0,
+            checksum_sha256="recipe-cleanup-checksum",
+            created_by="pytest",
+        )
+        db.add(version)
+        db.flush()
+        db.add(
+            models.StockReservation(
+                reference="RES-RECETTE-CLEANUP",
+                technical_dossier_version_id=version.id,
+                project_reference="RECETTE DOUBLON CRM CLEANUP",
+                status="reserved",
+            )
+        )
         db.add(
             models.MMG(
                 reference="MMG-RECETTE-CLEANUP",
@@ -426,6 +456,8 @@ def test_recipe_fixture_client_cleanup_is_admin_only_and_guarded(isolated_client
         assert db.query(models.CRMOpportunity).filter_by(client_id=recipe_id).count() == 0
         assert db.query(models.CRMActivity).filter_by(client_id=recipe_id).count() == 0
         assert db.query(models.MeasureMission).filter_by(client_id=recipe_id).count() == 0
+        reservation = db.query(models.StockReservation).filter_by(reference="RES-RECETTE-CLEANUP").one()
+        assert reservation.technical_dossier_version_id is None
         task = db.query(models.CalendarTask).filter_by(title="Relance recette cleanup").one()
         assert task.client_id is None
         assert task.opportunity_id is None
