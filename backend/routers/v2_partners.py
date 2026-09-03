@@ -202,6 +202,8 @@ def _is_recipe_fixture_client(client: models.Client) -> bool:
         *(client.tags or []),
     ]
     normalized_markers = " ".join(normalize_text(value) for value in markers if value)
+    if normalize_text(client.name).startswith("recette "):
+        return True
     return any(
         marker in normalized_markers
         for marker in (
@@ -290,16 +292,61 @@ def _delete_recipe_fixture_client_graph(db: Session, client: models.Client) -> N
             synchronize_session=False,
         )
     if mission_ids:
+        dossier_ids = [
+            item[0]
+            for item in db.query(models.TechnicalDossier.id)
+            .filter(models.TechnicalDossier.mission_id.in_(mission_ids))
+            .all()
+        ]
+        if dossier_ids:
+            version_ids = [
+                item[0]
+                for item in db.query(models.TechnicalDossierVersion.id)
+                .filter(models.TechnicalDossierVersion.dossier_id.in_(dossier_ids))
+                .all()
+            ]
+            if version_ids:
+                db.query(models.StockReservation).filter(
+                    models.StockReservation.technical_dossier_version_id.in_(version_ids)
+                ).update(
+                    {models.StockReservation.technical_dossier_version_id: None},
+                    synchronize_session=False,
+                )
+                db.query(models.TechnicalDossierVersion).filter(
+                    models.TechnicalDossierVersion.previous_version_id.in_(version_ids)
+                ).update(
+                    {models.TechnicalDossierVersion.previous_version_id: None},
+                    synchronize_session=False,
+                )
+            db.query(models.TechnicalDossierVersion).filter(
+                models.TechnicalDossierVersion.dossier_id.in_(dossier_ids)
+            ).delete(synchronize_session=False)
+            db.query(models.TechnicalDossier).filter(
+                models.TechnicalDossier.id.in_(dossier_ids)
+            ).delete(synchronize_session=False)
+        opening_ids = [
+            item[0]
+            for item in db.query(models.MeasureOpening.id)
+            .filter(models.MeasureOpening.mission_id.in_(mission_ids))
+            .all()
+        ]
+        if opening_ids:
+            db.query(models.MeasureMissionDocument).filter(
+                models.MeasureMissionDocument.opening_id.in_(opening_ids)
+            ).delete(synchronize_session=False)
+        db.query(models.MeasureMissionDocument).filter(
+            models.MeasureMissionDocument.mission_id.in_(mission_ids)
+        ).delete(synchronize_session=False)
+        db.query(models.MeasureOpening).filter(
+            models.MeasureOpening.mission_id.in_(mission_ids)
+        ).delete(synchronize_session=False)
         db.query(models.MMG).filter(models.MMG.measure_mission_id.in_(mission_ids)).update(
             {models.MMG.measure_mission_id: None},
             synchronize_session=False,
         )
-        for mission in (
-            db.query(models.MeasureMission)
-            .filter(models.MeasureMission.id.in_(mission_ids))
-            .all()
-        ):
-            db.delete(mission)
+        db.query(models.MeasureMission).filter(
+            models.MeasureMission.id.in_(mission_ids)
+        ).delete(synchronize_session=False)
 
     db.delete(client)
 

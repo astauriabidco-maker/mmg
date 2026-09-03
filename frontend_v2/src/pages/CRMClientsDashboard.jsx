@@ -249,6 +249,9 @@ export default function CRMClientsDashboard() {
             client?.segment,
             ...(client?.tags || []),
         ].filter(Boolean).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (client?.name?.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').startsWith('recette ')) {
+            return true;
+        }
         return [
             'recette doublon',
             'recette crm',
