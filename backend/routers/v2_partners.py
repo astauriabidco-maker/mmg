@@ -1,5 +1,6 @@
 import csv
 import io
+from collections import defaultdict
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -649,6 +650,180 @@ def list_client_segments(db: Session = Depends(get_db)):
         .all()
     )
     return sorted({value[0].strip() for value in values if value[0] and value[0].strip()})
+
+
+@router.get("/clients/segmentation", dependencies=CRM_VIEW)
+def get_client_segmentation_summary(db: Session = Depends(get_db)):
+    now = utcnow()
+    clients = (
+        db.query(models.Client)
+        .options(selectinload(models.Client.contacts))
+        .filter(models.Client.is_active.is_(True))
+        .order_by(models.Client.name.asc())
+        .all()
+    )
+    client_ids = [client.id for client in clients]
+    opportunities = (
+        db.query(models.CRMOpportunity)
+        .filter(models.CRMOpportunity.client_id.in_(client_ids))
+        .all()
+        if client_ids
+        else []
+    )
+    activities = (
+        db.query(models.CRMActivity)
+        .filter(models.CRMActivity.client_id.in_(client_ids))
+        .all()
+        if client_ids
+        else []
+    )
+    reminder_plans = (
+        db.query(models.CRMReminderPlan)
+        .filter(models.CRMReminderPlan.client_id.in_(client_ids))
+        .all()
+        if client_ids
+        else []
+    )
+    sales = db.query(models.SaleOrder).all()
+
+    opportunities_by_client: dict[int, list[models.CRMOpportunity]] = defaultdict(list)
+    for opportunity in opportunities:
+        opportunities_by_client[opportunity.client_id].append(opportunity)
+
+    activities_by_client: dict[int, list[models.CRMActivity]] = defaultdict(list)
+    for activity in activities:
+        activities_by_client[activity.client_id].append(activity)
+
+    reminders_by_client: dict[int, list[models.CRMReminderPlan]] = defaultdict(list)
+    for plan in reminder_plans:
+        reminders_by_client[plan.client_id].append(plan)
+
+    sales_by_client_name: dict[str, list[models.SaleOrder]] = defaultdict(list)
+    for sale in sales:
+        if sale.client_name:
+            sales_by_client_name[normalize_text(sale.client_name)].append(sale)
+
+    segments: dict[str, dict] = {}
+    tags: dict[str, int] = defaultdict(int)
+    statuses: dict[str, int] = defaultdict(int)
+    client_signals: dict[int, dict] = {}
+    for client in clients:
+        segment = client.segment or "Sans segment"
+        segment_row = segments.setdefault(
+            segment,
+            {
+                "segment": segment,
+                "clients": 0,
+                "open_opportunities": 0,
+                "overdue_actions": 0,
+                "upcoming_actions": 0,
+                "quotes_sent": 0,
+                "quotes_signed": 0,
+                "signed_amount": 0.0,
+            },
+        )
+        segment_row["clients"] += 1
+        for tag in client.tags or []:
+            tags[tag] += 1
+
+        client_opportunities = opportunities_by_client.get(client.id, [])
+        open_opportunities = [
+            opportunity
+            for opportunity in client_opportunities
+            if opportunity.stage not in {
+                models.CRMOpportunityStage.WON.value,
+                models.CRMOpportunityStage.LOST.value,
+            }
+        ]
+        overdue_actions = [
+            activity
+            for activity in activities_by_client.get(client.id, [])
+            if activity.status == models.CRMActivityStatus.TODO.value
+            and activity.due_at
+            and activity.due_at < now
+        ]
+        upcoming_actions = [
+            activity
+            for activity in activities_by_client.get(client.id, [])
+            if activity.status == models.CRMActivityStatus.TODO.value
+            and activity.due_at
+            and activity.due_at >= now
+        ]
+        pending_reminders = [
+            plan
+            for plan in reminders_by_client.get(client.id, [])
+            if plan.status == "PENDING"
+        ]
+        overdue_reminders = [
+            plan
+            for plan in pending_reminders
+            if plan.due_at and plan.due_at < now
+        ]
+        client_sales = sales_by_client_name.get(normalize_text(client.name), [])
+        sent_quotes = [
+            sale
+            for sale in client_sales
+            if sale.status in {"SENT", "DRAFT"} and sale.workflow_type != "FREE_SALE"
+        ]
+        signed_quotes = [
+            sale
+            for sale in client_sales
+            if sale.status in {"VALIDATED", "DELIVERED"}
+        ]
+        signed_amount = float(sum(sale.lines and sum(
+            float(line.quantity or 0)
+            * float(line.unit_price or 0)
+            * (1 - float(line.discount_pct or 0) / 100)
+            for line in sale.lines
+        ) or 0 for sale in signed_quotes))
+        has_no_next_action = bool(
+            open_opportunities
+            and not upcoming_actions
+            and not pending_reminders
+        )
+        signal_statuses = []
+        if open_opportunities:
+            signal_statuses.append("active_opportunity")
+        if overdue_actions or overdue_reminders:
+            signal_statuses.append("to_follow_up")
+        if sent_quotes:
+            signal_statuses.append("quote_sent")
+        if signed_quotes:
+            signal_statuses.append("quote_signed")
+        if has_no_next_action:
+            signal_statuses.append("missing_next_action")
+        if not signal_statuses:
+            signal_statuses.append("quiet")
+        for status in signal_statuses:
+            statuses[status] += 1
+        segment_row["open_opportunities"] += len(open_opportunities)
+        segment_row["overdue_actions"] += len(overdue_actions) + len(overdue_reminders)
+        segment_row["upcoming_actions"] += len(upcoming_actions)
+        segment_row["quotes_sent"] += len(sent_quotes)
+        segment_row["quotes_signed"] += len(signed_quotes)
+        segment_row["signed_amount"] += signed_amount
+        client_signals[client.id] = {
+            "client_id": client.id,
+            "statuses": signal_statuses,
+            "open_opportunities": len(open_opportunities),
+            "overdue_actions": len(overdue_actions) + len(overdue_reminders),
+            "upcoming_actions": len(upcoming_actions),
+            "pending_reminders": len(pending_reminders),
+            "quotes_sent": len(sent_quotes),
+            "quotes_signed": len(signed_quotes),
+            "signed_amount": signed_amount,
+            "missing_next_action": has_no_next_action,
+        }
+
+    return {
+        "segments": sorted(segments.values(), key=lambda item: (-item["clients"], item["segment"])),
+        "tags": [
+            {"tag": tag, "clients": count}
+            for tag, count in sorted(tags.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        "statuses": dict(statuses),
+        "client_signals": client_signals,
+    }
 
 
 @router.get("/clients/export.csv", dependencies=CRM_VIEW)

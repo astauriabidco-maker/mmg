@@ -651,6 +651,81 @@ def test_client_csv_import_reports_duplicates_and_enriched_contacts(isolated_cli
     assert contact["email_consent"] is True
 
 
+def test_client_segmentation_summary_reports_business_signals(isolated_client):
+    client, session_factory = isolated_client
+    headers = _headers(
+        session_factory,
+        "crm-segmentation-viewer",
+        ["SALES_VIEW", "SALES_EDIT"],
+    )
+    created = client.post(
+        "/v2/partners/clients",
+        json=_client_payload(
+            "Client Segment Actif",
+            email="segment-actif@example.test",
+            segment="Architectes",
+            tags=["VIP", "Prescription"],
+        ),
+        headers=headers,
+    )
+    assert created.status_code == 200, created.text
+    client_id = created.json()["id"]
+    with session_factory() as db:
+        db.add(
+            models.CRMOpportunity(
+                reference="OPP-SEGMENT-001",
+                client_id=client_id,
+                title="Projet segment actif",
+                stage=models.CRMOpportunityStage.PROPOSAL_SENT.value,
+                probability=70,
+                estimated_amount=5000,
+                created_by="pytest",
+            )
+        )
+        db.add(
+            models.CRMActivity(
+                client_id=client_id,
+                activity_type=models.CRMActivityType.TASK.value,
+                subject="Relance segment en retard",
+                due_at=utcnow() - timedelta(days=1),
+                status=models.CRMActivityStatus.TODO.value,
+                author="pytest",
+            )
+        )
+        sale = models.SaleOrder(
+            reference="DEV-SEGMENT-001",
+            client_name="Client Segment Actif",
+            status="VALIDATED",
+            workflow_type="FABRICATION_ESTIMATE",
+        )
+        db.add(sale)
+        db.flush()
+        db.add(
+            models.SaleOrderLine(
+                order_id=sale.id,
+                description="Ligne signée",
+                quantity=2,
+                unit_price=1000,
+            )
+        )
+        db.commit()
+
+    response = client.get("/v2/partners/clients/segmentation", headers=headers)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    architectes = next(item for item in payload["segments"] if item["segment"] == "Architectes")
+    assert architectes["clients"] == 1
+    assert architectes["open_opportunities"] == 1
+    assert architectes["overdue_actions"] == 1
+    assert architectes["quotes_signed"] == 1
+    assert architectes["signed_amount"] == 2000.0
+    assert {"VIP", "Prescription"}.issubset({item["tag"] for item in payload["tags"]})
+    signals = payload["client_signals"][str(client_id)]
+    assert "active_opportunity" in signals["statuses"]
+    assert "to_follow_up" in signals["statuses"]
+    assert "quote_signed" in signals["statuses"]
+
+
 def test_autonomous_reminder_sync_uses_application_session(isolated_client):
     _, session_factory = isolated_client
     with session_factory() as db:
