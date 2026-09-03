@@ -1886,11 +1886,12 @@ export default function StockDashboard() {
             || (editProductNeedsReason && !String(editProductForm.qualification_reason || '').trim())
         );
     const selectedProductActivationIssues = selectedProduct ? getCatalogActivationIssues(selectedProduct) : [];
+    const compactCatalogMode = ['catalog', 'drafts'].includes(currentMenu);
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
             <div className="shrink-0 border-b border-slate-200 bg-white">
-                <div className="px-6 py-4">
+                <div className={`px-6 ${compactCatalogMode ? 'py-2' : 'py-4'}`}>
                     <div className="flex flex-wrap items-center justify-between gap-4">
                         <div className="min-w-0">
                             <h3 className="font-black flex items-center gap-3 tracking-tight text-xl text-slate-950">
@@ -1907,7 +1908,7 @@ export default function StockDashboard() {
                                 permissionEntities={['stock_reservation', 'workshop_preparation', 'real_workshop_debit']}
                                 eventCodes={['stock_reserved', 'workshop_prepared', 'stock_consumed']}
                                 compact
-                                className="mt-3 max-w-4xl"
+                                className={`${compactCatalogMode ? 'hidden xl:block mt-2 max-w-3xl' : 'mt-3 max-w-4xl'}`}
                             />
                         </div>
 
@@ -1958,23 +1959,25 @@ export default function StockDashboard() {
                     </div>
                 </div>
 
-                <StockUXGuide
-                    activeKey={currentMenu}
-                    todoTotal={todoTotal}
-                    riskTotal={riskTotal}
-                    productsCount={products.length}
-                    locationsCount={physicalLocations.length}
-                    reservationsCount={reservations.length}
-                    inventoryCount={openInventorySessions.length}
-                    onTodo={selectTodo}
-                    onStock={() => selectInventoryFocus('stock')}
-                    onWorkshop={(stockPermissions.reserveWorkshop || stockPermissions.consumeWorkshop)
-                        ? () => setCurrentMenu('workshop')
-                        : selectTodo}
-                    onInventory={() => setCurrentMenu('physical-inventory')}
-                />
+                {!compactCatalogMode && (
+                    <StockUXGuide
+                        activeKey={currentMenu}
+                        todoTotal={todoTotal}
+                        riskTotal={riskTotal}
+                        productsCount={products.length}
+                        locationsCount={physicalLocations.length}
+                        reservationsCount={reservations.length}
+                        inventoryCount={openInventorySessions.length}
+                        onTodo={selectTodo}
+                        onStock={() => selectInventoryFocus('stock')}
+                        onWorkshop={(stockPermissions.reserveWorkshop || stockPermissions.consumeWorkshop)
+                            ? () => setCurrentMenu('workshop')
+                            : selectTodo}
+                        onInventory={() => setCurrentMenu('physical-inventory')}
+                    />
+                )}
 
-                <div className="px-4 sm:px-6 pb-3">
+                <div className={`px-4 sm:px-6 ${compactCatalogMode ? 'pb-2' : 'pb-3'}`}>
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
                         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
                         {stockNavGroups.map(group => (
