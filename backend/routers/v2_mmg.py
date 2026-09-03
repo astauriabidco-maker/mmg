@@ -7,7 +7,9 @@ from typing import List, Optional
 from pathlib import Path
 import os
 import base64
+import csv
 import hashlib
+import io
 import uuid
 from datetime import datetime, timedelta
 from ..database import get_db
@@ -856,9 +858,55 @@ def get_crm_cockpit(
         missions_query.all(),
         reminder_plans=reminder_plans_query.all(),
         stage_history=stage_history_query.all(),
+        sale_orders=db.query(models.SaleOrder).options(selectinload(models.SaleOrder.lines)).all(),
         now=utcnow(),
         horizon_days=horizon_days,
         stale_days=stale_days,
+    )
+
+
+@router.get(
+    "/crm/cockpit/export.csv",
+    dependencies=CRM_VIEW_DEPENDENCIES,
+)
+def export_crm_cockpit_csv(
+    owner_user_id: Optional[int] = None,
+    horizon_days: int = 14,
+    stale_days: int = 7,
+    db: Session = Depends(get_db),
+):
+    data = get_crm_cockpit(
+        owner_user_id=owner_user_id,
+        horizon_days=horizon_days,
+        stale_days=stale_days,
+        db=db,
+    )
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[
+            "owner_name",
+            "open_opportunities",
+            "pipeline_amount",
+            "weighted_pipeline_amount",
+            "quotes_sent",
+            "quotes_signed",
+            "signed_amount",
+            "conversion_rate",
+            "reminders_today",
+            "overdue_reminders",
+            "opportunities_without_action",
+            "attention_score",
+        ],
+    )
+    writer.writeheader()
+    for owner in data["owners"]:
+        writer.writerow(owner)
+    content = "\ufeff" + output.getvalue()
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="crm-pilotage-commercial.csv"'},
     )
 
 

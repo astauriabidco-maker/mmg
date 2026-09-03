@@ -123,12 +123,14 @@ def build_crm_cockpit(
     *,
     reminder_plans=None,
     stage_history=None,
+    sale_orders=None,
     now=None,
     horizon_days=14,
     stale_days=7,
 ):
     reminder_plans = reminder_plans or []
     stage_history = stage_history or []
+    sale_orders = sale_orders or []
     now = _naive_utc(now or datetime.utcnow())
     horizon = now + timedelta(days=horizon_days)
     stale_before = now - timedelta(days=stale_days)
@@ -426,9 +428,15 @@ def build_crm_cockpit(
                 "owner_name": name or "Non affecté",
                 "open_opportunities": 0,
                 "pipeline_amount": 0.0,
+                "weighted_pipeline_amount": 0.0,
+                "quotes_sent": 0,
+                "quotes_signed": 0,
+                "signed_amount": 0.0,
                 "reminders_today": 0,
                 "overdue_reminders": 0,
                 "opportunities_without_action": 0,
+                "conversion_rate": None,
+                "attention_score": 0,
             }
         return owner_rows[key]
 
@@ -439,9 +447,37 @@ def build_crm_cockpit(
             _owner_name(opportunity),
         )
         row["open_opportunities"] += 1
-        row["pipeline_amount"] += _number(getattr(opportunity, "estimated_amount", 0))
+        amount = _number(getattr(opportunity, "estimated_amount", 0))
+        probability = max(0, min(100, int(getattr(opportunity, "probability", 0) or 0)))
+        row["pipeline_amount"] += amount
+        row["weighted_pipeline_amount"] += amount * probability / 100
         if opportunity.id in without_action_ids:
             row["opportunities_without_action"] += 1
+
+    opportunities_by_sale_id = {
+        getattr(opportunity, "sale_order_id", None): opportunity
+        for opportunity in opportunities
+        if getattr(opportunity, "sale_order_id", None)
+    }
+    for sale in sale_orders:
+        opportunity = opportunities_by_sale_id.get(getattr(sale, "id", None))
+        if opportunity is None:
+            continue
+        row = owner_row(
+            getattr(opportunity, "owner_user_id", None),
+            _owner_name(opportunity),
+        )
+        status = str(getattr(sale, "status", "") or "")
+        if status == "SENT":
+            row["quotes_sent"] += 1
+        if status in {"VALIDATED", "DELIVERED"}:
+            row["quotes_signed"] += 1
+            row["signed_amount"] += sum(
+                _number(getattr(line, "quantity", 0))
+                * _number(getattr(line, "unit_price", 0))
+                * (1 - _number(getattr(line, "discount_pct", 0)) / 100)
+                for line in getattr(sale, "lines", []) or []
+            )
 
     for plan in reminder_plans:
         if str(getattr(plan, "status", "")) != "PENDING":
@@ -461,9 +497,23 @@ def build_crm_cockpit(
     owners = []
     for row in owner_rows.values():
         row["pipeline_amount"] = round(row["pipeline_amount"], 2)
+        row["weighted_pipeline_amount"] = round(row["weighted_pipeline_amount"], 2)
+        row["signed_amount"] = round(row["signed_amount"], 2)
+        closed_quotes = row["quotes_sent"] + row["quotes_signed"]
+        row["conversion_rate"] = (
+            round(row["quotes_signed"] * 100 / closed_quotes, 1)
+            if closed_quotes
+            else None
+        )
+        row["attention_score"] = (
+            row["overdue_reminders"] * 3
+            + row["opportunities_without_action"] * 2
+            + row["reminders_today"]
+        )
         owners.append(row)
     owners.sort(
         key=lambda item: (
+            -item["attention_score"],
             -item["overdue_reminders"],
             -item["opportunities_without_action"],
             item["owner_name"],
@@ -524,6 +574,10 @@ def build_crm_cockpit(
     measures_to_schedule = sum(
         1 for item in open_missions if getattr(item, "scheduled_start", None) is None
     )
+    quotes_sent = sum(row["quotes_sent"] for row in owners)
+    quotes_signed = sum(row["quotes_signed"] for row in owners)
+    signed_amount = sum(row["signed_amount"] for row in owners)
+    closed_quotes = quotes_sent + quotes_signed
 
     return {
         "generated_at": now,
@@ -538,6 +592,14 @@ def build_crm_cockpit(
             "opportunities_without_action": len(opportunities_without_action),
             "measures_to_schedule": measures_to_schedule,
             "automatic_reminders": len(reminders),
+            "quotes_sent": quotes_sent,
+            "quotes_signed": quotes_signed,
+            "signed_amount": round(signed_amount, 2),
+            "conversion_rate": (
+                round(quotes_signed * 100 / closed_quotes, 1)
+                if closed_quotes
+                else None
+            ),
         },
         "stages": stages,
         "agenda": agenda,

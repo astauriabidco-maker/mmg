@@ -10,6 +10,7 @@ import {
     Check,
     ClipboardList,
     Clock3,
+    Download,
     History,
     Mail,
     RefreshCw,
@@ -312,6 +313,32 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
         await Promise.all([cockpitQuery.refetch(), plansQuery.refetch()]);
     };
 
+    const exportCommercialSteering = async () => {
+        setActionError('');
+        try {
+            const response = await api.get('/v2/mmg/crm/cockpit/export.csv', {
+                params: {
+                    horizon_days: horizonDays,
+                    stale_days: 7,
+                    owner_user_id: selectedOwnerId ? Number(selectedOwnerId) : undefined,
+                },
+                responseType: 'blob',
+            });
+            const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'crm-pilotage-commercial.csv';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+            setNotification({ tone: 'success', message: 'Export pilotage commercial généré.' });
+        } catch (error) {
+            setActionError(error?.response?.data?.detail || "L'export du pilotage commercial a échoué.");
+        }
+    };
+
     const assignOpportunityOwner = async values => {
         const item = cockpitAction.item;
         const opportunityId = item.opportunity_id || item.id;
@@ -437,6 +464,13 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                         >
                             <RefreshCw className="h-4 w-4" />
                         </button>
+                        <button
+                            onClick={exportCommercialSteering}
+                            title="Exporter le pilotage commercial"
+                            className="inline-flex h-10 w-10 items-center justify-center border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                        >
+                            <Download className="h-4 w-4" />
+                        </button>
                     </div>
                 </header>
 
@@ -449,9 +483,11 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                     eventCodes={['crm_opportunity_created', 'measure_submitted_to_be', 'quote_sent', 'quote_signed']}
                 />
 
-                <section className="grid border-y border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+                <section className="grid border-y border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
                     <Metric icon={Target} label="Opportunités" value={metrics.open_opportunities} />
                     <Metric icon={TrendingUp} label="Pipeline pondéré" value={formatMoney(metrics.weighted_pipeline_amount)} tone="blue" />
+                    <Metric icon={Send} label="Devis envoyés" value={metrics.quotes_sent || 0} tone={(metrics.quotes_sent || 0) ? 'blue' : 'slate'} />
+                    <Metric icon={Check} label="CA signé" value={formatMoney(metrics.signed_amount)} tone={(metrics.signed_amount || 0) ? 'emerald' : 'slate'} />
                     <Metric icon={CalendarClock} label="Relances aujourd'hui" value={metrics.reminders_today} tone={metrics.reminders_today ? 'blue' : 'slate'} />
                     <Metric icon={Clock3} label="Relances en retard" value={metrics.overdue_reminders} tone={metrics.overdue_reminders ? 'red' : 'slate'} />
                     <Metric icon={AlertTriangle} label="Sans prochaine action" value={metrics.opportunities_without_action} tone={metrics.opportunities_without_action ? 'amber' : 'slate'} />
@@ -475,9 +511,9 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                     <div className="border-y border-slate-200 bg-white">
                         <SectionHeader
                             icon={Users}
-                            eyebrow="Charge commerciale"
-                            title="Retards et portefeuille par responsable"
-                            detail="Les dossiers non affectés restent visibles et doivent être attribués."
+                            eyebrow="Pilotage commercial"
+                            title="Conversion, CA signé et risques par responsable"
+                            detail="Pipeline, devis envoyés/signés, taux de conversion et score d’attention calculés par portefeuille."
                         />
                         <OwnerPerformanceTable
                             owners={data.owners || []}
@@ -824,15 +860,20 @@ function OwnerPerformanceTable({ owners, onSelectOwner }) {
     }
     return (
         <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] text-left">
+            <table className="w-full min-w-[1040px] text-left">
                 <thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-400">
                     <tr>
                         <th className="px-5 py-3">Responsable</th>
                         <th className="px-3 py-3 text-right">Dossiers</th>
                         <th className="px-3 py-3 text-right">Pipeline</th>
-                        <th className="px-3 py-3 text-right">Aujourd'hui</th>
+                        <th className="px-3 py-3 text-right">Pondéré</th>
+                        <th className="px-3 py-3 text-right">Envoyés</th>
+                        <th className="px-3 py-3 text-right">Signés</th>
+                        <th className="px-3 py-3 text-right">CA signé</th>
+                        <th className="px-3 py-3 text-right">Conv.</th>
                         <th className="px-3 py-3 text-right">Retards</th>
                         <th className="px-3 py-3 text-right">Sans action</th>
+                        <th className="px-3 py-3 text-right">Score</th>
                         <th className="w-12 px-3 py-3" />
                     </tr>
                 </thead>
@@ -842,12 +883,23 @@ function OwnerPerformanceTable({ owners, onSelectOwner }) {
                             <td className="px-5 py-3 text-sm font-black text-slate-900">{owner.owner_name}</td>
                             <td className="px-3 py-3 text-right text-sm font-black text-slate-700">{owner.open_opportunities}</td>
                             <td className="px-3 py-3 text-right text-sm font-black text-slate-900">{formatMoney(owner.pipeline_amount)}</td>
-                            <td className="px-3 py-3 text-right text-sm font-black text-blue-700">{owner.reminders_today}</td>
+                            <td className="px-3 py-3 text-right text-sm font-black text-blue-700">{formatMoney(owner.weighted_pipeline_amount)}</td>
+                            <td className="px-3 py-3 text-right text-sm font-black text-indigo-700">{owner.quotes_sent}</td>
+                            <td className="px-3 py-3 text-right text-sm font-black text-emerald-700">{owner.quotes_signed}</td>
+                            <td className="px-3 py-3 text-right text-sm font-black text-slate-900">{formatMoney(owner.signed_amount)}</td>
+                            <td className="px-3 py-3 text-right text-sm font-black text-slate-700">
+                                {owner.conversion_rate === null || owner.conversion_rate === undefined
+                                    ? '—'
+                                    : `${owner.conversion_rate.toLocaleString('fr-FR')} %`}
+                            </td>
                             <td className={`px-3 py-3 text-right text-sm font-black ${owner.overdue_reminders ? 'text-red-700' : 'text-slate-400'}`}>
                                 {owner.overdue_reminders}
                             </td>
                             <td className={`px-3 py-3 text-right text-sm font-black ${owner.opportunities_without_action ? 'text-amber-700' : 'text-slate-400'}`}>
                                 {owner.opportunities_without_action}
+                            </td>
+                            <td className={`px-3 py-3 text-right text-sm font-black ${owner.attention_score ? 'text-orange-700' : 'text-slate-400'}`}>
+                                {owner.attention_score}
                             </td>
                             <td className="px-3 py-3 text-right">
                                 {owner.owner_user_id && (
@@ -1190,6 +1242,7 @@ function Metric({ icon: Icon, label, value, tone = 'slate' }) {
         blue: 'text-blue-700',
         red: 'text-red-700',
         amber: 'text-amber-700',
+        emerald: 'text-emerald-700',
     };
     return (
         <div className="border-b border-r border-slate-100 px-4 py-4 last:border-r-0">
