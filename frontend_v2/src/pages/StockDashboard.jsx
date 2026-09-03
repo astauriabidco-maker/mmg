@@ -158,6 +158,8 @@ export default function StockDashboard() {
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
     const [showDraftOnly, setShowDraftOnly] = useState(false);
+    const [catalogQuickFilter, setCatalogQuickFilter] = useState('all'); // 'all' | 'to_identify' | 'draft' | 'missing_supplier' | 'missing_threshold' | 'active' | 'blocked'
+    const [catalogSourceFilter, setCatalogSourceFilter] = useState('all'); // 'all' | 'CORTIZO' | 'TECHNAL' | 'SEPALUMIC' | 'MMG' | 'AUTRE'
     const [expandedProducts, setExpandedProducts] = useState({});
     const [selectedProductId, setSelectedProductId] = useState(null);
     const [selectedLocationId, setSelectedLocationId] = useState(null);
@@ -1207,12 +1209,74 @@ export default function StockDashboard() {
             || text.includes('créé depuis prévisualisation débit atelier');
     };
 
+    const isProductToIdentify = (product) => {
+        const text = `${product?.name || ''} ${product?.reference_base || ''} ${product?.compatible_series || ''}`.toLowerCase();
+        return isDraftProduct(product)
+            || ['TO_IDENTIFY', 'TO_QUALIFY'].includes(product?.catalog_status)
+            || text.includes('[comptage]')
+            || text.includes('à identifier')
+            || text.includes('a identifier')
+            || text.includes('inconnu');
+    };
+
+    const getCatalogSource = (product) => {
+        const variantTokens = (product?.variants || [])
+            .flatMap(variant => [variant.reference, variant.supplier_reference, variant.barcode, variant.color, variant.finish])
+            .filter(Boolean)
+            .join(' ');
+        const text = `${product?.supplier || ''} ${product?.reference_base || ''} ${product?.name || ''} ${product?.compatible_series || ''} ${variantTokens}`.toUpperCase();
+        if (text.includes('CORTIZO')) return 'CORTIZO';
+        if (text.includes('TECHNAL') || text.includes('HYDRO')) return 'TECHNAL';
+        if (text.includes('SEPALUMIC')) return 'SEPALUMIC';
+        if (text.includes('MMG')) return 'MMG';
+        return 'AUTRE';
+    };
+
+    const getCatalogQuality = (product) => {
+        const variants = product?.variants || [];
+        const hasThreshold = variants.some(variant => Number(variant.min_threshold || 0) > 0);
+        const checks = [
+            { key: 'reference', label: 'référence', ok: Boolean(String(product?.reference_base || '').trim()) },
+            { key: 'name', label: 'désignation', ok: Boolean(String(product?.name || '').trim()) && !isProductToIdentify(product) },
+            { key: 'category', label: 'famille', ok: Boolean(String(product?.category || product?.material_type || '').trim()) },
+            { key: 'supplier', label: 'fournisseur', ok: Boolean(String(product?.supplier || '').trim()) },
+            { key: 'unit', label: 'unité', ok: Boolean(String(product?.unit || '').trim()) },
+            { key: 'threshold', label: 'seuil', ok: hasThreshold },
+            { key: 'variant', label: 'déclinaison active', ok: variants.some(variant => variant.is_active !== false) },
+        ];
+        const completed = checks.filter(check => check.ok).length;
+        return {
+            score: Math.round((completed / checks.length) * 100),
+            missing: checks.filter(check => !check.ok).map(check => check.label),
+        };
+    };
+
+    const productHasMissingSupplier = (product) => !String(product?.supplier || '').trim();
+    const productHasMissingThreshold = (product) => {
+        const variants = product?.variants || [];
+        return variants.length === 0 || variants.every(variant => Number(variant.min_threshold || 0) <= 0);
+    };
+
+    const matchesCatalogFilter = (product) => {
+        const status = String(product?.catalog_status || 'ACTIVE').toUpperCase();
+        if (catalogSourceFilter !== 'all' && getCatalogSource(product) !== catalogSourceFilter) return false;
+        if (catalogQuickFilter === 'to_identify') return isProductToIdentify(product);
+        if (catalogQuickFilter === 'draft') return isDraftProduct(product);
+        if (catalogQuickFilter === 'missing_supplier') return productHasMissingSupplier(product);
+        if (catalogQuickFilter === 'missing_threshold') return productHasMissingThreshold(product);
+        if (catalogQuickFilter === 'active') return status === 'ACTIVE' && !isDraftProduct(product);
+        if (catalogQuickFilter === 'blocked') return ['BLOCKED', 'ARCHIVED', 'INACTIVE'].includes(status);
+        return true;
+    };
+
     const selectInventoryFocus = (focus) => {
         setCurrentMenu(focus);
         setInventoryFocus(focus);
         setSearchTerm('');
         setShowLowStockOnly(false);
         setShowDraftOnly(focus === 'drafts');
+        setCatalogQuickFilter('all');
+        setCatalogSourceFilter('all');
         if (focus === 'catalog' || focus === 'drafts' || focus === 'services') {
             setActiveLocationId('global');
         }
@@ -1402,6 +1466,43 @@ export default function StockDashboard() {
     let totalValuation = 0;
     let totalLowStockCount = 0;
     const totalDraftCount = products.filter(isDraftProduct).length;
+    const catalogQualificationVisible = ['catalog', 'drafts'].includes(currentMenu);
+    const catalogProducts = products.filter(product => (product.product_type || 'stockable').toLowerCase() !== 'service');
+    const catalogQualityRows = catalogProducts.map(product => ({
+        product,
+        source: getCatalogSource(product),
+        quality: getCatalogQuality(product),
+        isDraft: isDraftProduct(product),
+        toIdentify: isProductToIdentify(product),
+        missingSupplier: productHasMissingSupplier(product),
+        missingThreshold: productHasMissingThreshold(product),
+        status: String(product.catalog_status || 'ACTIVE').toUpperCase(),
+    }));
+    const catalogQualityStats = catalogQualityRows.reduce((stats, row) => {
+        stats.total += 1;
+        if (row.status === 'ACTIVE' && !row.isDraft) stats.active += 1;
+        if (row.isDraft) stats.drafts += 1;
+        if (row.toIdentify) stats.toIdentify += 1;
+        if (row.missingSupplier) stats.missingSupplier += 1;
+        if (row.missingThreshold) stats.missingThreshold += 1;
+        if (['BLOCKED', 'ARCHIVED', 'INACTIVE'].includes(row.status)) stats.blocked += 1;
+        stats.sources[row.source] = (stats.sources[row.source] || 0) + 1;
+        return stats;
+    }, {
+        total: 0,
+        active: 0,
+        drafts: 0,
+        toIdentify: 0,
+        missingSupplier: 0,
+        missingThreshold: 0,
+        blocked: 0,
+        sources: { CORTIZO: 0, TECHNAL: 0, SEPALUMIC: 0, MMG: 0, AUTRE: 0 },
+    });
+    const catalogQualificationRows = catalogQualityRows
+        .filter(row => row.toIdentify || row.isDraft || row.missingSupplier || row.missingThreshold || row.quality.score < 80)
+        .sort((a, b) => a.quality.score - b.quality.score || String(a.product.name || '').localeCompare(String(b.product.name || '')))
+        .slice(0, 6);
+    const isCatalogQualificationFilterActive = catalogQuickFilter !== 'all' || catalogSourceFilter !== 'all';
 
     products.forEach(p => {
         const draftProduct = isDraftProduct(p);
@@ -1413,10 +1514,11 @@ export default function StockDashboard() {
         if (!showDraftOnly && inventoryFocus === 'services' && !isServiceProduct) return;
         if (!showDraftOnly && inventoryFocus !== 'services' && isServiceProduct) return;
         if (!showDraftOnly && ['stock', 'services'].includes(inventoryFocus) && !isOperationalProduct) return;
+        if (catalogQualificationVisible && !matchesCatalogFilter(p)) return;
         let hasVisibleVariant = false;
         const variantsData = [];
 
-        p.variants.forEach(v => {
+        (p.variants || []).forEach(v => {
             let stockToDisplay = 0;
             let locId = null;
             if (activeLocationId === 'global') {
@@ -2992,11 +3094,13 @@ export default function StockDashboard() {
                                 <span className="text-lg font-black text-slate-950">{totalValuation.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
                             </div>
                         )}
-                        {(showLowStockOnly || showDraftOnly) && (
+                        {(showLowStockOnly || showDraftOnly || isCatalogQualificationFilterActive) && (
                             <button
                                 onClick={() => {
                                     setShowLowStockOnly(false);
                                     setShowDraftOnly(false);
+                                    setCatalogQuickFilter('all');
+                                    setCatalogSourceFilter('all');
                                     const targetFocus = currentMenu === 'stock' ? 'stock' : 'catalog';
                                     setInventoryFocus(targetFocus);
                                     setCurrentMenu(targetFocus);
@@ -3061,6 +3165,19 @@ export default function StockDashboard() {
 
                 {/* THE GRID / LIST */}
                 <div className="flex-1 overflow-y-auto w-full relative p-4 bg-white">
+                    {catalogQualificationVisible && (
+                        <CatalogQualificationPanel
+                            stats={catalogQualityStats}
+                            rows={catalogQualificationRows}
+                            activeQuickFilter={catalogQuickFilter}
+                            activeSourceFilter={catalogSourceFilter}
+                            onQuickFilter={setCatalogQuickFilter}
+                            onSourceFilter={setCatalogSourceFilter}
+                            onOpenProduct={openProductDetail}
+                            canEdit={stockPermissions.qualifyCatalog}
+                        />
+                    )}
+
                     {groupedData.length === 0 && (
                         <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-200 rounded-3xl m-6">
                             <Box className="w-12 h-12 text-slate-300 mb-4" />
@@ -3085,6 +3202,8 @@ export default function StockDashboard() {
                                     {groupedData.map(({ product, variants }) => {
                                         const isExpanded = expandedProducts[product.id];
                                         const draftProduct = isDraftProduct(product);
+                                        const catalogQuality = getCatalogQuality(product);
+                                        const catalogSource = getCatalogSource(product);
                                         return (
                                             <React.Fragment key={product.id}>
                                                 <tr className="group hover:bg-slate-50 transition-colors cursor-pointer border-l-4 border-l-transparent hover:border-l-blue-400" onClick={() => toggleExpand(product.id)}>
@@ -3116,6 +3235,17 @@ export default function StockDashboard() {
                                                                     <span className="text-[9px] uppercase font-black bg-blue-50 text-blue-500 px-1.5 py-0.5 rounded-md border border-blue-100">Gammes: {product.compatible_series}</span>
                                                                 )}
                                                             </div>
+                                                            {inventoryFocus !== 'services' && (
+                                                                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                                                    <span className="text-[9px] uppercase font-black bg-slate-100 text-slate-500 px-2 py-1 rounded-md border border-slate-200">Source {catalogSource}</span>
+                                                                    <span className={`text-[9px] uppercase font-black px-2 py-1 rounded-md border ${catalogQuality.score >= 80 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : catalogQuality.score >= 55 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                                                        Qualité {catalogQuality.score}%
+                                                                    </span>
+                                                                    {catalogQuality.missing.slice(0, 3).map(item => (
+                                                                        <span key={item} className="text-[9px] uppercase font-black bg-white text-slate-400 px-2 py-1 rounded-md border border-slate-200">À compléter: {item}</span>
+                                                                    ))}
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     </td>
                                                     <td className="py-4 px-4 text-center">
@@ -3285,6 +3415,8 @@ export default function StockDashboard() {
                                 const totalStock = variants.reduce((acc, v) => acc + (v.stockToDisplay || 0), 0);
                                 const isLowStock = false; // Add logic if needed
                                 const draftProduct = isDraftProduct(product);
+                                const catalogQuality = getCatalogQuality(product);
+                                const catalogSource = getCatalogSource(product);
 
                                 return (
                                     <div key={product.id} className="bg-white rounded-3xl border border-slate-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group cursor-pointer" onClick={() => toggleExpand(product.id)}>
@@ -3309,6 +3441,14 @@ export default function StockDashboard() {
                                         <div className="p-5 flex-1 flex flex-col">
                                             <p className="text-xs font-bold text-slate-400 mb-1">{product.reference_base}</p>
                                             <h3 className="font-black text-lg text-slate-800 leading-tight mb-4 group-hover:text-blue-600 transition-colors">{product.name}</h3>
+                                            {inventoryFocus !== 'services' && (
+                                                <div className="mb-4 flex flex-wrap gap-1.5">
+                                                    <span className="text-[9px] uppercase font-black bg-slate-100 text-slate-500 px-2 py-1 rounded-md border border-slate-200">Source {catalogSource}</span>
+                                                    <span className={`text-[9px] uppercase font-black px-2 py-1 rounded-md border ${catalogQuality.score >= 80 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : catalogQuality.score >= 55 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                                        Qualité {catalogQuality.score}%
+                                                    </span>
+                                                </div>
+                                            )}
 
                                             <div className="mt-auto space-y-3">
                                                 <div className="flex items-end justify-between items-center py-2 border-t border-slate-100 mt-2">
@@ -5472,6 +5612,145 @@ function RoleRule({ icon: Icon, title, text }) {
             <div>
                 <p className="font-black text-sm text-slate-900">{title}</p>
                 <p className="text-xs font-bold text-slate-500">{text}</p>
+            </div>
+        </div>
+    );
+}
+
+function CatalogQualificationPanel({
+    stats,
+    rows,
+    activeQuickFilter,
+    activeSourceFilter,
+    onQuickFilter,
+    onSourceFilter,
+    onOpenProduct,
+    canEdit,
+}) {
+    const quickFilters = [
+        { key: 'all', label: 'Tout', value: stats.total, tone: 'slate' },
+        { key: 'to_identify', label: 'À identifier', value: stats.toIdentify, tone: 'red' },
+        { key: 'draft', label: 'Brouillons', value: stats.drafts, tone: 'amber' },
+        { key: 'missing_supplier', label: 'Sans fournisseur', value: stats.missingSupplier, tone: 'orange' },
+        { key: 'missing_threshold', label: 'Sans seuil', value: stats.missingThreshold, tone: 'blue' },
+        { key: 'active', label: 'Actifs', value: stats.active, tone: 'emerald' },
+        { key: 'blocked', label: 'Bloqués', value: stats.blocked, tone: 'slate' },
+    ];
+    const sourceFilters = ['all', 'CORTIZO', 'TECHNAL', 'SEPALUMIC', 'MMG', 'AUTRE'];
+    const toneClasses = {
+        slate: 'border-slate-200 bg-white text-slate-700',
+        red: 'border-red-200 bg-red-50 text-red-700',
+        amber: 'border-amber-200 bg-amber-50 text-amber-700',
+        orange: 'border-orange-200 bg-orange-50 text-orange-700',
+        blue: 'border-blue-200 bg-blue-50 text-blue-700',
+        emerald: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    };
+    const qualityClass = (score) => (
+        score >= 80
+            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+            : score >= 55
+                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                : 'bg-red-50 text-red-700 border-red-200'
+    );
+
+    return (
+        <div className="mb-4 rounded-3xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-500">Référentiel stock</p>
+                    <h3 className="mt-1 text-lg font-black text-slate-900">Catalogue à qualifier proprement</h3>
+                    <p className="mt-1 max-w-3xl text-xs font-bold leading-relaxed text-slate-500">
+                        Priorise les références brouillon, inconnues ou incomplètes avant comptage, réservation ou lancement atelier.
+                    </p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                    {sourceFilters.map(source => {
+                        const active = activeSourceFilter === source;
+                        const value = source === 'all' ? stats.total : (stats.sources[source] || 0);
+                        return (
+                            <button
+                                key={source}
+                                type="button"
+                                onClick={() => onSourceFilter(source)}
+                                className={`rounded-2xl border px-3 py-2 text-left transition-all ${active ? 'border-slate-900 bg-slate-900 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:text-blue-700'}`}
+                            >
+                                <span className="block text-[9px] font-black uppercase tracking-widest opacity-60">{source === 'all' ? 'Source' : 'Fournisseur'}</span>
+                                <span className="mt-1 flex items-end justify-between gap-3">
+                                    <span className="text-xs font-black">{source === 'all' ? 'Toutes' : source}</span>
+                                    <span className="text-lg font-black">{value}</span>
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="mt-4 grid gap-2 md:grid-cols-4 xl:grid-cols-7">
+                {quickFilters.map(filter => {
+                    const active = activeQuickFilter === filter.key;
+                    return (
+                        <button
+                            key={filter.key}
+                            type="button"
+                            onClick={() => onQuickFilter(filter.key)}
+                            className={`rounded-2xl border px-3 py-3 text-left transition-all ${active ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : toneClasses[filter.tone]}`}
+                        >
+                            <span className="block text-[9px] font-black uppercase tracking-widest opacity-65">{filter.label}</span>
+                            <span className="mt-1 block text-2xl font-black">{Number(filter.value || 0).toLocaleString('fr-FR')}</span>
+                        </button>
+                    );
+                })}
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-white bg-white p-3">
+                <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Actions rapides</p>
+                        <p className="text-xs font-bold text-slate-500">Les fiches les moins qualifiées remontent ici en premier.</p>
+                    </div>
+                    {!canEdit && (
+                        <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                            Lecture seule
+                        </span>
+                    )}
+                </div>
+                {rows.length === 0 ? (
+                    <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
+                        Catalogue propre sur les filtres courants : aucune fiche prioritaire à qualifier.
+                    </div>
+                ) : (
+                    <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                        {rows.map(row => (
+                            <button
+                                key={row.product.id}
+                                type="button"
+                                onClick={(event) => onOpenProduct(event, row.product)}
+                                className="rounded-2xl border border-slate-200 bg-white p-3 text-left transition-all hover:border-blue-200 hover:bg-blue-50/40"
+                            >
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <p className="truncate text-sm font-black text-slate-900">{row.product.name}</p>
+                                        <p className="mt-0.5 text-[10px] font-black uppercase tracking-widest text-slate-400">{row.product.reference_base || 'Sans référence'} · {row.source}</p>
+                                    </div>
+                                    <span className={`shrink-0 rounded-xl border px-2.5 py-1 text-[10px] font-black ${qualityClass(row.quality.score)}`}>
+                                        {row.quality.score}%
+                                    </span>
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                    {row.quality.missing.length > 0 ? row.quality.missing.slice(0, 4).map(item => (
+                                        <span key={item} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-slate-500">
+                                            {item}
+                                        </span>
+                                    )) : (
+                                        <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-emerald-700">
+                                            fiche exploitable
+                                        </span>
+                                    )}
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     );
