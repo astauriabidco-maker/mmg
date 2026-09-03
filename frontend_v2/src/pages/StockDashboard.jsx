@@ -2025,6 +2025,13 @@ export default function StockDashboard({ surface = 'management' }) {
                         draftCount={totalDraftCount}
                         valuation={totalValuation}
                         canSeeValuation={isAdmin}
+                        criticalNeeds={criticalPurchaseNeeds}
+                        blockedNeeds={blockedPurchaseNeeds}
+                        reservations={reservations}
+                        openInventorySessions={openInventorySessions}
+                        openPurchases={openPurchases}
+                        catalogQualityStats={catalogQualityStats}
+                        loadingRisks={loadingPurchaseNeeds}
                         onOpenManagement={() => switchStockSurface('management')}
                     />
                 )}
@@ -4985,8 +4992,56 @@ function StockPilotageDashboard({
     draftCount,
     valuation,
     canSeeValuation,
+    criticalNeeds = [],
+    blockedNeeds = [],
+    reservations = [],
+    openInventorySessions = [],
+    openPurchases = [],
+    catalogQualityStats = {},
+    loadingRisks,
     onOpenManagement,
 }) {
+    const formatCurrency = value => Number(value || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+    const formatQty = value => Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+    const topRisks = [...criticalNeeds, ...blockedNeeds]
+        .filter(Boolean)
+        .sort((a, b) => {
+            const rank = { CRITICAL: 0, URGENT: 1, TO_PLAN: 2, COVERED: 3 };
+            return (rank[String(a.priority || '').toUpperCase()] ?? 9) - (rank[String(b.priority || '').toUpperCase()] ?? 9)
+                || Number(b.net_need_quantity || 0) - Number(a.net_need_quantity || 0);
+        })
+        .slice(0, 5);
+    const visibleReservations = reservations.slice(0, 4);
+    const visibleInventories = openInventorySessions.slice(0, 4);
+    const visiblePurchases = openPurchases.slice(0, 3);
+    const qualityAlerts = [
+        { label: 'Brouillons', value: draftCount, tone: 'amber' },
+        { label: 'À identifier', value: catalogQualityStats.toIdentify || 0, tone: 'red' },
+        { label: 'Sans fournisseur', value: catalogQualityStats.missingSupplier || 0, tone: 'amber' },
+        { label: 'Sans seuil', value: catalogQualityStats.missingThreshold || 0, tone: 'blue' },
+    ];
+    const recommendations = [
+        riskTotal > 0 && {
+            title: 'Sécuriser les articles critiques',
+            detail: `${riskTotal} référence(s) à risque détectée(s). Vérifier commande, fournisseur ou substitution.`,
+            tone: 'red',
+        },
+        reservationsCount > 0 && {
+            title: 'Contrôler les réservations atelier',
+            detail: `${reservationsCount} réservation(s) ouverte(s) : préparer avant lancement et débit réel.`,
+            tone: 'amber',
+        },
+        inventoryCount > 0 && {
+            title: 'Clôturer les inventaires ouverts',
+            detail: `${inventoryCount} campagne(s) à terminer ou valider pour fiabiliser le stock réel.`,
+            tone: 'blue',
+        },
+        draftCount > 0 && {
+            title: 'Qualifier le catalogue',
+            detail: `${draftCount} brouillon(s) à compléter avant exploitation industrielle fiable.`,
+            tone: 'amber',
+        },
+    ].filter(Boolean);
     const decisionCards = [
         {
             label: 'Priorités ouvertes',
@@ -5024,49 +5079,162 @@ function StockPilotageDashboard({
         emerald: 'border-emerald-200 bg-emerald-50 text-emerald-950',
         slate: 'border-slate-200 bg-slate-50 text-slate-950',
     };
+    const pillToneClasses = {
+        red: 'bg-red-50 text-red-700 border-red-100',
+        amber: 'bg-amber-50 text-amber-700 border-amber-100',
+        blue: 'bg-blue-50 text-blue-700 border-blue-100',
+        emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+        slate: 'bg-slate-50 text-slate-600 border-slate-200',
+    };
 
     return (
         <div className="flex-1 overflow-y-auto bg-slate-50 px-6 py-5">
             <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
-                <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div>
-                            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-600">Cockpit décisionnel</p>
-                            <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950">Ce qui demande une décision stock maintenant</h2>
-                            <p className="mt-2 max-w-3xl text-sm font-bold text-slate-500">
-                                Le pilotage ne sert pas à gérer les fiches : il résume les risques, priorités et flux à arbitrer.
-                            </p>
+                <div className="space-y-5">
+                    <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-600">Cockpit décisionnel</p>
+                                <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950">Ce qui demande une décision stock maintenant</h2>
+                                <p className="mt-2 max-w-3xl text-sm font-bold text-slate-500">
+                                    Le pilotage ne sert pas à gérer les fiches : il résume les risques, priorités et flux à arbitrer.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={onOpenManagement}
+                                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800"
+                            >
+                                Ouvrir la gestion stock
+                                <ArrowRight className="h-4 w-4" />
+                            </button>
                         </div>
-                        <button
-                            type="button"
-                            onClick={onOpenManagement}
-                            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800"
-                        >
-                            Ouvrir la gestion stock
-                            <ArrowRight className="h-4 w-4" />
-                        </button>
-                    </div>
 
-                    <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                        {decisionCards.map(card => {
-                            const Icon = card.Icon;
-                            return (
-                                <article key={card.label} className={`rounded-3xl border p-5 ${toneClasses[card.tone]}`}>
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div>
-                                            <p className="text-[10px] font-black uppercase tracking-widest opacity-60">{card.label}</p>
-                                            <p className="mt-3 text-4xl font-black tracking-tight">{Number(card.value || 0).toLocaleString('fr-FR')}</p>
+                        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                            {decisionCards.map(card => {
+                                const Icon = card.Icon;
+                                return (
+                                    <article key={card.label} className={`rounded-3xl border p-5 ${toneClasses[card.tone]}`}>
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest opacity-60">{card.label}</p>
+                                                <p className="mt-3 text-4xl font-black tracking-tight">{Number(card.value || 0).toLocaleString('fr-FR')}</p>
+                                            </div>
+                                            <span className="rounded-2xl bg-white/70 p-3 shadow-sm">
+                                                <Icon className="h-5 w-5" />
+                                            </span>
                                         </div>
-                                        <span className="rounded-2xl bg-white/70 p-3 shadow-sm">
-                                            <Icon className="h-5 w-5" />
-                                        </span>
+                                        <p className="mt-4 min-h-[44px] text-sm font-bold opacity-75">{card.detail}</p>
+                                    </article>
+                                );
+                            })}
+                        </div>
+                    </section>
+
+                    <section className="grid gap-5 2xl:grid-cols-[1fr_420px]">
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <div className="flex items-start justify-between gap-4">
+                                <div>
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-red-500">Top risques matière</p>
+                                    <h3 className="mt-1 text-xl font-black text-slate-950">Articles à sécuriser en priorité</h3>
+                                </div>
+                                <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-500">
+                                    {loadingRisks ? 'Analyse...' : `${topRisks.length} ligne(s)`}
+                                </span>
+                            </div>
+                            <div className="mt-4 space-y-3">
+                                {topRisks.length > 0 ? topRisks.map((need, index) => (
+                                    <div key={`${need.variant_id || need.reference || index}`} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <p className="truncate font-black text-slate-950">{need.reference || need.variant_reference || need.item_name || `Référence #${need.variant_id || index + 1}`}</p>
+                                                <p className="mt-1 text-xs font-bold text-slate-500">{need.product_name || need.supplier || 'Fournisseur à vérifier'}</p>
+                                            </div>
+                                            <span className={`rounded-lg border px-2.5 py-1 text-[10px] font-black uppercase ${String(need.priority || '').toUpperCase() === 'CRITICAL' ? pillToneClasses.red : pillToneClasses.amber}`}>
+                                                {need.priority || 'À traiter'}
+                                            </span>
+                                        </div>
+                                        <div className="mt-3 grid grid-cols-3 gap-2 text-xs font-black text-slate-600">
+                                            <span>Besoin {formatQty(need.net_need_quantity)}</span>
+                                            <span>Dispo {formatQty(need.available_quantity)}</span>
+                                            <span>Délai {need.supplier_lead_time_days ? `${need.supplier_lead_time_days} j` : '—'}</span>
+                                        </div>
                                     </div>
-                                    <p className="mt-4 min-h-[44px] text-sm font-bold opacity-75">{card.detail}</p>
-                                </article>
-                            );
-                        })}
-                    </div>
-                </section>
+                                )) : (
+                                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5 text-sm font-bold text-emerald-700">
+                                        Aucun risque matière critique remonté pour le moment.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Actions recommandées</p>
+                            <h3 className="mt-1 text-xl font-black text-slate-950">Prochaines décisions</h3>
+                            <div className="mt-4 space-y-3">
+                                {recommendations.length > 0 ? recommendations.map(action => (
+                                    <div key={action.title} className={`rounded-2xl border p-4 ${pillToneClasses[action.tone]}`}>
+                                        <p className="font-black">{action.title}</p>
+                                        <p className="mt-1 text-xs font-bold opacity-80">{action.detail}</p>
+                                    </div>
+                                )) : (
+                                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5 text-sm font-bold text-emerald-700">
+                                        Aucun arbitrage urgent : surveiller les prochains mouvements et comptages.
+                                    </div>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={onOpenManagement}
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
+                                >
+                                    Passer en gestion pour exécuter
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="grid gap-5 2xl:grid-cols-2">
+                        <InsightList
+                            title="Flux atelier à surveiller"
+                            eyebrow="Réservations"
+                            empty="Aucune réservation atelier ouverte."
+                            items={visibleReservations}
+                            renderItem={(reservation, index) => ({
+                                title: reservation.reference || reservation.document_reference || `Réservation #${reservation.id || index + 1}`,
+                                detail: reservation.sale_reference || reservation.client_name || reservation.status || 'À préparer avant débit réel',
+                                meta: `${(reservation.lines || reservation.items || []).length} ligne(s)`,
+                                tone: 'amber',
+                            })}
+                        />
+                        <InsightList
+                            title="Inventaires à terminer"
+                            eyebrow="Comptage"
+                            empty="Aucune campagne d’inventaire ouverte."
+                            items={visibleInventories}
+                            renderItem={(session, index) => ({
+                                title: session.name || session.reference || `Inventaire #${session.id || index + 1}`,
+                                detail: session.location?.name || session.status || 'Campagne ouverte',
+                                meta: `${(session.lines || []).length} ligne(s)`,
+                                tone: 'blue',
+                            })}
+                        />
+                    </section>
+
+                    {visiblePurchases.length > 0 && (
+                        <InsightList
+                            title="Achats ouverts impactant le stock"
+                            eyebrow="Approvisionnement"
+                            empty=""
+                            items={visiblePurchases}
+                            renderItem={(purchase, index) => ({
+                                title: purchase.reference || `Commande achat #${purchase.id || index + 1}`,
+                                detail: purchase.supplier_name || purchase.supplier || purchase.status || 'Commande ouverte',
+                                meta: purchase.expected_date ? new Date(purchase.expected_date).toLocaleDateString('fr-FR') : 'Date à confirmer',
+                                tone: 'emerald',
+                            })}
+                        />
+                    )}
+                </div>
 
                 <aside className="space-y-4">
                     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -5093,6 +5261,14 @@ function StockPilotageDashboard({
                                 </div>
                             )}
                         </div>
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                            {qualityAlerts.map(alert => (
+                                <div key={alert.label} className={`rounded-2xl border px-3 py-2 ${pillToneClasses[alert.tone]}`}>
+                                    <p className="text-[9px] font-black uppercase tracking-widest opacity-70">{alert.label}</p>
+                                    <p className="mt-1 text-lg font-black">{Number(alert.value || 0).toLocaleString('fr-FR')}</p>
+                                </div>
+                            ))}
+                        </div>
                     </div>
 
                     <div className="rounded-3xl border border-slate-200 bg-slate-950 p-5 text-white shadow-sm">
@@ -5103,6 +5279,51 @@ function StockPilotageDashboard({
                         </p>
                     </div>
                 </aside>
+            </div>
+        </div>
+    );
+}
+
+function InsightList({ title, eyebrow, empty, items, renderItem }) {
+    return (
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+                <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{eyebrow}</p>
+                    <h3 className="mt-1 text-xl font-black text-slate-950">{title}</h3>
+                </div>
+                <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-500">
+                    {items.length}
+                </span>
+            </div>
+            <div className="mt-4 space-y-3">
+                {items.length > 0 ? items.map((item, index) => {
+                    const rendered = renderItem(item, index);
+                    const tone = rendered.tone || 'slate';
+                    const toneClass = {
+                        amber: 'border-amber-100 bg-amber-50 text-amber-800',
+                        blue: 'border-blue-100 bg-blue-50 text-blue-800',
+                        emerald: 'border-emerald-100 bg-emerald-50 text-emerald-800',
+                        slate: 'border-slate-100 bg-slate-50 text-slate-700',
+                    }[tone] || 'border-slate-100 bg-slate-50 text-slate-700';
+                    return (
+                        <div key={`${rendered.title}-${index}`} className={`rounded-2xl border p-4 ${toneClass}`}>
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <p className="truncate font-black">{rendered.title}</p>
+                                    <p className="mt-1 text-xs font-bold opacity-75">{rendered.detail}</p>
+                                </div>
+                                <span className="rounded-lg bg-white/70 px-2.5 py-1 text-[10px] font-black uppercase">
+                                    {rendered.meta}
+                                </span>
+                            </div>
+                        </div>
+                    );
+                }) : (
+                    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5 text-sm font-bold text-slate-500">
+                        {empty}
+                    </div>
+                )}
             </div>
         </div>
     );
