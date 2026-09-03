@@ -768,6 +768,10 @@ class CRMCockpitMetrics(BaseModel):
     opportunities_without_action: int = 0
     measures_to_schedule: int
     automatic_reminders: int
+    quotes_sent: int = 0
+    quotes_signed: int = 0
+    signed_amount: float = 0
+    conversion_rate: Optional[float] = None
 
 
 class CRMCockpitStage(BaseModel):
@@ -828,9 +832,15 @@ class CRMCockpitOwnerPerformance(BaseModel):
     owner_name: str
     open_opportunities: int = 0
     pipeline_amount: float = 0
+    weighted_pipeline_amount: float = 0
+    quotes_sent: int = 0
+    quotes_signed: int = 0
+    signed_amount: float = 0
     reminders_today: int = 0
     overdue_reminders: int = 0
     opportunities_without_action: int = 0
+    conversion_rate: Optional[float] = None
+    attention_score: int = 0
 
 
 class CRMCockpitStageConversion(BaseModel):

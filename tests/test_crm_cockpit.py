@@ -43,6 +43,7 @@ def opportunity(
     updated_at=None,
     owner_user_id=1,
     owner_name="Commercial",
+    sale_order_id=None,
 ):
     return SimpleNamespace(
         id=item_id,
@@ -59,6 +60,7 @@ def opportunity(
         owner=None,
         owner_user_id=owner_user_id,
         owner_name=owner_name,
+        sale_order_id=sale_order_id,
     )
 
 
@@ -129,6 +131,22 @@ def stage_event(item_id, from_stage, to_stage):
         opportunity_id=item_id,
         from_stage=from_stage,
         to_stage=to_stage,
+    )
+
+
+def sale_order(item_id, *, status="SENT", lines=None):
+    return SimpleNamespace(
+        id=item_id,
+        status=status,
+        lines=lines or [],
+    )
+
+
+def sale_line(*, quantity=1, unit_price=1000, discount_pct=0):
+    return SimpleNamespace(
+        quantity=quantity,
+        unit_price=unit_price,
+        discount_pct=discount_pct,
     )
 
 
@@ -274,6 +292,55 @@ def test_cockpit_groups_today_overdue_and_missing_actions_by_owner():
     assert commercial["opportunities_without_action"] == 1
     assert alice["overdue_reminders"] == 1
     assert alice["opportunities_without_action"] == 1
+
+
+def test_cockpit_computes_commercial_steering_by_owner():
+    result = build_crm_cockpit(
+        [
+            opportunity(
+                1,
+                amount=10000,
+                probability=50,
+                sale_order_id=10,
+                milestone_at=NOW + timedelta(days=3),
+            ),
+            opportunity(
+                2,
+                amount=8000,
+                probability=25,
+                sale_order_id=11,
+                milestone=None,
+                milestone_at=None,
+            ),
+        ],
+        [],
+        [],
+        sale_orders=[
+            sale_order(10, status="SENT"),
+            sale_order(
+                11,
+                status="VALIDATED",
+                lines=[
+                    sale_line(quantity=2, unit_price=1500),
+                    sale_line(quantity=1, unit_price=1000, discount_pct=10),
+                ],
+            ),
+        ],
+        now=NOW,
+    )
+
+    owner = result["owners"][0]
+    assert owner["pipeline_amount"] == 18000
+    assert owner["weighted_pipeline_amount"] == 7000
+    assert owner["quotes_sent"] == 1
+    assert owner["quotes_signed"] == 1
+    assert owner["signed_amount"] == 3900
+    assert owner["conversion_rate"] == 50
+    assert owner["attention_score"] == 2
+    assert result["metrics"]["quotes_sent"] == 1
+    assert result["metrics"]["quotes_signed"] == 1
+    assert result["metrics"]["signed_amount"] == 3900
+    assert result["metrics"]["conversion_rate"] == 50
 
 
 def test_cockpit_conversion_rates_use_real_stage_transitions():
