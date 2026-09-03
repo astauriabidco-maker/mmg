@@ -47,7 +47,8 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
         {
             title: 'Supply Chain',
             items: [
-                { id: 'stock', label: 'Inventaire & Stock', icon: Archive, type: 'internal', anyPermission: ['STOCK_VIEW', 'inventory.approve_value'] },
+                { id: 'stock_dashboard', label: 'Pilotage stock', icon: BarChart3, type: 'internal', anyPermission: ['STOCK_VIEW', 'inventory.approve_value'] },
+                { id: 'stock', label: 'Gestion stock', icon: Archive, type: 'internal', anyPermission: ['STOCK_VIEW', 'inventory.approve_value'] },
                 { id: 'purchases', label: 'Achats & Appro', icon: ShoppingCart, type: 'internal', permission: 'PURCHASES_VIEW' },
                 { id: 'logistics', label: 'Logistique & Expédition', icon: Truck, type: 'internal' },
             ]

@@ -161,7 +161,15 @@ export default function App() {
                                 path="/stock"
                                 element={
                                     <ProtectedRoute>
-                                        <StockDashboard />
+                                        <StockDashboard surface="management" />
+                                    </ProtectedRoute>
+                                }
+                            />
+                            <Route
+                                path="/stock/dashboard"
+                                element={
+                                    <ProtectedRoute>
+                                        <StockDashboard surface="dashboard" />
                                     </ProtectedRoute>
                                 }
                             />
