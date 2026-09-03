@@ -8,6 +8,8 @@ import CRMClientActionWorkspace from '../components/CRMClientActionWorkspace';
 import CRMCockpit from '../components/CRMCockpit';
 import CRMOpportunityPipeline from '../components/CRMOpportunityPipeline';
 import MeasureMissionBoard from '../components/MeasureMissionBoard';
+import { useAuth } from '../context/AuthContext';
+import { userHasAnyRole } from '../utils/roleNavigation';
 
 const saleAmount = (sale) => (sale.lines || []).reduce(
     (sum, line) => sum + (Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100)),
@@ -19,6 +21,7 @@ const isActivePresalesStatus = (status) => ['DRAFT', 'SENT'].includes(status);
 
 export default function CRMClientsDashboard() {
     const navigate = useNavigate();
+    const { user } = useAuth();
     const [crmView, setCrmView] = useState('cockpit');
     const [searchTerm, setSearchTerm] = useState('');
     const [segmentFilter, setSegmentFilter] = useState('');
@@ -233,6 +236,39 @@ export default function CRMClientsDashboard() {
             setClientDataMessage('Fiches clients fusionnées avec leur historique.');
         } catch (error) {
             setClientDataMessage(error?.response?.data?.detail || 'La fusion a échoué.');
+        }
+    };
+
+    const isRecipeCleanupClient = (client) => {
+        const markers = [
+            client?.name,
+            client?.contact_name,
+            client?.email,
+            client?.phone,
+            client?.tax_id,
+            client?.segment,
+            ...(client?.tags || []),
+        ].filter(Boolean).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        return [
+            'recette doublon',
+            'recette crm',
+            'fixture',
+            'test a supprimer',
+            'a supprimer',
+        ].some(marker => markers.includes(marker));
+    };
+
+    const deleteRecipeClient = async (client) => {
+        if (!client?.id) return;
+        if (!window.confirm(`Supprimer définitivement la fiche de recette « ${client.name} » et ses contacts ?`)) return;
+        setClientDataMessage('');
+        try {
+            await api.delete(`/v2/partners/clients/${client.id}/recipe-fixture`);
+            await Promise.all([refetchClients(), duplicatesQuery.refetch()]);
+            setSelectedClientId(null);
+            setClientDataMessage(`Fiche de recette supprimée : ${client.name}.`);
+        } catch (error) {
+            setClientDataMessage(error?.response?.data?.detail || "La suppression de la fiche de recette a échoué.");
         }
     };
 
@@ -753,6 +789,8 @@ export default function CRMClientsDashboard() {
                                 onPlanMeasureForOpportunity={startMeasureForOpportunity}
                                 onOpenSale={openSale}
                                 onClientChanged={refetchClients}
+                                canDeleteRecipeClient={userHasAnyRole(user, ['ADMIN', 'SUPER_ADMIN']) && isRecipeCleanupClient(selectedClient)}
+                                onDeleteRecipeClient={() => deleteRecipeClient(selectedClient)}
                                 onOpenMeasures={(dossier) => dossier?.measure_mission_id
                                     ? navigate(`/measure-missions/${dossier.measure_mission_id}`)
                                     : setCrmView('measures')}

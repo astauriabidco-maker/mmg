@@ -117,6 +117,8 @@ export default function CRMClientActionWorkspace({
     onOpenSale,
     onOpenMeasures,
     onClientChanged,
+    canDeleteRecipeClient = false,
+    onDeleteRecipeClient,
 }) {
     const [actionMode, setActionMode] = useState(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -440,6 +442,14 @@ export default function CRMClientActionWorkspace({
                         <ActionButton icon={PhoneCall} label="Noter un appel" onClick={() => resetAndOpen('call')} />
                         <ActionButton icon={Tags} label="Segmenter" onClick={openSegmentationForm} />
                         <ActionButton icon={ClipboardList} label="Planifier un métré" onClick={onPlanMeasure} accent />
+                        {canDeleteRecipeClient && (
+                            <ActionButton
+                                icon={Trash2}
+                                label="Supprimer fiche recette"
+                                onClick={onDeleteRecipeClient}
+                                danger
+                            />
+                        )}
                     </div>
                 </div>
             </header>
@@ -618,9 +628,27 @@ export default function CRMClientActionWorkspace({
                                     </div>
                                     <div className="flex shrink-0 items-center gap-1">
                                         {!contact.is_primary && (
-                                            <button type="button" onClick={() => setPrimaryContact(contact)} title="Définir comme principal" className="rounded-md p-1.5 text-slate-400 hover:bg-amber-50 hover:text-amber-700"><Star className="h-4 w-4" /></button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setPrimaryContact(contact)}
+                                                title="Définir comme principal"
+                                                aria-label={`Définir ${contact.name} comme contact principal`}
+                                                className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-md p-1.5 text-slate-400 hover:bg-amber-50 hover:text-amber-700"
+                                            >
+                                                <Star className="h-4 w-4" />
+                                            </button>
                                         )}
-                                        <button type="button" onClick={() => deleteContact(contact)} title="Supprimer" className="rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-700"><Trash2 className="h-4 w-4" /></button>
+                                        <button
+                                            type="button"
+                                            onClick={() => deleteContact(contact)}
+                                            title={`Supprimer le contact ${contact.name}`}
+                                            aria-label={`Supprimer le contact ${contact.name}`}
+                                            data-crm-contact-delete={contact.id}
+                                            className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-700"
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                            <span className="sr-only">Supprimer le contact {contact.name}</span>
+                                        </button>
                                     </div>
                                 </div>
                                 <div className="mt-3 space-y-1 text-xs font-semibold text-slate-600">
@@ -869,12 +897,14 @@ export default function CRMClientActionWorkspace({
     );
 }
 
-function ActionButton({ icon: Icon, label, onClick, primary, accent }) {
+function ActionButton({ icon: Icon, label, onClick, primary, accent, danger }) {
     const tone = primary
         ? 'border-blue-600 bg-blue-600 text-white hover:bg-blue-500'
-        : accent
-            ? 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500'
-            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50';
+        : danger
+            ? 'border-red-600 bg-red-600 text-white hover:bg-red-500'
+            : accent
+                ? 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500'
+                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50';
     return (
         <button onClick={onClick} className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-black ${tone}`}>
             <Icon className="h-4 w-4" />
