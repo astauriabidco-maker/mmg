@@ -3334,7 +3334,7 @@ export default function StockDashboard({ surface = 'management' }) {
                     <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
                         <StockValuationView products={products} locations={locations} quants={quants} />
                     </div>
-                ) : (
+                ) : currentMenu === 'management-home' ? null : (
                     <>
                         {/* HEADER INFO */}
                 <div className="px-6 py-4 bg-white border-b border-slate-200 shrink-0 flex flex-wrap justify-between items-center gap-4">
