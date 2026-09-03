@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, inspect, text
 
 from backend import database, models
 from backend import main as backend_main
+from backend.routers import v2_mmg
 from backend.core import security
 from backend.core.security import get_password_hash
 from backend.core.time import utcnow
@@ -98,6 +99,43 @@ def test_crm_read_and_write_permissions_are_enforced(isolated_client):
         headers=editor,
     )
     assert allowed_opportunity.status_code == 201, allowed_opportunity.text
+
+
+def test_crm_cockpit_csv_export_ignores_internal_owner_fields(isolated_client, monkeypatch):
+    client, session_factory = isolated_client
+    viewer = _headers(session_factory, "crm-export-viewer", ["SALES_VIEW"])
+
+    def fake_cockpit(*args, **kwargs):
+        return {
+            "owners": [
+                {
+                    "owner_user_id": 42,
+                    "owner_name": "Commercial Test",
+                    "open_opportunities": 2,
+                    "pipeline_amount": 65000,
+                    "weighted_pipeline_amount": 27500,
+                    "quotes_sent": 1,
+                    "quotes_signed": 1,
+                    "signed_amount": 3900,
+                    "conversion_rate": 50,
+                    "reminders_today": 0,
+                    "overdue_reminders": 0,
+                    "opportunities_without_action": 1,
+                    "attention_score": 2,
+                    "internal_future_field": "must not break export",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(v2_mmg, "build_crm_cockpit", fake_cockpit)
+
+    response = client.get("/v2/mmg/crm/cockpit/export.csv", headers=viewer)
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/csv")
+    assert 'filename="crm-pilotage-commercial.csv"' in response.headers["content-disposition"]
+    assert "internal_future_field" not in response.text
+    assert "Commercial Test" in response.text
 
 
 def test_legacy_presales_mutations_require_sales_edit(isolated_client):
