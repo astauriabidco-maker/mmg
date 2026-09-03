@@ -112,6 +112,11 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
         },
     });
 
+    const segmentationQuery = useQuery({
+        queryKey: ['partners', 'clients', 'segmentation'],
+        queryFn: async () => (await api.get('/v2/partners/clients/segmentation')).data,
+    });
+
     const templatesQuery = useQuery({
         queryKey: ['crm-reminder-templates'],
         queryFn: async () => (await api.get('/v2/mmg/crm/reminder-templates')).data,
@@ -453,6 +458,19 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                     <Metric icon={ClipboardList} label="Métrés à planifier" value={metrics.measures_to_schedule} tone={metrics.measures_to_schedule ? 'amber' : 'slate'} />
                 </section>
 
+                <section className="border-y border-slate-200 bg-white">
+                    <SectionHeader
+                        icon={BarChart3}
+                        eyebrow="Segmentation active"
+                        title="Portefeuille par segment commercial"
+                        detail="Vue calculée depuis les fiches clients, opportunités, relances et devis signés."
+                    />
+                    <SegmentPortfolio
+                        segments={segmentationQuery.data?.segments || []}
+                        loading={segmentationQuery.isLoading}
+                    />
+                </section>
+
                 <section className="grid gap-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)]">
                     <div className="border-y border-slate-200 bg-white">
                         <SectionHeader
@@ -753,6 +771,49 @@ export default function CRMCockpit({ onOpenClient, onOpenMeasure }) {
                         : scheduleOpportunityAction}
                 />
             )}
+        </div>
+    );
+}
+
+function SegmentPortfolio({ segments, loading }) {
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center gap-2 px-5 py-8 text-sm font-bold text-slate-500">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Calcul des segments commerciaux
+            </div>
+        );
+    }
+    if (!segments.length) {
+        return <EmptyState title="Aucun segment exploitable" detail="Les segments apparaîtront dès que les fiches clients seront qualifiées." />;
+    }
+    return (
+        <div className="grid divide-y divide-slate-100 md:grid-cols-2 md:divide-x md:divide-y-0 xl:grid-cols-4">
+            {segments.slice(0, 4).map(segment => (
+                <div key={segment.segment} className="p-5">
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                            <p className="truncate text-sm font-black text-slate-950">{segment.segment}</p>
+                            <p className="mt-1 text-xs font-semibold text-slate-500">{segment.clients} client(s)</p>
+                        </div>
+                        <span className="rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-black text-blue-700">
+                            {segment.open_opportunities} opp.
+                        </span>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-[10px] font-bold text-slate-500">
+                        <span>Retards</span>
+                        <span className={segment.overdue_actions ? 'text-right font-black text-red-600' : 'text-right font-black text-slate-700'}>
+                            {segment.overdue_actions}
+                        </span>
+                        <span>Devis envoyés</span>
+                        <span className="text-right font-black text-indigo-700">{segment.quotes_sent}</span>
+                        <span>Devis signés</span>
+                        <span className="text-right font-black text-emerald-700">{segment.quotes_signed}</span>
+                        <span>CA signé</span>
+                        <span className="text-right font-black text-slate-950">{formatMoney(segment.signed_amount)}</span>
+                    </div>
+                </div>
+            ))}
         </div>
     );
 }

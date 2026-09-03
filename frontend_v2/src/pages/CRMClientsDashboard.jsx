@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, BellRing, Building2, CalendarClock, CheckCircle2, ClipboardList, Download, FileText, Mail, MapPin, Merge, Package, Phone, Plus, Search, Send, Truck, Upload, Users, Wrench, X } from 'lucide-react';
@@ -18,6 +18,32 @@ const saleAmount = (sale) => (sale.lines || []).reduce(
 
 const isPresalesStatus = (status) => ['DRAFT', 'SENT', 'CANCELLED'].includes(status);
 const isActivePresalesStatus = (status) => ['DRAFT', 'SENT'].includes(status);
+const CRM_FILTER_STORAGE_KEY = 'mmg.crm.clientFilters.v1';
+const COMMERCIAL_STATUS_OPTIONS = [
+    { value: '', label: 'Tous statuts' },
+    { value: 'active_opportunity', label: 'Opportunité active' },
+    { value: 'to_follow_up', label: 'À relancer' },
+    { value: 'missing_next_action', label: 'Sans prochaine action' },
+    { value: 'quote_sent', label: 'Devis envoyé' },
+    { value: 'quote_signed', label: 'Devis signé' },
+    { value: 'quiet', label: 'Calme' },
+];
+const COMMERCIAL_STATUS_LABELS = {
+    active_opportunity: 'Opportunité',
+    to_follow_up: 'À relancer',
+    missing_next_action: 'Sans action',
+    quote_sent: 'Devis envoyé',
+    quote_signed: 'Signé',
+    quiet: 'Calme',
+};
+const COMMERCIAL_STATUS_STYLES = {
+    active_opportunity: 'bg-blue-100 text-blue-700',
+    to_follow_up: 'bg-red-100 text-red-700',
+    missing_next_action: 'bg-amber-100 text-amber-800',
+    quote_sent: 'bg-indigo-100 text-indigo-700',
+    quote_signed: 'bg-emerald-100 text-emerald-700',
+    quiet: 'bg-slate-100 text-slate-600',
+};
 
 export default function CRMClientsDashboard() {
     const navigate = useNavigate();
@@ -25,6 +51,8 @@ export default function CRMClientsDashboard() {
     const [crmView, setCrmView] = useState('cockpit');
     const [searchTerm, setSearchTerm] = useState('');
     const [segmentFilter, setSegmentFilter] = useState('');
+    const [tagFilter, setTagFilter] = useState('');
+    const [commercialStatusFilter, setCommercialStatusFilter] = useState('');
     const [selectedClientId, setSelectedClientId] = useState(null);
     const [showProposalStarter, setShowProposalStarter] = useState(false);
     const [showClientModal, setShowClientModal] = useState(false);
@@ -90,6 +118,14 @@ export default function CRMClientsDashboard() {
         },
     });
 
+    const segmentationQuery = useQuery({
+        queryKey: ['partners', 'clients', 'segmentation'],
+        queryFn: async () => {
+            const response = await api.get('/v2/partners/clients/segmentation');
+            return response.data;
+        },
+    });
+
     const { data: sales = [] } = useQuery({
         queryKey: ['sales'],
         queryFn: async () => {
@@ -109,6 +145,28 @@ export default function CRMClientsDashboard() {
     const normalize = (value) => String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
     const formatDate = (value) => value ? new Date(value).toLocaleDateString('fr-FR') : '-';
+    const getClientSignals = (clientId) => segmentationQuery.data?.client_signals?.[clientId] || segmentationQuery.data?.client_signals?.[String(clientId)] || null;
+
+    useEffect(() => {
+        try {
+            const saved = JSON.parse(localStorage.getItem(CRM_FILTER_STORAGE_KEY) || '{}');
+            if (saved.searchTerm) setSearchTerm(saved.searchTerm);
+            if (saved.segmentFilter) setSegmentFilter(saved.segmentFilter);
+            if (saved.tagFilter) setTagFilter(saved.tagFilter);
+            if (saved.commercialStatusFilter) setCommercialStatusFilter(saved.commercialStatusFilter);
+        } catch {
+            localStorage.removeItem(CRM_FILTER_STORAGE_KEY);
+        }
+    }, []);
+
+    useEffect(() => {
+        localStorage.setItem(CRM_FILTER_STORAGE_KEY, JSON.stringify({
+            searchTerm,
+            segmentFilter,
+            tagFilter,
+            commercialStatusFilter,
+        }));
+    }, [searchTerm, segmentFilter, tagFilter, commercialStatusFilter]);
 
     const statusLabel = (sale) => {
         if (sale.status === 'DRAFT') return 'À envoyer';
@@ -310,12 +368,21 @@ export default function CRMClientsDashboard() {
     const clientSegments = useMemo(() => (
         [...new Set(clients.map(client => client.segment).filter(Boolean))].sort()
     ), [clients]);
+    const clientTags = useMemo(() => (
+        (segmentationQuery.data?.tags || []).map(item => item.tag)
+    ), [segmentationQuery.data]);
 
     const filteredClients = useMemo(() => {
         const needle = normalize(searchTerm);
         return clients
             .filter(client => client.is_active !== false)
             .filter(client => !segmentFilter || client.segment === segmentFilter)
+            .filter(client => !tagFilter || (client.tags || []).includes(tagFilter))
+            .filter(client => {
+                if (!commercialStatusFilter) return true;
+                const statuses = getClientSignals(client.id)?.statuses || [];
+                return statuses.includes(commercialStatusFilter);
+            })
             .filter(client => {
                 if (!needle) return true;
                 return [
@@ -329,7 +396,7 @@ export default function CRMClientsDashboard() {
                     ...(client.tags || []),
                 ].some(value => normalize(value).includes(needle));
             });
-    }, [clients, searchTerm, segmentFilter]);
+    }, [clients, searchTerm, segmentFilter, tagFilter, commercialStatusFilter, segmentationQuery.data]);
 
     const selectedClient = useMemo(() => (
         clients.find(client => client.id === selectedClientId) || filteredClients[0] || null
@@ -721,17 +788,70 @@ export default function CRMClientsDashboard() {
                                     className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                             </div>
-                            <select
-                                value={segmentFilter}
-                                onChange={event => setSegmentFilter(event.target.value)}
-                                className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
-                            >
-                                <option value="">Tous les segments</option>
-                                {clientSegments.map(segment => <option key={segment} value={segment}>{segment}</option>)}
-                            </select>
-                            <button
-                                onClick={() => setShowClientModal(true)}
-                                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-black text-white hover:bg-slate-800"
+	                            <select
+	                                value={segmentFilter}
+	                                onChange={event => setSegmentFilter(event.target.value)}
+	                                className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+	                            >
+	                                <option value="">Tous les segments</option>
+	                                {clientSegments.map(segment => <option key={segment} value={segment}>{segment}</option>)}
+	                            </select>
+	                            <div className="mt-2 grid grid-cols-2 gap-2">
+	                                <select
+	                                    value={tagFilter}
+	                                    onChange={event => setTagFilter(event.target.value)}
+	                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+	                                    aria-label="Filtrer par tag"
+	                                >
+	                                    <option value="">Tous tags</option>
+	                                    {clientTags.map(tag => <option key={tag} value={tag}>{tag}</option>)}
+	                                </select>
+	                                <select
+	                                    value={commercialStatusFilter}
+	                                    onChange={event => setCommercialStatusFilter(event.target.value)}
+	                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+	                                    aria-label="Filtrer par statut commercial"
+	                                >
+	                                    {COMMERCIAL_STATUS_OPTIONS.map(option => (
+	                                        <option key={option.value || 'all'} value={option.value}>{option.label}</option>
+	                                    ))}
+	                                </select>
+	                            </div>
+	                            {(searchTerm || segmentFilter || tagFilter || commercialStatusFilter) && (
+	                                <button
+	                                    type="button"
+	                                    onClick={() => {
+	                                        setSearchTerm('');
+	                                        setSegmentFilter('');
+	                                        setTagFilter('');
+	                                        setCommercialStatusFilter('');
+	                                    }}
+	                                    className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-500 hover:bg-white"
+	                                >
+	                                    Réinitialiser les filtres
+	                                </button>
+	                            )}
+	                            {segmentationQuery.data?.segments?.length ? (
+	                                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+	                                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Segments actifs</p>
+	                                    <div className="mt-2 space-y-1.5">
+	                                        {segmentationQuery.data.segments.slice(0, 3).map(segment => (
+	                                            <button
+	                                                key={segment.segment}
+	                                                type="button"
+	                                                onClick={() => setSegmentFilter(segment.segment === 'Sans segment' ? '' : segment.segment)}
+	                                                className="flex w-full items-center justify-between rounded-lg bg-white px-2 py-1.5 text-left text-[10px] font-bold text-slate-600 hover:bg-blue-50"
+	                                            >
+	                                                <span className="truncate">{segment.segment}</span>
+	                                                <span className="font-black text-slate-900">{segment.clients}</span>
+	                                            </button>
+	                                        ))}
+	                                    </div>
+	                                </div>
+	                            ) : null}
+	                            <button
+	                                onClick={() => setShowClientModal(true)}
+	                                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-black text-white hover:bg-slate-800"
                             >
                                 <Plus className="h-4 w-4" />
                                 Nouveau client
@@ -829,14 +949,24 @@ export default function CRMClientsDashboard() {
                                             >
                                                 <p className="truncate text-sm font-black text-slate-900">{client.name}</p>
                                                 <p className="mt-1 truncate text-xs font-semibold text-slate-500">{client.phone || client.email || 'Coordonnées à compléter'}</p>
-                                                {(client.segment || client.tags?.length) && (
-                                                    <p className="mt-1 truncate text-[9px] font-black uppercase tracking-wide text-blue-600">
-                                                        {[client.segment, ...(client.tags || [])].filter(Boolean).join(' · ')}
-                                                    </p>
-                                                )}
-                                            </button>
-                                        );
-                                    })}
+	                                                {(client.segment || client.tags?.length) && (
+	                                                    <p className="mt-1 truncate text-[9px] font-black uppercase tracking-wide text-blue-600">
+	                                                        {[client.segment, ...(client.tags || [])].filter(Boolean).join(' · ')}
+	                                                    </p>
+	                                                )}
+	                                                <div className="mt-2 flex flex-wrap gap-1">
+	                                                    {(getClientSignals(client.id)?.statuses || ['quiet']).slice(0, 3).map(status => (
+	                                                        <span
+	                                                            key={status}
+	                                                            className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wide ${COMMERCIAL_STATUS_STYLES[status] || COMMERCIAL_STATUS_STYLES.quiet}`}
+	                                                        >
+	                                                            {COMMERCIAL_STATUS_LABELS[status] || status}
+	                                                        </span>
+	                                                    ))}
+	                                                </div>
+	                                            </button>
+	                                        );
+	                                    })}
                                 </div>
                             ) : (
                                 <div className="py-8 text-center text-xs font-bold text-slate-400">Aucun client trouvé.</div>
