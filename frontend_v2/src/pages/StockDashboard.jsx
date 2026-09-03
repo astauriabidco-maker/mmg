@@ -1632,6 +1632,9 @@ export default function StockDashboard() {
         emerald: 'bg-emerald-100 text-emerald-700',
         amber: 'bg-amber-100 text-amber-700',
     };
+    const activeNavItem = stockNavGroups
+        .flatMap(group => group.items.map(item => ({ ...item, group: group.label })))
+        .find(item => item.key === currentMenu);
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
@@ -1704,6 +1707,22 @@ export default function StockDashboard() {
                     </div>
                 </div>
 
+                <StockUXGuide
+                    activeKey={currentMenu}
+                    todoTotal={todoTotal}
+                    riskTotal={riskTotal}
+                    productsCount={products.length}
+                    locationsCount={physicalLocations.length}
+                    reservationsCount={reservations.length}
+                    inventoryCount={openInventorySessions.length}
+                    onTodo={selectTodo}
+                    onStock={() => selectInventoryFocus('stock')}
+                    onWorkshop={(stockPermissions.reserveWorkshop || stockPermissions.consumeWorkshop)
+                        ? () => setCurrentMenu('workshop')
+                        : selectTodo}
+                    onInventory={() => setCurrentMenu('physical-inventory')}
+                />
+
                 <div className="px-4 sm:px-6 pb-3">
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
                         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
@@ -1741,6 +1760,18 @@ export default function StockDashboard() {
                             </div>
                         ))}
                         </div>
+                    </div>
+                </div>
+
+                <div className="border-t border-slate-100 bg-slate-50/70 px-6 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-500">
+                        <span>
+                            Vous êtes dans <span className="font-black text-slate-900">{activeNavItem?.label || 'Inventaire & Stock'}</span>
+                            {activeNavItem?.group ? <span> · {activeNavItem.group}</span> : null}
+                        </span>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                            Lecture claire : prioriser → mouvementer → compter → auditer
+                        </span>
                     </div>
                 </div>
             </div>
@@ -4490,6 +4521,115 @@ export default function StockDashboard() {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+function StockUXGuide({
+    activeKey,
+    todoTotal,
+    riskTotal,
+    productsCount,
+    locationsCount,
+    reservationsCount,
+    inventoryCount,
+    onTodo,
+    onStock,
+    onWorkshop,
+    onInventory,
+}) {
+    const cards = [
+        {
+            key: 'todo',
+            eyebrow: '1 · Prioriser',
+            title: 'File à traiter',
+            detail: 'Ruptures, brouillons, réservations et inventaires ouverts.',
+            metric: todoTotal,
+            suffix: 'point(s)',
+            Icon: AlertTriangle,
+            tone: riskTotal > 0 ? 'red' : 'slate',
+            onClick: onTodo,
+        },
+        {
+            key: 'stock',
+            eyebrow: '2 · Exploiter',
+            title: 'Stock réel',
+            detail: 'Articles actifs, quantités disponibles et zones physiques.',
+            metric: productsCount,
+            suffix: `${locationsCount} zone(s)`,
+            Icon: Package,
+            tone: 'emerald',
+            onClick: onStock,
+        },
+        {
+            key: 'workshop',
+            eyebrow: '3 · Atelier',
+            title: 'Réservations',
+            detail: 'Préparer, remettre, puis consommer seulement au débit réel.',
+            metric: reservationsCount,
+            suffix: 'ouverte(s)',
+            Icon: ArrowRight,
+            tone: reservationsCount > 0 ? 'amber' : 'slate',
+            onClick: onWorkshop,
+        },
+        {
+            key: 'physical-inventory',
+            eyebrow: '4 · Contrôler',
+            title: 'Inventaire physique',
+            detail: 'Compter le réel, justifier les écarts et valider les ajustements.',
+            metric: inventoryCount,
+            suffix: 'campagne(s)',
+            Icon: ClipboardCheck,
+            tone: inventoryCount > 0 ? 'blue' : 'slate',
+            onClick: onInventory,
+        },
+    ];
+    const toneClasses = {
+        slate: 'border-slate-200 bg-white text-slate-900',
+        red: 'border-red-200 bg-red-50 text-red-950',
+        blue: 'border-blue-200 bg-blue-50 text-blue-950',
+        emerald: 'border-emerald-200 bg-emerald-50 text-emerald-950',
+        amber: 'border-amber-200 bg-amber-50 text-amber-950',
+    };
+    const iconClasses = {
+        slate: 'bg-slate-100 text-slate-600',
+        red: 'bg-red-100 text-red-700',
+        blue: 'bg-blue-100 text-blue-700',
+        emerald: 'bg-emerald-100 text-emerald-700',
+        amber: 'bg-amber-100 text-amber-700',
+    };
+
+    return (
+        <div className="px-4 sm:px-6 pb-3">
+            <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-4">
+                {cards.map(card => {
+                    const Icon = card.Icon;
+                    const active = activeKey === card.key;
+                    return (
+                        <button
+                            key={card.key}
+                            type="button"
+                            onClick={card.onClick}
+                            className={`group rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm ${toneClasses[card.tone]} ${active ? 'ring-2 ring-blue-500/30' : ''}`}
+                        >
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <p className="text-[10px] font-black uppercase tracking-[0.22em] opacity-60">{card.eyebrow}</p>
+                                    <h4 className="mt-1 font-black">{card.title}</h4>
+                                </div>
+                                <span className={`rounded-xl p-2 ${iconClasses[card.tone]}`}>
+                                    <Icon className="h-4 w-4" />
+                                </span>
+                            </div>
+                            <p className="mt-3 text-xs font-bold leading-relaxed opacity-70">{card.detail}</p>
+                            <div className="mt-4 flex items-end justify-between gap-3">
+                                <span className="text-2xl font-black">{Number(card.metric || 0).toLocaleString('fr-FR')}</span>
+                                <span className="text-[10px] font-black uppercase tracking-widest opacity-60">{card.suffix}</span>
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
         </div>
     );
 }
