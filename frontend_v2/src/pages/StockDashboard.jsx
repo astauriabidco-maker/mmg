@@ -594,6 +594,29 @@ export default function StockDashboard() {
         setShowEditProductModal(true);
     };
 
+    const openGuidedProductQualification = (e, product) => {
+        e.stopPropagation();
+        const suggestion = getGuidedCatalogPatch(product);
+        setEditProductForm({
+            id: product.id,
+            reference_base: product.reference_base,
+            name: product.name,
+            category: product.category || suggestion.category || '',
+            material_type: product.material_type || suggestion.material_type || '',
+            unit: product.unit || suggestion.unit,
+            supplier: product.supplier || suggestion.supplier,
+            product_type: product.product_type || 'stockable',
+            available_in_pos: product.available_in_pos || false,
+            image_url: product.image_url || '',
+            technical_doc_url: product.technical_doc_url || '',
+            compatible_series: product.compatible_series || '',
+            catalog_status: suggestion.catalog_status,
+            qualification_source: suggestion.source,
+            qualification_missing: getCatalogQuality(product).missing,
+        });
+        setShowEditProductModal(true);
+    };
+
     const submitEditProduct = async () => {
         try {
             await api.put(`/v2/stock/products/${editProductForm.id}`, {
@@ -1248,6 +1271,22 @@ export default function StockDashboard() {
         return {
             score: Math.round((completed / checks.length) * 100),
             missing: checks.filter(check => !check.ok).map(check => check.label),
+        };
+    };
+
+    const getGuidedCatalogPatch = (product) => {
+        const source = getCatalogSource(product);
+        const supplier = source !== 'AUTRE' ? source : (product?.supplier || '');
+        const categoryText = `${product?.name || ''} ${product?.reference_base || ''} ${product?.compatible_series || ''}`.toUpperCase();
+        const inferredCategory = product?.category || product?.material_type
+            || (categoryText.includes('VITR') ? 'VITRAGE' : categoryText.includes('JOINT') ? 'ACCESSOIRE' : categoryText.includes('PROFIL') || categoryText.includes('DORMANT') || categoryText.includes('OUVRANT') ? 'PROFILÉ' : '');
+        return {
+            source,
+            supplier,
+            category: inferredCategory,
+            material_type: product?.material_type || inferredCategory,
+            unit: product?.unit || 'pce',
+            catalog_status: isDraftProduct(product) ? 'TO_QUALIFY' : (product?.catalog_status || 'ACTIVE'),
         };
     };
 
@@ -3174,6 +3213,8 @@ export default function StockDashboard() {
                             onQuickFilter={setCatalogQuickFilter}
                             onSourceFilter={setCatalogSourceFilter}
                             onOpenProduct={openProductDetail}
+                            onQualifyProduct={openGuidedProductQualification}
+                            onEditFirstVariant={(event, product) => openEditVariant(event, (product.variants || [])[0])}
                             canEdit={stockPermissions.qualifyCatalog}
                         />
                     )}
@@ -3281,6 +3322,12 @@ export default function StockDashboard() {
                                                                         className="px-3 py-1.5 bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-800 rounded-lg border border-slate-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
                                                                     >
                                                                         <Edit3 className="w-3.5 h-3.5"/> Modifier
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={(e) => openGuidedProductQualification(e, product)}
+                                                                        className="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg border border-blue-200 transition-colors text-xs font-bold shadow-sm flex items-center gap-1"
+                                                                    >
+                                                                        <Check className="w-3.5 h-3.5"/> Qualifier
                                                                     </button>
                                                                 </>
                                                             )}
@@ -3845,6 +3892,31 @@ export default function StockDashboard() {
                             <button onClick={()=>setShowEditProductModal(false)} className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
                         </div>
                         <div className="space-y-4">
+                            {editProductForm.qualification_source && (
+                                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div>
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">Assistant qualification</p>
+                                            <p className="mt-1 text-sm font-black text-blue-950">Source détectée : {editProductForm.qualification_source}</p>
+                                            <p className="mt-1 text-xs font-bold text-blue-700">
+                                                Complétez fournisseur, famille, unité et statut avant exploitation stock/atelier.
+                                            </p>
+                                        </div>
+                                        <span className="rounded-xl bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-blue-700 shadow-sm">
+                                            Fiche guidée
+                                        </span>
+                                    </div>
+                                    {editProductForm.qualification_missing?.length > 0 && (
+                                        <div className="mt-3 flex flex-wrap gap-1.5">
+                                            {editProductForm.qualification_missing.map(item => (
+                                                <span key={item} className="rounded-lg border border-blue-200 bg-white px-2 py-1 text-[9px] font-black uppercase tracking-wide text-blue-700">
+                                                    À compléter : {item}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                             <div>
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Réf Parent</label>
                                 <input value={editProductForm.reference_base} onChange={e=>setEditProductForm({...editProductForm, reference_base: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
@@ -3879,6 +3951,7 @@ export default function StockDashboard() {
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Fournisseur</label>
                                     <select value={editProductForm.supplier} onChange={e=>setEditProductForm({...editProductForm, supplier: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold">
                                         <option value="">Aucun / à qualifier</option>
+                                        {editProductForm.supplier && !supplierOptions.includes(editProductForm.supplier) && <option value={editProductForm.supplier}>{editProductForm.supplier}</option>}
                                         {supplierOptions.map(supplier => <option key={supplier} value={supplier}>{supplier}</option>)}
                                     </select>
                                 </div>
@@ -3888,11 +3961,15 @@ export default function StockDashboard() {
                                 <input value={editProductForm.compatible_series} onChange={e=>setEditProductForm({...editProductForm, compatible_series: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" />
                             </div>
                             <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
-                                <p className="text-xs font-black text-blue-800">
-                                    Statut : {CATALOG_STATUS_META[editProductForm.catalog_status]?.label || 'Brouillon'}
-                                </p>
-                                <p className="mt-1 text-xs font-bold text-blue-600">
-                                    Le statut se pilote depuis la fiche article afin de conserver les contrôles et l’historique.
+                                <label className="text-xs font-black text-blue-800 mb-1 block">Statut catalogue</label>
+                                <select value={editProductForm.catalog_status} onChange={e=>setEditProductForm({...editProductForm, catalog_status: e.target.value})} className="w-full rounded-xl border border-blue-100 bg-white p-3 text-sm font-black text-blue-900">
+                                    {Object.entries(CATALOG_STATUS_META).map(([status, meta]) => (
+                                        <option key={status} value={status}>{meta.label || status}</option>
+                                    ))}
+                                    {!CATALOG_STATUS_META[editProductForm.catalog_status] && <option value={editProductForm.catalog_status}>{editProductForm.catalog_status}</option>}
+                                </select>
+                                <p className="mt-2 text-xs font-bold text-blue-600">
+                                    Passez en actif seulement quand la référence, la famille, l’unité, le fournisseur et les seuils sont fiables.
                                 </p>
                             </div>
                             <div className="col-span-2 border-t border-slate-100 my-2 pt-4 flex gap-4">
@@ -5625,6 +5702,8 @@ function CatalogQualificationPanel({
     onQuickFilter,
     onSourceFilter,
     onOpenProduct,
+    onQualifyProduct,
+    onEditFirstVariant,
     canEdit,
 }) {
     const quickFilters = [
@@ -5721,10 +5800,17 @@ function CatalogQualificationPanel({
                 ) : (
                     <div className="mt-3 grid gap-2 lg:grid-cols-2">
                         {rows.map(row => (
-                            <button
+                            <div
                                 key={row.product.id}
-                                type="button"
+                                role="button"
+                                tabIndex={0}
                                 onClick={(event) => onOpenProduct(event, row.product)}
+                                onKeyDown={(event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault();
+                                        onOpenProduct(event, row.product);
+                                    }
+                                }}
                                 className="rounded-2xl border border-slate-200 bg-white p-3 text-left transition-all hover:border-blue-200 hover:bg-blue-50/40"
                             >
                                 <div className="flex items-start justify-between gap-3">
@@ -5747,7 +5833,33 @@ function CatalogQualificationPanel({
                                         </span>
                                     )}
                                 </div>
-                            </button>
+                                {canEdit && (
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                onQualifyProduct(event, row.product);
+                                            }}
+                                            className="inline-flex items-center rounded-lg bg-blue-600 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-white"
+                                        >
+                                            Qualifier fiche
+                                        </button>
+                                        {row.missingThreshold && (row.product.variants || []).length > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    onEditFirstVariant(event, row.product);
+                                                }}
+                                                className="inline-flex items-center rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-amber-700"
+                                            >
+                                                Renseigner seuil
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         ))}
                     </div>
                 )}
