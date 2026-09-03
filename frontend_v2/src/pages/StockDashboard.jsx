@@ -160,6 +160,7 @@ export default function StockDashboard() {
     const [showDraftOnly, setShowDraftOnly] = useState(false);
     const [catalogQuickFilter, setCatalogQuickFilter] = useState('all'); // 'all' | 'to_identify' | 'draft' | 'missing_supplier' | 'missing_threshold' | 'active' | 'blocked'
     const [catalogSourceFilter, setCatalogSourceFilter] = useState('all'); // 'all' | 'CORTIZO' | 'TECHNAL' | 'SEPALUMIC' | 'MMG' | 'AUTRE'
+    const [catalogQualificationExpanded, setCatalogQualificationExpanded] = useState(false);
     const [expandedProducts, setExpandedProducts] = useState({});
     const [selectedProductId, setSelectedProductId] = useState(null);
     const [selectedLocationId, setSelectedLocationId] = useState(null);
@@ -1692,6 +1693,18 @@ export default function StockDashboard() {
             });
         }
     });
+
+    if (catalogQualificationVisible && catalogQuickFilter === 'all' && catalogSourceFilter === 'all') {
+        groupedData = groupedData.sort((a, b) => {
+            const aDraft = isDraftProduct(a.product) || isProductToIdentify(a.product);
+            const bDraft = isDraftProduct(b.product) || isProductToIdentify(b.product);
+            if (aDraft !== bDraft) return aDraft ? 1 : -1;
+            const aQuality = getCatalogQuality(a.product).score;
+            const bQuality = getCatalogQuality(b.product).score;
+            if (aQuality !== bQuality) return bQuality - aQuality;
+            return String(a.product.name || '').localeCompare(String(b.product.name || ''), 'fr', { sensitivity: 'base' });
+        });
+    }
 
     const draftProducts = products.filter(isDraftProduct);
     const stockVariants = products
@@ -3340,6 +3353,8 @@ export default function StockDashboard() {
                             onOpenProduct={openProductDetail}
                             onQualifyProduct={openGuidedProductQualification}
                             onEditFirstVariant={(event, product) => openEditVariant(event, (product.variants || [])[0])}
+                            expanded={catalogQualificationExpanded}
+                            onToggleExpanded={() => setCatalogQualificationExpanded(prev => !prev)}
                             canEdit={stockPermissions.qualifyCatalog}
                         />
                     )}
@@ -3349,6 +3364,20 @@ export default function StockDashboard() {
                             <Box className="w-12 h-12 text-slate-300 mb-4" />
                             <p className="text-center text-slate-400 font-bold">
                                 {inventoryFocus === 'services' ? 'Aucune prestation trouvée avec le filtre actuel.' : 'Aucun produit trouvé avec le filtre actuel.'} <br/> <span className="text-sm font-medium italic">Réinitialisez les filtres ou changez d'emplacement.</span>
+                            </p>
+                        </div>
+                    )}
+
+                    {groupedData.length > 0 && (
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Liste des articles</p>
+                                <h3 className="text-base font-black text-slate-900">
+                                    {groupedData.length.toLocaleString('fr-FR')} fiche(s) affichée(s)
+                                </h3>
+                            </div>
+                            <p className="text-xs font-bold text-slate-500">
+                                Par défaut : articles actifs et mieux qualifiés en premier, brouillons ensuite.
                             </p>
                         </div>
                     )}
@@ -5853,6 +5882,8 @@ function CatalogQualificationPanel({
     onOpenProduct,
     onQualifyProduct,
     onEditFirstVariant,
+    expanded,
+    onToggleExpanded,
     canEdit,
 }) {
     const quickFilters = [
@@ -5891,7 +5922,7 @@ function CatalogQualificationPanel({
                         Priorise les références brouillon, inconnues ou incomplètes avant comptage, réservation ou lancement atelier.
                     </p>
                 </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                <div className="flex flex-wrap gap-2">
                     {sourceFilters.map(source => {
                         const active = activeSourceFilter === source;
                         const value = source === 'all' ? stats.total : (stats.sources[source] || 0);
@@ -5900,12 +5931,11 @@ function CatalogQualificationPanel({
                                 key={source}
                                 type="button"
                                 onClick={() => onSourceFilter(source)}
-                                className={`rounded-2xl border px-3 py-2 text-left transition-all ${active ? 'border-slate-900 bg-slate-900 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:text-blue-700'}`}
+                                className={`rounded-xl border px-3 py-2 text-left transition-all ${active ? 'border-slate-900 bg-slate-900 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:text-blue-700'}`}
                             >
-                                <span className="block text-[9px] font-black uppercase tracking-widest opacity-60">{source === 'all' ? 'Source' : 'Fournisseur'}</span>
-                                <span className="mt-1 flex items-end justify-between gap-3">
-                                    <span className="text-xs font-black">{source === 'all' ? 'Toutes' : source}</span>
-                                    <span className="text-lg font-black">{value}</span>
+                                <span className="flex items-center gap-2">
+                                    <span className="text-xs font-black">{source === 'all' ? 'Toutes sources' : source}</span>
+                                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-700">{value}</span>
                                 </span>
                             </button>
                         );
@@ -5913,7 +5943,7 @@ function CatalogQualificationPanel({
                 </div>
             </div>
 
-            <div className="mt-4 grid gap-2 md:grid-cols-4 xl:grid-cols-7">
+            <div className="mt-4 flex flex-wrap gap-2">
                 {quickFilters.map(filter => {
                     const active = activeQuickFilter === filter.key;
                     return (
@@ -5921,10 +5951,10 @@ function CatalogQualificationPanel({
                             key={filter.key}
                             type="button"
                             onClick={() => onQuickFilter(filter.key)}
-                            className={`rounded-2xl border px-3 py-3 text-left transition-all ${active ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : toneClasses[filter.tone]}`}
+                            className={`rounded-xl border px-3 py-2 text-left transition-all ${active ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : toneClasses[filter.tone]}`}
                         >
-                            <span className="block text-[9px] font-black uppercase tracking-widest opacity-65">{filter.label}</span>
-                            <span className="mt-1 block text-2xl font-black">{Number(filter.value || 0).toLocaleString('fr-FR')}</span>
+                            <span className="text-[10px] font-black uppercase tracking-widest opacity-70">{filter.label}</span>
+                            <span className="ml-2 text-sm font-black">{Number(filter.value || 0).toLocaleString('fr-FR')}</span>
                         </button>
                     );
                 })}
@@ -5934,19 +5964,30 @@ function CatalogQualificationPanel({
                 <div className="flex items-center justify-between gap-3">
                     <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Actions rapides</p>
-                        <p className="text-xs font-bold text-slate-500">Les fiches les moins qualifiées remontent ici en premier.</p>
+                        <p className="text-xs font-bold text-slate-500">
+                            {expanded ? 'Les fiches les moins qualifiées remontent ici en premier.' : `${rows.length} fiche(s) prioritaire(s) masquée(s) pour garder la liste visible.`}
+                        </p>
                     </div>
+                    <div className="flex items-center gap-2">
                     {!canEdit && (
                         <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
                             Lecture seule
                         </span>
                     )}
+                    <button
+                        type="button"
+                        onClick={onToggleExpanded}
+                        className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-600 hover:bg-slate-100"
+                    >
+                        {expanded ? 'Masquer' : 'Afficher'}
+                    </button>
+                    </div>
                 </div>
-                {rows.length === 0 ? (
+                {expanded && rows.length === 0 ? (
                     <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
                         Catalogue propre sur les filtres courants : aucune fiche prioritaire à qualifier.
                     </div>
-                ) : (
+                ) : expanded ? (
                     <div className="mt-3 grid gap-2 lg:grid-cols-2">
                         {rows.map(row => (
                             <div
@@ -6011,7 +6052,7 @@ function CatalogQualificationPanel({
                             </div>
                         ))}
                     </div>
-                )}
+                ) : null}
             </div>
         </div>
     );
