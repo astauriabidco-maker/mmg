@@ -4634,6 +4634,135 @@ function StockUXGuide({
     );
 }
 
+function InventoryCountingGuide({
+    selectedVariant,
+    selectedLocation,
+    expectedQuantity,
+    countedQuantity,
+    variance,
+    isBlindCounting,
+    pendingCount,
+    recountCount,
+    varianceCount,
+    okCount,
+    totalLines,
+    nextLine,
+    canCount,
+    busy,
+    onFocusLine,
+    onClear,
+}) {
+    const hasSelection = Boolean(selectedVariant && selectedLocation);
+    const varianceTone = isBlindCounting
+        ? 'slate'
+        : variance === null
+            ? 'slate'
+            : Math.abs(variance) < 0.000001
+                ? 'emerald'
+                : 'amber';
+    const toneClasses = {
+        slate: 'border-slate-200 bg-white text-slate-900',
+        emerald: 'border-emerald-200 bg-emerald-50 text-emerald-950',
+        amber: 'border-amber-200 bg-amber-50 text-amber-950',
+    };
+    const stepItems = [
+        { label: 'À compter', value: pendingCount, className: 'bg-slate-100 text-slate-700' },
+        { label: 'Recompte', value: recountCount, className: 'bg-red-100 text-red-700' },
+        { label: 'Écart', value: varianceCount, className: 'bg-amber-100 text-amber-700' },
+        { label: 'OK', value: okCount, className: 'bg-emerald-100 text-emerald-700' },
+    ];
+
+    return (
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-stretch xl:justify-between">
+                <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-600">Comptage guidé</p>
+                    <h5 className="mt-1 text-xl font-black text-slate-950">Une référence, une quantité réelle, puis suivant.</h5>
+                    <p className="mt-1 text-sm font-bold text-slate-500">
+                        Le tableau complet reste disponible dessous, mais le compteur peut travailler ici sans lire tout l’audit.
+                    </p>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-4">
+                        {stepItems.map(item => (
+                            <div key={item.label} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{item.label}</p>
+                                <p className={`mt-2 inline-flex min-w-12 justify-center rounded-xl px-3 py-1 text-lg font-black ${item.className}`}>
+                                    {Number(item.value || 0).toLocaleString('fr-FR')}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="grid min-w-0 gap-3 lg:grid-cols-2 xl:w-[620px]">
+                    <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Prochaine action</p>
+                        {nextLine ? (
+                            <>
+                                <p className="mt-2 truncate font-black text-slate-950">{nextLine.variant?.reference || `Variante #${nextLine.variant_id}`}</p>
+                                <p className="text-xs font-bold text-slate-600">{nextLine.location?.name || `Lieu #${nextLine.location_id}`}</p>
+                                <button
+                                    type="button"
+                                    onClick={() => onFocusLine(nextLine)}
+                                    disabled={!canCount || busy}
+                                    className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-500 disabled:bg-slate-300"
+                                >
+                                    {nextLine.status === 'recount' ? 'Charger le recompte' : 'Charger la ligne suivante'}
+                                </button>
+                            </>
+                        ) : (
+                            <div className="mt-3 rounded-xl border border-emerald-100 bg-white p-4 text-sm font-bold text-emerald-700">
+                                Toutes les lignes prévues sont traitées. Vous pouvez vérifier les écarts ou valider.
+                            </div>
+                        )}
+                    </div>
+
+                    <div className={`rounded-2xl border p-4 ${toneClasses[varianceTone]}`}>
+                        <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Contrôle immédiat</p>
+                        {hasSelection ? (
+                            <>
+                                <p className="mt-2 truncate font-black">{selectedVariant.reference} · {selectedLocation.name}</p>
+                                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                                    <div className="rounded-xl bg-white/70 p-2">
+                                        <p className="text-[9px] font-black uppercase tracking-widest opacity-50">Système</p>
+                                        <p className="font-black">{isBlindCounting ? '•••' : Number(expectedQuantity || 0).toLocaleString('fr-FR')}</p>
+                                    </div>
+                                    <div className="rounded-xl bg-white/70 p-2">
+                                        <p className="text-[9px] font-black uppercase tracking-widest opacity-50">Compté</p>
+                                        <p className="font-black">{countedQuantity === null ? '—' : Number(countedQuantity).toLocaleString('fr-FR')}</p>
+                                    </div>
+                                    <div className="rounded-xl bg-white/70 p-2">
+                                        <p className="text-[9px] font-black uppercase tracking-widest opacity-50">Écart</p>
+                                        <p className="font-black">
+                                            {isBlindCounting ? '•••' : variance === null ? '—' : `${variance > 0 ? '+' : ''}${Number(variance).toLocaleString('fr-FR')}`}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={onClear}
+                                    disabled={busy}
+                                    className="mt-3 text-xs font-black text-slate-500 underline disabled:opacity-40"
+                                >
+                                    Effacer la sélection
+                                </button>
+                            </>
+                        ) : (
+                            <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-white/70 p-4 text-sm font-bold text-slate-500">
+                                Scannez une référence ou chargez la prochaine ligne pour afficher le contrôle.
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+            {totalLines > 0 && (
+                <p className="mt-4 text-xs font-bold text-slate-400">
+                    Parcours recommandé : charger la prochaine ligne → scanner ou confirmer la référence → saisir la quantité réelle → ajouter → passer à la suivante.
+                </p>
+            )}
+        </section>
+    );
+}
+
 function StockRiskView({
     loading,
     needs,
@@ -5443,6 +5572,11 @@ function PhysicalInventoryView({
     const isBlindCounting = Boolean(selectedSession?.blind_counting && ['draft', 'counting', 'pending_approval'].includes(selectedSession?.status));
     const totalLines = selectedSession?.lines?.length || 0;
     const countedLines = (selectedSession?.lines || []).filter(line => line.status !== 'pending').length;
+    const pendingLines = (selectedSession?.lines || []).filter(line => line.status === 'pending');
+    const recountLines = (selectedSession?.lines || []).filter(line => line.status === 'recount');
+    const varianceLines = (selectedSession?.lines || []).filter(line => line.status === 'variance');
+    const okLines = (selectedSession?.lines || []).filter(line => ['ok', 'validated'].includes(line.status));
+    const nextGuidedLine = recountLines[0] || pendingLines[0] || null;
     const rankedInventoryLines = [...(selectedSession?.lines || [])].sort((left, right) => {
         const scoreDifference = Number(right.anomaly_score ?? -1) - Number(left.anomaly_score ?? -1);
         if (scoreDifference !== 0) return scoreDifference;
@@ -5666,7 +5800,13 @@ function PhysicalInventoryView({
     };
 
     const focusLine = (line) => {
-        setLineForm(prev => ({ ...prev, variant_id: String(line.variant_id), location_id: String(line.location_id) }));
+        setLineForm(prev => ({
+            ...prev,
+            variant_id: String(line.variant_id),
+            location_id: String(line.location_id),
+            counted_quantity: '',
+            reason: line.reason || '',
+        }));
         setScanValue(line.variant?.reference || '');
     };
 
@@ -6230,7 +6370,40 @@ function PhysicalInventoryView({
                                 )}
 
                                 {['draft', 'counting'].includes(selectedSession.status) && (
-                                    <form onSubmit={submitLine} className="rounded-3xl border border-blue-100 bg-blue-50/40 p-5 grid grid-cols-1 lg:grid-cols-[1.1fr_1.5fr_1fr_160px_1fr_auto] gap-3 items-end">
+                                    <InventoryCountingGuide
+                                        selectedVariant={selectedVariant}
+                                        selectedLocation={selectedLocation}
+                                        expectedQuantity={expectedQuantity}
+                                        countedQuantity={countedQuantity}
+                                        variance={variance}
+                                        isBlindCounting={isBlindCounting}
+                                        pendingCount={pendingLines.length}
+                                        recountCount={recountLines.length}
+                                        varianceCount={varianceLines.length}
+                                        okCount={okLines.length}
+                                        totalLines={totalLines}
+                                        nextLine={nextGuidedLine}
+                                        canCount={canCount}
+                                        busy={busy}
+                                        onFocusLine={focusLine}
+                                        onClear={() => {
+                                            setLineForm({ variant_id: '', location_id: selectedSession.location_id || '', counted_quantity: '', reason: '' });
+                                            setScanValue('');
+                                            setEvidenceFile(null);
+                                        }}
+                                    />
+                                )}
+
+                                {['draft', 'counting'].includes(selectedSession.status) && (
+                                    <form onSubmit={submitLine} className="rounded-3xl border border-blue-100 bg-blue-50/40 p-5">
+                                        <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                                            <div>
+                                                <p className="text-[10px] uppercase font-black tracking-widest text-blue-600">Saisie rapide</p>
+                                                <h5 className="font-black text-slate-950">Scanner, contrôler, enregistrer</h5>
+                                            </div>
+                                            <p className="text-xs font-bold text-slate-500">Entrée = sélectionner la référence · Ajouter = enregistrer le comptage</p>
+                                        </div>
+                                        <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_1.5fr_1fr_160px_1fr_auto] gap-3 items-end">
                                         <label className="space-y-1">
                                             <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Scan / recherche tablette</span>
                                             <input
@@ -6329,10 +6502,11 @@ function PhysicalInventoryView({
                                                 </div>
                                                 <div className={`rounded-xl border p-3 ${isBlindCounting ? 'bg-slate-50 border-slate-200' : variance === null || variance === 0 ? 'bg-emerald-50 border-emerald-100' : variance > 0 ? 'bg-blue-50 border-blue-100' : 'bg-amber-50 border-amber-100'}`}>
                                                     <p className="text-[10px] uppercase font-black text-slate-400">Écart</p>
-                                                    <p className="text-xl font-black text-slate-900">{isBlindCounting ? '•••' : variance === null ? '-' : `${variance > 0 ? '+' : ''}${variance.toLocaleString('fr-FR')}`}</p>
-                                                </div>
-                                            </div>
-                                        )}
+                                            <p className="text-xl font-black text-slate-900">{isBlindCounting ? '•••' : variance === null ? '-' : `${variance > 0 ? '+' : ''}${variance.toLocaleString('fr-FR')}`}</p>
+                                        </div>
+                                    </div>
+                                )}
+                                        </div>
                                     </form>
                                 )}
 
