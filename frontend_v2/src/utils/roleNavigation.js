@@ -10,6 +10,7 @@ const MANAGER_VIEW_PERMISSIONS = {
     'sale-detail': 'SALES_VIEW',
     pos: 'SALES_EDIT',
     accounting: 'ACC_VIEW',
+    stock_dashboard: ['STOCK_VIEW', 'inventory.approve_value'],
     stock: ['STOCK_VIEW', 'inventory.approve_value'],
     purchases: 'PURCHASES_VIEW',
 };
@@ -51,8 +52,8 @@ export function getDefaultManagerView(user) {
     if (userHasPermission(user, 'SALES_VIEW')) return 'crm';
     if (userHasPermission(user, 'ACC_VIEW')) return 'accounting';
     if (userHasPermission(user, 'PURCHASES_VIEW')) return 'purchases';
-    if (userHasPermission(user, 'inventory.approve_value')) return 'stock';
-    if (userHasPermission(user, 'STOCK_VIEW')) return 'stock';
+    if (userHasPermission(user, 'inventory.approve_value')) return 'stock_dashboard';
+    if (userHasPermission(user, 'STOCK_VIEW')) return 'stock_dashboard';
     return null;
 }
 
@@ -87,7 +88,7 @@ export function getDefaultPathForUser(user) {
     if (roles.includes('SALES')) return '/crm';
     if (userHasPermission(user, 'ACC_VIEW')) return '/manager?view=accounting';
     if (userHasPermission(user, 'PURCHASES_VIEW')) return '/manager?view=purchases';
-    if (roles.some(role => STOCK_HOME_ROLES.has(role))) return shouldUseStockMobile() ? '/stock-mobile' : '/stock';
+    if (roles.some(role => STOCK_HOME_ROLES.has(role))) return shouldUseStockMobile() ? '/stock-mobile' : '/stock/dashboard';
     if (roles.some(role => ATELIER_HOME_ROLES.has(role))) {
         const firstStation = Array.isArray(user?.stations) && user.stations.length > 0 ? user.stations[0] : null;
         const stationCode = typeof firstStation === 'string' ? firstStation : firstStation?.code;

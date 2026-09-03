@@ -57,6 +57,7 @@ export default function ManagerDashboard() {
             activeView === 'workshop_supervisor' ? 'Chef d\'atelier' :
             activeView === 'orders' ? 'Suivi Commandes' :
                 activeView === 'schedule' ? 'Planning & Agenda' :
+                activeView === 'stock_dashboard' ? 'Pilotage Stock' :
                 activeView === 'stock' ? 'Gestion de Stock' :
                     activeView === 'purchases' ? 'Achats & Appro' :
                         activeView === 'sale-detail' ? 'Dossier métier client' :
@@ -224,7 +225,8 @@ export default function ManagerDashboard() {
                     {activeView === 'workshop_supervisor' && <WorkshopSupervisorView />}
                     {activeView === 'orders' && renderOrdersView()}
                     {activeView === 'schedule' && <ScheduleDashboard />}
-                    {activeView === 'stock' && <StockDashboard />}
+                    {activeView === 'stock_dashboard' && <StockDashboard key="stock-dashboard" surface="dashboard" />}
+                    {activeView === 'stock' && <StockDashboard key="stock-management" surface="management" />}
                     {activeView === 'purchases' && <PurchasesDashboard />}
                     {activeView === 'sales' && <SalesDashboard />}
                     {activeView === 'crm' && <CRMClientsDashboard />}

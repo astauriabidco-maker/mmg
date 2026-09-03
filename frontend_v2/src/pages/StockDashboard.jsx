@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { downloadFileWithFeedback } from '../services/pdf';
@@ -84,8 +85,10 @@ const isReservationProductionLaunched = (reservation) => (
     || !!reservation?.production_order_id
 );
 
-export default function StockDashboard() {
+export default function StockDashboard({ surface = 'management' }) {
     const queryClient = useQueryClient();
+    const navigate = useNavigate();
+    const location = useLocation();
     const { user } = useAuth();
     const ontologyQuery = useMMGOntology();
     const isManager = userHasAnyRole(user, ['ADMIN', 'MANAGER']);
@@ -152,7 +155,8 @@ export default function StockDashboard() {
 
     const [activeLocationId, setActiveLocationId] = useState('global'); // 'global' or a precise ID
     const [searchTerm, setSearchTerm] = useState('');
-    const [currentMenu, setCurrentMenu] = useState('todo'); // 'todo' | 'risk' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation' | 'product-detail' | 'location-detail'
+    const isDashboardSurface = surface === 'dashboard';
+    const [currentMenu, setCurrentMenu] = useState(isDashboardSurface ? 'todo' : 'catalog'); // 'todo' | 'risk' | 'catalog' | 'stock' | 'services' | 'drafts' | 'locations' | 'workshop' | 'audit' | 'physical-inventory' | 'import-export' | 'valuation' | 'product-detail' | 'location-detail'
     const [inventoryFocus, setInventoryFocus] = useState('catalog'); // 'catalog' | 'stock' | 'drafts' | 'services'
     const [todoRoleFilter, setTodoRoleFilter] = useState('me'); // 'me' | 'stock' | 'atelier' | 'catalogue' | 'achats' | 'manager'
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
@@ -1888,6 +1892,19 @@ export default function StockDashboard() {
         );
     const selectedProductActivationIssues = selectedProduct ? getCatalogActivationIssues(selectedProduct) : [];
     const compactCatalogMode = ['catalog', 'drafts'].includes(currentMenu);
+    const surfaceTitle = isDashboardSurface ? 'Pilotage stock' : 'Gestion de stock';
+    const surfaceSubtitle = isDashboardSurface
+        ? 'Voir les priorités, alertes, réservations et inventaires à traiter.'
+        : 'Gérer le catalogue, les emplacements, les mouvements et les inventaires.';
+    const switchStockSurface = (targetSurface) => {
+        if (targetSurface === surface) return;
+        const targetView = targetSurface === 'dashboard' ? 'stock_dashboard' : 'stock';
+        if (location.pathname === '/manager') {
+            navigate(`/manager?view=${targetView}`);
+            return;
+        }
+        navigate(targetSurface === 'dashboard' ? '/stock/dashboard' : '/stock');
+    };
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
@@ -1896,10 +1913,10 @@ export default function StockDashboard() {
                     <div className="flex flex-wrap items-center justify-between gap-4">
                         <div className="min-w-0">
                             <h3 className="font-black flex items-center gap-3 tracking-tight text-xl text-slate-950">
-                                <Box className="text-blue-600 w-5 h-5" /> Inventaire & Stock
+                                <Box className="text-blue-600 w-5 h-5" /> {surfaceTitle}
                             </h3>
                             <p className="text-sm font-bold text-slate-500 mt-0.5">
-                                Piloter les priorités, le catalogue, le stock physique et la traçabilité.
+                                {surfaceSubtitle}
                             </p>
                             <div className="mt-2">
                                 <button
@@ -1927,6 +1944,22 @@ export default function StockDashboard() {
                         </div>
 
                         <div className="flex flex-1 flex-wrap items-center justify-end gap-2 min-w-[280px]">
+                            <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1">
+                                <button
+                                    type="button"
+                                    onClick={() => switchStockSurface('dashboard')}
+                                    className={`rounded-lg px-3 py-2 text-xs font-black transition-all ${isDashboardSurface ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-white hover:text-slate-900'}`}
+                                >
+                                    Pilotage
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => switchStockSurface('management')}
+                                    className={`rounded-lg px-3 py-2 text-xs font-black transition-all ${!isDashboardSurface ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-white hover:text-slate-900'}`}
+                                >
+                                    Gestion
+                                </button>
+                            </div>
                             <div className="relative w-full max-w-lg">
                                 <Search className="w-4 h-4 text-slate-400 absolute left-4 top-3.5" />
                                 <input
@@ -1973,7 +2006,7 @@ export default function StockDashboard() {
                     </div>
                 </div>
 
-                {!compactCatalogMode && (
+                {isDashboardSurface && !compactCatalogMode && (
                     <StockUXGuide
                         activeKey={currentMenu}
                         todoTotal={todoTotal}
