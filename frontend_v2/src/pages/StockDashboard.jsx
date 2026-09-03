@@ -173,6 +173,14 @@ export default function StockDashboard({ surface = 'management' }) {
     // emplacement...) pour que "Retour" restaure le bon contexte.
     const [productDetailReturnMenu, setProductDetailReturnMenu] = useState(null);
 
+    useEffect(() => {
+        setCurrentMenu(isDashboardSurface ? 'todo' : 'catalog');
+        setInventoryFocus('catalog');
+        setSelectedProductId(null);
+        setSelectedLocationId(null);
+        setProductDetailReturnMenu(null);
+    }, [isDashboardSurface]);
+
     // Inline edit states
     const [addingSubLocTo, setAddingSubLocTo] = useState(null);
     const [newSubLocName, setNewSubLocName] = useState('');
