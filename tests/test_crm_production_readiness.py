@@ -338,6 +338,59 @@ def test_recipe_fixture_client_cleanup_is_admin_only_and_guarded(isolated_client
         headers=admin_headers,
     )
     assert recipe.status_code == 200, recipe.text
+    recipe_id = recipe.json()["id"]
+    opportunity = client.post(
+        "/v2/mmg/opportunities",
+        json={
+            "client_id": recipe_id,
+            "title": "Opportunité recette cleanup",
+            "stage": "nouveau",
+            "need_type": "autre",
+            "probability": 10,
+        },
+        headers=admin_headers,
+    )
+    assert opportunity.status_code == 201, opportunity.text
+    with session_factory() as db:
+        db.add(
+            models.CalendarTask(
+                title="Relance recette cleanup",
+                category="CRM",
+                status="TODO",
+                priority="NORMAL",
+                start_at=utcnow(),
+                client_id=recipe_id,
+                opportunity_id=opportunity.json()["id"],
+            )
+        )
+        db.add(
+            models.CRMActivity(
+                client_id=recipe_id,
+                opportunity_id=opportunity.json()["id"],
+                activity_type=models.CRMActivityType.NOTE.value,
+                subject="Activité recette cleanup",
+                status=models.CRMActivityStatus.TODO.value,
+                author="pytest",
+            )
+        )
+        mission = models.MeasureMission(
+            reference="MM-RECETTE-CLEANUP",
+            client_id=recipe_id,
+            source_type="CLIENT_DOCUMENTS",
+            project_scope="SUPPLY_ONLY",
+            created_by="pytest",
+        )
+        db.add(mission)
+        db.flush()
+        db.add(
+            models.MMG(
+                reference="MMG-RECETTE-CLEANUP",
+                client_id=recipe_id,
+                measure_mission_id=mission.id,
+                client_name="RECETTE DOUBLON CRM CLEANUP",
+            )
+        )
+        db.commit()
     normal = client.post(
         "/v2/partners/clients",
         json=_client_payload("Client Réel Non Fixture"),
@@ -346,7 +399,7 @@ def test_recipe_fixture_client_cleanup_is_admin_only_and_guarded(isolated_client
     assert normal.status_code == 200, normal.text
 
     denied_role = client.delete(
-        f"/v2/partners/clients/{recipe.json()['id']}/recipe-fixture",
+        f"/v2/partners/clients/{recipe_id}/recipe-fixture",
         headers=editor_headers,
     )
     assert denied_role.status_code == 403
@@ -358,7 +411,7 @@ def test_recipe_fixture_client_cleanup_is_admin_only_and_guarded(isolated_client
     assert denied_guard.status_code == 422
 
     deleted = client.delete(
-        f"/v2/partners/clients/{recipe.json()['id']}/recipe-fixture",
+        f"/v2/partners/clients/{recipe_id}/recipe-fixture",
         headers=admin_headers,
     )
     assert deleted.status_code == 200, deleted.text
@@ -369,6 +422,16 @@ def test_recipe_fixture_client_cleanup_is_admin_only_and_guarded(isolated_client
     names = {item["name"] for item in clients.json()}
     assert "RECETTE DOUBLON CRM CLEANUP" not in names
     assert "Client Réel Non Fixture" in names
+    with session_factory() as db:
+        assert db.query(models.CRMOpportunity).filter_by(client_id=recipe_id).count() == 0
+        assert db.query(models.CRMActivity).filter_by(client_id=recipe_id).count() == 0
+        assert db.query(models.MeasureMission).filter_by(client_id=recipe_id).count() == 0
+        task = db.query(models.CalendarTask).filter_by(title="Relance recette cleanup").one()
+        assert task.client_id is None
+        assert task.opportunity_id is None
+        dossier = db.query(models.MMG).filter_by(reference="MMG-RECETTE-CLEANUP").one()
+        assert dossier.client_id is None
+        assert dossier.measure_mission_id is None
 
 
 def test_duplicate_detection_merge_and_segmentation(isolated_client):

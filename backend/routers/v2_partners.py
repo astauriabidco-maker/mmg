@@ -214,6 +214,96 @@ def _is_recipe_fixture_client(client: models.Client) -> bool:
     )
 
 
+def _delete_recipe_fixture_client_graph(db: Session, client: models.Client) -> None:
+    opportunity_ids = [
+        item[0]
+        for item in db.query(models.CRMOpportunity.id)
+        .filter(models.CRMOpportunity.client_id == client.id)
+        .all()
+    ]
+    site_ids = [
+        item[0]
+        for item in db.query(models.ClientSiteAddress.id)
+        .filter(models.ClientSiteAddress.client_id == client.id)
+        .all()
+    ]
+    mission_ids = [
+        item[0]
+        for item in db.query(models.MeasureMission.id)
+        .filter(models.MeasureMission.client_id == client.id)
+        .all()
+    ]
+
+    db.query(models.CalendarTask).filter(
+        models.CalendarTask.client_id == client.id
+    ).update({models.CalendarTask.client_id: None}, synchronize_session=False)
+    if opportunity_ids:
+        db.query(models.CalendarTask).filter(
+            models.CalendarTask.opportunity_id.in_(opportunity_ids)
+        ).update({models.CalendarTask.opportunity_id: None}, synchronize_session=False)
+        db.query(models.CRMReminderPlan).filter(
+            models.CRMReminderPlan.opportunity_id.in_(opportunity_ids)
+        ).update({models.CRMReminderPlan.sent_delivery_id: None}, synchronize_session=False)
+        db.query(models.CRMReminderDelivery).filter(
+            models.CRMReminderDelivery.opportunity_id.in_(opportunity_ids)
+        ).update(
+            {
+                models.CRMReminderDelivery.opportunity_id: None,
+                models.CRMReminderDelivery.activity_id: None,
+            },
+            synchronize_session=False,
+        )
+        db.query(models.CRMOpportunityStageHistory).filter(
+            models.CRMOpportunityStageHistory.opportunity_id.in_(opportunity_ids)
+        ).delete(synchronize_session=False)
+        db.query(models.CRMReminderPlan).filter(
+            models.CRMReminderPlan.opportunity_id.in_(opportunity_ids)
+        ).delete(synchronize_session=False)
+
+    db.query(models.CRMReminderPlan).filter(
+        models.CRMReminderPlan.client_id == client.id
+    ).update({models.CRMReminderPlan.sent_delivery_id: None}, synchronize_session=False)
+    db.query(models.CRMReminderPlan).filter(
+        models.CRMReminderPlan.client_id == client.id
+    ).delete(synchronize_session=False)
+    db.query(models.CRMReminderDelivery).filter(
+        models.CRMReminderDelivery.client_id == client.id
+    ).delete(synchronize_session=False)
+    db.query(models.CRMActivity).filter(
+        models.CRMActivity.client_id == client.id
+    ).delete(synchronize_session=False)
+    if opportunity_ids:
+        db.query(models.CRMOpportunity).filter(
+            models.CRMOpportunity.id.in_(opportunity_ids)
+        ).delete(synchronize_session=False)
+
+    db.query(models.MMG).filter(models.MMG.client_id == client.id).update(
+        {
+            models.MMG.client_id: None,
+            models.MMG.client_name: f"{client.name} (fiche recette supprimée)",
+        },
+        synchronize_session=False,
+    )
+    if site_ids:
+        db.query(models.MMG).filter(models.MMG.site_address_id.in_(site_ids)).update(
+            {models.MMG.site_address_id: None},
+            synchronize_session=False,
+        )
+    if mission_ids:
+        db.query(models.MMG).filter(models.MMG.measure_mission_id.in_(mission_ids)).update(
+            {models.MMG.measure_mission_id: None},
+            synchronize_session=False,
+        )
+        for mission in (
+            db.query(models.MeasureMission)
+            .filter(models.MeasureMission.id.in_(mission_ids))
+            .all()
+        ):
+            db.delete(mission)
+
+    db.delete(client)
+
+
 @router.get(
     "/clients",
     response_model=List[schemas.ClientResponse],
@@ -537,7 +627,7 @@ def delete_recipe_fixture_client(client_id: int, db: Session = Depends(get_db)):
             "Cette action est réservée aux fiches de recette/test explicitement identifiées",
         )
     deleted_name = db_client.name
-    db.delete(db_client)
+    _delete_recipe_fixture_client_graph(db, db_client)
     db.commit()
     return {"status": "deleted", "deleted_client_id": client_id, "deleted_name": deleted_name}
 
