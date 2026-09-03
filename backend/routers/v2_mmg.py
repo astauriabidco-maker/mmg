@@ -901,7 +901,10 @@ def export_crm_cockpit_csv(
     )
     writer.writeheader()
     for owner in data["owners"]:
-        writer.writerow(owner)
+        writer.writerow({
+            fieldname: owner.get(fieldname)
+            for fieldname in writer.fieldnames
+        })
     content = "\ufeff" + output.getvalue()
     return Response(
         content=content.encode("utf-8"),
