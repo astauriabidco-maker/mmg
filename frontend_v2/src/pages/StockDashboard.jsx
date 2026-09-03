@@ -161,6 +161,7 @@ export default function StockDashboard() {
     const [catalogQuickFilter, setCatalogQuickFilter] = useState('all'); // 'all' | 'to_identify' | 'draft' | 'missing_supplier' | 'missing_threshold' | 'active' | 'blocked'
     const [catalogSourceFilter, setCatalogSourceFilter] = useState('all'); // 'all' | 'CORTIZO' | 'TECHNAL' | 'SEPALUMIC' | 'MMG' | 'AUTRE'
     const [catalogQualificationExpanded, setCatalogQualificationExpanded] = useState(false);
+    const [stockGuidanceExpanded, setStockGuidanceExpanded] = useState(false);
     const [expandedProducts, setExpandedProducts] = useState({});
     const [selectedProductId, setSelectedProductId] = useState(null);
     const [selectedLocationId, setSelectedLocationId] = useState(null);
@@ -1900,16 +1901,29 @@ export default function StockDashboard() {
                             <p className="text-sm font-bold text-slate-500 mt-0.5">
                                 Piloter les priorités, le catalogue, le stock physique et la traçabilité.
                             </p>
-                            <OntologyGuidance
-                                ontology={ontologyQuery.data}
-                                title="Garde-fou stock / atelier"
-                                subtitle="Le stock réel est consommé uniquement après réservation, préparation atelier et lancement fabrication."
-                                entityCodes={['stock_item', 'stock_reservation', 'workshop_preparation', 'production_order', 'real_workshop_debit']}
-                                permissionEntities={['stock_reservation', 'workshop_preparation', 'real_workshop_debit']}
-                                eventCodes={['stock_reserved', 'workshop_prepared', 'stock_consumed']}
-                                compact
-                                className={`${compactCatalogMode ? 'hidden xl:block mt-2 max-w-3xl' : 'mt-3 max-w-4xl'}`}
-                            />
+                            <div className="mt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setStockGuidanceExpanded(prev => !prev)}
+                                    className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-100"
+                                >
+                                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                                    Ontologie active · stock → atelier
+                                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${stockGuidanceExpanded ? 'rotate-180' : ''}`} />
+                                </button>
+                                {stockGuidanceExpanded && (
+                                    <OntologyGuidance
+                                        ontology={ontologyQuery.data}
+                                        title="Garde-fou stock / atelier"
+                                        subtitle="Le stock réel est consommé uniquement après réservation, préparation atelier et lancement fabrication."
+                                        entityCodes={['stock_item', 'stock_reservation', 'workshop_preparation', 'production_order', 'real_workshop_debit']}
+                                        permissionEntities={['stock_reservation', 'workshop_preparation', 'real_workshop_debit']}
+                                        eventCodes={['stock_reserved', 'workshop_prepared', 'stock_consumed']}
+                                        compact
+                                        className={`${compactCatalogMode ? 'hidden xl:block mt-2 max-w-3xl' : 'mt-2 max-w-4xl'}`}
+                                    />
+                                )}
+                            </div>
                         </div>
 
                         <div className="flex flex-1 flex-wrap items-center justify-end gap-2 min-w-[280px]">
@@ -4998,7 +5012,7 @@ function StockUXGuide({
     };
 
     return (
-        <div className="px-4 sm:px-6 pb-3">
+        <div className="px-4 sm:px-6 pb-2">
             <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-4">
                 {cards.map(card => {
                     const Icon = card.Icon;
@@ -5008,22 +5022,22 @@ function StockUXGuide({
                             key={card.key}
                             type="button"
                             onClick={card.onClick}
-                            className={`group rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm ${toneClasses[card.tone]} ${active ? 'ring-2 ring-blue-500/30' : ''}`}
+                            className={`group rounded-2xl border px-4 py-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm ${toneClasses[card.tone]} ${active ? 'ring-2 ring-blue-500/30' : ''}`}
                         >
-                            <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center justify-between gap-3">
                                 <div className="min-w-0">
                                     <p className="text-[10px] font-black uppercase tracking-[0.22em] opacity-60">{card.eyebrow}</p>
-                                    <h4 className="mt-1 font-black">{card.title}</h4>
+                                    <h4 className="mt-0.5 font-black">{card.title}</h4>
                                 </div>
                                 <span className={`rounded-xl p-2 ${iconClasses[card.tone]}`}>
                                     <Icon className="h-4 w-4" />
                                 </span>
                             </div>
-                            <p className="mt-3 text-xs font-bold leading-relaxed opacity-70">{card.detail}</p>
-                            <div className="mt-4 flex items-end justify-between gap-3">
-                                <span className="text-2xl font-black">{Number(card.metric || 0).toLocaleString('fr-FR')}</span>
+                            <div className="mt-2 flex items-end justify-between gap-3">
+                                <span className="text-2xl font-black leading-none">{Number(card.metric || 0).toLocaleString('fr-FR')}</span>
                                 <span className="text-[10px] font-black uppercase tracking-widest opacity-60">{card.suffix}</span>
                             </div>
+                            <p className="mt-2 hidden text-xs font-bold leading-relaxed opacity-70 xl:block">{card.detail}</p>
                         </button>
                     );
                 })}
