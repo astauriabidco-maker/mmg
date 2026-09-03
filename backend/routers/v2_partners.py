@@ -31,6 +31,7 @@ router = APIRouter(
 
 CRM_VIEW = [Depends(security.require_permissions("SALES_VIEW"))]
 CRM_EDIT = [Depends(security.require_permissions("SALES_EDIT"))]
+ADMIN_ONLY = [Depends(security.require_roles("ADMIN", "SUPER_ADMIN"))]
 MAX_CLIENT_IMPORT_BYTES = 2 * 1024 * 1024
 CLIENT_CSV_FIELDS = (
     "name",
@@ -188,6 +189,29 @@ def _find_import_match(db: Session, row: dict) -> Optional[models.Client]:
         if name and normalize_text(client.name) == name:
             return client
     return None
+
+
+def _is_recipe_fixture_client(client: models.Client) -> bool:
+    markers = [
+        client.name,
+        client.contact_name,
+        client.email,
+        client.phone,
+        client.tax_id,
+        client.segment,
+        *(client.tags or []),
+    ]
+    normalized_markers = " ".join(normalize_text(value) for value in markers if value)
+    return any(
+        marker in normalized_markers
+        for marker in (
+            "recette doublon",
+            "recette crm",
+            "fixture",
+            "test a supprimer",
+            "a supprimer",
+        )
+    )
 
 
 @router.get(
@@ -499,6 +523,23 @@ def delete_client(client_id: int, db: Session = Depends(get_db)):
     db.delete(db_client)
     db.commit()
     return {"status": "deleted"}
+
+
+@router.delete(
+    "/clients/{client_id}/recipe-fixture",
+    dependencies=ADMIN_ONLY,
+)
+def delete_recipe_fixture_client(client_id: int, db: Session = Depends(get_db)):
+    db_client = _client_or_404(db, client_id)
+    if not _is_recipe_fixture_client(db_client):
+        raise HTTPException(
+            422,
+            "Cette action est réservée aux fiches de recette/test explicitement identifiées",
+        )
+    deleted_name = db_client.name
+    db.delete(db_client)
+    db.commit()
+    return {"status": "deleted", "deleted_client_id": client_id, "deleted_name": deleted_name}
 
 
 @router.get(

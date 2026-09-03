@@ -13,13 +13,13 @@ from backend.core.security import get_password_hash
 from backend.core.time import utcnow
 
 
-def _headers(session_factory, username, permissions):
+def _headers(session_factory, username, permissions, role="SALES"):
     with session_factory() as db:
         db.add(
             models.User(
                 username=username,
                 pin_hash=get_password_hash("4826"),
-                role="SALES",
+                role=role,
                 is_active=True,
             )
         )
@@ -27,7 +27,8 @@ def _headers(session_factory, username, permissions):
     token = security.create_access_token(
         {
             "sub": username,
-            "role": "SALES",
+            "role": role,
+            "roles": [role],
             "permissions": permissions,
         }
     )
@@ -311,6 +312,63 @@ def test_contact_duplicate_detection_flags_same_person_inside_client(isolated_cl
         first.json()["id"],
         second.json()["id"],
     }
+
+
+def test_recipe_fixture_client_cleanup_is_admin_only_and_guarded(isolated_client):
+    client, session_factory = isolated_client
+    editor_headers = _headers(
+        session_factory,
+        "crm-cleanup-editor",
+        ["SALES_VIEW", "SALES_EDIT"],
+    )
+    admin_headers = _headers(
+        session_factory,
+        "crm-cleanup-admin",
+        ["*"],
+        role="ADMIN",
+    )
+    recipe = client.post(
+        "/v2/partners/clients",
+        json=_client_payload(
+            "RECETTE DOUBLON CRM CLEANUP",
+            email="cleanup-recette@example.test",
+            segment="Recette CRM",
+            tags=["Doublon", "Recette"],
+        ),
+        headers=admin_headers,
+    )
+    assert recipe.status_code == 200, recipe.text
+    normal = client.post(
+        "/v2/partners/clients",
+        json=_client_payload("Client Réel Non Fixture"),
+        headers=admin_headers,
+    )
+    assert normal.status_code == 200, normal.text
+
+    denied_role = client.delete(
+        f"/v2/partners/clients/{recipe.json()['id']}/recipe-fixture",
+        headers=editor_headers,
+    )
+    assert denied_role.status_code == 403
+
+    denied_guard = client.delete(
+        f"/v2/partners/clients/{normal.json()['id']}/recipe-fixture",
+        headers=admin_headers,
+    )
+    assert denied_guard.status_code == 422
+
+    deleted = client.delete(
+        f"/v2/partners/clients/{recipe.json()['id']}/recipe-fixture",
+        headers=admin_headers,
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted_name"] == "RECETTE DOUBLON CRM CLEANUP"
+
+    clients = client.get("/v2/partners/clients", headers=admin_headers)
+    assert clients.status_code == 200
+    names = {item["name"] for item in clients.json()}
+    assert "RECETTE DOUBLON CRM CLEANUP" not in names
+    assert "Client Réel Non Fixture" in names
 
 
 def test_duplicate_detection_merge_and_segmentation(isolated_client):
