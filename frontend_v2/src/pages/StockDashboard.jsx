@@ -5097,9 +5097,11 @@ function InventoryCountingGuide({
     pendingCount,
     recountCount,
     varianceCount,
+    unjustifiedVarianceCount,
     okCount,
     totalLines,
     nextLine,
+    currentLineNeedsReason,
     canCount,
     busy,
     onFocusLine,
@@ -5122,19 +5124,43 @@ function InventoryCountingGuide({
         { label: 'À compter', value: pendingCount, className: 'bg-slate-100 text-slate-700' },
         { label: 'Recompte', value: recountCount, className: 'bg-red-100 text-red-700' },
         { label: 'Écart', value: varianceCount, className: 'bg-amber-100 text-amber-700' },
+        { label: 'À justifier', value: unjustifiedVarianceCount, className: 'bg-orange-100 text-orange-700' },
         { label: 'OK', value: okCount, className: 'bg-emerald-100 text-emerald-700' },
+    ];
+    const operatorSteps = [
+        { label: '1. Créer', detail: 'Choisir zone et type de campagne.' },
+        { label: '2. Compter', detail: 'Scanner ou charger la prochaine ligne.' },
+        { label: '3. Justifier', detail: 'Motif obligatoire si écart.' },
+        { label: '4. Valider', detail: 'Ajustement stock seulement à la fin.' },
     ];
 
     return (
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-5 grid gap-2 md:grid-cols-4">
+                {operatorSteps.map((step, index) => (
+                    <div
+                        key={step.label}
+                        className={`rounded-2xl border p-3 ${
+                            index === 1
+                                ? 'border-blue-200 bg-blue-50'
+                                : index === 2 && (varianceCount > 0 || currentLineNeedsReason || unjustifiedVarianceCount > 0)
+                                    ? 'border-amber-200 bg-amber-50'
+                                    : 'border-slate-100 bg-slate-50'
+                        }`}
+                    >
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{step.label}</p>
+                        <p className="mt-1 text-xs font-bold text-slate-600">{step.detail}</p>
+                    </div>
+                ))}
+            </div>
             <div className="flex flex-col gap-4 xl:flex-row xl:items-stretch xl:justify-between">
                 <div className="min-w-0 flex-1">
                     <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-600">Comptage guidé</p>
                     <h5 className="mt-1 text-xl font-black text-slate-950">Une référence, une quantité réelle, puis suivant.</h5>
                     <p className="mt-1 text-sm font-bold text-slate-500">
-                        Le tableau complet reste disponible dessous, mais le compteur peut travailler ici sans lire tout l’audit.
+                        Mode opérateur : le tableau complet reste dessous, le comptage se fait ici sans lire tout l’audit.
                     </p>
-                    <div className="mt-4 grid gap-2 sm:grid-cols-4">
+                    <div className="mt-4 grid gap-2 sm:grid-cols-5">
                         {stepItems.map(item => (
                             <div key={item.label} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{item.label}</p>
@@ -5202,6 +5228,11 @@ function InventoryCountingGuide({
                         ) : (
                             <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-white/70 p-4 text-sm font-bold text-slate-500">
                                 Scannez une référence ou chargez la prochaine ligne pour afficher le contrôle.
+                            </div>
+                        )}
+                        {currentLineNeedsReason && (
+                            <div className="mt-3 rounded-xl border border-amber-200 bg-white p-3 text-xs font-black text-amber-800">
+                                Garde-fou actif : motif obligatoire avant ajout de cette ligne.
                             </div>
                         )}
                     </div>
@@ -6214,8 +6245,19 @@ function PhysicalInventoryView({
     const pendingLines = (selectedSession?.lines || []).filter(line => line.status === 'pending');
     const recountLines = (selectedSession?.lines || []).filter(line => line.status === 'recount');
     const varianceLines = (selectedSession?.lines || []).filter(line => line.status === 'variance');
+    const unjustifiedVarianceLines = varianceLines.filter(line => !String(line.reason || '').trim());
     const okLines = (selectedSession?.lines || []).filter(line => ['ok', 'validated'].includes(line.status));
     const nextGuidedLine = recountLines[0] || pendingLines[0] || null;
+    const currentLineNeedsReason = !isBlindCounting
+        && variance !== null
+        && Math.abs(Number(variance || 0)) > 0.000001
+        && !String(lineForm.reason || '').trim();
+    const canSubmitCountLine = canCount
+        && !busy
+        && Boolean(lineForm.variant_id)
+        && Boolean(selectedLocationId)
+        && lineForm.counted_quantity !== ''
+        && !currentLineNeedsReason;
     const rankedInventoryLines = [...(selectedSession?.lines || [])].sort((left, right) => {
         const scoreDifference = Number(right.anomaly_score ?? -1) - Number(left.anomaly_score ?? -1);
         if (scoreDifference !== 0) return scoreDifference;
@@ -6369,6 +6411,10 @@ function PhysicalInventoryView({
     const submitLine = async (event) => {
         event.preventDefault();
         if (!selectedSession || !lineForm.variant_id || !selectedLocationId || lineForm.counted_quantity === '' || busy) return;
+        if (currentLineNeedsReason) {
+            alert("Un motif est obligatoire avant d'enregistrer une ligne avec écart.");
+            return;
+        }
         const existingLine = (selectedSession.lines || []).find(line => (
             String(line.variant_id) === String(lineForm.variant_id)
             && String(line.location_id) === String(selectedLocationId)
@@ -6964,7 +7010,7 @@ function PhysicalInventoryView({
                                                 <button onClick={cancelSession} disabled={!canValidate || busy} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm">
                                                     Annuler
                                                 </button>
-                                                <button onClick={validateSession} disabled={!canValidate || busy || !selectedSession.lines?.length || hasRecountLines || hasPendingLines} title={hasPendingLines ? 'Toutes les lignes doivent être comptées avant validation' : undefined} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
+                                                <button onClick={validateSession} disabled={!canValidate || busy || !selectedSession.lines?.length || hasRecountLines || hasPendingLines || unjustifiedVarianceLines.length > 0} title={hasPendingLines ? 'Toutes les lignes doivent être comptées avant validation' : unjustifiedVarianceLines.length > 0 ? 'Chaque écart doit avoir un motif avant validation' : undefined} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
                                                     Valider les écarts
                                                 </button>
                                             </>
@@ -7019,9 +7065,11 @@ function PhysicalInventoryView({
                                         pendingCount={pendingLines.length}
                                         recountCount={recountLines.length}
                                         varianceCount={varianceLines.length}
+                                        unjustifiedVarianceCount={unjustifiedVarianceLines.length}
                                         okCount={okLines.length}
                                         totalLines={totalLines}
                                         nextLine={nextGuidedLine}
+                                        currentLineNeedsReason={currentLineNeedsReason}
                                         canCount={canCount}
                                         busy={busy}
                                         onFocusLine={focusLine}
@@ -7111,11 +7159,17 @@ function PhysicalInventoryView({
                                         </label>
                                         <button
                                             type="submit"
-                                            disabled={!canCount || busy || !lineForm.variant_id || !selectedLocationId || lineForm.counted_quantity === ''}
+                                            disabled={!canSubmitCountLine}
+                                            title={currentLineNeedsReason ? "Motif obligatoire pour enregistrer un écart" : undefined}
                                             className="px-5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-black text-sm"
                                         >
                                             Ajouter
                                         </button>
+                                        {currentLineNeedsReason && (
+                                            <div className="lg:col-span-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-black text-amber-800">
+                                                Écart détecté : renseignez le motif avant d’enregistrer. Le stock ne sera ajusté qu’après validation finale de la campagne.
+                                            </div>
+                                        )}
                                         <label className="lg:col-span-6 rounded-xl border border-dashed border-slate-300 bg-white px-3 py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                             <span>
                                                 <span className="block text-[10px] uppercase font-black tracking-widest text-slate-500">Justificatif optionnel</span>
