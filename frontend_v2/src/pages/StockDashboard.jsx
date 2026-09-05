@@ -190,7 +190,7 @@ export default function StockDashboard({ surface = 'management' }) {
 
     // Modals
     const [showTransferModal, setShowTransferModal] = useState(false);
-    const [transferData, setTransferData] = useState({ variant: null, sourceLocId: null, targetLocId: '', qty: '' });
+    const [transferData, setTransferData] = useState({ variant: null, sourceLocId: null, targetLocId: '', qty: '', comment: '' });
 
     const [showNewProductModal, setShowNewProductModal] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
@@ -448,22 +448,37 @@ export default function StockDashboard({ surface = 'management' }) {
 
     // -------- EXPLICIT TRANSFER (A -> B) --------
     const openTransferModal = (variant, sourceLocId) => {
-        setTransferData({ variant, sourceLocId, targetLocId: '', qty: '' });
+        setTransferData({ variant, sourceLocId, targetLocId: '', qty: '', comment: '' });
         setShowTransferModal(true);
     };
 
     const submitTransfer = async () => {
-        if (!transferData.targetLocId || !transferData.qty || isNaN(transferData.qty) || transferData.qty <= 0) return;
+        if (!transferData.variant || !transferData.sourceLocId || !transferData.targetLocId || !transferData.qty || isNaN(transferData.qty) || transferData.qty <= 0) return;
+        const targetLocation = locations.find(location => String(location.id) === String(transferData.targetLocId));
+        const targetQuality = getLocationQuality(targetLocation);
+        const sourceLocation = locations.find(location => String(location.id) === String(transferData.sourceLocId));
+        const sourceQuant = quants.find(quant =>
+            quant.variant_id === transferData.variant?.id
+            && String(quant.location_id) === String(transferData.sourceLocId)
+        );
+        const sourceAvailable = Number(sourceQuant?.available_quantity ?? sourceQuant?.quantity ?? 0);
+        if (!targetLocation || !targetQuality.exploitable) {
+            return alert("Choisissez une destination exploitable atelier avant de transférer.");
+        }
+        if (parseFloat(transferData.qty) > sourceAvailable) {
+            return alert(`Quantité insuffisante à la source : ${sourceAvailable.toLocaleString('fr-FR')} disponible.`);
+        }
         try {
             await api.post('/v2/stock/transaction', {
                 variant_id: transferData.variant.id,
                 quantity: parseFloat(transferData.qty),
                 location_id: transferData.sourceLocId,
                 location_dest_id: parseInt(transferData.targetLocId),
-                notes: "Transfert Interne/Manuel"
+                notes: ['Transfert stock guidé', transferData.comment || null].filter(Boolean).join(' · ')
             });
             setShowTransferModal(false);
             queryClient.invalidateQueries();
+            alert(`${parseFloat(transferData.qty).toLocaleString('fr-FR')} unité(s) transférée(s) de ${getFullLocationName(sourceLocation)} vers ${getFullLocationName(targetLocation)}.`);
         } catch (e) {
             alert("Erreur lors du transfert.");
         }
@@ -1949,6 +1964,17 @@ export default function StockDashboard({ surface = 'management' }) {
         window.setTimeout(() => locationNameInputRef.current?.focus(), 80);
     };
     const locationFormIssues = getLocationNameIssues(locationForm.name);
+    const transferSourceLocation = locations.find(location => String(location.id) === String(transferData.sourceLocId));
+    const transferTargetLocation = locations.find(location => String(location.id) === String(transferData.targetLocId));
+    const transferTargetQuality = transferTargetLocation ? getLocationQuality(transferTargetLocation) : null;
+    const transferVariantContext = transferData.variant ? getVariantContext(transferData.variant.id) : { product: null, variant: null };
+    const transferSourceQuant = quants.find(quant =>
+        quant.variant_id === transferData.variant?.id
+        && String(quant.location_id) === String(transferData.sourceLocId)
+    );
+    const transferSourceAvailable = Number(transferSourceQuant?.available_quantity ?? transferSourceQuant?.quantity ?? 0);
+    const transferQuantityValid = Number(transferData.qty || 0) > 0 && Number(transferData.qty || 0) <= transferSourceAvailable;
+    const transferBlocked = !transferData.variant || !transferData.sourceLocId || !transferData.targetLocId || !transferQuantityValid || !transferTargetQuality?.exploitable;
     const receptionTargetLocation = locations.find(location => String(location.id) === String(receptionData.targetLocId));
     const receptionTargetQuality = receptionTargetLocation ? getLocationQuality(receptionTargetLocation) : null;
     const receptionVariantContext = receptionData.variant ? getVariantContext(receptionData.variant.id) : { product: null, variant: null };
@@ -4331,39 +4357,123 @@ export default function StockDashboard({ surface = 'management' }) {
             )}
             {/* -------- TRANSFER POPUP -------- */}
             {showTransferModal && (
-                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl shadow-2xl p-6 w-[400px] border border-slate-100">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="font-black text-lg">Transfert <ArrowRight className="inline w-4 h-4 mx-1"/> Interne</h3>
-                            <button onClick={()=>setShowTransferModal(false)} className="text-slate-400 hover:bg-slate-100 p-1.5 rounded"><X className="w-5 h-5"/></button>
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-3xl w-full border border-slate-100">
+                        <div className="flex items-center gap-3 mb-5 border-b border-slate-100 pb-4">
+                            <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 shadow-inner">
+                                <ArrowRight className="w-6 h-6" />
+                            </div>
+                            <div>
+                                <p className="text-[10px] uppercase tracking-[0.24em] font-black text-blue-600">Transfert stock guidé</p>
+                                <h3 className="font-black text-2xl text-slate-800">Déplacer une quantité entre deux emplacements</h3>
+                                <p className="text-sm font-medium text-slate-500">Source claire → destination exploitable → quantité disponible → mouvement tracé.</p>
+                            </div>
+                            <button onClick={()=>setShowTransferModal(false)} className="ml-auto text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
                         </div>
-                        <p className="text-sm font-bold text-slate-500 mb-4">{transferData.variant?.reference}</p>
 
                         <div className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-black text-slate-400 uppercase mb-1">Destination (Interne)</label>
-                                <select
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
-                                    value={transferData.targetLocId} onChange={e=>setTransferData({...transferData, targetLocId: e.target.value})}
-                                >
-                                    <option value="">-- Choisir un emplacement --</option>
-                                    {locations.filter(l => l.usage === 'internal').map(l => (
-                                        <option key={l.id} value={l.id} disabled={l.id === transferData.sourceLocId}>{getFullLocationName(l)}</option>
-                                    ))}
-                                </select>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                {[
+                                    ['1', 'Source', Boolean(transferSourceLocation)],
+                                    ['2', 'Destination', Boolean(transferTargetQuality?.exploitable)],
+                                    ['3', 'Quantité', transferQuantityValid],
+                                    ['4', 'Confirmer', !transferBlocked],
+                                ].map(([step, label, done]) => (
+                                    <div key={step} className={`rounded-2xl border p-3 ${done ? 'border-blue-200 bg-blue-50 text-blue-800' : 'border-slate-200 bg-slate-50 text-slate-500'}`}>
+                                        <p className="text-[10px] uppercase tracking-widest font-black">Étape {step}</p>
+                                        <p className="mt-1 font-black">{done ? '✓ ' : ''}{label}</p>
+                                    </div>
+                                ))}
                             </div>
-                            <div>
-                                <label className="block text-xs font-black text-slate-400 uppercase mb-1">Quantité (Total Pces/M)</label>
-                                <input
-                                    type="number"
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 font-black text-2xl text-center outline-none focus:ring-2 focus:ring-blue-500"
-                                    value={transferData.qty} onChange={e=>setTransferData({...transferData, qty: e.target.value})} placeholder="0"
-                                    autoFocus
-                                    onKeyDown={e => e.key === 'Enter' && submitTransfer()}
-                                />
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">1 · Source</p>
+                                    <p className="mt-1 text-sm font-black text-slate-950">{transferVariantContext.product?.name || 'Article sélectionné'}</p>
+                                    <p className="mt-1 text-xs font-mono font-bold text-slate-500">{transferData.variant?.reference || '-'}</p>
+                                    <div className="mt-3 rounded-xl border border-white bg-white p-3">
+                                        <p className="text-xs font-black uppercase tracking-widest text-slate-400">Depuis</p>
+                                        <p className="mt-1 text-sm font-black text-slate-900">{transferSourceLocation ? getFullLocationName(transferSourceLocation) : 'Source non renseignée'}</p>
+                                        <p className="mt-2 text-2xl font-black text-blue-700">{transferSourceAvailable.toLocaleString('fr-FR')}</p>
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Disponible</p>
+                                    </div>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">2 · Destination exploitable</label>
+                                    <select
+                                        className={`w-full rounded-xl border p-3 font-bold outline-none focus:ring-2 focus:ring-blue-500 ${
+                                            transferTargetQuality && !transferTargetQuality.exploitable
+                                                ? 'border-red-200 bg-red-50 text-red-700'
+                                                : 'border-slate-200 bg-white text-slate-700'
+                                        }`}
+                                        value={transferData.targetLocId} onChange={e=>setTransferData({...transferData, targetLocId: e.target.value})}
+                                    >
+                                        <option value="">-- Choisir un rack, casier ou emplacement atelier --</option>
+                                        {locations.filter(l => l.usage === 'internal').map(l => (
+                                            <option key={l.id} value={l.id} disabled={l.id === transferData.sourceLocId}>
+                                                {getLocationQuality(l).exploitable ? '✓ ' : '⚠ '}
+                                                {getFullLocationName(l)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {transferTargetQuality && (
+                                        <div className={`mt-2 rounded-xl border p-3 text-xs font-bold ${
+                                            transferTargetQuality.exploitable
+                                                ? 'border-blue-200 bg-blue-50 text-blue-700'
+                                                : 'border-red-200 bg-red-50 text-red-700'
+                                        }`}>
+                                            {transferTargetQuality.exploitable
+                                                ? `Destination exploitable atelier · ${transferTargetQuality.role}`
+                                                : `Destination non exploitable : ${(transferTargetQuality.issues || []).join(', ') || transferTargetQuality.role}`}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                            <button onClick={submitTransfer} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 mt-2">
-                                Valider Mouvement
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-black text-blue-600 uppercase tracking-widest mb-1.5">3 · Quantité à transférer</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max={transferSourceAvailable || undefined}
+                                        className={`w-full rounded-xl border p-3 font-black text-2xl text-center outline-none focus:ring-2 focus:ring-blue-500 ${
+                                            transferData.qty && !transferQuantityValid
+                                                ? 'border-red-200 bg-red-50 text-red-700'
+                                                : 'border-blue-200 bg-blue-50 text-blue-700'
+                                        }`}
+                                        value={transferData.qty} onChange={e=>setTransferData({...transferData, qty: e.target.value})} placeholder="0"
+                                        autoFocus
+                                        onKeyDown={e => e.key === 'Enter' && !transferBlocked && submitTransfer()}
+                                    />
+                                    {transferData.qty && !transferQuantityValid && (
+                                        <p className="mt-2 text-xs font-bold text-red-600">
+                                            Quantité invalide ou supérieure au disponible ({transferSourceAvailable.toLocaleString('fr-FR')}).
+                                        </p>
+                                    )}
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Commentaire transfert</label>
+                                    <input
+                                        value={transferData.comment}
+                                        onChange={e=>setTransferData({...transferData, comment: e.target.value})}
+                                        className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder="Ex: regroupement rack, préparation inventaire..."
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Confirmation</p>
+                                <p className="mt-1 text-sm font-bold text-slate-600">
+                                    {transferBlocked
+                                        ? 'Complétez une destination exploitable et une quantité disponible avant validation.'
+                                        : `${Number(transferData.qty).toLocaleString('fr-FR')} unité(s) de ${transferData.variant?.reference} seront transférées vers ${getFullLocationName(transferTargetLocation)}.`}
+                                </p>
+                            </div>
+
+                            <button onClick={submitTransfer} disabled={transferBlocked} className="w-full py-4 bg-blue-600 disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-blue-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 mt-2">
+                                Valider le transfert
                             </button>
                         </div>
                     </div>
