@@ -162,7 +162,7 @@ export default function StockDashboard({ surface = 'management' }) {
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
     const [showDraftOnly, setShowDraftOnly] = useState(false);
-    const [catalogQuickFilter, setCatalogQuickFilter] = useState('all'); // 'all' | 'to_identify' | 'draft' | 'missing_supplier' | 'missing_threshold' | 'active' | 'blocked'
+    const [catalogQuickFilter, setCatalogQuickFilter] = useState('all'); // 'all' | 'to_identify' | 'draft' | 'missing_supplier' | 'missing_threshold' | 'missing_location' | 'active' | 'blocked'
     const [catalogSourceFilter, setCatalogSourceFilter] = useState('all'); // 'all' | 'CORTIZO' | 'TECHNAL' | 'SEPALUMIC' | 'MMG' | 'AUTRE'
     const [catalogQualificationExpanded, setCatalogQualificationExpanded] = useState(false);
     const [stockGuidanceExpanded, setStockGuidanceExpanded] = useState(false);
@@ -320,6 +320,8 @@ export default function StockDashboard({ surface = 'management' }) {
     const handleAddSubLocation = async (e, parentId) => {
         if (e && e.preventDefault) e.preventDefault();
         if (!newSubLocName.trim()) { setAddingSubLocTo(null); return; }
+        const nameIssues = getLocationNameIssues(newSubLocName);
+        if (nameIssues.length > 0) return alert(`Nom d’emplacement à préciser : ${nameIssues.join(', ')}.`);
 
         // Find parent to inherit usage, or default to internal
         const parent = locations.find(l => l.id === parentId);
@@ -362,6 +364,8 @@ export default function StockDashboard({ surface = 'management' }) {
     const handleCreateManagedLocation = async (event) => {
         event.preventDefault();
         if (!locationForm.name.trim()) return;
+        const nameIssues = getLocationNameIssues(locationForm.name);
+        if (nameIssues.length > 0) return alert(`Nom d’emplacement à préciser : ${nameIssues.join(', ')}.`);
         try {
             await api.post('/v2/stock/locations', {
                 name: locationForm.name.trim(),
@@ -1197,6 +1201,7 @@ export default function StockDashboard({ surface = 'management' }) {
         const descendantIds = getLocationDescendantIds(parentLoc.id);
         const stockLineCount = quants.filter(quant => descendantIds.includes(quant.location_id) && Number(quant.quantity || 0) !== 0).length;
         const hasChildren = children.length > 0;
+        const quality = getLocationQuality(parentLoc);
 
         return (
             <div key={parentLoc.id} className="space-y-2">
@@ -1235,6 +1240,13 @@ export default function StockDashboard({ surface = 'management' }) {
                                         : 'bg-amber-50 text-amber-700'
                                 }`}>
                                     {stockLineCount > 0 ? `${stockLineCount} ligne(s) stock` : 'Vide / à qualifier'}
+                                </span>
+                                <span className={`rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-wide ${
+                                    quality.exploitable
+                                        ? 'bg-blue-50 text-blue-700'
+                                        : 'bg-red-50 text-red-700'
+                                }`}>
+                                    {quality.exploitable ? 'Exploitable atelier' : `À corriger · ${quality.role}`}
                                 </span>
                             </div>
                         </div>
@@ -1296,6 +1308,47 @@ export default function StockDashboard({ surface = 'management' }) {
         if (!loc.parent_id) return loc.name;
         const parent = locations.find(l => l.id === loc.parent_id);
         return parent ? `${getFullLocationName(parent)} > ${loc.name}` : loc.name;
+    };
+
+    const vagueLocationWords = ['divers', 'stock', 'test', 'zone', 'autre', 'temp', 'temporary', 'vrac', 'inconnu', 'unknown'];
+    const getLocationDepth = (loc) => {
+        if (!loc?.parent_id) return 0;
+        const parent = locations.find(item => item.id === loc.parent_id);
+        return parent ? 1 + getLocationDepth(parent) : 0;
+    };
+    const getLocationRole = (loc) => {
+        const label = `${loc?.name || ''} ${getFullLocationName(loc || {})}`.toLowerCase();
+        if (loc?.usage === 'production' || label.includes('atelier') || label.includes('préparation') || label.includes('preparation')) return 'Zone atelier';
+        if (label.includes('casier') || label.includes('case') || label.includes('bac') || /\b[a-z]\d+\b/i.test(label)) return 'Casier final';
+        if (label.includes('rack') || label.includes('travée') || label.includes('travee') || label.includes('étag') || label.includes('etag')) return 'Rack';
+        return loc?.parent_id ? 'Zone parent' : 'Magasin';
+    };
+    const getLocationQuality = (loc) => {
+        if (!loc) return { role: 'Inconnu', exploitable: false, issues: ['emplacement absent'] };
+        const fullName = getFullLocationName(loc);
+        const normalizedName = String(loc.name || '').trim().toLowerCase();
+        const ambiguousPrefixWords = vagueLocationWords.filter(word => word !== 'zone');
+        const role = getLocationRole(loc);
+        const issues = [];
+        if (loc.usage !== 'internal' && loc.usage !== 'production') issues.push('lieu virtuel');
+        if (!normalizedName) issues.push('nom absent');
+        if (normalizedName.length < 3) issues.push('nom trop court');
+        if (vagueLocationWords.includes(normalizedName)) issues.push('nom trop vague');
+        if (ambiguousPrefixWords.some(word => normalizedName === word || normalizedName.startsWith(`${word} `))) issues.push('nom à préciser');
+        if (role === 'Magasin' && getLocationDepth(loc) === 0 && !locations.some(child => child.parent_id === loc.id)) issues.push('structure à détailler');
+        if (['Magasin', 'Zone parent'].includes(role)) issues.push('point de prélèvement à préciser');
+        const exploitable = issues.length === 0 && ['Rack', 'Casier final', 'Zone atelier'].includes(role);
+        return { role, exploitable, issues, fullName };
+    };
+    const getLocationNameIssues = (name) => {
+        const normalizedName = String(name || '').trim().toLowerCase();
+        const ambiguousPrefixWords = vagueLocationWords.filter(word => word !== 'zone');
+        const issues = [];
+        if (!normalizedName) issues.push('Nom obligatoire');
+        if (normalizedName && normalizedName.length < 3) issues.push('Nom trop court');
+        if (vagueLocationWords.includes(normalizedName)) issues.push('Nom trop vague');
+        if (ambiguousPrefixWords.some(word => normalizedName === word || normalizedName.startsWith(`${word} `))) issues.push('Précisez le rack, casier ou usage réel');
+        return issues;
     };
 
     const getLocationDescendantIds = (locationId) => {
@@ -1400,6 +1453,15 @@ export default function StockDashboard({ surface = 'management' }) {
         const variants = product?.variants || [];
         return variants.length === 0 || variants.every(variant => Number(variant.min_threshold || 0) <= 0);
     };
+    const productHasUnclearLocation = (product) => {
+        const variantIds = new Set((product?.variants || []).map(variant => variant.id));
+        const stockRows = quants
+            .filter(quant => variantIds.has(quant.variant_id) && Number(quant.quantity || 0) !== 0)
+            .map(quant => locations.find(location => location.id === quant.location_id))
+            .filter(location => location?.usage === 'internal');
+        if (stockRows.length === 0) return false;
+        return !stockRows.some(location => getLocationQuality(location).exploitable);
+    };
 
     const matchesCatalogFilter = (product) => {
         const status = String(product?.catalog_status || 'ACTIVE').toUpperCase();
@@ -1408,6 +1470,7 @@ export default function StockDashboard({ surface = 'management' }) {
         if (catalogQuickFilter === 'draft') return isDraftProduct(product);
         if (catalogQuickFilter === 'missing_supplier') return productHasMissingSupplier(product);
         if (catalogQuickFilter === 'missing_threshold') return productHasMissingThreshold(product);
+        if (catalogQuickFilter === 'missing_location') return productHasUnclearLocation(product);
         if (catalogQuickFilter === 'active') return status === 'ACTIVE' && !isDraftProduct(product);
         if (catalogQuickFilter === 'blocked') return ['BLOCKED', 'ARCHIVED', 'INACTIVE'].includes(status);
         return true;
@@ -1620,6 +1683,7 @@ export default function StockDashboard({ surface = 'management' }) {
         toIdentify: isProductToIdentify(product),
         missingSupplier: productHasMissingSupplier(product),
         missingThreshold: productHasMissingThreshold(product),
+        missingLocation: productHasUnclearLocation(product),
         status: String(product.catalog_status || 'ACTIVE').toUpperCase(),
     }));
     const catalogQualityStats = catalogQualityRows.reduce((stats, row) => {
@@ -1629,6 +1693,7 @@ export default function StockDashboard({ surface = 'management' }) {
         if (row.toIdentify) stats.toIdentify += 1;
         if (row.missingSupplier) stats.missingSupplier += 1;
         if (row.missingThreshold) stats.missingThreshold += 1;
+        if (row.missingLocation) stats.missingLocation += 1;
         if (['BLOCKED', 'ARCHIVED', 'INACTIVE'].includes(row.status)) stats.blocked += 1;
         stats.sources[row.source] = (stats.sources[row.source] || 0) + 1;
         return stats;
@@ -1639,11 +1704,12 @@ export default function StockDashboard({ surface = 'management' }) {
         toIdentify: 0,
         missingSupplier: 0,
         missingThreshold: 0,
+        missingLocation: 0,
         blocked: 0,
         sources: { CORTIZO: 0, TECHNAL: 0, SEPALUMIC: 0, MMG: 0, AUTRE: 0 },
     });
     const catalogQualificationRows = catalogQualityRows
-        .filter(row => row.toIdentify || row.isDraft || row.missingSupplier || row.missingThreshold || row.quality.score < 80)
+        .filter(row => row.toIdentify || row.isDraft || row.missingSupplier || row.missingThreshold || row.missingLocation || row.quality.score < 80)
         .sort((a, b) => a.quality.score - b.quality.score || String(a.product.name || '').localeCompare(String(b.product.name || '')))
         .slice(0, 6);
     const isCatalogQualificationFilterActive = catalogQuickFilter !== 'all' || catalogSourceFilter !== 'all';
@@ -1826,8 +1892,8 @@ export default function StockDashboard({ surface = 'management' }) {
             .map(quant => quant.location_id)
     );
     const internalLocationsWithStock = physicalLocations.filter(location => locationIdsWithStock.has(location.id));
-    const internalLeafLocations = physicalLocations.filter(location => !locations.some(child => child.parent_id === location.id));
-    const emptyInternalLocations = physicalLocations.filter(location => !locationIdsWithStock.has(location.id));
+    const unclearInternalLocations = physicalLocations.filter(location => !getLocationQuality(location).exploitable);
+    const exploitableInternalLocations = physicalLocations.filter(location => getLocationQuality(location).exploitable);
     const locationStockCoverage = physicalLocations.length
         ? Math.round((internalLocationsWithStock.length / physicalLocations.length) * 100)
         : 0;
@@ -1840,6 +1906,7 @@ export default function StockDashboard({ surface = 'management' }) {
         .filter(row => Number(row.quantity || 0) > 0)
         .sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0))
         .slice(0, 3);
+    const selectedProductHasUnclearLocation = selectedProduct ? productHasUnclearLocation(selectedProduct) : false;
     const selectedProductMovements = selectedProduct ? getProductMovements(selectedProduct) : [];
     const selectedProductReservations = selectedProduct ? getProductReservations(selectedProduct) : [];
     const selectedProductVariantIds = new Set((selectedProduct?.variants || []).map(variant => variant.id));
@@ -1851,6 +1918,7 @@ export default function StockDashboard({ surface = 'management' }) {
     const selectedLocationMovements = selectedLocation ? getLocationMovements(selectedLocation) : [];
     const selectedLocationInventorySessions = selectedLocation ? getLocationInventorySessions(selectedLocation) : [];
     const selectedLocationChildren = selectedLocation ? locations.filter(location => location.parent_id === selectedLocation.id) : [];
+    const selectedLocationQuality = selectedLocation ? getLocationQuality(selectedLocation) : null;
     const selectedLocationSummary = selectedLocationStockRows.reduce((summary, row) => ({
         physicalStock: summary.physicalStock + Number(row.quantity || 0),
         reserved: summary.reserved + Number(row.reservedQuantity || 0),
@@ -1869,6 +1937,7 @@ export default function StockDashboard({ surface = 'management' }) {
         setShowLocationManagerModal(true);
         window.setTimeout(() => locationNameInputRef.current?.focus(), 80);
     };
+    const locationFormIssues = getLocationNameIssues(locationForm.name);
     const stockNavGroups = [
         {
             label: 'Accueil',
@@ -2255,6 +2324,15 @@ export default function StockDashboard({ surface = 'management' }) {
                                             <span className="rounded-lg bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-blue-100">
                                                 {locationUsageLabels[selectedLocation.usage] || selectedLocation.usage}
                                             </span>
+                                            {selectedLocationQuality && (
+                                                <span className={`rounded-lg px-3 py-1 text-[10px] font-black uppercase tracking-widest ${
+                                                    selectedLocationQuality.exploitable
+                                                        ? 'bg-emerald-500/20 text-emerald-100'
+                                                        : 'bg-amber-500/20 text-amber-100'
+                                                }`}>
+                                                    {selectedLocationQuality.exploitable ? 'Exploitable atelier' : `À clarifier · ${selectedLocationQuality.role}`}
+                                                </span>
+                                            )}
                                             {selectedLocationChildren.length > 0 && (
                                                 <span className="rounded-lg bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-200">
                                                     {selectedLocationChildren.length} sous-zone(s)
@@ -2313,6 +2391,26 @@ export default function StockDashboard({ surface = 'management' }) {
                                 </div>
 
                                 <div className="p-6 space-y-6">
+                                    {selectedLocationQuality && !selectedLocationQuality.exploitable && (
+                                        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                                <div>
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">Qualité emplacement</p>
+                                                    <h3 className="mt-1 text-base font-black text-amber-950">Cette zone n’est pas encore pleinement exploitable atelier</h3>
+                                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                                        {(selectedLocationQuality.issues || []).map(issue => (
+                                                            <span key={issue} className="rounded-md bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700">
+                                                                {issue}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                <span className="rounded-xl bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-amber-700">
+                                                    {selectedLocationQuality.role}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                                         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                                             <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Stock physique</p>
@@ -2737,6 +2835,28 @@ export default function StockDashboard({ surface = 'management' }) {
                                                     Gérer le plan
                                                 </button>
                                             </div>
+                                            {selectedProductHasUnclearLocation && (
+                                                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4">
+                                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                                        <div>
+                                                            <p className="text-[10px] uppercase tracking-widest font-black text-red-700">Emplacement à fiabiliser</p>
+                                                            <p className="mt-1 text-sm font-black text-red-950">
+                                                                Du stock existe, mais aucun rack/casier exploitable atelier n’est clairement identifié.
+                                                            </p>
+                                                            <p className="mt-1 text-xs font-bold text-red-700">
+                                                                Rattachez l’article à un emplacement précis pour éviter les erreurs de préparation.
+                                                            </p>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setCurrentMenu('locations')}
+                                                            className="rounded-xl bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-red-700 hover:bg-red-100"
+                                                        >
+                                                            Corriger
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
                                             {selectedProductPrimaryLocations.length > 0 ? (
                                                 <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
                                                     {selectedProductPrimaryLocations.map((row, index) => (
@@ -2750,7 +2870,16 @@ export default function StockDashboard({ surface = 'management' }) {
                                                                 {index === 0 ? 'Emplacement principal' : 'Autre emplacement'}
                                                             </p>
                                                             <p className="mt-1 font-black text-slate-950">{row.locationName}</p>
-                                                            <p className="mt-2 text-xs font-bold text-slate-500">{row.variant?.reference || 'Référence inconnue'}</p>
+                                                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                                                <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">{row.variant?.reference || 'Référence inconnue'}</span>
+                                                                <span className={`rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-wide ${
+                                                                    getLocationQuality(row.location).exploitable
+                                                                        ? 'bg-emerald-50 text-emerald-700'
+                                                                        : 'bg-amber-50 text-amber-700'
+                                                                }`}>
+                                                                    {getLocationQuality(row.location).exploitable ? 'Exploitable atelier' : getLocationQuality(row.location).role}
+                                                                </span>
+                                                            </div>
                                                             <div className="mt-3 flex items-end justify-between gap-3">
                                                                 <p className="text-2xl font-black text-blue-700">{formatQty(row.quantity)}</p>
                                                                 <span className="text-[10px] font-black uppercase tracking-widest text-blue-600">
@@ -3363,14 +3492,14 @@ export default function StockDashboard({ surface = 'management' }) {
                                         <p className="text-xs font-bold text-slate-500 mt-1">{locationStockCoverage}% du plan contient du stock réel.</p>
                                     </div>
                                     <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Emplacements finaux</p>
-                                        <p className="text-3xl font-black text-emerald-800 mt-2">{internalLeafLocations.length}</p>
-                                        <p className="text-xs font-bold text-emerald-700 mt-1">Casiers, racks ou positions où affecter les articles.</p>
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Exploitables atelier</p>
+                                        <p className="text-3xl font-black text-emerald-800 mt-2">{exploitableInternalLocations.length}</p>
+                                        <p className="text-xs font-bold text-emerald-700 mt-1">Racks, casiers ou zones atelier assez précis.</p>
                                     </div>
                                     <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">À ranger/qualifier</p>
-                                        <p className="text-3xl font-black text-amber-800 mt-2">{emptyInternalLocations.length}</p>
-                                        <p className="text-xs font-bold text-amber-700 mt-1">Zones vides ou encore non utilisées par le stock.</p>
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">À clarifier</p>
+                                        <p className="text-3xl font-black text-amber-800 mt-2">{unclearInternalLocations.length}</p>
+                                        <p className="text-xs font-bold text-amber-700 mt-1">Noms vagues, zones parent seules ou emplacements incomplets.</p>
                                     </div>
                                 </div>
 
@@ -3471,28 +3600,36 @@ export default function StockDashboard({ surface = 'management' }) {
                                             <div className="flex items-start justify-between gap-3">
                                                 <div>
                                                     <p className="text-xs uppercase tracking-widest font-black text-amber-700">Zones à qualifier</p>
-                                                    <h3 className="font-black text-amber-950 mt-1">{emptyInternalLocations.length} emplacement(s) sans stock</h3>
+                                                    <h3 className="font-black text-amber-950 mt-1">{unclearInternalLocations.length} emplacement(s) à clarifier</h3>
                                                     <p className="mt-1 text-sm font-bold text-amber-800">
-                                                        À vérifier : zone réellement vide, zone brouillon, ou nom à préciser.
+                                                        À vérifier : nom vague, zone parent sans rack/casier, ou emplacement non exploitable atelier.
                                                     </p>
                                                 </div>
-                                                <span className="rounded-xl bg-white px-3 py-2 text-xl font-black text-amber-900">{emptyInternalLocations.length}</span>
+                                                <span className="rounded-xl bg-white px-3 py-2 text-xl font-black text-amber-900">{unclearInternalLocations.length}</span>
                                             </div>
                                             <div className="mt-4 space-y-2 max-h-52 overflow-y-auto pr-1">
-                                                {emptyInternalLocations.slice(0, 6).map(location => (
-                                                    <button
-                                                        key={location.id}
-                                                        type="button"
-                                                        onClick={(event) => openLocationDetail(event, location)}
-                                                        className="w-full rounded-xl border border-amber-100 bg-white p-3 text-left hover:bg-amber-100/40"
-                                                    >
-                                                        <p className="font-black text-slate-900">{getFullLocationName(location)}</p>
-                                                        <p className="mt-1 text-[10px] uppercase tracking-wide font-black text-amber-700">Vide / à qualifier</p>
-                                                    </button>
-                                                ))}
-                                                {emptyInternalLocations.length === 0 && (
+                                                {unclearInternalLocations.slice(0, 6).map(location => {
+                                                    const quality = getLocationQuality(location);
+                                                    return (
+                                                        <button
+                                                            key={location.id}
+                                                            type="button"
+                                                            onClick={(event) => openLocationDetail(event, location)}
+                                                            className="w-full rounded-xl border border-amber-100 bg-white p-3 text-left hover:bg-amber-100/40"
+                                                        >
+                                                            <p className="font-black text-slate-900">{getFullLocationName(location)}</p>
+                                                            <div className="mt-1 flex flex-wrap gap-1.5">
+                                                                <span className="rounded-md bg-amber-50 px-2 py-1 text-[10px] uppercase tracking-wide font-black text-amber-700">{quality.role}</span>
+                                                                {(quality.issues || []).slice(0, 2).map(issue => (
+                                                                    <span key={issue} className="rounded-md bg-red-50 px-2 py-1 text-[10px] uppercase tracking-wide font-black text-red-700">{issue}</span>
+                                                                ))}
+                                                            </div>
+                                                        </button>
+                                                    );
+                                                })}
+                                                {unclearInternalLocations.length === 0 && (
                                                     <p className="rounded-xl border border-dashed border-amber-200 bg-white p-4 text-center text-sm font-bold text-amber-700">
-                                                        Aucun emplacement vide à qualifier.
+                                                        Tous les emplacements physiques sont exploitables côté atelier.
                                                     </p>
                                                 )}
                                             </div>
@@ -4091,6 +4228,15 @@ export default function StockDashboard({ surface = 'management' }) {
                                     <p className="text-xs font-bold text-slate-400">
                                         Évitez les noms flous type “divers” ou “stock” : l’opérateur doit pouvoir trouver la zone sans demander.
                                     </p>
+                                    {locationFormIssues.length > 0 && locationForm.name.trim() && (
+                                        <div className="mt-2 flex flex-wrap gap-1.5">
+                                            {locationFormIssues.map(issue => (
+                                                <span key={issue} className="rounded-md bg-red-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-red-700">
+                                                    {issue}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
                                 </label>
                                 <label className="block space-y-1">
                                     <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Parent</span>
@@ -4128,7 +4274,7 @@ export default function StockDashboard({ surface = 'management' }) {
                                 </label>
                                 <button
                                     type="submit"
-                                    disabled={!locationForm.name.trim()}
+                                    disabled={!locationForm.name.trim() || locationFormIssues.length > 0}
                                     className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black"
                                 >
                                     Créer la zone
@@ -7007,6 +7153,7 @@ function CatalogQualificationPanel({
         { key: 'draft', label: 'Brouillons', value: stats.drafts, tone: 'amber' },
         { key: 'missing_supplier', label: 'Sans fournisseur', value: stats.missingSupplier, tone: 'orange' },
         { key: 'missing_threshold', label: 'Sans seuil', value: stats.missingThreshold, tone: 'blue' },
+        { key: 'missing_location', label: 'Sans emplacement clair', value: stats.missingLocation, tone: 'orange' },
         { key: 'active', label: 'Actifs', value: stats.active, tone: 'emerald' },
         { key: 'blocked', label: 'Bloqués', value: stats.blocked, tone: 'slate' },
     ];
