@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -32,6 +34,11 @@ class SupplierBase(BaseModel):
     website: Optional[str] = None
     payment_terms: Optional[str] = None
     lead_time_days: Optional[int] = None
+    minimum_order_amount: Optional[float] = None
+    free_shipping_threshold: Optional[float] = None
+    default_discount_percent: float = 0.0
+    price_valid_until: Optional[datetime] = None
+    preferred_families: Optional[str] = None
     preferred_contact_method: Optional[str] = None
     notes: Optional[str] = None
 
@@ -640,6 +647,11 @@ def get_supplier_operations(supplier_id: int, db: Session = Depends(get_db)):
             "delivery_terms": supplier.delivery_terms,
             "payment_terms": supplier.payment_terms,
             "lead_time_days": supplier.lead_time_days,
+            "minimum_order_amount": float(supplier.minimum_order_amount) if supplier.minimum_order_amount is not None else None,
+            "free_shipping_threshold": float(supplier.free_shipping_threshold) if supplier.free_shipping_threshold is not None else None,
+            "default_discount_percent": float(supplier.default_discount_percent or 0),
+            "price_valid_until": supplier.price_valid_until,
+            "preferred_families": supplier.preferred_families,
             "preferred_contact_method": supplier.preferred_contact_method,
             "website": supplier.website,
             "notes": supplier.notes,

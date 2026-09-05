@@ -268,6 +268,48 @@ const groupNeedsBySupplier = (needs) => Object.values(needs.reduce((acc, need) =
     return acc;
 }, {})).sort((a, b) => b.critical_count - a.critical_count || b.urgent_count - a.urgent_count || a.supplier.localeCompare(b.supplier));
 
+const formatSupplierMoney = (amount, currency = 'EUR') => (
+    amount === null || amount === undefined || amount === ''
+        ? 'Non renseigné'
+        : Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency })
+);
+
+const buildPurchaseConditionAlerts = (supplier, totalAmount, expectedDate, lines = [], variants = []) => {
+    if (!supplier) return [];
+    const alerts = [];
+    const currency = supplier.default_currency || 'EUR';
+    const minimum = Number(supplier.minimum_order_amount || 0);
+    const franco = Number(supplier.free_shipping_threshold || 0);
+    const leadTime = Number(supplier.lead_time_days || 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (minimum > 0 && totalAmount > 0 && totalAmount < minimum) {
+        alerts.push(`Minimum non atteint : ${formatSupplierMoney(totalAmount, currency)} / ${formatSupplierMoney(minimum, currency)}.`);
+    }
+    if (franco > 0 && totalAmount > 0 && totalAmount < franco) {
+        alerts.push(`Franco non atteint : ${formatSupplierMoney(totalAmount, currency)} / ${formatSupplierMoney(franco, currency)}.`);
+    }
+    if (leadTime > 0 && expectedDate) {
+        const requested = new Date(expectedDate);
+        requested.setHours(0, 0, 0, 0);
+        const requestedDays = Math.ceil((requested - today) / 86400000);
+        if (requestedDays < leadTime) alerts.push(`Délai demandé J+${Math.max(requestedDays, 0)} sous le standard fournisseur ${leadTime} j.`);
+    }
+    if (supplier.price_valid_until) {
+        const validUntil = new Date(supplier.price_valid_until);
+        validUntil.setHours(0, 0, 0, 0);
+        if (validUntil < today) alerts.push(`Tarif fournisseur expiré le ${validUntil.toLocaleDateString('fr-FR')}.`);
+    }
+    const selectedSupplierName = String(supplier.name || '').trim();
+    const offCatalogLine = lines.find(line => {
+        const variant = variants.find(v => String(v.id) === String(line.variant_id));
+        return variant?.product_supplier && selectedSupplierName && variant.product_supplier !== selectedSupplierName;
+    });
+    if (offCatalogLine) alerts.push('Au moins une ligne utilise un fournisseur différent du fournisseur préféré article.');
+    if (supplier.supplier_status === 'TO_QUALIFY') alerts.push('Fournisseur à qualifier : validation achats recommandée.');
+    return alerts;
+};
+
 export default function PurchasesDashboard() {
     const [currentTab, setCurrentTab] = useState('dashboard'); // dashboard, orders, requests, suppliers, disputes, ai
 
@@ -326,6 +368,11 @@ export default function PurchasesDashboard() {
         website: '',
         payment_terms: '',
         lead_time_days: '',
+        minimum_order_amount: '',
+        free_shipping_threshold: '',
+        default_discount_percent: '',
+        price_valid_until: '',
+        preferred_families: '',
         preferred_contact_method: 'email',
         notes: '',
     };
@@ -506,6 +553,7 @@ export default function PurchasesDashboard() {
     const poGlobalDiscountAmount = poAfterLineDiscount * (poGlobalDiscountPercent / 100);
     const poSubtotal = poAfterLineDiscount - poGlobalDiscountAmount;
     const validLines = newPO.lines.filter(line => line.variant_id && parseFloat(line.quantity || 0) > 0).length;
+    const purchaseConditionAlerts = buildPurchaseConditionAlerts(selectedSupplier, poSubtotal, newPO.expected_date, newPO.lines, availableVariants);
     const purchaseNeeds = normalizePurchaseNeeds(aiRecommendations, availableVariants, suppliers);
     const filteredPurchaseNeeds = purchaseNeeds.filter(need => {
         const term = searchTerm.toLowerCase();
@@ -676,6 +724,11 @@ export default function PurchasesDashboard() {
             const payload = {
                 ...newSupplier,
                 lead_time_days: newSupplier.lead_time_days === '' ? null : parseInt(newSupplier.lead_time_days, 10),
+                minimum_order_amount: newSupplier.minimum_order_amount === '' ? null : Number(newSupplier.minimum_order_amount),
+                free_shipping_threshold: newSupplier.free_shipping_threshold === '' ? null : Number(newSupplier.free_shipping_threshold),
+                default_discount_percent: newSupplier.default_discount_percent === '' ? 0 : Number(newSupplier.default_discount_percent),
+                price_valid_until: newSupplier.price_valid_until || null,
+                preferred_families: newSupplier.preferred_families.trim() || null,
             };
             await api.post('/v2/suppliers/', payload);
             setShowSupplierModal(false);
@@ -1205,6 +1258,12 @@ export default function PurchasesDashboard() {
                                     <div className="text-xs text-slate-400 mt-2 font-medium flex items-center gap-1">
                                         <FileText className="w-3 h-3"/> {po.lines_count} Lignes
                                     </div>
+                                    {(po.contract_alerts || []).some(alert => ['WARNING', 'BLOCKING'].includes(alert.severity)) && (
+                                        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800 flex items-center gap-2">
+                                            <AlertTriangle className="w-3.5 h-3.5" />
+                                            Conditions fournisseur à vérifier
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                             {filteredPurchases.length === 0 && (
@@ -1244,6 +1303,12 @@ export default function PurchasesDashboard() {
                                         <div className="text-xs text-slate-400 mt-2 font-medium flex items-center gap-1">
                                             <FileText className="w-3 h-3"/> {req.lines_count} ligne(s) · demandé par {req.requested_by || 'Système'}
                                         </div>
+                                        {(req.contract_alerts || []).some(alert => ['WARNING', 'BLOCKING'].includes(alert.severity)) && (
+                                            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800 flex items-center gap-2">
+                                                <AlertTriangle className="w-3.5 h-3.5" />
+                                                Conditions fournisseur à vérifier
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             {purchaseRequests.length === 0 && (
@@ -1899,6 +1964,28 @@ export default function PurchasesDashboard() {
                                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Paiement</p>
                                                     <p className="font-black text-slate-800 truncate">{selectedSupplier.payment_terms || 'Non renseigné'}</p>
                                                 </div>
+                                                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3">
+                                                    <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Minimum</p>
+                                                    <p className="font-black text-emerald-900">{formatSupplierMoney(selectedSupplier.minimum_order_amount, selectedSupplier.default_currency || 'EUR')}</p>
+                                                </div>
+                                                <div className="rounded-xl bg-blue-50 border border-blue-100 p-3">
+                                                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Franco</p>
+                                                    <p className="font-black text-blue-900">{formatSupplierMoney(selectedSupplier.free_shipping_threshold, selectedSupplier.default_currency || 'EUR')}</p>
+                                                </div>
+                                                <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3">
+                                                    <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Tarif valable</p>
+                                                    <p className="font-black text-indigo-900">{selectedSupplier.price_valid_until ? new Date(selectedSupplier.price_valid_until).toLocaleDateString('fr-FR') : 'Non renseigné'}</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {purchaseConditionAlerts.length > 0 && (
+                                            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                                                <h5 className="font-black text-amber-900 flex items-center gap-2">
+                                                    <AlertTriangle className="w-4 h-4" /> Commande hors conditions à vérifier
+                                                </h5>
+                                                <ul className="mt-2 space-y-1 text-sm font-bold text-amber-800 list-disc pl-5">
+                                                    {purchaseConditionAlerts.map((alert, index) => <li key={index}>{alert}</li>)}
+                                                </ul>
                                             </div>
                                         )}
                                     </div>
@@ -2657,6 +2744,30 @@ export default function PurchasesDashboard() {
                                 </div>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Minimum commande</label>
+                                        <input type="number" min="0" step="0.01" value={newSupplier.minimum_order_amount} onChange={e=>setNewSupplier({...newSupplier, minimum_order_amount: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="€"/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Franco</label>
+                                        <input type="number" min="0" step="0.01" value={newSupplier.free_shipping_threshold} onChange={e=>setNewSupplier({...newSupplier, free_shipping_threshold: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="€"/>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Remise négociée</label>
+                                        <input type="number" min="0" max="100" step="0.01" value={newSupplier.default_discount_percent} onChange={e=>setNewSupplier({...newSupplier, default_discount_percent: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="%"/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Validité tarifaire</label>
+                                        <input type="date" value={newSupplier.price_valid_until} onChange={e=>setNewSupplier({...newSupplier, price_valid_until: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"/>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Familles préférées</label>
+                                    <input type="text" value={newSupplier.preferred_families} onChange={e=>setNewSupplier({...newSupplier, preferred_families: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="PROFIL, ACCESSOIRE, QUINCAILLERIE..."/>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
                                         <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Incoterm</label>
                                         <input type="text" value={newSupplier.incoterm} onChange={e=>setNewSupplier({...newSupplier, incoterm: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500" placeholder="EXW, DAP, FCA..."/>
                                     </div>
@@ -3190,6 +3301,7 @@ const PurchaseDashboardOverview = ({ dashboard, supplierOperations = {}, setCurr
         { label: 'Factures à payer', value: summary.supplier_invoices_to_pay || 0, tone: 'bg-indigo-50 border-indigo-100 text-indigo-700', tab: 'orders' },
         { label: 'Paiements bloqués', value: summary.supplier_invoices_blocked || 0, tone: 'bg-rose-50 border-rose-100 text-rose-700', tab: 'suppliers' },
         { label: 'Demandes à valider', value: summary.pending_requests || 0, tone: 'bg-amber-50 border-amber-100 text-amber-700', tab: 'requests' },
+        { label: 'Hors conditions', value: summary.out_of_condition_orders || 0, tone: 'bg-yellow-50 border-yellow-100 text-yellow-700', tab: 'orders' },
         { label: 'Litiges ouverts', value: summary.open_disputes || 0, tone: 'bg-rose-50 border-rose-100 text-rose-700', tab: 'disputes' },
     ];
 
@@ -4421,6 +4533,22 @@ const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurr
                                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Paiement</p>
                                                 <p className="font-black text-slate-800">{sup.payment_terms || 'Non renseigné'}</p>
                                             </div>
+                                            <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-100">
+                                                <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Minimum</p>
+                                                <p className="font-black text-emerald-900">{formatSupplierMoney(sup.minimum_order_amount, sup.default_currency || 'EUR')}</p>
+                                            </div>
+                                            <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100">
+                                                <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">Franco</p>
+                                                <p className="font-black text-blue-900">{formatSupplierMoney(sup.free_shipping_threshold, sup.default_currency || 'EUR')}</p>
+                                            </div>
+                                            <div className="bg-indigo-50 rounded-2xl p-4 border border-indigo-100">
+                                                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1">Remise négociée</p>
+                                                <p className="font-black text-indigo-900">{sup.default_discount_percent ? `${Number(sup.default_discount_percent).toLocaleString('fr-FR')} %` : 'Non renseigné'}</p>
+                                            </div>
+                                            <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100">
+                                                <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1">Tarif valable</p>
+                                                <p className="font-black text-amber-900">{sup.price_valid_until ? new Date(sup.price_valid_until).toLocaleDateString('fr-FR') : 'Non renseigné'}</p>
+                                            </div>
                                             <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
                                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Contact</p>
                                                 <p className="font-black text-slate-800">{sup.preferred_contact_method || 'Non renseigné'}</p>
@@ -4450,6 +4578,12 @@ const SupplierProfile = ({ sup, purchases, disputes = [], openPODetails, setCurr
                                             <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 mb-6">
                                                 <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">Conditions livraison</p>
                                                 <p className="font-bold text-blue-950">{sup.delivery_terms}</p>
+                                            </div>
+                                        )}
+                                        {sup.preferred_families && (
+                                            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 mb-6">
+                                                <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Fournisseur préféré pour</p>
+                                                <p className="font-bold text-emerald-950">{sup.preferred_families}</p>
                                             </div>
                                         )}
                                         <div className="text-center p-6 bg-slate-50 rounded-2xl border border-slate-100 mb-6">

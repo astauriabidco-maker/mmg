@@ -396,6 +396,11 @@ class SupplierBase(BaseModel):
     website: Optional[str] = None
     payment_terms: Optional[str] = None
     lead_time_days: Optional[int] = None
+    minimum_order_amount: Optional[float] = None
+    free_shipping_threshold: Optional[float] = None
+    default_discount_percent: float = 0.0
+    price_valid_until: Optional[datetime] = None
+    preferred_families: Optional[str] = None
     preferred_contact_method: Optional[str] = None
     notes: Optional[str] = None
     is_active: bool = True
