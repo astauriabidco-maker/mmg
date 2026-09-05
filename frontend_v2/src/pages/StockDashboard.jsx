@@ -1857,6 +1857,18 @@ export default function StockDashboard({ surface = 'management' }) {
         available: summary.available + Number(row.availableQuantity || 0),
         valuation: summary.valuation + Number(row.valuation || 0),
     }), { physicalStock: 0, reserved: 0, available: 0, valuation: 0 });
+    const locationTemplates = [
+        { label: 'Magasin', name: 'Magasin principal', usage: 'internal', hint: 'Zone racine pour réception et stockage courant.' },
+        { label: 'Zone', name: 'Zone ALU', usage: 'internal', hint: 'Famille matière ou zone physique de rangement.' },
+        { label: 'Rack', name: 'Rack ALU A', usage: 'internal', hint: 'Travée, étagère ou support visible atelier.' },
+        { label: 'Casier', name: 'Casier A1', usage: 'internal', hint: 'Position finale où l’opérateur prend la pièce.' },
+        { label: 'Atelier', name: 'Zone préparation atelier', usage: 'production', hint: 'Zone de remise interne avant débit réel.' },
+    ];
+    const openLocationTemplateForm = (template) => {
+        setLocationForm({ name: template.name, usage: template.usage, parent_id: '' });
+        setShowLocationManagerModal(true);
+        window.setTimeout(() => locationNameInputRef.current?.focus(), 80);
+    };
     const stockNavGroups = [
         {
             label: 'Accueil',
@@ -2727,17 +2739,24 @@ export default function StockDashboard({ surface = 'management' }) {
                                             </div>
                                             {selectedProductPrimaryLocations.length > 0 ? (
                                                 <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-                                                    {selectedProductPrimaryLocations.map(row => (
+                                                    {selectedProductPrimaryLocations.map((row, index) => (
                                                         <button
                                                             key={`${row.variant_id}-${row.location_id}-primary`}
                                                             type="button"
                                                             onClick={(event) => openLocationDetail(event, row.location)}
                                                             className="rounded-2xl border border-white bg-white p-4 text-left shadow-sm hover:border-blue-200 hover:bg-blue-50"
                                                         >
-                                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Emplacement</p>
+                                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">
+                                                                {index === 0 ? 'Emplacement principal' : 'Autre emplacement'}
+                                                            </p>
                                                             <p className="mt-1 font-black text-slate-950">{row.locationName}</p>
                                                             <p className="mt-2 text-xs font-bold text-slate-500">{row.variant?.reference || 'Référence inconnue'}</p>
-                                                            <p className="mt-3 text-2xl font-black text-blue-700">{formatQty(row.quantity)}</p>
+                                                            <div className="mt-3 flex items-end justify-between gap-3">
+                                                                <p className="text-2xl font-black text-blue-700">{formatQty(row.quantity)}</p>
+                                                                <span className="text-[10px] font-black uppercase tracking-widest text-blue-600">
+                                                                    Voir zone
+                                                                </span>
+                                                            </div>
                                                         </button>
                                                     ))}
                                                 </div>
@@ -3370,6 +3389,38 @@ export default function StockDashboard({ surface = 'management' }) {
                                     ))}
                                 </div>
 
+                                <div className="p-6 border-b border-slate-100 bg-slate-50">
+                                    <div className="flex flex-wrap items-start justify-between gap-4">
+                                        <div>
+                                            <p className="text-[10px] uppercase tracking-[0.24em] font-black text-blue-600">Création assistée</p>
+                                            <h3 className="mt-1 text-xl font-black text-slate-950">Créer avec un modèle atelier</h3>
+                                            <p className="mt-1 text-sm font-bold text-slate-500">
+                                                Structure recommandée : Magasin → Zone → Rack → Casier. Les noms restent modifiables avant validation.
+                                            </p>
+                                        </div>
+                                        {!canManageLocations && (
+                                            <span className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-500">
+                                                Lecture seule
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                                        {locationTemplates.map(template => (
+                                            <button
+                                                key={template.label}
+                                                type="button"
+                                                disabled={!canManageLocations}
+                                                onClick={() => openLocationTemplateForm(template)}
+                                                className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-blue-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                            >
+                                                <p className="text-[10px] uppercase tracking-widest font-black text-blue-500">Modèle</p>
+                                                <p className="mt-1 font-black text-slate-950">{template.label}</p>
+                                                <p className="mt-1 text-xs font-bold text-slate-500">{template.hint}</p>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
                                 {addingSubLocTo === 'root' && canManageLocations && (
                                     <div className="px-6 py-4 border-b border-blue-100 bg-blue-50">
                                         <div className="max-w-xl">
@@ -3416,6 +3467,37 @@ export default function StockDashboard({ surface = 'management' }) {
                                     </div>
 
                                     <div className="space-y-4">
+                                        <div className="rounded-2xl border border-amber-100 bg-amber-50 p-5">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <p className="text-xs uppercase tracking-widest font-black text-amber-700">Zones à qualifier</p>
+                                                    <h3 className="font-black text-amber-950 mt-1">{emptyInternalLocations.length} emplacement(s) sans stock</h3>
+                                                    <p className="mt-1 text-sm font-bold text-amber-800">
+                                                        À vérifier : zone réellement vide, zone brouillon, ou nom à préciser.
+                                                    </p>
+                                                </div>
+                                                <span className="rounded-xl bg-white px-3 py-2 text-xl font-black text-amber-900">{emptyInternalLocations.length}</span>
+                                            </div>
+                                            <div className="mt-4 space-y-2 max-h-52 overflow-y-auto pr-1">
+                                                {emptyInternalLocations.slice(0, 6).map(location => (
+                                                    <button
+                                                        key={location.id}
+                                                        type="button"
+                                                        onClick={(event) => openLocationDetail(event, location)}
+                                                        className="w-full rounded-xl border border-amber-100 bg-white p-3 text-left hover:bg-amber-100/40"
+                                                    >
+                                                        <p className="font-black text-slate-900">{getFullLocationName(location)}</p>
+                                                        <p className="mt-1 text-[10px] uppercase tracking-wide font-black text-amber-700">Vide / à qualifier</p>
+                                                    </button>
+                                                ))}
+                                                {emptyInternalLocations.length === 0 && (
+                                                    <p className="rounded-xl border border-dashed border-amber-200 bg-white p-4 text-center text-sm font-bold text-amber-700">
+                                                        Aucun emplacement vide à qualifier.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+
                                         <div className="rounded-2xl border border-slate-200 bg-white p-5">
                                             <p className="text-xs uppercase tracking-widest font-black text-slate-400">Actions rapides</p>
                                             <h3 className="font-black text-slate-900 mt-1">Faire vivre les emplacements</h3>
@@ -3990,15 +4072,25 @@ export default function StockDashboard({ surface = 'management' }) {
                                             : 'Créez une zone principale directement exploitable par réception, transfert et inventaire.'}
                                     </p>
                                 </div>
+                                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                                    <p className="text-[10px] uppercase tracking-widest font-black text-blue-700">Structure conseillée</p>
+                                    <p className="mt-1 text-sm font-black text-slate-950">Magasin → Zone → Rack → Casier</p>
+                                    <p className="mt-1 text-xs font-bold text-blue-700">
+                                        Utilisez des noms courts, visibles par l’atelier : Rack ALU A, Casier A1, Zone vitrage.
+                                    </p>
+                                </div>
                                 <label className="block space-y-1">
                                     <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Nom</span>
                                     <input
                                         ref={locationNameInputRef}
                                         value={locationForm.name}
                                         onChange={event => setLocationForm(prev => ({ ...prev, name: event.target.value }))}
-                                        placeholder={locationForm.parent_id ? "Ex: Étagère 1, Casier A, Niveau bas" : "Ex: Rack ALU A"}
+                                        placeholder={locationForm.parent_id ? "Ex: Rack A, Casier A1, Niveau bas" : "Ex: Magasin principal, Zone ALU"}
                                         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-black outline-none focus:ring-2 focus:ring-blue-500"
                                     />
+                                    <p className="text-xs font-bold text-slate-400">
+                                        Évitez les noms flous type “divers” ou “stock” : l’opérateur doit pouvoir trouver la zone sans demander.
+                                    </p>
                                 </label>
                                 <label className="block space-y-1">
                                     <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">Parent</span>
@@ -5822,6 +5914,13 @@ function StockManagementHome({
                                                             Fabrication non lancée
                                                         </span>
                                                     )}
+                                                </div>
+                                                <div className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+                                                    <p className="text-[11px] font-bold text-slate-400">Cliquez pour ouvrir la file atelier complète.</p>
+                                                    <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white">
+                                                        Traiter ce débit
+                                                        <ArrowRight className="h-3.5 w-3.5" />
+                                                    </span>
                                                 </div>
                                             </div>
                                         );
