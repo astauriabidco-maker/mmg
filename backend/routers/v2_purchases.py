@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from pydantic import BaseModel
 from typing import List, Optional
+import json
 import uuid
 import os
 from reportlab.lib import colors
@@ -170,6 +171,182 @@ def _purchase_payload_total(data: PurchaseOrderCreate) -> float:
     global_discount_percent = max(0, min(float(data.global_discount_percent or 0), 100))
     return subtotal * (1 - global_discount_percent / 100)
 
+def _supplier_contract_conditions(supplier: Optional[models.Supplier]) -> dict:
+    if not supplier or not supplier.notes:
+        return {}
+    notes = supplier.notes.strip()
+    try:
+        parsed = json.loads(notes)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    conditions = parsed.get("contract_conditions", parsed)
+    return conditions if isinstance(conditions, dict) else {}
+
+def _parse_contract_date(value) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+def _contract_number(conditions: dict, *keys: str) -> Optional[float]:
+    for key in keys:
+        value = conditions.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+def _purchase_contract_alerts(data: PurchaseOrderCreate, db: Session) -> list[dict]:
+    supplier_name = (data.supplier or "").strip()
+    supplier = (
+        db.query(models.Supplier).filter(models.Supplier.name == supplier_name).first()
+        if supplier_name
+        else None
+    )
+    conditions = _supplier_contract_conditions(supplier)
+    total = _purchase_payload_total(data)
+    alerts: list[dict] = []
+
+    def add_alert(code: str, severity: str, title: str, message: str, blocking: bool = False) -> None:
+        alerts.append({
+            "code": code,
+            "severity": severity,
+            "title": title,
+            "message": message,
+            "blocking": blocking,
+        })
+
+    if not supplier:
+        add_alert(
+            "supplier.not_found",
+            "WARNING",
+            "Fournisseur non référencé",
+            "Aucune fiche fournisseur active ne permet de contrôler les conditions d'achat.",
+        )
+        return alerts
+
+    if supplier.supplier_status == "BLOCKED":
+        add_alert(
+            "supplier.blocked",
+            "BLOCKING",
+            "Fournisseur bloqué",
+            "Le fournisseur est bloqué: la commande ne doit pas être engagée sans levée du blocage.",
+            True,
+        )
+    elif supplier.supplier_status == "TO_QUALIFY":
+        add_alert(
+            "supplier.to_qualify",
+            "WARNING",
+            "Fournisseur à qualifier",
+            "Le fournisseur doit être qualifié avant engagement récurrent.",
+        )
+
+    minimum_amount = (
+        float(supplier.minimum_order_amount)
+        if supplier.minimum_order_amount is not None
+        else _contract_number(conditions, "minimum_order_amount", "minimum_amount", "minimum")
+    )
+    if minimum_amount is None:
+        add_alert(
+            "contract.minimum_missing",
+            "INFO",
+            "Minimum de commande absent",
+            "Aucun minimum de commande n'est renseigné dans les conditions fournisseur.",
+        )
+    elif total < minimum_amount:
+        add_alert(
+            "contract.minimum_not_reached",
+            "WARNING",
+            "Minimum de commande non atteint",
+            f"Total {total:.2f} € inférieur au minimum négocié de {minimum_amount:.2f} €.",
+        )
+
+    free_shipping_amount = (
+        float(supplier.free_shipping_threshold)
+        if supplier.free_shipping_threshold is not None
+        else _contract_number(conditions, "free_shipping_amount", "free_shipping_threshold", "franco_amount", "franco")
+    )
+    if free_shipping_amount is None:
+        add_alert(
+            "contract.free_shipping_missing",
+            "INFO",
+            "Franco absent",
+            "Aucun seuil de franco n'est renseigné dans les conditions fournisseur.",
+        )
+    elif total < free_shipping_amount:
+        add_alert(
+            "contract.free_shipping_not_reached",
+            "INFO",
+            "Franco non atteint",
+            f"Total {total:.2f} € inférieur au franco de {free_shipping_amount:.2f} €.",
+        )
+
+    if supplier.lead_time_days and data.expected_date:
+        requested_days = max((data.expected_date.date() - utcnow().date()).days, 0)
+        if requested_days < int(supplier.lead_time_days):
+            add_alert(
+                "contract.lead_time_short",
+                "WARNING",
+                "Délai demandé trop court",
+                f"Livraison demandée à J+{requested_days}, sous le délai standard fournisseur de {supplier.lead_time_days} jours.",
+            )
+
+    valid_until = supplier.price_valid_until or _parse_contract_date(conditions.get("price_valid_until") or conditions.get("tariff_valid_until"))
+    if valid_until and valid_until.date() < utcnow().date():
+        add_alert(
+            "contract.price_expired",
+            "WARNING",
+            "Tarif expiré",
+            f"Le tarif fournisseur est expiré depuis le {valid_until.date().isoformat()}.",
+        )
+
+    preferred_categories = supplier.preferred_families or conditions.get("preferred_categories") or conditions.get("preferred_product_categories") or []
+    if isinstance(preferred_categories, str):
+        preferred_categories = [item.strip() for item in preferred_categories.split(",")]
+    preferred_categories = {str(category).upper() for category in preferred_categories if category}
+    if preferred_categories:
+        ordered_categories = {
+            str(variant.product.category).upper()
+            for line in data.lines
+            if line.variant_id
+            for variant in [db.query(models.ProductVariant).filter(models.ProductVariant.id == line.variant_id).first()]
+            if variant and variant.product and variant.product.category
+        }
+        outside_categories = sorted(category for category in ordered_categories if category not in preferred_categories)
+        if outside_categories:
+            add_alert(
+                "contract.supplier_not_preferred_for_category",
+                "WARNING",
+                "Fournisseur non préféré",
+                "Catégories hors périmètre préféré: " + ", ".join(outside_categories),
+            )
+
+    for line in data.lines:
+        if not line.variant_id:
+            continue
+        variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == line.variant_id).first()
+        product_supplier = (variant.product.supplier or "").strip() if variant and variant.product else ""
+        if product_supplier and product_supplier != supplier.name:
+            add_alert(
+                "contract.supplier_not_preferred_for_item",
+                "WARNING",
+                "Fournisseur non préféré article",
+                f"L'article {variant.reference} référence {product_supplier} comme fournisseur préféré.",
+            )
+
+    return alerts
+
 def _purchase_approval_reason(data: PurchaseOrderCreate, db: Session) -> Optional[str]:
     total = _purchase_payload_total(data)
     supplier_name = (data.supplier or "").strip()
@@ -195,7 +372,7 @@ def _purchase_approval_reason(data: PurchaseOrderCreate, db: Session) -> Optiona
         return "Besoin critique/urgent: validation achat obligatoire avant bon fournisseur."
     return None
 
-def _serialize_purchase_request(request: models.PurchaseRequest) -> dict:
+def _serialize_purchase_request(request: models.PurchaseRequest, db: Optional[Session] = None) -> dict:
     return {
         "id": request.id,
         "reference": request.reference,
@@ -217,6 +394,26 @@ def _serialize_purchase_request(request: models.PurchaseRequest) -> dict:
         "purchase_order_id": request.purchase_order_id,
         "created_at": request.created_at,
         "updated_at": request.updated_at,
+        "contract_alerts": _purchase_contract_alerts(
+            PurchaseOrderCreate(
+                supplier=request.supplier,
+                expected_date=request.expected_date,
+                global_discount_percent=float(request.global_discount_percent or 0),
+                notes=request.notes,
+                lines=[
+                    PurchaseOrderLineInput(
+                        variant_id=line.variant_id,
+                        quantity=float(line.quantity or 0),
+                        unit_price=float(line.unit_price or 0),
+                        discount_percent=float(line.discount_percent or 0),
+                        need_priority=line.need_priority,
+                        need_reason=line.need_reason,
+                    )
+                    for line in request.lines
+                ],
+            ),
+            db,
+        ) if db else [],
         "lines_count": len(request.lines),
         "lines": [
             {
@@ -1001,12 +1198,43 @@ def get_purchase_orders(db: Session = Depends(get_db)):
             "next_action": metrics["next_action"],
             "is_late": metrics["is_late"],
             "late_days": metrics["late_days"],
+            "contract_alerts": _purchase_contract_alerts(
+                PurchaseOrderCreate(
+                    supplier=po.supplier,
+                    expected_date=po.expected_date,
+                    global_discount_percent=float(po.global_discount_percent or 0),
+                    notes=po.notes,
+                    lines=[
+                        PurchaseOrderLineInput(
+                            variant_id=line.variant_id,
+                            quantity=float(line.quantity or 0),
+                            unit_price=float(line.unit_price or 0),
+                            discount_percent=float(line.discount_percent or 0),
+                        )
+                        for line in po.lines
+                    ],
+                ),
+                db,
+            ),
             "open_disputes": db.query(models.SupplierDispute).filter(
                 models.SupplierDispute.purchase_order_id == po.id,
                 models.SupplierDispute.status.in_(["OPEN", "IN_PROGRESS"]),
             ).count(),
         })
     return result
+
+@router.post("/contract-alerts")
+def preview_purchase_contract_alerts(
+    data: PurchaseOrderCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    security.assert_permission(db, current_user, "purchases.request")
+    return {
+        "supplier": data.supplier,
+        "total_amount": _purchase_payload_total(data),
+        "alerts": _purchase_contract_alerts(data, db),
+    }
 
 @router.get("/dashboard")
 def get_purchase_dashboard(db: Session = Depends(get_db)):
@@ -1032,6 +1260,7 @@ def get_purchase_dashboard(db: Session = Depends(get_db)):
         "supplier_invoices_overdue": 0,
         "supplier_invoices_blocked": 0,
         "open_disputes": len(open_disputes),
+        "out_of_condition_orders": 0,
         "pending_requests": sum(1 for request in requests if request.status == models.PurchaseRequestStatus.PENDING_APPROVAL),
         "approved_requests": sum(1 for request in requests if request.status == models.PurchaseRequestStatus.APPROVED),
         "amount_committed": 0.0,
@@ -1047,10 +1276,34 @@ def get_purchase_dashboard(db: Session = Depends(get_db)):
 
     for po in pos:
         metrics = _purchase_order_metrics(po, db)
+        contract_alerts = _purchase_contract_alerts(
+            PurchaseOrderCreate(
+                supplier=po.supplier,
+                expected_date=po.expected_date,
+                global_discount_percent=float(po.global_discount_percent or 0),
+                notes=po.notes,
+                lines=[
+                    PurchaseOrderLineInput(
+                        variant_id=line.variant_id,
+                        quantity=float(line.quantity or 0),
+                        unit_price=float(line.unit_price or 0),
+                        discount_percent=float(line.discount_percent or 0),
+                    )
+                    for line in po.lines
+                ],
+            ),
+            db,
+        )
+        actionable_contract_alerts = [
+            alert for alert in contract_alerts
+            if alert.get("severity") in {"WARNING", "BLOCKING"}
+        ]
         is_closed = po.status in [models.PurchaseOrderStatus.CANCELLED, models.PurchaseOrderStatus.RECEIVED]
         if not is_closed:
             summary["open_orders"] += 1
             summary["amount_committed"] += float(po.total_amount or 0)
+            if actionable_contract_alerts:
+                summary["out_of_condition_orders"] += 1
         if metrics["quantity_remaining"] > 0:
             summary["to_receive"] += 1
         if metrics["is_late"]:
@@ -1069,6 +1322,16 @@ def get_purchase_dashboard(db: Session = Depends(get_db)):
                 "quantity_remaining": metrics["quantity_remaining"],
                 "quantity_invoiceable": metrics["quantity_invoiceable"],
                 "total_amount": po.total_amount,
+            })
+        if not is_closed and actionable_contract_alerts:
+            actions.append({
+                "type": "CONTRACT",
+                "purchase_order_id": po.id,
+                "reference": po.reference,
+                "supplier": po.supplier,
+                "label": actionable_contract_alerts[0].get("title") or "Conditions fournisseur à vérifier",
+                "total_amount": po.total_amount,
+                "contract_alerts": actionable_contract_alerts,
             })
 
     for request in requests:
@@ -1154,7 +1417,7 @@ def get_purchase_dashboard(db: Session = Depends(get_db)):
         item["days_until_due"] if item["days_until_due"] is not None else 9999,
         item["supplier"] or "",
     ))
-    priority = {"LATE": 0, "PAYMENT_BLOCKED": 1, "PAYMENT_DUE": 2, "DISPUTE": 3, "INVOICE": 4, "REQUEST": 5, "RECEIPT": 6}
+    priority = {"LATE": 0, "CONTRACT": 1, "PAYMENT_BLOCKED": 2, "PAYMENT_DUE": 3, "DISPUTE": 4, "INVOICE": 5, "REQUEST": 6, "RECEIPT": 7}
     actions.sort(key=lambda item: (priority.get(item["type"], 9), -int(item.get("late_days") or 0), item.get("supplier") or ""))
     return {
         "summary": summary,
@@ -1427,7 +1690,7 @@ def get_purchase_requests(db: Session = Depends(get_db)):
         .order_by(models.PurchaseRequest.created_at.desc(), models.PurchaseRequest.id.desc())
         .all()
     )
-    return [_serialize_purchase_request(request) for request in requests]
+    return [_serialize_purchase_request(request, db) for request in requests]
 
 @router.post("/requests")
 def create_purchase_request(
@@ -1506,7 +1769,7 @@ def create_purchase_request(
 
     db.commit()
     db.refresh(request)
-    return _serialize_purchase_request(request)
+    return _serialize_purchase_request(request, db)
 
 @router.post("/requests/{request_id}/approve")
 def approve_purchase_request(
@@ -1525,7 +1788,7 @@ def approve_purchase_request(
     request.approved_at = utcnow()
     db.commit()
     db.refresh(request)
-    return _serialize_purchase_request(request)
+    return _serialize_purchase_request(request, db)
 
 @router.post("/requests/{request_id}/reject")
 def reject_purchase_request(
@@ -1549,7 +1812,7 @@ def reject_purchase_request(
     request.rejection_reason = reason
     db.commit()
     db.refresh(request)
-    return _serialize_purchase_request(request)
+    return _serialize_purchase_request(request, db)
 
 @router.post("/requests/{request_id}/convert")
 def convert_purchase_request_to_order(
@@ -1564,13 +1827,13 @@ def convert_purchase_request_to_order(
     if request.status == models.PurchaseRequestStatus.CONVERTED and request.purchase_order_id:
         po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == request.purchase_order_id).first()
         if po:
-            return {"request": _serialize_purchase_request(request), "purchase_order": {"id": po.id, "reference": po.reference}}
+            return {"request": _serialize_purchase_request(request, db), "purchase_order": {"id": po.id, "reference": po.reference}}
     if request.status != models.PurchaseRequestStatus.APPROVED:
         raise HTTPException(status_code=400, detail="La demande doit être validée avant création du bon fournisseur.")
     if request.purchase_order_id:
         po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == request.purchase_order_id).first()
         if po:
-            return {"request": _serialize_purchase_request(request), "purchase_order": {"id": po.id, "reference": po.reference}}
+            return {"request": _serialize_purchase_request(request, db), "purchase_order": {"id": po.id, "reference": po.reference}}
         raise HTTPException(status_code=409, detail="Cette demande référence un bon fournisseur introuvable.")
 
     po_data = PurchaseOrderCreate(
@@ -1596,7 +1859,7 @@ def convert_purchase_request_to_order(
     db.commit()
     db.refresh(request)
     db.refresh(po)
-    return {"request": _serialize_purchase_request(request), "purchase_order": {"id": po.id, "reference": po.reference}}
+    return {"request": _serialize_purchase_request(request, db), "purchase_order": {"id": po.id, "reference": po.reference}}
 
 @router.post("/")
 def create_purchase_order(

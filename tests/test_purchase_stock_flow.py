@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 
 import pytest
@@ -1077,6 +1078,118 @@ def test_sensitive_purchase_order_requires_purchase_request_validation(purchase_
 
     assert response.status_code == 409
     assert "Demande d'achat obligatoire" in response.json()["detail"]
+
+
+def test_purchase_contract_alerts_flag_supplier_conditions(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "contract-alerts-tester")
+
+    with TestingSessionLocal() as db:
+        supplier = models.Supplier(
+            name="CONDITIONS ALU",
+            supplier_status="ACTIVE",
+            lead_time_days=10,
+            minimum_order_amount=500,
+            free_shipping_threshold=800,
+            price_valid_until=utcnow() - timedelta(days=1),
+            preferred_families="ALUMINIUM",
+        )
+        preferred_supplier = models.Supplier(name="PREFERRED QUINCAILLERIE", supplier_status="ACTIVE")
+        product = models.Product(
+            reference_base="CONTRACT-WARN",
+            name="Article hors conditions",
+            category="QUINCAILLERIE",
+            material_type="ACCESSOIRE",
+            unit="pce",
+            supplier="PREFERRED QUINCAILLERIE",
+            product_type="stockable",
+            catalog_status="ACTIVE",
+        )
+        db.add_all([supplier, preferred_supplier, product])
+        db.flush()
+        variant = models.ProductVariant(
+            product_id=product.id,
+            reference="CONTRACT-WARN-V1",
+            supplier_reference="CW-1",
+            min_threshold=1,
+        )
+        db.add(variant)
+        db.commit()
+        variant_id = variant.id
+
+    response = client.post(
+        "/v2/purchases/contract-alerts",
+        headers=headers,
+        json={
+            "supplier": "CONDITIONS ALU",
+            "expected_date": (utcnow() + timedelta(days=3)).isoformat(),
+            "lines": [{"variant_id": variant_id, "quantity": 2, "unit_price": 100}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    codes = {alert["code"] for alert in response.json()["alerts"]}
+    assert "contract.minimum_not_reached" in codes
+    assert "contract.free_shipping_not_reached" in codes
+    assert "contract.lead_time_short" in codes
+    assert "contract.price_expired" in codes
+    assert "contract.supplier_not_preferred_for_category" in codes
+    assert "contract.supplier_not_preferred_for_item" in codes
+
+
+def test_purchase_request_exposes_contract_alerts_from_supplier_notes(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "contract-request-alerts-tester")
+
+    with TestingSessionLocal() as db:
+        supplier = models.Supplier(
+            name="NOTES CONDITIONS",
+            supplier_status="ACTIVE",
+            lead_time_days=5,
+            notes=json.dumps({
+                "contract_conditions": {
+                    "minimum_order_amount": 300,
+                    "free_shipping_amount": 600,
+                }
+            }),
+        )
+        product = models.Product(
+            reference_base="CONTRACT-REQ",
+            name="Article conditions notes",
+            category="ALUMINIUM",
+            material_type="ALU",
+            unit="pce",
+            supplier="NOTES CONDITIONS",
+            product_type="stockable",
+            catalog_status="ACTIVE",
+        )
+        db.add_all([supplier, product])
+        db.flush()
+        variant = models.ProductVariant(
+            product_id=product.id,
+            reference="CONTRACT-REQ-V1",
+            supplier_reference="CR-1",
+            min_threshold=1,
+        )
+        db.add(variant)
+        db.commit()
+        variant_id = variant.id
+
+    response = client.post(
+        "/v2/purchases/requests",
+        headers=headers,
+        json={
+            "supplier": "NOTES CONDITIONS",
+            "expected_date": (utcnow() + timedelta(days=2)).isoformat(),
+            "lines": [{"variant_id": variant_id, "quantity": 1, "unit_price": 100}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    codes = {alert["code"] for alert in response.json()["contract_alerts"]}
+    assert "contract.minimum_not_reached" in codes
+    assert "contract.free_shipping_not_reached" in codes
+    assert "contract.lead_time_short" in codes
 
 
 def test_purchase_request_can_be_approved_and_converted_to_order(purchase_test_client):
