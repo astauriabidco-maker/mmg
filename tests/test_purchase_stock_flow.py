@@ -380,21 +380,33 @@ def test_purchase_order_can_be_received_partially_then_completed():
         assert over_invoice_response.status_code == 400, over_invoice_response.text
         assert "supérieure au reçu non facturé" in over_invoice_response.json()["detail"]
 
+        negative_price_invoice_response = client.post(
+            f"/v2/purchases/{po_id}/supplier-invoices",
+            headers=headers,
+            json={
+                "supplier_reference": "FAC-NEGATIVE",
+                "lines": [{"purchase_order_line_id": line_id, "quantity": 1, "unit_price": -1}],
+            },
+        )
+        assert negative_price_invoice_response.status_code == 400, negative_price_invoice_response.text
+        assert "Prix facturé négatif interdit" in negative_price_invoice_response.json()["detail"]
+
         invoice_response = client.post(
             f"/v2/purchases/{po_id}/supplier-invoices",
             headers=headers,
             json={
                 "supplier_reference": "FAC-PARTIAL",
-                "lines": [{"purchase_order_line_id": line_id, "quantity": 2}],
+                "lines": [{"purchase_order_line_id": line_id, "quantity": 2, "unit_price": 11}],
             },
         )
         assert invoice_response.status_code == 200, invoice_response.text
         supplier_invoice = invoice_response.json()
         assert supplier_invoice["reference"].startswith("FF-")
         assert supplier_invoice["supplier_reference"] == "FAC-PARTIAL"
-        assert supplier_invoice["total_amount"] == 20.0
+        assert supplier_invoice["total_amount"] == 22.0
+        assert supplier_invoice["lines"][0]["unit_price"] == 11.0
         assert supplier_invoice["paid_amount"] == 0.0
-        assert supplier_invoice["remaining_amount"] == 20.0
+        assert supplier_invoice["remaining_amount"] == 22.0
 
         payment_response = client.post(
             f"/v2/purchases/supplier-invoices/{supplier_invoice['id']}/pay",
@@ -405,7 +417,7 @@ def test_purchase_order_can_be_received_partially_then_completed():
         paid_invoice = payment_response.json()
         assert paid_invoice["status"] == "PARTIAL"
         assert paid_invoice["paid_amount"] == 5.0
-        assert paid_invoice["remaining_amount"] == 15.0
+        assert paid_invoice["remaining_amount"] == 17.0
 
         details_response = client.get(f"/v2/purchases/{po_id}", headers=headers)
         details = details_response.json()

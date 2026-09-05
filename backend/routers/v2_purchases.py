@@ -61,6 +61,7 @@ class PurchaseOrderReceiveInput(BaseModel):
 class SupplierInvoiceLineInput(BaseModel):
     purchase_order_line_id: int
     quantity: float
+    unit_price: Optional[float] = None
 
 class SupplierInvoiceCreate(BaseModel):
     supplier_reference: Optional[str] = None
@@ -1928,13 +1929,21 @@ def create_supplier_invoice(
 
     po_lines = {line.id: line for line in po.lines}
     requested = {}
+    requested_unit_prices = {}
     for line in data.lines:
         if line.purchase_order_line_id not in po_lines:
             raise HTTPException(status_code=400, detail=f"Ligne d'achat inconnue: {line.purchase_order_line_id}.")
         quantity = float(line.quantity or 0)
         if quantity <= 0:
             continue
+        if line.unit_price is not None and float(line.unit_price) < 0:
+            raise HTTPException(status_code=400, detail=f"Prix facturé négatif interdit pour la ligne {line.purchase_order_line_id}.")
         requested[line.purchase_order_line_id] = requested.get(line.purchase_order_line_id, 0.0) + quantity
+        requested_unit_prices[line.purchase_order_line_id] = (
+            float(line.unit_price)
+            if line.unit_price is not None
+            else float(po_lines[line.purchase_order_line_id].unit_price or 0)
+        )
 
     if not requested:
         raise HTTPException(status_code=400, detail="Aucune quantité positive à facturer.")
@@ -1970,7 +1979,8 @@ def create_supplier_invoice(
     for line_id, quantity in requested.items():
         po_line = po_lines[line_id]
         discount_percent = max(0, min(float(po_line.discount_percent or 0), 100))
-        line_total = quantity * float(po_line.unit_price or 0) * (1 - discount_percent / 100)
+        invoiced_unit_price = requested_unit_prices.get(line_id, float(po_line.unit_price or 0))
+        line_total = quantity * invoiced_unit_price * (1 - discount_percent / 100)
         description = po_line.variant.product.name if po_line.variant and po_line.variant.product else po_line.variant.reference if po_line.variant else "Article fournisseur"
         db.add(models.SupplierInvoiceLine(
             invoice_id=invoice.id,
@@ -1978,7 +1988,7 @@ def create_supplier_invoice(
             variant_id=po_line.variant_id,
             description=description,
             quantity=quantity,
-            unit_price=po_line.unit_price,
+            unit_price=invoiced_unit_price,
             discount_percent=discount_percent,
             line_total=line_total,
         ))
