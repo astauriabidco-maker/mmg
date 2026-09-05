@@ -896,6 +896,9 @@ export default function PurchasesDashboard() {
                 received: line.quantity_received || 0,
                 invoiced: line.quantity_invoiced || 0,
                 invoiceable: line.quantity_invoiceable || 0,
+                ordered_unit_price: Number(line.unit_price || 0),
+                invoiced_unit_price: Number(line.unit_price || 0),
+                discount_percent: Number(line.discount_percent || 0),
                 quantity: line.quantity_invoiceable || 0,
             }))
             .filter(line => line.invoiceable > 0);
@@ -913,19 +916,70 @@ export default function PurchasesDashboard() {
                 : line
         )));
     };
+    const updateSupplierInvoiceLinePrice = (lineId, value) => {
+        setSupplierInvoiceLines(lines => lines.map(line => (
+            line.line_id === lineId
+                ? { ...line, invoiced_unit_price: Math.max(parseFloat(value || 0), 0) }
+                : line
+        )));
+    };
 
     const supplierInvoiceQuantityTotal = supplierInvoiceLines.reduce((sum, line) => sum + (parseFloat(line.quantity || 0) || 0), 0);
+    const supplierInvoiceAmountTotal = supplierInvoiceLines.reduce((sum, line) => {
+        const qty = parseFloat(line.quantity || 0) || 0;
+        const price = parseFloat(line.invoiced_unit_price || 0) || 0;
+        const discount = Math.max(0, Math.min(parseFloat(line.discount_percent || 0) || 0, 100));
+        return sum + qty * price * (1 - discount / 100);
+    }, 0);
+    const supplierInvoicePriceWarnings = supplierInvoiceLines.filter(line => {
+        const qty = parseFloat(line.quantity || 0) || 0;
+        const expected = Number(line.ordered_unit_price || 0);
+        const actual = Number(line.invoiced_unit_price || 0);
+        return qty > 0 && Math.abs(actual - expected) > 0.01;
+    });
+    const supplierInvoiceReady = supplierInvoiceQuantityTotal > 0 && supplierInvoicePriceWarnings.length === 0;
+
+    const openSupplierInvoicePriceDispute = (line) => {
+        setShowSupplierInvoiceModal(false);
+        setDisputeForm({
+            supplier: selectedPO?.supplier || '',
+            purchase_order_id: selectedPO?.id || null,
+            supplier_invoice_id: null,
+            title: `Écart prix facture ${line.variant_ref}`,
+            category: 'PRICE',
+            severity: 'HIGH',
+            description: `Prix attendu ${Number(line.ordered_unit_price || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}, prix facturé ${Number(line.invoiced_unit_price || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}.`,
+            expected_quantity: '',
+            received_quantity: '',
+            expected_unit_price: Number(line.ordered_unit_price || 0),
+            invoiced_unit_price: Number(line.invoiced_unit_price || 0),
+            expected_action: 'PRICE_CORRECTION',
+            due_date: '',
+            blocks_receipt: false,
+            blocks_payment: true,
+            impact_summary: 'Paiement suspendu jusqu’à correction du prix fournisseur.',
+        });
+        setShowDisputeModal(true);
+    };
 
     const handleCreateSupplierInvoice = async () => {
         const lines = supplierInvoiceLines
-            .map(line => ({ purchase_order_line_id: line.line_id, quantity: parseFloat(line.quantity || 0) }))
+            .map(line => ({
+                purchase_order_line_id: line.line_id,
+                quantity: parseFloat(line.quantity || 0),
+                unit_price: Number(line.invoiced_unit_price || 0)
+            }))
             .filter(line => line.quantity > 0);
         if (lines.length === 0) {
             alert("Veuillez saisir au moins une quantité facturée.");
             return;
         }
+        if (supplierInvoicePriceWarnings.length > 0) {
+            alert("Écart prix détecté : ouvrez un litige prix ou corrigez le prix facturé avant rapprochement.");
+            return;
+        }
         try {
-            await api.post(`/v2/purchases/${selectedPO.id}/supplier-invoices`, {
+            const res = await api.post(`/v2/purchases/${selectedPO.id}/supplier-invoices`, {
                 supplier_reference: supplierInvoiceRef,
                 due_date: supplierInvoiceDueDate || null,
                 notes: supplierInvoiceNotes,
@@ -935,7 +989,10 @@ export default function PurchasesDashboard() {
             queryClient.invalidateQueries(['purchases']);
             queryClient.invalidateQueries(['purchase-dashboard']);
             await openPODetails(selectedPO.id);
-            alert("Facture fournisseur rapprochée avec les réceptions.");
+            alert("Facture fournisseur rapprochée avec les réceptions. Vous pouvez maintenant la payer si aucun litige ne bloque.");
+            if (res.data && canManageSupplierPayments) {
+                openSupplierPaymentModal(res.data);
+            }
         } catch (err) {
             console.error(err);
             alert(err.response?.data?.detail || "Erreur lors du rapprochement facture fournisseur.");
@@ -2174,11 +2231,25 @@ export default function PurchasesDashboard() {
                                 </div>
                             </div>
 
+                            <div className={`rounded-2xl border p-5 ${supplierInvoiceReady ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                                <div className="flex items-start gap-3">
+                                    {supplierInvoiceReady ? <CheckCircle className="w-5 h-5 mt-0.5" /> : <AlertTriangle className="w-5 h-5 mt-0.5" />}
+                                    <div>
+                                        <p className="font-black">{supplierInvoiceReady ? 'Facture prête à rapprocher' : 'Contrôle facture à terminer'}</p>
+                                        <p className="mt-1 text-sm font-bold opacity-80">
+                                            {supplierInvoiceReady
+                                                ? `Quantités reçues contrôlées, prix conformes au bon. Montant estimé : ${supplierInvoiceAmountTotal.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}.`
+                                                : 'Les quantités doivent venir des réceptions. Tout écart de prix doit être corrigé ou transformé en litige bloquant paiement.'}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                                 <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
                                     <div>
                                         <h4 className="font-black text-slate-900">Lignes reçues à facturer</h4>
-                                        <p className="text-xs font-medium text-slate-500">Le maximum correspond au réceptionné moins le déjà facturé.</p>
+                                        <p className="text-xs font-medium text-slate-500">Le maximum correspond au réceptionné moins le déjà facturé. Le prix facturé doit rester conforme au bon.</p>
                                     </div>
                                     <button
                                         onClick={() => setSupplierInvoiceLines(lines => lines.map(line => ({ ...line, quantity: line.invoiceable })))}
@@ -2189,7 +2260,7 @@ export default function PurchasesDashboard() {
                                 </div>
                                 <div className="divide-y divide-slate-100">
                                     {supplierInvoiceLines.map(line => (
-                                        <div key={line.line_id} className="grid grid-cols-[1fr_110px_110px_130px] gap-4 items-center px-5 py-4">
+                                        <div key={line.line_id} className="grid grid-cols-[1fr_90px_100px_120px_120px_150px] gap-4 items-center px-5 py-4">
                                             <div>
                                                 <p className="font-black text-slate-900">{line.product_name}</p>
                                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{line.variant_ref}</p>
@@ -2214,6 +2285,36 @@ export default function PurchasesDashboard() {
                                                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-center font-black text-orange-600 outline-none focus:ring-2 focus:ring-orange-500"
                                                 />
                                             </div>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Prix facture</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    value={line.invoiced_unit_price}
+                                                    onChange={e => updateSupplierInvoiceLinePrice(line.line_id, e.target.value)}
+                                                    className={`w-full bg-slate-50 border rounded-xl p-3 text-center font-black outline-none focus:ring-2 focus:ring-orange-500 ${Math.abs(Number(line.invoiced_unit_price || 0) - Number(line.ordered_unit_price || 0)) > 0.01 ? 'border-red-300 text-red-600' : 'border-slate-200 text-slate-800'}`}
+                                                />
+                                                <p className="mt-1 text-[10px] font-bold text-slate-400 text-center">
+                                                    Bon : {Number(line.ordered_unit_price || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                                                </p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contrôle</p>
+                                                {Math.abs(Number(line.invoiced_unit_price || 0) - Number(line.ordered_unit_price || 0)) > 0.01 ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openSupplierInvoicePriceDispute(line)}
+                                                        className="mt-1 px-3 py-2 rounded-xl bg-red-100 text-red-700 text-xs font-black hover:bg-red-200"
+                                                    >
+                                                        Créer litige prix
+                                                    </button>
+                                                ) : (
+                                                    <span className="mt-1 inline-flex px-3 py-2 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-black">
+                                                        Prix OK
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
                                     ))}
                                     {supplierInvoiceLines.length === 0 && (
@@ -2232,8 +2333,8 @@ export default function PurchasesDashboard() {
 
                         <div className="px-8 py-5 bg-white border-t border-slate-100 flex justify-between items-center">
                             <button onClick={()=>setShowSupplierInvoiceModal(false)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50">Annuler</button>
-                            <button onClick={handleCreateSupplierInvoice} disabled={supplierInvoiceQuantityTotal <= 0} className="px-8 py-4 bg-orange-600 disabled:bg-slate-300 hover:bg-orange-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
-                                Valider le rapprochement
+                            <button onClick={handleCreateSupplierInvoice} disabled={!supplierInvoiceReady} className="px-8 py-4 bg-orange-600 disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-orange-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
+                                Valider rapprochement et ouvrir paiement
                             </button>
                         </div>
                     </div>
