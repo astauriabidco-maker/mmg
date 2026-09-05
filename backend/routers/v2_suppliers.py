@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel
 from typing import List, Optional
+from collections import defaultdict
 
 from backend.database import get_db
 from backend import models
@@ -238,6 +239,257 @@ def _supplier_quality_score(
         "overdue_invoices": len(overdue_invoices),
         "partial_orders": len(partial_orders),
         "penalties": penalties,
+    }
+
+
+def _supplier_invoice_remaining_amount(invoice: models.SupplierInvoice) -> float:
+    paid_amount = sum(float(payment.amount or 0) for payment in invoice.payments)
+    return max(float(invoice.total_amount or 0) - paid_amount, 0.0)
+
+
+def _supplier_recommendation(score: int, *, late_orders: int, open_disputes: int, payment_blockers: int, price_match_rate: Optional[float]) -> str:
+    if payment_blockers > 0:
+        return "Résoudre les litiges bloquant paiement avant nouvel engagement important."
+    if open_disputes > 0:
+        return "Traiter les litiges ouverts et sécuriser les prochaines réceptions."
+    if late_orders > 0:
+        return "Relancer le fournisseur et confirmer les dates de livraison."
+    if price_match_rate is not None and price_match_rate < 90:
+        return "Contrôler les prix facturés avant paiement."
+    if score < 70:
+        return "Commander avec suivi achats renforcé."
+    return "Commander normalement, surveillance standard."
+
+
+@router.get("/operations-dashboard")
+def get_supplier_operations_dashboard(db: Session = Depends(get_db)):
+    suppliers = (
+        db.query(models.Supplier)
+        .filter(models.Supplier.is_active == True)
+        .order_by(models.Supplier.name)
+        .all()
+    )
+    purchase_orders = (
+        db.query(models.PurchaseOrder)
+        .order_by(models.PurchaseOrder.order_date.desc())
+        .all()
+    )
+    po_ids = [po.id for po in purchase_orders]
+    po_refs = [po.reference for po in purchase_orders]
+    invoiced_quantities = _supplier_invoiced_quantities(db, po_ids)
+    receipt_moves = (
+        db.query(models.StockMove)
+        .filter(
+            models.StockMove.document_type == "purchase_order",
+            models.StockMove.document_reference.in_(po_refs),
+        )
+        .all()
+        if po_refs else []
+    )
+    receipt_dates_by_po_ref = {}
+    for move in receipt_moves:
+        if not move.document_reference or not move.date:
+            continue
+        current = receipt_dates_by_po_ref.get(move.document_reference)
+        if current is None or move.date > current:
+            receipt_dates_by_po_ref[move.document_reference] = move.date
+
+    invoices = (
+        db.query(models.SupplierInvoice)
+        .filter(models.SupplierInvoice.status != "CANCELLED")
+        .all()
+    )
+    disputes = db.query(models.SupplierDispute).all()
+
+    orders_by_supplier = defaultdict(list)
+    invoices_by_supplier = defaultdict(list)
+    disputes_by_supplier = defaultdict(list)
+    for po in purchase_orders:
+        orders_by_supplier[po.supplier].append(po)
+    for invoice in invoices:
+        invoices_by_supplier[invoice.supplier].append(invoice)
+    for dispute in disputes:
+        disputes_by_supplier[dispute.supplier].append(dispute)
+
+    supplier_names = set(orders_by_supplier) | set(invoices_by_supplier) | set(disputes_by_supplier) | {supplier.name for supplier in suppliers}
+    supplier_by_name = {supplier.name: supplier for supplier in suppliers}
+
+    supplier_cards = []
+    totals = {
+        "suppliers_count": 0,
+        "average_score": 0.0,
+        "at_risk_suppliers": 0,
+        "critical_suppliers": 0,
+        "late_orders": 0,
+        "open_disputes": 0,
+        "payment_blockers": 0,
+        "amount_blocked": 0.0,
+        "amount_to_pay": 0.0,
+        "average_receipt_delay_days": None,
+        "average_receipt_lead_time_days": None,
+        "price_match_rate": None,
+        "quantity_conformity_rate": None,
+    }
+    receipt_delay_days = []
+    receipt_lead_time_days = []
+    price_checks = {"ok": 0, "total": 0}
+    quantity_checks = {"ok": 0, "total": 0}
+
+    for supplier_name in sorted(name for name in supplier_names if name):
+        supplier = supplier_by_name.get(supplier_name) or models.Supplier(
+            name=supplier_name,
+            supplier_status="TO_QUALIFY",
+        )
+        supplier_orders = orders_by_supplier.get(supplier_name, [])
+        supplier_invoices = invoices_by_supplier.get(supplier_name, [])
+        supplier_disputes = disputes_by_supplier.get(supplier_name, [])
+
+        order_payloads = []
+        open_orders = 0
+        late_orders = 0
+        quantity_ordered = 0.0
+        quantity_received = 0.0
+        for po in supplier_orders:
+            metrics = _supplier_po_metrics(po, invoiced_quantities)
+            payload = _supplier_order_payload(po, metrics)
+            order_payloads.append(payload)
+            quantity_ordered += metrics["quantity_ordered"]
+            quantity_received += metrics["quantity_received"]
+            if po.status != models.PurchaseOrderStatus.CANCELLED and metrics["operational_status"] != "READY_TO_CLOSE":
+                open_orders += 1
+            if metrics["is_late"]:
+                late_orders += 1
+            if po.status == models.PurchaseOrderStatus.RECEIVED:
+                quantity_checks["total"] += 1
+                if abs(metrics["quantity_ordered"] - metrics["quantity_received"]) <= 0.001:
+                    quantity_checks["ok"] += 1
+                receipt_date = receipt_dates_by_po_ref.get(po.reference)
+                if receipt_date and po.expected_date:
+                    receipt_delay_days.append(max((receipt_date.date() - po.expected_date.date()).days, 0))
+                if receipt_date and po.order_date:
+                    receipt_lead_time_days.append(max((receipt_date.date() - po.order_date.date()).days, 0))
+
+        invoice_amount_to_pay = 0.0
+        invoice_amount_blocked = 0.0
+        open_supplier_disputes = [
+            dispute for dispute in supplier_disputes
+            if dispute.status in {"OPEN", "IN_PROGRESS"}
+        ]
+        payment_blockers = [dispute for dispute in open_supplier_disputes if dispute.blocks_payment]
+        for invoice in supplier_invoices:
+            remaining_amount = _supplier_invoice_remaining_amount(invoice)
+            invoice_amount_to_pay += remaining_amount
+            if payment_blockers and invoice.status in {"TO_PAY", "PARTIAL"}:
+                invoice_amount_blocked += remaining_amount
+            for line in invoice.lines:
+                expected_price = float(line.purchase_order_line.unit_price or 0) if line.purchase_order_line else None
+                invoiced_price = float(line.unit_price or 0)
+                if expected_price is not None:
+                    price_checks["total"] += 1
+                    if abs(invoiced_price - expected_price) <= 0.01:
+                        price_checks["ok"] += 1
+
+        quality_score = _supplier_quality_score(supplier, order_payloads, supplier_disputes, supplier_invoices)
+        score = int(quality_score["score"])
+        receipt_completion_rate = round((quantity_received / quantity_ordered) * 100, 1) if quantity_ordered else None
+        supplier_price_total = 0
+        supplier_price_ok = 0
+        for invoice in supplier_invoices:
+            for line in invoice.lines:
+                expected_price = float(line.purchase_order_line.unit_price or 0) if line.purchase_order_line else None
+                if expected_price is None:
+                    continue
+                supplier_price_total += 1
+                if abs(float(line.unit_price or 0) - expected_price) <= 0.01:
+                    supplier_price_ok += 1
+        supplier_price_match_rate = round((supplier_price_ok / supplier_price_total) * 100, 1) if supplier_price_total else None
+        attention_score = (
+            (100 - score)
+            + late_orders * 8
+            + len(open_supplier_disputes) * 10
+            + len(payment_blockers) * 15
+            + (20 if invoice_amount_blocked > 0 else 0)
+        )
+
+        supplier_cards.append({
+            "supplier": supplier_name,
+            "supplier_id": getattr(supplier, "id", None),
+            "status": supplier.supplier_status,
+            "category": supplier.supplier_category,
+            "score": score,
+            "label": quality_score["label"],
+            "tone": quality_score["tone"],
+            "recommendation": _supplier_recommendation(
+                score,
+                late_orders=late_orders,
+                open_disputes=len(open_supplier_disputes),
+                payment_blockers=len(payment_blockers),
+                price_match_rate=supplier_price_match_rate,
+            ),
+            "attention_score": attention_score,
+            "orders_count": len(supplier_orders),
+            "open_orders": open_orders,
+            "late_orders": late_orders,
+            "open_disputes": len(open_supplier_disputes),
+            "blocking_disputes": len([
+                dispute for dispute in open_supplier_disputes
+                if dispute.severity in {"HIGH", "BLOCKING", "CRITICAL"} or dispute.blocks_receipt or dispute.blocks_payment
+            ]),
+            "payment_blockers": len(payment_blockers),
+            "amount_to_pay": invoice_amount_to_pay,
+            "amount_blocked": invoice_amount_blocked,
+            "receipt_completion_rate": receipt_completion_rate,
+            "price_match_rate": supplier_price_match_rate,
+            "quantity_conformity_rate": quality_score["conformity_rate"],
+            "delivery_rate": quality_score["delivery_rate"],
+        })
+
+        totals["amount_to_pay"] += invoice_amount_to_pay
+        totals["amount_blocked"] += invoice_amount_blocked
+        totals["late_orders"] += late_orders
+        totals["open_disputes"] += len(open_supplier_disputes)
+        totals["payment_blockers"] += len(payment_blockers)
+
+    totals["suppliers_count"] = len(supplier_cards)
+    if supplier_cards:
+        totals["average_score"] = round(sum(item["score"] for item in supplier_cards) / len(supplier_cards), 1)
+        totals["at_risk_suppliers"] = sum(1 for item in supplier_cards if item["score"] < 70 or item["late_orders"] or item["open_disputes"])
+        totals["critical_suppliers"] = sum(1 for item in supplier_cards if item["score"] < 50 or item["payment_blockers"] or item["blocking_disputes"])
+    if receipt_delay_days:
+        totals["average_receipt_delay_days"] = round(sum(receipt_delay_days) / len(receipt_delay_days), 1)
+    if receipt_lead_time_days:
+        totals["average_receipt_lead_time_days"] = round(sum(receipt_lead_time_days) / len(receipt_lead_time_days), 1)
+    if price_checks["total"]:
+        totals["price_match_rate"] = round((price_checks["ok"] / price_checks["total"]) * 100, 1)
+    if quantity_checks["total"]:
+        totals["quantity_conformity_rate"] = round((quantity_checks["ok"] / quantity_checks["total"]) * 100, 1)
+
+    supplier_cards.sort(key=lambda item: (-item["attention_score"], item["score"], item["supplier"]))
+
+    return {
+        "summary": totals,
+        "top_risks": supplier_cards[:8],
+        "suppliers": supplier_cards,
+        "recommendations": [
+            {
+                "code": "PAYMENT_BLOCKERS",
+                "label": "Paiements bloqués à lever",
+                "count": totals["payment_blockers"],
+                "enabled": totals["payment_blockers"] > 0,
+            },
+            {
+                "code": "LATE_SUPPLIERS",
+                "label": "Relancer les fournisseurs en retard",
+                "count": totals["late_orders"],
+                "enabled": totals["late_orders"] > 0,
+            },
+            {
+                "code": "PRICE_CONTROL",
+                "label": "Contrôler la fiabilité prix",
+                "count": max(0, price_checks["total"] - price_checks["ok"]),
+                "enabled": bool(price_checks["total"] and price_checks["ok"] < price_checks["total"]),
+            },
+        ],
     }
 
 

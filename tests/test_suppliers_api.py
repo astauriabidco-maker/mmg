@@ -254,3 +254,23 @@ def test_supplier_operations_exposes_actionable_purchase_situation(client):
     assert any(event["type"] == "late_receipt" for event in operations["timeline"])
     assert any(event["type"] == "stock_receipt" for event in operations["timeline"])
     assert any(event["type"] == "supplier_invoice" for event in operations["timeline"])
+
+    dashboard_response = client.get("/v2/suppliers/operations-dashboard", headers=headers)
+    assert dashboard_response.status_code == 200, dashboard_response.text
+    dashboard = dashboard_response.json()
+
+    assert dashboard["summary"]["suppliers_count"] >= 1
+    assert dashboard["summary"]["late_orders"] >= 1
+    assert dashboard["summary"]["open_disputes"] >= 1
+    assert dashboard["summary"]["payment_blockers"] >= 1
+    assert dashboard["summary"]["amount_blocked"] >= 10.0
+    assert dashboard["summary"]["price_match_rate"] == 100.0
+    assert dashboard["summary"]["quantity_conformity_rate"] is None
+    supplier_risk = next(item for item in dashboard["top_risks"] if item["supplier"] == "OPS FOURNISSEUR")
+    assert supplier_risk["score"] < 75
+    assert supplier_risk["late_orders"] == 1
+    assert supplier_risk["open_disputes"] == 1
+    assert supplier_risk["payment_blockers"] == 1
+    assert supplier_risk["amount_blocked"] >= 10.0
+    assert "litiges" in supplier_risk["recommendation"].lower()
+    assert any(item["code"] == "PAYMENT_BLOCKERS" and item["enabled"] for item in dashboard["recommendations"])
