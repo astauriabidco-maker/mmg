@@ -1194,6 +1194,9 @@ export default function StockDashboard({ surface = 'management' }) {
             customer: 'Client',
             inventory: 'Inventaire virtuel',
         }[parentLoc.usage] || parentLoc.usage;
+        const descendantIds = getLocationDescendantIds(parentLoc.id);
+        const stockLineCount = quants.filter(quant => descendantIds.includes(quant.location_id) && Number(quant.quantity || 0) !== 0).length;
+        const hasChildren = children.length > 0;
 
         return (
             <div key={parentLoc.id} className="space-y-2">
@@ -1220,6 +1223,20 @@ export default function StockDashboard({ surface = 'management' }) {
                             <p className="text-[11px] font-bold text-slate-400">
                                 {usageLabel} {parentLoc.parent_id ? `- sous ${locations.find(l => l.id === parentLoc.parent_id)?.name || 'zone'}` : '- zone principale'}
                             </p>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                {hasChildren && (
+                                    <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-500">
+                                        {children.length} sous-zone(s)
+                                    </span>
+                                )}
+                                <span className={`rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-wide ${
+                                    stockLineCount > 0
+                                        ? 'bg-emerald-50 text-emerald-700'
+                                        : 'bg-amber-50 text-amber-700'
+                                }`}>
+                                    {stockLineCount > 0 ? `${stockLineCount} ligne(s) stock` : 'Vide / à qualifier'}
+                                </span>
+                            </div>
                         </div>
                     </div>
 	                    <div className="flex items-center gap-2 shrink-0">
@@ -1803,12 +1820,26 @@ export default function StockDashboard({ surface = 'management' }) {
     const physicalLocations = locations.filter(location => location.usage === 'internal');
     const internalRootLocations = rootLocations.filter(location => location.usage === 'internal');
     const virtualLocations = locations.filter(location => location.usage !== 'internal');
-    const productionLocations = locations.filter(location => location.usage === 'production');
+    const locationIdsWithStock = new Set(
+        quants
+            .filter(quant => Number(quant.quantity || 0) !== 0)
+            .map(quant => quant.location_id)
+    );
+    const internalLocationsWithStock = physicalLocations.filter(location => locationIdsWithStock.has(location.id));
+    const internalLeafLocations = physicalLocations.filter(location => !locations.some(child => child.parent_id === location.id));
+    const emptyInternalLocations = physicalLocations.filter(location => !locationIdsWithStock.has(location.id));
+    const locationStockCoverage = physicalLocations.length
+        ? Math.round((internalLocationsWithStock.length / physicalLocations.length) * 100)
+        : 0;
     const inventoryPageMenus = ['catalog', 'stock', 'services', 'drafts'];
     const isInventoryPage = inventoryPageMenus.includes(currentMenu);
     const selectedProduct = products.find(product => product.id === selectedProductId);
     const selectedProductSummary = selectedProduct ? getProductSummary(selectedProduct) : null;
     const selectedProductLocationRows = selectedProduct ? getProductLocationRows(selectedProduct) : [];
+    const selectedProductPrimaryLocations = selectedProductLocationRows
+        .filter(row => Number(row.quantity || 0) > 0)
+        .sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0))
+        .slice(0, 3);
     const selectedProductMovements = selectedProduct ? getProductMovements(selectedProduct) : [];
     const selectedProductReservations = selectedProduct ? getProductReservations(selectedProduct) : [];
     const selectedProductVariantIds = new Set((selectedProduct?.variants || []).map(variant => variant.id));
@@ -1927,6 +1958,11 @@ export default function StockDashboard({ surface = 'management' }) {
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
+            <datalist id="stock-location-paths">
+                {internalLocations.map(location => (
+                    <option key={location.id} value={getFullLocationName(location)} />
+                ))}
+            </datalist>
             <div className={`${isDashboardSurface ? 'flex min-h-0 flex-1 flex-col' : 'shrink-0'} border-b border-slate-200 bg-white`}>
                 <div className={`px-6 ${compactCatalogMode ? 'py-2' : 'py-4'}`}>
                     <div className="flex flex-wrap items-center justify-between gap-4">
@@ -2668,6 +2704,46 @@ export default function StockDashboard({ surface = 'management' }) {
                                             )}
                                         </div>
 
+                                        <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-5">
+                                            <div className="flex flex-wrap items-start justify-between gap-4">
+                                                <div>
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-blue-700">Repère atelier</p>
+                                                    <h3 className="mt-1 text-lg font-black text-slate-950">Où prendre cet article en premier ?</h3>
+                                                    <p className="mt-1 text-sm font-bold text-slate-600">
+                                                        Affichage par chemin complet pour éviter les ambiguïtés entre magasin, rack et casier.
+                                                    </p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCurrentMenu('locations')}
+                                                    className="rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-black text-blue-700 hover:bg-blue-50"
+                                                >
+                                                    Gérer le plan
+                                                </button>
+                                            </div>
+                                            {selectedProductPrimaryLocations.length > 0 ? (
+                                                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                                                    {selectedProductPrimaryLocations.map(row => (
+                                                        <button
+                                                            key={`${row.variant_id}-${row.location_id}-primary`}
+                                                            type="button"
+                                                            onClick={(event) => openLocationDetail(event, row.location)}
+                                                            className="rounded-2xl border border-white bg-white p-4 text-left shadow-sm hover:border-blue-200 hover:bg-blue-50"
+                                                        >
+                                                            <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Emplacement</p>
+                                                            <p className="mt-1 font-black text-slate-950">{row.locationName}</p>
+                                                            <p className="mt-2 text-xs font-bold text-slate-500">{row.variant?.reference || 'Référence inconnue'}</p>
+                                                            <p className="mt-3 text-2xl font-black text-blue-700">{formatQty(row.quantity)}</p>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="mt-4 rounded-2xl border border-dashed border-blue-200 bg-white p-4 text-sm font-bold text-blue-700">
+                                                    Aucun emplacement physique alimenté. Réceptionnez l’article dans une zone réelle ou rattachez-le lors du prochain comptage.
+                                                </div>
+                                            )}
+                                        </div>
+
                                         <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
                                             <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
                                                 <div>
@@ -2694,6 +2770,7 @@ export default function StockDashboard({ surface = 'management' }) {
                                                             <div key={`${row.variant_id}-${row.location_id}`} className="grid grid-cols-1 md:grid-cols-[1fr_150px_130px_140px_120px] gap-3 px-5 py-4 items-center">
                                                                 <div className="min-w-0">
                                                                     <p className="font-black text-slate-900 truncate">{row.locationName}</p>
+                                                                    <p className="text-[10px] uppercase tracking-widest font-black text-blue-500">Chemin atelier complet</p>
                                                                     <p className="text-xs font-bold text-slate-400">{row.variant?.reference || 'Référence inconnue'}</p>
                                                                 </div>
                                                                 <div>
@@ -3220,7 +3297,7 @@ export default function StockDashboard({ surface = 'management' }) {
                                             Zones & emplacements
                                         </h2>
                                         <p className="text-sm font-bold text-slate-300 mt-1 max-w-3xl">
-                                            Créez les entrepôts, zones, racks et emplacements utilisés par réception, transfert, inventaire physique et débit atelier.
+                                            Organisez le rangement comme l’atelier travaille : magasin, zone, rack, casier, puis fiche article rattachée.
                                         </p>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
@@ -3253,25 +3330,40 @@ export default function StockDashboard({ surface = 'management' }) {
 
                                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-6 border-b border-slate-100">
                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Zones physiques</p>
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Plan atelier</p>
                                         <p className="text-3xl font-black text-slate-950 mt-2">{physicalLocations.length}</p>
-                                        <p className="text-xs font-bold text-slate-500 mt-1">Entrepôts, racks et emplacements de stock réel.</p>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">Zones physiques où l’on peut ranger ou prendre une pièce.</p>
                                     </div>
                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Racines</p>
-                                        <p className="text-3xl font-black text-slate-950 mt-2">{internalRootLocations.length}</p>
-                                        <p className="text-xs font-bold text-slate-500 mt-1">Points d’entrée du plan d’entrepôt.</p>
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Avec stock</p>
+                                        <p className="text-3xl font-black text-slate-950 mt-2">{internalLocationsWithStock.length}</p>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">{locationStockCoverage}% du plan contient du stock réel.</p>
                                     </div>
                                     <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Atelier</p>
-                                        <p className="text-3xl font-black text-emerald-800 mt-2">{productionLocations.length}</p>
-                                        <p className="text-xs font-bold text-emerald-700 mt-1">Zones de production et encours.</p>
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Emplacements finaux</p>
+                                        <p className="text-3xl font-black text-emerald-800 mt-2">{internalLeafLocations.length}</p>
+                                        <p className="text-xs font-bold text-emerald-700 mt-1">Casiers, racks ou positions où affecter les articles.</p>
                                     </div>
                                     <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">Lieux virtuels</p>
-                                        <p className="text-3xl font-black text-amber-800 mt-2">{virtualLocations.length}</p>
-                                        <p className="text-xs font-bold text-amber-700 mt-1">Fournisseur, client, inventaire ou flux système.</p>
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">À ranger/qualifier</p>
+                                        <p className="text-3xl font-black text-amber-800 mt-2">{emptyInternalLocations.length}</p>
+                                        <p className="text-xs font-bold text-amber-700 mt-1">Zones vides ou encore non utilisées par le stock.</p>
                                     </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-6 border-b border-slate-100 bg-white">
+                                    {[
+                                        ['1', 'Créer la zone', 'Magasin, atelier, vitrage, quincaillerie…'],
+                                        ['2', 'Ajouter le rack', 'Travée, étagère, niveau ou chariot.'],
+                                        ['3', 'Réceptionner ici', 'Les entrées stock alimentent un emplacement réel.'],
+                                        ['4', 'Retrouver sur fiche', 'La fiche article affiche le chemin complet.'],
+                                    ].map(([step, title, detail]) => (
+                                        <div key={step} className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+                                            <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-black text-white">{step}</div>
+                                            <p className="font-black text-slate-950">{title}</p>
+                                            <p className="mt-1 text-xs font-bold text-slate-500">{detail}</p>
+                                        </div>
+                                    ))}
                                 </div>
 
                                 {addingSubLocTo === 'root' && canManageLocations && (
@@ -3297,8 +3389,11 @@ export default function StockDashboard({ surface = 'management' }) {
                                 <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6 p-6">
                                     <div className="space-y-4">
                                         <div>
-                                            <p className="text-xs uppercase tracking-widest font-black text-slate-400">Arborescence physique</p>
-                                            <h3 className="text-xl font-black text-slate-900">Entrepôts, zones et emplacements</h3>
+                                            <p className="text-xs uppercase tracking-widest font-black text-slate-400">Plan atelier</p>
+                                            <h3 className="text-xl font-black text-slate-900">Où ranger / où prendre ?</h3>
+                                            <p className="text-sm font-bold text-slate-500 mt-1">
+                                                Cliquez sur une fiche pour voir le stock présent, réceptionner dans la zone ou transférer vers un autre emplacement.
+                                            </p>
                                         </div>
                                         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
                                             {internalRootLocations.map(location => (
@@ -3317,6 +3412,36 @@ export default function StockDashboard({ surface = 'management' }) {
                                     </div>
 
                                     <div className="space-y-4">
+                                        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                                            <p className="text-xs uppercase tracking-widest font-black text-slate-400">Actions rapides</p>
+                                            <h3 className="font-black text-slate-900 mt-1">Faire vivre les emplacements</h3>
+                                            <div className="mt-4 grid grid-cols-1 gap-2">
+                                                {canManageLocations && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setAddingSubLocTo('root')}
+                                                        className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-500"
+                                                    >
+                                                        Créer une zone principale
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCurrentMenu('stock')}
+                                                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
+                                                >
+                                                    Voir le stock par emplacement
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCurrentMenu('physical-inventory')}
+                                                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
+                                                >
+                                                    Compter une zone
+                                                </button>
+                                            </div>
+                                        </div>
+
                                         <div className="rounded-2xl border border-slate-200 bg-white p-5">
                                             <p className="text-xs uppercase tracking-widest font-black text-slate-400">Règle simple</p>
                                             <h3 className="font-black text-slate-900 mt-1">Physique vs virtuel</h3>
@@ -4390,8 +4515,17 @@ export default function StockDashboard({ surface = 'management' }) {
                                 </div>
                             </div>
                             <div>
-                                <label className="text-xs font-black text-slate-400 mb-1 block">Emplacement cible</label>
-                                <input value={editVariantForm.location} onChange={e=>setEditVariantForm({...editVariantForm, location: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase" placeholder="Ex: Rack ALU A1" />
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Emplacement cible indicatif</label>
+                                <input
+                                    list="stock-location-paths"
+                                    value={editVariantForm.location}
+                                    onChange={e=>setEditVariantForm({...editVariantForm, location: e.target.value})}
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase"
+                                    placeholder="Ex: Magasin > Rack ALU > Casier A1"
+                                />
+                                <p className="mt-1 text-xs font-bold text-slate-400">
+                                    Pour le stock réel, privilégier réception, transfert ou inventaire physique sur une zone existante.
+                                </p>
                             </div>
                             <div>
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Image Spécifique Variante (Optionnel)</label>
@@ -4463,6 +4597,19 @@ export default function StockDashboard({ surface = 'management' }) {
                                     <label className="text-xs font-black text-slate-400 mb-1 block">Seuil d'alerte (Qté)</label>
                                     <input type="number" value={addVariantForm.min_threshold} onChange={e=>setAddVariantForm({...addVariantForm, min_threshold: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
                                 </div>
+                            </div>
+                            <div>
+                                <label className="text-xs font-black text-slate-400 mb-1 block">Emplacement cible indicatif</label>
+                                <input
+                                    list="stock-location-paths"
+                                    value={addVariantForm.location}
+                                    onChange={e=>setAddVariantForm({...addVariantForm, location: e.target.value})}
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl uppercase"
+                                    placeholder="Ex: Magasin > Rack ALU > Casier A1"
+                                />
+                                <p className="mt-1 text-xs font-bold text-slate-400">
+                                    Cette indication aide la fiche produit ; les quantités réelles restent pilotées par réception, transfert et comptage.
+                                </p>
                             </div>
                             <div>
                                 <label className="text-xs font-black text-slate-400 mb-1 block">Image Spécifique Variante (Optionnel)</label>
@@ -4771,6 +4918,21 @@ export default function StockDashboard({ surface = 'management' }) {
                                                     className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono font-bold text-slate-800 outline-none focus:border-blue-500"
                                                     placeholder="0"
                                                 />
+                                            </div>
+                                        )}
+                                        {newProductForm.product_type !== 'service' && (
+                                            <div className="md:col-span-2">
+                                                <label className="mb-1.5 block text-xs font-black text-slate-500">Emplacement cible indicatif</label>
+                                                <input
+                                                    list="stock-location-paths"
+                                                    value={newProductForm.location}
+                                                    onChange={e => setNewProductForm({...newProductForm, location: e.target.value})}
+                                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-bold uppercase text-slate-700 outline-none focus:border-blue-500"
+                                                    placeholder="Ex: Magasin > Rack ALU > Casier A1"
+                                                />
+                                                <p className="mt-1 text-xs font-semibold text-slate-400">
+                                                    Repère de rangement pour l’atelier. Les quantités seront ensuite affectées par réception, transfert ou inventaire physique.
+                                                </p>
                                             </div>
                                         )}
                                     </div>
@@ -7707,7 +7869,7 @@ function PhysicalInventoryView({
                                             >
                                                 <option value="">Choisir</option>
                                                 {internalLocations.map(location => (
-                                                    <option key={location.id} value={location.id}>{location.name}</option>
+                                                    <option key={location.id} value={location.id}>{getFullLocationName(location)}</option>
                                                 ))}
                                             </select>
                                         </label>
