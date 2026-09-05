@@ -1868,6 +1868,10 @@ export default function StockDashboard({ surface = 'management' }) {
     const blockedPurchaseNeeds = purchaseNeeds.filter(need => !need.is_orderable && Number(need.net_need_quantity || 0) > 0);
     const coveredPurchaseNeeds = purchaseNeeds.filter(need => String(need.priority || '').toUpperCase() === 'COVERED');
     const longLeadTimeNeeds = purchaseNeeds.filter(need => Number(need.supplier_lead_time_days || 0) >= 14);
+    const replenishmentNeeds = purchaseNeeds.filter(need =>
+        Number(need.net_need_quantity || 0) > 0
+        && String(need.priority || '').toUpperCase() !== 'COVERED'
+    );
     const riskTotal = criticalPurchaseNeeds.length + blockedPurchaseNeeds.length;
     const recentManualAdjustments = transactions.filter(tx => {
         const documentType = String(tx.document_type || '').toLowerCase();
@@ -3232,6 +3236,7 @@ export default function StockDashboard({ surface = 'management' }) {
                             blockedNeeds={blockedPurchaseNeeds}
                             coveredNeeds={coveredPurchaseNeeds}
                             longLeadTimeNeeds={longLeadTimeNeeds}
+                            replenishmentNeeds={replenishmentNeeds}
                             onOpenPurchases={goToPurchases}
                             canCreatePurchaseRequest={stockPermissions.requestPurchases}
                             riskActionVariantId={riskActionVariantId}
@@ -6630,6 +6635,7 @@ function StockRiskView({
     blockedNeeds,
     coveredNeeds,
     longLeadTimeNeeds,
+    replenishmentNeeds = [],
     onOpenPurchases,
     canCreatePurchaseRequest,
     riskActionVariantId,
@@ -6666,6 +6672,38 @@ function StockRiskView({
             || Number(b.net_need_quantity || 0) - Number(a.net_need_quantity || 0)
             || String(a.supplier || '').localeCompare(String(b.supplier || ''));
     });
+    const replenishmentQueue = [...replenishmentNeeds]
+        .filter(need => Number(need.net_need_quantity || 0) > 0)
+        .sort((a, b) => {
+            const rank = { CRITICAL: 0, URGENT: 1, TO_PLAN: 2, COVERED: 3 };
+            return (rank[String(a.priority || '').toUpperCase()] ?? 9) - (rank[String(b.priority || '').toUpperCase()] ?? 9)
+                || String(a.supplier || 'ZZZ').localeCompare(String(b.supplier || 'ZZZ'))
+                || Number(b.net_need_quantity || 0) - Number(a.net_need_quantity || 0);
+        });
+    const supplierBuckets = replenishmentQueue.reduce((acc, need) => {
+        const key = need.supplier || 'Fournisseur à renseigner';
+        if (!acc[key]) {
+            acc[key] = {
+                supplier: key,
+                lines: 0,
+                quantity: 0,
+                blocked: 0,
+                critical: 0,
+                leadTime: 0,
+                sample: [],
+            };
+        }
+        acc[key].lines += 1;
+        acc[key].quantity += Number(need.suggested_quantity || need.net_need_quantity || 0);
+        acc[key].blocked += need.is_orderable ? 0 : 1;
+        acc[key].critical += String(need.priority || '').toUpperCase() === 'CRITICAL' ? 1 : 0;
+        acc[key].leadTime = Math.max(acc[key].leadTime, Number(need.supplier_lead_time_days || 0));
+        if (acc[key].sample.length < 3) acc[key].sample.push(need.reference || need.product_name || `#${need.variant_id}`);
+        return acc;
+    }, {});
+    const supplierPlans = Object.values(supplierBuckets)
+        .sort((a, b) => b.critical - a.critical || b.quantity - a.quantity || a.supplier.localeCompare(b.supplier))
+        .slice(0, 5);
 
     return (
         <div className="w-full space-y-6">
@@ -6696,6 +6734,39 @@ function StockRiskView({
                 <RiskMetric title="Couverts" value={summary.covered_count || coveredNeeds.length} tone="emerald" detail="Commande ou demande ouverte" />
                 <RiskMetric title="Délai long" value={longLeadTimeNeeds.length} tone="blue" detail="Fournisseur >= 14 jours" />
             </div>
+
+            <section className="overflow-hidden rounded-3xl border border-emerald-200 bg-white shadow-sm">
+                <div className="grid gap-4 bg-gradient-to-r from-emerald-50 via-white to-blue-50 p-5 xl:grid-cols-[1fr_320px] xl:items-center">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-emerald-600">Réapprovisionnement guidé</p>
+                        <h3 className="mt-1 text-2xl font-black text-slate-950">Transformer les manques en demandes d’achat claires</h3>
+                        <p className="mt-2 max-w-3xl text-sm font-bold text-slate-600">
+                            Le système part du besoin net, vérifie fournisseur et couverture existante, puis propose une demande d’achat traçable.
+                        </p>
+                    </div>
+                    <div className="rounded-2xl border border-emerald-200 bg-white p-4">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">File achat à traiter</p>
+                        <div className="mt-2 flex items-end justify-between gap-3">
+                            <p className="text-4xl font-black text-emerald-700">{replenishmentQueue.length}</p>
+                            <p className="pb-1 text-right text-xs font-black uppercase tracking-widest text-slate-400">ligne(s)<br />à arbitrer</p>
+                        </div>
+                    </div>
+                </div>
+                <div className="grid gap-3 border-t border-emerald-100 bg-white p-5 md:grid-cols-4">
+                    {[
+                        ['1', 'Identifier', 'Référence, fournisseur, seuil et stock disponible.'],
+                        ['2', 'Calculer', 'Besoin net = seuil/réservation - stock couvert.'],
+                        ['3', 'Décider', 'Créer demande achat ou corriger la fiche bloquante.'],
+                        ['4', 'Suivre', 'Commande, réception puis rangement en emplacement clair.'],
+                    ].map(([step, title, detail]) => (
+                        <div key={step} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Étape {step}</p>
+                            <p className="mt-1 font-black text-slate-950">{title}</p>
+                            <p className="mt-1 text-xs font-bold text-slate-500">{detail}</p>
+                        </div>
+                    ))}
+                </div>
+            </section>
 
             <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[1fr_420px]">
                 <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -6787,6 +6858,46 @@ function StockRiskView({
                 </section>
 
                 <aside className="space-y-4">
+                    <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Plan par fournisseur</p>
+                                <h3 className="mt-1 text-lg font-black text-slate-950">Regrouper avant d’acheter</h3>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={onOpenPurchases}
+                                className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-500"
+                            >
+                                Achats
+                            </button>
+                        </div>
+                        <div className="mt-4 space-y-3">
+                            {supplierPlans.length > 0 ? supplierPlans.map(plan => (
+                                <div key={plan.supplier} className="rounded-2xl border border-emerald-100 bg-white p-4">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="truncate font-black text-slate-950">{plan.supplier}</p>
+                                            <p className="mt-1 text-xs font-bold text-slate-500">{plan.sample.join(' · ')}</p>
+                                        </div>
+                                        <span className={`rounded-lg px-2 py-1 text-[10px] font-black uppercase ${plan.blocked ? 'bg-red-50 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                            {plan.blocked ? `${plan.blocked} bloqué(s)` : 'prêt'}
+                                        </span>
+                                    </div>
+                                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs font-black text-slate-500">
+                                        <span>{plan.lines} ligne(s)</span>
+                                        <span>{formatQty(plan.quantity)} à acheter</span>
+                                        <span>{plan.leadTime ? `${plan.leadTime} j` : 'délai —'}</span>
+                                    </div>
+                                </div>
+                            )) : (
+                                <div className="rounded-2xl border border-emerald-100 bg-white p-4 text-sm font-bold text-emerald-700">
+                                    Aucun réapprovisionnement net à lancer.
+                                </div>
+                            )}
+                        </div>
+                    </section>
+
                     <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
                         <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Lecture métier</p>
                         <h3 className="mt-1 text-lg font-black text-slate-950">Ce que le système surveille</h3>
