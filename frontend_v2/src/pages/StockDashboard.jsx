@@ -2149,6 +2149,8 @@ export default function StockDashboard({ surface = 'management' }) {
                             draftCount={totalDraftCount}
                             reservationsCount={reservations.length}
                             locationsCount={physicalLocations.length}
+                            reservations={reservations}
+                            workshopPreparations={workshopPreparations}
                             canUseWorkshop={stockPermissions.reserveWorkshop || stockPermissions.consumeWorkshop}
                             currentMenu={currentMenu}
                             onCatalog={() => selectInventoryFocus('catalog')}
@@ -5590,6 +5592,8 @@ function StockManagementHome({
     draftCount,
     reservationsCount,
     locationsCount,
+    reservations = [],
+    workshopPreparations = [],
     canUseWorkshop,
     currentMenu,
     onCatalog,
@@ -5667,6 +5671,39 @@ function StockManagementHome({
         ['Articles', productsCount, draftCount > 0 ? `${draftCount} brouillon(s) à qualifier` : 'Catalogue à jour', 'blue'],
         ['Inventaires', inventoryCount, inventoryCount > 0 ? 'Campagne ouverte' : 'Aucun comptage ouvert', 'slate'],
     ];
+    const guidedReservations = [...reservations]
+        .sort((a, b) => new Date(a.created_at || a.updated_at || 0) - new Date(b.created_at || b.updated_at || 0))
+        .slice(0, 3)
+        .map(reservation => {
+            const preparation = workshopPreparations.find(item => item.reservation_id === reservation.id);
+            const totalReserved = reservation.lines?.reduce((sum, line) => sum + Number(line.reserved_quantity || 0), 0) || 0;
+            const productionLaunched = isReservationProductionLaunched(reservation);
+            let nextAction = 'Créer bon atelier';
+            let tone = 'blue';
+            if (preparation?.status === 'draft') {
+                nextAction = 'Préparer lignes';
+                tone = 'amber';
+            } else if (preparation?.status === 'ready') {
+                nextAction = 'Remettre atelier';
+                tone = 'blue';
+            } else if (preparation?.status === 'handed_over' && productionLaunched) {
+                nextAction = 'Consommer débit réel';
+                tone = 'emerald';
+            } else if (preparation?.status === 'handed_over') {
+                nextAction = 'Lancer fabrication';
+                tone = 'slate';
+            }
+            const contextOk = Boolean(reservation.sale_order_id || reservation.production_order_id || reservation.order_reference || reservation.sale_reference);
+            return {
+                reservation,
+                preparation,
+                totalReserved,
+                productionLaunched,
+                nextAction,
+                tone,
+                contextOk,
+            };
+        });
     const toneClasses = {
         blue: 'border-blue-100 bg-blue-50 text-blue-900',
         emerald: 'border-emerald-100 bg-emerald-50 text-emerald-900',
@@ -5734,6 +5771,67 @@ function StockManagementHome({
                                     <ArrowRight className="h-4 w-4" />
                                 </span>
                             </div>
+                        </div>
+                        <div className="border-t border-amber-100 bg-white/55 px-6 py-4">
+                            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-700">File guidée</p>
+                                    <p className="text-sm font-bold text-slate-600">Prochains bons à traiter, avec la prochaine action visible.</p>
+                                </div>
+                                {reservationsCount > guidedReservations.length && (
+                                    <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-800">
+                                        +{reservationsCount - guidedReservations.length} autre(s)
+                                    </span>
+                                )}
+                            </div>
+                            {guidedReservations.length > 0 ? (
+                                <div className="grid gap-2 lg:grid-cols-3">
+                                    {guidedReservations.map(({ reservation, preparation, totalReserved, nextAction, tone, contextOk }) => {
+                                        const toneClass = {
+                                            amber: 'bg-amber-50 text-amber-800 border-amber-200',
+                                            blue: 'bg-blue-50 text-blue-800 border-blue-200',
+                                            emerald: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+                                            slate: 'bg-slate-50 text-slate-700 border-slate-200',
+                                        }[tone];
+                                        return (
+                                            <div key={reservation.id || reservation.reference} className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <p className="truncate text-sm font-black text-slate-950">
+                                                            {reservation.order_reference || reservation.project_reference || reservation.reference || `Réservation #${reservation.id}`}
+                                                        </p>
+                                                        <p className="mt-1 text-xs font-bold text-slate-500">
+                                                            {(reservation.lines?.length || 0).toLocaleString('fr-FR')} ligne(s) · {totalReserved.toLocaleString('fr-FR')} réservé
+                                                        </p>
+                                                    </div>
+                                                    <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${toneClass}`}>
+                                                        {nextAction}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                                    <span className={`rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-wide ${
+                                                        contextOk ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+                                                    }`}>
+                                                        {contextOk ? 'Dossier lié' : 'Dossier à vérifier'}
+                                                    </span>
+                                                    <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">
+                                                        {preparation?.reference || 'Bon à créer'}
+                                                    </span>
+                                                    {preparation?.status === 'handed_over' && !isReservationProductionLaunched(reservation) && (
+                                                        <span className="rounded-md bg-orange-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-orange-700">
+                                                            Fabrication non lancée
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="rounded-2xl border border-dashed border-amber-200 bg-white p-4 text-sm font-bold text-amber-800">
+                                    Aucun débit ouvert : cliquez sur “Ouvrir débit atelier” pour importer le prochain bon.
+                                </div>
+                            )}
                         </div>
                     </button>
 
