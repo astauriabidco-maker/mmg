@@ -224,7 +224,7 @@ export default function StockDashboard({ surface = 'management' }) {
     const [addVariantForm, setAddVariantForm] = useState(null);
 
     const [showReceptionModal, setShowReceptionModal] = useState(false);
-    const [receptionData, setReceptionData] = useState({ variant: null, targetLocId: '', qty: '' });
+    const [receptionData, setReceptionData] = useState({ variant: null, targetLocId: '', qty: '', lot: '', comment: '' });
     const [receptionSearch, setReceptionSearch] = useState('');
     const [showCustomerIssueModal, setShowCustomerIssueModal] = useState(false);
     const [customerIssueData, setCustomerIssueData] = useState({ variant: null, sourceLocId: '', qty: '', reason: '' });
@@ -471,27 +471,37 @@ export default function StockDashboard({ surface = 'management' }) {
 
     // -------- ENTREE STOCK MANUELLE (VIRTUAL SUPPLIER -> DEPOT) --------
     const openReceptionModal = () => {
-        setReceptionData({ variant: null, targetLocId: '', qty: '' });
+        setReceptionData({ variant: null, targetLocId: '', qty: '', lot: '', comment: '' });
         setReceptionSearch('');
         setShowReceptionModal(true);
     };
 
     const openReceptionForVariant = (variant, targetLocId = '') => {
-        setReceptionData({ variant, targetLocId, qty: '' });
+        setReceptionData({ variant, targetLocId, qty: '', lot: '', comment: '' });
         setReceptionSearch(variant?.reference || '');
         setShowReceptionModal(true);
     };
 
     const openReceptionForLocation = (location) => {
-        setReceptionData({ variant: null, targetLocId: location?.id ? String(location.id) : '', qty: '' });
+        setReceptionData({ variant: null, targetLocId: location?.id ? String(location.id) : '', qty: '', lot: '', comment: '' });
         setReceptionSearch('');
         setShowReceptionModal(true);
     };
 
     const submitReception = async () => {
         if (!receptionData.variant || !receptionData.targetLocId || !receptionData.qty || isNaN(receptionData.qty) || receptionData.qty <= 0) return;
+        const targetLocation = locations.find(location => String(location.id) === String(receptionData.targetLocId));
+        const locationQuality = getLocationQuality(targetLocation);
+        if (!targetLocation || !locationQuality.exploitable) {
+            return alert("Choisissez un rack, casier ou emplacement atelier exploitable avant de réceptionner.");
+        }
 
         const supplierLoc = locations.find(l => l.usage === 'supplier');
+        const noteParts = [
+            'Réception stock guidée',
+            receptionData.lot ? `Lot: ${receptionData.lot}` : null,
+            receptionData.comment ? `Commentaire: ${receptionData.comment}` : null,
+        ].filter(Boolean);
 
         try {
             await api.post('/v2/stock/transaction', {
@@ -499,10 +509,11 @@ export default function StockDashboard({ surface = 'management' }) {
                 quantity: parseFloat(receptionData.qty),
                 location_id: supplierLoc?.id || null,       // Source: supplier virtual location, or external if missing
                 location_dest_id: parseInt(receptionData.targetLocId), // Dest: Chosen Internal Shelf
-                notes: "Réception Achat Direct"
+                notes: noteParts.join(' · ')
             });
             setShowReceptionModal(false);
             queryClient.invalidateQueries();
+            alert(`${parseFloat(receptionData.qty).toLocaleString('fr-FR')} unité(s) réceptionnée(s) sur ${getFullLocationName(targetLocation)}.`);
         } catch (e) {
             alert("Erreur lors de la réception.");
         }
@@ -1938,6 +1949,11 @@ export default function StockDashboard({ surface = 'management' }) {
         window.setTimeout(() => locationNameInputRef.current?.focus(), 80);
     };
     const locationFormIssues = getLocationNameIssues(locationForm.name);
+    const receptionTargetLocation = locations.find(location => String(location.id) === String(receptionData.targetLocId));
+    const receptionTargetQuality = receptionTargetLocation ? getLocationQuality(receptionTargetLocation) : null;
+    const receptionVariantContext = receptionData.variant ? getVariantContext(receptionData.variant.id) : { product: null, variant: null };
+    const receptionQuantityValid = Number(receptionData.qty || 0) > 0;
+    const receptionBlocked = !receptionData.variant || !receptionData.targetLocId || !receptionQuantityValid || !receptionTargetQuality?.exploitable;
     const stockNavGroups = [
         {
             label: 'Accueil',
@@ -4357,22 +4373,37 @@ export default function StockDashboard({ surface = 'management' }) {
             {/* -------- RECEPTION MODAL -------- */}
             {showReceptionModal && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-slate-100">
-                        <div className="flex items-center gap-3 mb-6 border-b border-slate-100 pb-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-3xl w-full border border-slate-100">
+                        <div className="flex items-center gap-3 mb-5 border-b border-slate-100 pb-4">
                             <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-inner">
                                 <Truck className="w-6 h-6" />
                             </div>
                             <div>
-                                <h3 className="font-black text-2xl text-slate-800">Entrée stock manuelle</h3>
-                                <p className="text-sm font-medium text-slate-500">Initialiser ou corriger un stock hors bon fournisseur.</p>
+                                <p className="text-[10px] uppercase tracking-[0.24em] font-black text-emerald-600">Réception stock guidée</p>
+                                <h3 className="font-black text-2xl text-slate-800">Ranger une entrée dans un emplacement clair</h3>
+                                <p className="text-sm font-medium text-slate-500">Article → emplacement final → quantité → lot/commentaire → mouvement tracé.</p>
                             </div>
                             <button onClick={()=>setShowReceptionModal(false)} className="ml-auto text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
                         </div>
 
                         <div className="space-y-5">
-                            <div>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                {[
+                                    ['1', 'Article', Boolean(receptionData.variant)],
+                                    ['2', 'Emplacement', Boolean(receptionTargetQuality?.exploitable)],
+                                    ['3', 'Quantité', receptionQuantityValid],
+                                    ['4', 'Confirmer', !receptionBlocked],
+                                ].map(([step, label, done]) => (
+                                    <div key={step} className={`rounded-2xl border p-3 ${done ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-slate-50 text-slate-500'}`}>
+                                        <p className="text-[10px] uppercase tracking-widest font-black">Étape {step}</p>
+                                        <p className="mt-1 font-black">{done ? '✓ ' : ''}{label}</p>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                                 <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center justify-between">
-                                    <span>Article à ajuster</span>
+                                    <span>1 · Article à réceptionner</span>
                                 </label>
                                 <div className="mb-2 relative">
                                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
@@ -4409,32 +4440,94 @@ export default function StockDashboard({ surface = 'management' }) {
                                         );
                                     })}
                                 </select>
+                                {receptionData.variant && (
+                                    <div className="mt-3 rounded-xl border border-emerald-100 bg-white p-3">
+                                        <p className="text-sm font-black text-slate-900">
+                                            {receptionVariantContext.product?.name || 'Article sélectionné'}
+                                        </p>
+                                        <p className="mt-1 text-xs font-mono font-bold text-slate-500">
+                                            {receptionData.variant.reference}
+                                            {receptionVariantContext.product?.supplier ? ` · ${receptionVariantContext.product.supplier}` : ''}
+                                        </p>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Ranger dans le lieu</label>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">2 · Emplacement final obligatoire</label>
                                     <select
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                                        className={`w-full rounded-xl border p-3 font-bold outline-none focus:ring-2 focus:ring-emerald-500 ${
+                                            receptionTargetQuality && !receptionTargetQuality.exploitable
+                                                ? 'border-red-200 bg-red-50 text-red-700'
+                                                : 'border-slate-200 bg-slate-50 text-slate-700'
+                                        }`}
                                         value={receptionData.targetLocId} onChange={e=>setReceptionData({...receptionData, targetLocId: e.target.value})}
                                     >
-                                        <option value="">- Dépôt Physique -</option>
+                                        <option value="">- Choisir un rack, casier ou emplacement atelier -</option>
                                         {locations.filter(l => l.usage === 'internal').map(l => (
-                                            <option key={l.id} value={l.id}>{getFullLocationName(l)}</option>
+                                            <option key={l.id} value={l.id}>
+                                                {getLocationQuality(l).exploitable ? '✓ ' : '⚠ '}
+                                                {getFullLocationName(l)}
+                                            </option>
                                         ))}
                                     </select>
+                                    {receptionTargetQuality && (
+                                        <div className={`mt-2 rounded-xl border p-3 text-xs font-bold ${
+                                            receptionTargetQuality.exploitable
+                                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                : 'border-red-200 bg-red-50 text-red-700'
+                                        }`}>
+                                            {receptionTargetQuality.exploitable
+                                                ? `Emplacement exploitable atelier · ${receptionTargetQuality.role}`
+                                                : `Emplacement non exploitable : ${(receptionTargetQuality.issues || []).join(', ') || receptionTargetQuality.role}`}
+                                        </div>
+                                    )}
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-black text-emerald-500 uppercase tracking-widest mb-1.5">Quantité (Qté)</label>
+                                    <label className="block text-xs font-black text-emerald-500 uppercase tracking-widest mb-1.5">3 · Quantité reçue</label>
                                     <input
                                         type="number"
                                         className="w-full bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl p-3 font-black text-2xl text-center outline-none focus:ring-2 focus:ring-emerald-500 shadow-inner placeholder-emerald-300"
                                         value={receptionData.qty} onChange={e=>setReceptionData({...receptionData, qty: e.target.value})} placeholder="0"
                                     />
+                                    {!receptionQuantityValid && receptionData.qty && (
+                                        <p className="mt-2 text-xs font-bold text-red-600">La quantité doit être supérieure à zéro.</p>
+                                    )}
                                 </div>
                             </div>
 
-                            <button onClick={submitReception} disabled={!receptionData.variant || !receptionData.targetLocId || !receptionData.qty} className="w-full py-4 mt-2 bg-emerald-600 disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-emerald-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 text-lg">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">4 · Lot / BL / repère fournisseur</label>
+                                    <input
+                                        value={receptionData.lot}
+                                        onChange={e=>setReceptionData({...receptionData, lot: e.target.value})}
+                                        className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                                        placeholder="Ex: BL-2026-0042, lot fournisseur..."
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Commentaire réception</label>
+                                    <input
+                                        value={receptionData.comment}
+                                        onChange={e=>setReceptionData({...receptionData, comment: e.target.value})}
+                                        className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                                        placeholder="Ex: réception complète, contrôle visuel OK..."
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Confirmation</p>
+                                <p className="mt-1 text-sm font-bold text-slate-600">
+                                    {receptionBlocked
+                                        ? 'Complétez l’article, l’emplacement exploitable et la quantité avant validation.'
+                                        : `${Number(receptionData.qty).toLocaleString('fr-FR')} unité(s) de ${receptionData.variant?.reference} seront rangées dans ${getFullLocationName(receptionTargetLocation)}.`}
+                                </p>
+                            </div>
+
+                            <button onClick={submitReception} disabled={receptionBlocked} className="w-full py-4 mt-2 bg-emerald-600 disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-emerald-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 text-lg">
                                 Valider l'entrée en stock
                             </button>
                         </div>
