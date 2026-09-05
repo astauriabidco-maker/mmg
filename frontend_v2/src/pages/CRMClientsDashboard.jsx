@@ -663,6 +663,81 @@ export default function CRMClientsDashboard() {
         },
     ]), [commerceOverview]);
 
+    const commercialActionRows = useMemo(() => {
+        const rows = [];
+        const clientByName = new Map(clients.map(client => [normalize(client.name), client]));
+        sales
+            .filter(sale => ['SENT', 'DRAFT'].includes(sale.status))
+            .sort((a, b) => new Date(a.updated_at || a.created_at || 0) - new Date(b.updated_at || b.created_at || 0))
+            .slice(0, 8)
+            .forEach(sale => {
+                const client = clientByName.get(normalize(sale.client_name));
+                rows.push({
+                    key: `sale-${sale.id}`,
+                    priority: sale.status === 'SENT' ? 20 : 30,
+                    tone: sale.status === 'SENT' ? 'blue' : 'slate',
+                    label: sale.status === 'SENT' ? 'Devis à relancer' : 'Brouillon à envoyer',
+                    clientName: sale.client_name || client?.name || 'Client à vérifier',
+                    reference: sale.reference,
+                    detail: `${formatMoney(saleAmount(sale))} · ${sale.status === 'SENT' ? 'attente signature' : 'brouillon commercial'}`,
+                    date: sale.updated_at || sale.created_at,
+                    actionLabel: sale.status === 'SENT' ? 'Ouvrir / relancer' : 'Ouvrir devis',
+                    onOpen: () => openSale(sale.id),
+                });
+            });
+
+        Object.values(segmentationQuery.data?.client_signals || {})
+            .filter(signal => (signal.statuses || []).includes('to_follow_up') || signal.missing_next_action)
+            .slice(0, 8)
+            .forEach(signal => {
+                const client = clients.find(item => item.id === signal.client_id);
+                if (!client) return;
+                const needsFollowUp = (signal.statuses || []).includes('to_follow_up');
+                rows.push({
+                    key: `client-signal-${client.id}-${needsFollowUp ? 'follow' : 'missing'}`,
+                    priority: needsFollowUp ? 10 : 25,
+                    tone: needsFollowUp ? 'red' : 'amber',
+                    label: needsFollowUp ? 'Relance due' : 'Action à planifier',
+                    clientName: client.name,
+                    reference: client.phone || client.email || 'Coordonnées à compléter',
+                    detail: needsFollowUp
+                        ? `${signal.overdue_actions || signal.pending_reminders || 1} relance(s) ou action(s) en retard`
+                        : `${signal.open_opportunities || 1} opportunité(s) sans prochaine action`,
+                    date: null,
+                    actionLabel: needsFollowUp ? 'Traiter relance' : 'Planifier action',
+                    onOpen: () => {
+                        setSelectedClientId(client.id);
+                        setCrmView(needsFollowUp ? 'cockpit' : 'clients');
+                    },
+                });
+            });
+
+        dossiers
+            .filter(dossier => dossier.status !== 'VALIDATED')
+            .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0))
+            .slice(0, 6)
+            .forEach(dossier => {
+                rows.push({
+                    key: `measure-${dossier.id}`,
+                    priority: 40,
+                    tone: 'emerald',
+                    label: 'Métré à suivre',
+                    clientName: dossier.client_name || 'Client à vérifier',
+                    reference: dossier.reference,
+                    detail: dossier.client_address || 'Adresse chantier à compléter',
+                    date: dossier.created_at,
+                    actionLabel: 'Suivre métré',
+                    onOpen: () => dossier.measure_mission_id
+                        ? navigate(`/measure-missions/${dossier.measure_mission_id}`)
+                        : setCrmView('measures'),
+                });
+            });
+
+        return rows
+            .sort((a, b) => a.priority - b.priority || new Date(a.date || 0) - new Date(b.date || 0))
+            .slice(0, 8);
+    }, [clients, sales, dossiers, segmentationQuery.data]);
+
     const clientTimeline = useMemo(() => {
         const events = [];
         clientSales.forEach(sale => {
@@ -837,6 +912,28 @@ export default function CRMClientsDashboard() {
                                 {sellerQueue.map(item => (
                                     <SellerQueueCard key={item.key} item={item} onOpen={() => setCrmView(item.view)} />
                                 ))}
+                            </div>
+                            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                                <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">À traiter en priorité</p>
+                                        <p className="text-xs font-bold text-slate-500">Les premières lignes concrètes à ouvrir maintenant.</p>
+                                    </div>
+                                    <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">{commercialActionRows.length} action(s)</span>
+                                </div>
+                                <div className="divide-y divide-slate-200">
+                                    {commercialActionRows.length ? (
+                                        commercialActionRows.map(row => (
+                                            <CommercialActionRow key={row.key} row={row} formatDate={formatDate} />
+                                        ))
+                                    ) : (
+                                        <div className="px-4 py-8 text-center">
+                                            <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500" />
+                                            <p className="mt-2 text-sm font-black text-slate-700">Aucune priorité commerciale urgente</p>
+                                            <p className="mt-1 text-xs font-bold text-slate-500">Les devis, relances et métrés ouverts apparaîtront ici.</p>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -2202,6 +2299,40 @@ function SellerQueueCard({ item, onOpen }) {
             </div>
             <p className="mt-3 text-sm font-bold leading-5 opacity-75">{item.detail}</p>
         </button>
+    );
+}
+
+function CommercialActionRow({ row, formatDate }) {
+    const tones = {
+        red: 'bg-red-50 text-red-700 border-red-100',
+        blue: 'bg-blue-50 text-blue-700 border-blue-100',
+        amber: 'bg-amber-50 text-amber-800 border-amber-100',
+        emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+        slate: 'bg-slate-100 text-slate-700 border-slate-200',
+    };
+    return (
+        <div className="grid gap-3 bg-white px-4 py-3 transition-colors hover:bg-blue-50/30 lg:grid-cols-[180px_minmax(0,1fr)_150px_150px] lg:items-center">
+            <div>
+                <span className={`inline-flex rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-widest ${tones[row.tone] || tones.slate}`}>
+                    {row.label}
+                </span>
+                {row.date && <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-slate-400">{formatDate(row.date)}</p>}
+            </div>
+            <div className="min-w-0">
+                <p className="truncate text-sm font-black text-slate-950">{row.clientName}</p>
+                <p className="mt-1 truncate text-xs font-bold text-slate-500">{row.reference}</p>
+                <p className="mt-1 text-xs font-semibold text-slate-400">{row.detail}</p>
+            </div>
+            <p className="text-xs font-black uppercase tracking-widest text-slate-400">Prochaine action</p>
+            <button
+                type="button"
+                onClick={row.onOpen}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white hover:bg-slate-800"
+            >
+                {row.actionLabel}
+                <ArrowRight className="h-4 w-4" />
+            </button>
+        </div>
     );
 }
 
