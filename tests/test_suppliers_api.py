@@ -170,7 +170,7 @@ def test_supplier_operations_exposes_actionable_purchase_situation(client):
     location_response = client.post(
         "/v2/stock/locations",
         headers=headers,
-        json={"name": "WH/Supplier Ops", "usage": "internal"},
+        json={"name": "Rack Supplier Ops", "usage": "internal"},
     )
     assert location_response.status_code == 200, location_response.text
     target_location_id = location_response.json()["id"]

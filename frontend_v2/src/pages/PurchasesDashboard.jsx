@@ -339,6 +339,8 @@ export default function PurchasesDashboard() {
     // Receive form
     const [receiveTargetLoc, setReceiveTargetLoc] = useState('');
     const [receiveLines, setReceiveLines] = useState([]);
+    const [receiveDeliveryNoteRef, setReceiveDeliveryNoteRef] = useState('');
+    const [receiveComment, setReceiveComment] = useState('');
     const [supplierInvoiceRef, setSupplierInvoiceRef] = useState('');
     const [supplierInvoiceDueDate, setSupplierInvoiceDueDate] = useState('');
     const [supplierInvoiceNotes, setSupplierInvoiceNotes] = useState('');
@@ -450,6 +452,34 @@ export default function PurchasesDashboard() {
 
     const availableVariants = variantsData;
     const locations = locationsData;
+    const getFullLocationName = (loc) => {
+        if (!loc) return '';
+        if (!loc.parent_id) return loc.name;
+        const parent = locations.find(l => l.id === loc.parent_id);
+        return parent ? `${getFullLocationName(parent)} > ${loc.name}` : loc.name;
+    };
+    const vagueLocationWords = ['divers', 'stock', 'test', 'zone', 'autre', 'temp', 'temporary', 'vrac', 'inconnu', 'unknown'];
+    const getLocationRole = (loc) => {
+        const label = `${loc?.name || ''} ${getFullLocationName(loc || {})}`.toLowerCase();
+        if (loc?.usage === 'production' || label.includes('atelier') || label.includes('préparation') || label.includes('preparation')) return 'Zone atelier';
+        if (label.includes('casier') || label.includes('case') || label.includes('bac') || /\b[a-z]\d+\b/i.test(label)) return 'Casier final';
+        if (label.includes('rack') || label.includes('travée') || label.includes('travee') || label.includes('étag') || label.includes('etag')) return 'Rack';
+        return loc?.parent_id ? 'Zone parent' : 'Magasin';
+    };
+    const getLocationQuality = (loc) => {
+        if (!loc) return { role: 'Inconnu', exploitable: false, issues: ['emplacement absent'], fullName: '' };
+        const normalizedName = String(loc.name || '').trim().toLowerCase();
+        const firstWord = normalizedName.split(' ')[0];
+        const compactSlot = /^[a-z]\d+$/i.test(normalizedName);
+        const role = getLocationRole(loc);
+        const issues = [];
+        if (loc.usage !== 'internal' && loc.usage !== 'production') issues.push('lieu virtuel');
+        if (!normalizedName) issues.push('nom absent');
+        if (normalizedName && normalizedName.length < 3 && !compactSlot) issues.push('nom trop court');
+        if (vagueLocationWords.includes(normalizedName) || vagueLocationWords.filter(word => word !== 'zone').includes(firstWord)) issues.push('nom trop vague');
+        if (['Magasin', 'Zone parent'].includes(role)) issues.push('rack, casier ou zone atelier à préciser');
+        return { role, exploitable: issues.length === 0 && ['Rack', 'Casier final', 'Zone atelier'].includes(role), issues, fullName: getFullLocationName(loc) };
+    };
     const selectedSupplier = suppliers.find(s => s.name === newPO.supplier);
     const poGrossTotal = newPO.lines.reduce((sum, line) => {
         const qty = parseFloat(line.quantity || 0);
@@ -737,6 +767,10 @@ export default function PurchasesDashboard() {
             alert("Veuillez sélectionner un emplacement de destination.");
             return;
         }
+        if (!receiveTargetQuality?.exploitable) {
+            alert("Choisissez un rack, casier ou emplacement atelier exploitable avant de réceptionner.");
+            return;
+        }
         const lines = receiveLines
             .map(line => ({ line_id: line.line_id, quantity: parseFloat(line.quantity || 0) }))
             .filter(line => line.quantity > 0);
@@ -745,12 +779,17 @@ export default function PurchasesDashboard() {
             return;
         }
         try {
-            await api.post(`/v2/purchases/${selectedPO.id}/receive`, { target_location_id: parseInt(receiveTargetLoc), lines });
+            await api.post(`/v2/purchases/${selectedPO.id}/receive`, {
+                target_location_id: parseInt(receiveTargetLoc),
+                delivery_note_reference: receiveDeliveryNoteRef.trim() || null,
+                notes: receiveComment.trim() || null,
+                lines
+            });
             setShowReceiveModal(false);
             queryClient.invalidateQueries(['purchases']);
             queryClient.invalidateQueries(['purchase-dashboard']);
             await openPODetails(selectedPO.id);
-            alert("Réception effectuée avec succès et stock mis à jour !");
+            alert(`Réception effectuée : ${receiveQuantityTotal.toLocaleString('fr-FR')} unité(s) rangée(s) dans ${receiveTargetQuality.fullName}.`);
         } catch (err) {
             console.error(err);
             alert(err.response?.data?.detail || "Erreur lors de la réception.");
@@ -827,6 +866,8 @@ export default function PurchasesDashboard() {
             })
             .filter(line => line.remaining > 0);
         setReceiveTargetLoc('');
+        setReceiveDeliveryNoteRef('');
+        setReceiveComment('');
         setReceiveLines(lines);
         setShowReceiveModal(true);
     };
@@ -840,6 +881,10 @@ export default function PurchasesDashboard() {
     };
 
     const receiveQuantityTotal = receiveLines.reduce((sum, line) => sum + (parseFloat(line.quantity || 0) || 0), 0);
+    const receiveTargetLocation = locations.find(location => String(location.id) === String(receiveTargetLoc));
+    const receiveTargetQuality = receiveTargetLocation ? getLocationQuality(receiveTargetLocation) : null;
+    const receiveActiveLines = receiveLines.filter(line => parseFloat(line.quantity || 0) > 0);
+    const receiveBlocked = !receiveTargetLoc || !receiveTargetQuality?.exploitable || receiveQuantityTotal <= 0;
 
     const openSupplierInvoiceModal = () => {
         if (!canManageSupplierInvoices) return;
@@ -1923,33 +1968,81 @@ export default function PurchasesDashboard() {
             {/* RECEIVE MODAL */}
             {showReceiveModal && selectedPO && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full border border-slate-100 overflow-hidden">
-                        <div className="px-8 py-6 bg-slate-900 text-white flex justify-between items-start">
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full border border-slate-100 overflow-hidden max-h-[92vh] flex flex-col">
+                        <div className="px-8 py-6 bg-emerald-950 text-white flex justify-between items-start">
                             <div>
-                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-300/20 text-emerald-200 text-[10px] font-black uppercase tracking-widest mb-3">
-                                    <Truck className="w-3.5 h-3.5"/> Réception fournisseur
+                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-300/20 text-emerald-100 text-[10px] font-black uppercase tracking-widest mb-3">
+                                    <Truck className="w-3.5 h-3.5"/> Réception depuis commande fournisseur
                                 </div>
-                                <h3 className="font-black text-3xl">Réception partielle</h3>
-                                <p className="text-sm font-medium text-slate-300 mt-1">{selectedPO.reference} · {selectedPO.supplier}</p>
+                                <h3 className="font-black text-3xl">Réceptionner, ranger, rendre disponible</h3>
+                                <p className="text-sm font-bold text-emerald-100 mt-1">
+                                    {selectedPO.reference} · {selectedPO.supplier} · commande → emplacement clair → stock disponible
+                                </p>
                             </div>
-                            <button onClick={()=>setShowReceiveModal(false)} className="text-slate-300 hover:bg-white/10 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                            <button onClick={()=>setShowReceiveModal(false)} className="text-emerald-100 hover:bg-white/10 p-2 rounded-full"><X className="w-5 h-5"/></button>
                         </div>
 
-                        <div className="p-8 space-y-6 bg-slate-50">
-                            <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-4">
+                        <div className="overflow-y-auto p-8 space-y-6 bg-slate-50">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                {[
+                                    ['1', 'Bon fournisseur', Boolean(selectedPO)],
+                                    ['2', 'Lignes reçues', receiveActiveLines.length > 0],
+                                    ['3', 'Emplacement final', Boolean(receiveTargetQuality?.exploitable)],
+                                    ['4', 'Mouvement tracé', !receiveBlocked],
+                                ].map(([step, label, ok]) => (
+                                    <div key={step} className={`rounded-2xl border p-4 ${ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-white border-slate-200 text-slate-500'}`}>
+                                        <p className="text-[10px] font-black uppercase tracking-widest">Étape {step}</p>
+                                        <p className="mt-1 font-black">{label}</p>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-[1fr_280px] gap-4">
                                 <div className="bg-white rounded-2xl border border-slate-200 p-5">
-                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Emplacement de destination</label>
-                                    <select value={receiveTargetLoc} onChange={e=>setReceiveTargetLoc(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500">
-                                        <option value="">Choisir un entrepôt</option>
-                                        {locations.map(l => (
-                                            <option key={l.id} value={l.id}>{l.name}</option>
-                                        ))}
+                                    <div className="flex items-center justify-between gap-4 mb-4">
+                                        <div>
+                                            <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Rangement obligatoire</p>
+                                            <h4 className="font-black text-slate-950 text-lg">Où ranger les pièces reçues ?</h4>
+                                            <p className="text-xs font-bold text-slate-500">Choisir un rack, casier ou emplacement atelier final. Pas de zone vague.</p>
+                                        </div>
+                                        {receiveTargetQuality && (
+                                            <span className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest ${receiveTargetQuality.exploitable ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                                {receiveTargetQuality.exploitable ? 'Exploitable atelier' : 'À corriger'}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <select
+                                        value={receiveTargetLoc}
+                                        onChange={e=>setReceiveTargetLoc(e.target.value)}
+                                        className={`w-full bg-slate-50 border rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 ${receiveTargetQuality && !receiveTargetQuality.exploitable ? 'border-red-300 text-red-700' : 'border-slate-200'}`}
+                                    >
+                                        <option value="">Choisir un rack, casier ou emplacement atelier</option>
+                                        {locations.map(l => {
+                                            const quality = getLocationQuality(l);
+                                            return (
+                                                <option key={l.id} value={l.id}>
+                                                    {quality.exploitable ? '✓ ' : '⚠ '} {quality.fullName}
+                                                </option>
+                                            );
+                                        })}
                                     </select>
+                                    {receiveTargetQuality && (
+                                        <p className={`mt-3 text-sm font-bold ${receiveTargetQuality.exploitable ? 'text-emerald-700' : 'text-red-700'}`}>
+                                            {receiveTargetQuality.exploitable
+                                                ? `Destination validée · ${receiveTargetQuality.role} · ${receiveTargetQuality.fullName}`
+                                                : `Destination non exploitable : ${(receiveTargetQuality.issues || []).join(', ')}`}
+                                        </p>
+                                    )}
                                 </div>
-                                <div className="bg-emerald-600 text-white rounded-2xl p-5 shadow-lg">
-                                    <p className="text-[10px] font-black text-emerald-100 uppercase tracking-widest">Total à recevoir</p>
-                                    <p className="text-3xl font-black mt-2">{receiveQuantityTotal.toLocaleString('fr-FR')}</p>
-                                    <p className="text-xs font-bold text-emerald-100 mt-1">{receiveLines.filter(l => parseFloat(l.quantity || 0) > 0).length} ligne(s)</p>
+                                <div className="bg-emerald-600 text-white rounded-2xl p-5 shadow-lg flex flex-col justify-between">
+                                    <div>
+                                        <p className="text-[10px] font-black text-emerald-100 uppercase tracking-widest">Total reçu maintenant</p>
+                                        <p className="text-4xl font-black mt-2">{receiveQuantityTotal.toLocaleString('fr-FR')}</p>
+                                        <p className="text-xs font-bold text-emerald-100 mt-1">{receiveActiveLines.length} ligne(s) mouvementée(s)</p>
+                                    </div>
+                                    <p className="mt-6 text-xs font-bold text-emerald-100">
+                                        Le stock sera disponible immédiatement dans l’emplacement choisi.
+                                    </p>
                                 </div>
                             </div>
 
@@ -2002,12 +2095,47 @@ export default function PurchasesDashboard() {
                                     )}
                                 </div>
                             </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="bg-white rounded-2xl border border-slate-200 p-5">
+                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Bon de livraison fournisseur</label>
+                                    <input
+                                        value={receiveDeliveryNoteRef}
+                                        onChange={e => setReceiveDeliveryNoteRef(e.target.value)}
+                                        placeholder="Ex: BL fournisseur, colis, transporteur..."
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                </div>
+                                <div className="bg-white rounded-2xl border border-slate-200 p-5">
+                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Commentaire réception</label>
+                                    <input
+                                        value={receiveComment}
+                                        onChange={e => setReceiveComment(e.target.value)}
+                                        placeholder="Ex: réception complète, contrôle visuel OK..."
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className={`rounded-2xl border p-5 ${receiveBlocked ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
+                                <div className="flex items-start gap-3">
+                                    {receiveBlocked ? <AlertTriangle className="w-5 h-5 mt-0.5" /> : <CheckCircle className="w-5 h-5 mt-0.5" />}
+                                    <div>
+                                        <p className="font-black">{receiveBlocked ? 'Réception à compléter' : 'Réception prête à valider'}</p>
+                                        <p className="mt-1 text-sm font-bold opacity-80">
+                                            {receiveBlocked
+                                                ? 'Sélectionnez un emplacement final exploitable et au moins une quantité reçue.'
+                                                : `${receiveQuantityTotal.toLocaleString('fr-FR')} unité(s) seront ajoutées au stock disponible dans ${receiveTargetQuality.fullName}.`}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         <div className="px-8 py-5 bg-white border-t border-slate-100 flex justify-between items-center">
                             <button onClick={()=>setShowReceiveModal(false)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50">Annuler</button>
-                            <button onClick={handleReceivePO} disabled={!receiveTargetLoc || receiveQuantityTotal <= 0} className="px-8 py-4 bg-emerald-600 disabled:bg-slate-300 hover:bg-emerald-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
-                                Valider la réception
+                            <button onClick={handleReceivePO} disabled={receiveBlocked} className="px-8 py-4 bg-emerald-600 disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-emerald-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
+                                Valider réception et ranger en stock
                             </button>
                         </div>
                     </div>

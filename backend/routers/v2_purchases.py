@@ -55,6 +55,8 @@ class PurchaseOrderReceiveLineInput(BaseModel):
 class PurchaseOrderReceiveInput(BaseModel):
     target_location_id: int
     lines: Optional[List[PurchaseOrderReceiveLineInput]] = None
+    delivery_note_reference: Optional[str] = None
+    notes: Optional[str] = None
 
 class SupplierInvoiceLineInput(BaseModel):
     purchase_order_line_id: int
@@ -589,6 +591,74 @@ def _line_match_status(quantity_received: float, quantity_invoiced: float) -> st
     if quantity_invoiced < quantity_received:
         return "PARTIAL_MATCH"
     return "MATCHED"
+
+_VAGUE_LOCATION_WORDS = {
+    "divers",
+    "stock",
+    "test",
+    "zone",
+    "autre",
+    "temp",
+    "temporary",
+    "vrac",
+    "inconnu",
+    "unknown",
+}
+
+
+def _location_full_name(db: Session, location: models.StockLocation) -> str:
+    names = []
+    current = location
+    seen = set()
+    while current and current.id not in seen:
+        seen.add(current.id)
+        names.append(current.name or "")
+        current = db.query(models.StockLocation).filter_by(id=current.parent_id).first() if current.parent_id else None
+    return " > ".join(reversed([name for name in names if name]))
+
+
+def _location_role(db: Session, location: models.StockLocation) -> str:
+    label = f"{location.name or ''} {_location_full_name(db, location)}".lower()
+    if location.usage == "production" or "atelier" in label or "préparation" in label or "preparation" in label:
+        return "Zone atelier"
+    if "casier" in label or "case" in label or "bac" in label:
+        return "Casier final"
+    if "rack" in label or "travée" in label or "travee" in label or "étag" in label or "etag" in label:
+        return "Rack"
+    last_segment = (location.name or "").split("/")[-1].strip().lower()
+    if len(last_segment) >= 2 and last_segment[0].isalpha() and last_segment[1:].isdigit():
+        return "Casier final"
+    return "Zone parent" if location.parent_id else "Magasin"
+
+
+def _assert_receipt_target_exploitable(db: Session, location_id: int) -> models.StockLocation:
+    location = db.query(models.StockLocation).filter_by(id=location_id, is_active=True).first()
+    if not location:
+        raise HTTPException(status_code=400, detail="Emplacement de réception introuvable ou archivé.")
+    if location.usage not in {"internal", "production"}:
+        raise HTTPException(status_code=400, detail="La réception fournisseur doit cibler un emplacement physique interne.")
+
+    name = (location.name or "").strip().lower()
+    first_word = name.split(" ", 1)[0] if name else ""
+    compact_slot = len(name) >= 2 and name[0].isalpha() and name[1:].isdigit()
+    role = _location_role(db, location)
+    issues = []
+    if not name:
+        issues.append("nom absent")
+    if name and len(name) < 3 and not compact_slot:
+        issues.append("nom trop court")
+    if name in _VAGUE_LOCATION_WORDS or first_word in (_VAGUE_LOCATION_WORDS - {"zone"}):
+        issues.append("nom trop vague")
+    if role in {"Magasin", "Zone parent"}:
+        issues.append("rack, casier ou zone atelier à préciser")
+
+    if issues:
+        detail = ", ".join(issues)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Emplacement non exploitable pour réception fournisseur: {detail}.",
+        )
+    return location
 
 def _supplier_map(db: Session) -> dict[str, models.Supplier]:
     return {
@@ -1758,6 +1828,7 @@ def receive_purchase_order(
         
     if po.status == models.PurchaseOrderStatus.RECEIVED:
         raise HTTPException(status_code=400, detail="PO already fully received")
+    target_location = _assert_receipt_target_exploitable(db, data.target_location_id)
         
     # Get Supplier virtual location, or create if not exists
     supplier_loc = db.query(models.StockLocation).filter(models.StockLocation.usage == 'supplier').first()
@@ -1792,6 +1863,12 @@ def receive_purchase_order(
 
         if receive_qty > 0:
             ref_move = f"IN/{po.reference}/{line.id}"
+            notes = [
+                f"Réception fournisseur depuis {po.reference}",
+                f"Rangé dans {_location_full_name(db, target_location)}",
+                f"BL fournisseur: {data.delivery_note_reference.strip()}" if data.delivery_note_reference else None,
+                data.notes.strip() if data.notes else None,
+            ]
             try:
                 InventoryService.move_stock(
                     db,
@@ -1800,7 +1877,7 @@ def receive_purchase_order(
                     dest_location_id=data.target_location_id,
                     quantity=receive_qty,
                     reference=ref_move,
-                    notes=f"Réception fournisseur depuis {po.reference}",
+                    notes=" · ".join(note for note in notes if note),
                     author=current_user.get("sub", "unknown"),
                     source_screen="purchases.receipt",
                     document_type="purchase_order",
