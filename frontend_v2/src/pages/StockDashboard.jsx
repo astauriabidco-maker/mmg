@@ -232,6 +232,14 @@ export default function StockDashboard({ surface = 'management' }) {
     const [customerIssueData, setCustomerIssueData] = useState({ variant: null, sourceLocId: '', qty: '', reason: '' });
     const [customerIssueSearch, setCustomerIssueSearch] = useState('');
     const [riskActionVariantId, setRiskActionVariantId] = useState(null);
+    const [showSupplierResolutionModal, setShowSupplierResolutionModal] = useState(false);
+    const [supplierResolutionForm, setSupplierResolutionForm] = useState({
+        mode: 'link',
+        supplierName: '',
+        applySimilar: false,
+        notes: '',
+    });
+    const [supplierResolutionSaving, setSupplierResolutionSaving] = useState(false);
 
     const { data: productHistory = [] } = useQuery({
         queryKey: ['product-history', selectedProductId],
@@ -1688,6 +1696,82 @@ export default function StockDashboard({ surface = 'management' }) {
         });
     };
 
+    const openSupplierResolutionAssistant = (product = selectedProduct, context = activeSupplierFixContext) => {
+        if (!product) return;
+        const detected = String(context?.suggestedSupplier || product.supplier || '').trim();
+        const existing = supplierDirectory.find(supplier =>
+            supplier.is_active !== false
+            && String(supplier.name || '').trim().toUpperCase() === detected.toUpperCase()
+        );
+        setSupplierResolutionForm({
+            mode: existing ? 'link' : 'create',
+            supplierName: existing?.name || (detected === 'AUTRE' ? '' : detected),
+            applySimilar: false,
+            notes: context?.reference
+                ? `Déblocage réapprovisionnement ${context.reference}`
+                : 'Déblocage réapprovisionnement stock',
+        });
+        setShowSupplierResolutionModal(true);
+    };
+
+    const productUpdatePayload = (product, supplierName) => ({
+        reference_base: product.reference_base,
+        name: product.name,
+        category: product.category || null,
+        material_type: product.material_type,
+        unit: product.unit,
+        supplier: supplierName,
+        product_type: product.product_type,
+        available_in_pos: product.available_in_pos,
+        image_url: product.image_url,
+        technical_doc_url: product.technical_doc_url,
+        compatible_series: product.compatible_series,
+        catalog_status: product.catalog_status || 'ACTIVE',
+    });
+
+    const submitSupplierResolution = async () => {
+        if (!selectedProduct) return;
+        const supplierName = String(supplierResolutionForm.supplierName || '').trim();
+        if (!supplierName) {
+            alert("Choisissez ou saisissez un fournisseur avant validation.");
+            return;
+        }
+        const supplierExists = supplierDirectory.some(supplier =>
+            supplier.is_active !== false
+            && String(supplier.name || '').trim().toUpperCase() === supplierName.toUpperCase()
+        );
+        const targetProducts = supplierResolutionForm.applySimilar
+            ? [selectedProduct, ...supplierResolutionSimilarProducts]
+            : [selectedProduct];
+
+        setSupplierResolutionSaving(true);
+        try {
+            if (supplierResolutionForm.mode === 'create' && !supplierExists) {
+                await api.post('/v2/suppliers/', {
+                    name: supplierName,
+                    supplier_status: 'ACTIVE',
+                    supplier_category: selectedProduct.material_type || selectedProduct.category || null,
+                    default_currency: 'EUR',
+                    notes: supplierResolutionForm.notes || 'Créé depuis assistant réapprovisionnement stock.',
+                });
+            }
+            await Promise.all(targetProducts.map(product =>
+                api.put(`/v2/stock/products/${product.id}`, productUpdatePayload(product, supplierName))
+            ));
+            await queryClient.invalidateQueries({ queryKey: ['suppliers', 'catalog'] });
+            await queryClient.invalidateQueries({ queryKey: ['products'] });
+            await queryClient.invalidateQueries({ queryKey: ['purchase-needs'] });
+            await queryClient.invalidateQueries({ queryKey: ['purchase-needs', 'stock-risk'] });
+            setSupplierFixContext(prev => prev ? { ...prev, suggestedSupplier: supplierName } : prev);
+            setShowSupplierResolutionModal(false);
+            alert(`${targetProducts.length} fiche(s) rattachée(s) à ${supplierName}. Relancez Stock à risque pour confirmer le déblocage.`);
+        } catch (e) {
+            alert(e.response?.data?.detail || "Erreur lors du rapprochement fournisseur.");
+        } finally {
+            setSupplierResolutionSaving(false);
+        }
+    };
+
     const openLocationDetail = (event, location) => {
         event?.stopPropagation?.();
         setSelectedLocationId(location.id);
@@ -1974,6 +2058,20 @@ export default function StockDashboard({ surface = 'management' }) {
             && String(supplier.name || '').trim().toUpperCase() === String(selectedProduct.supplier || '').trim().toUpperCase()
         )
         : false;
+    const supplierResolutionSimilarProducts = selectedProduct
+        ? products.filter(product => {
+            if (product.id === selectedProduct.id || String(product.product_type || 'stockable').toLowerCase() === 'service') return false;
+            const currentSupplier = String(selectedProduct.supplier || '').trim().toUpperCase();
+            const detectedSupplier = String(activeSupplierFixContext?.suggestedSupplier || '').trim().toUpperCase();
+            const productSupplier = String(product.supplier || '').trim().toUpperCase();
+            const productReference = String(product.reference_base || '').trim().toUpperCase();
+            return (
+                (currentSupplier && productSupplier === currentSupplier)
+                || (detectedSupplier && productSupplier === detectedSupplier)
+                || (detectedSupplier && productReference.startsWith(`${detectedSupplier}:`))
+            );
+        }).slice(0, 50)
+        : [];
     const selectedLocation = locations.find(location => location.id === selectedLocationId);
     const selectedLocationStockRows = selectedLocation ? getLocationStockRows(selectedLocation) : [];
     const selectedLocationMovements = selectedLocation ? getLocationMovements(selectedLocation) : [];
@@ -2841,10 +2939,10 @@ export default function StockDashboard({ surface = 'management' }) {
                                                 {stockPermissions.qualifyCatalog && (
                                                     <button
                                                         type="button"
-                                                        onClick={(event) => openEditProduct(event, selectedProduct)}
+                                                        onClick={() => openSupplierResolutionAssistant(selectedProduct, activeSupplierFixContext)}
                                                         className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black text-white hover:bg-red-500"
                                                     >
-                                                        Modifier fournisseur
+                                                        Assistant fournisseur
                                                     </button>
                                                 )}
                                                 <button
@@ -3228,10 +3326,10 @@ export default function StockDashboard({ surface = 'management' }) {
                                                                 {stockPermissions.qualifyCatalog && (
                                                                     <button
                                                                         type="button"
-                                                                        onClick={(event) => openEditProduct(event, selectedProduct)}
+                                                                        onClick={() => openSupplierResolutionAssistant(selectedProduct, activeSupplierFixContext)}
                                                                         className="rounded-xl bg-red-600 px-3 py-2 text-xs font-black text-white hover:bg-red-500"
                                                                     >
-                                                                        Modifier fournisseur
+                                                                        Assistant fournisseur
                                                                     </button>
                                                                 )}
                                                                 <button
@@ -4868,6 +4966,138 @@ export default function StockDashboard({ surface = 'management' }) {
                             >
                                 <ArrowRight className="w-5 h-5" />
                                 Valider la sortie stock
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* -------- SUPPLIER RESOLUTION ASSISTANT -------- */}
+            {showSupplierResolutionModal && selectedProduct && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-2xl w-full border border-slate-100">
+                        <div className="flex items-start gap-3 mb-6 border-b border-slate-100 pb-4">
+                            <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center text-red-600 shadow-inner">
+                                <Truck className="w-6 h-6" />
+                            </div>
+                            <div>
+                                <p className="text-[10px] uppercase tracking-[0.24em] font-black text-red-600">Assistant fournisseur</p>
+                                <h3 className="font-black text-2xl text-slate-800">Débloquer le réapprovisionnement</h3>
+                                <p className="text-sm font-medium text-slate-500">
+                                    Créez ou rapprochez le fournisseur, puis rattachez la fiche article pour relancer le calcul réappro.
+                                </p>
+                            </div>
+                            <button onClick={()=>setShowSupplierResolutionModal(false)} className="ml-auto text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                        </div>
+
+                        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 mb-5">
+                            <p className="text-xs font-black uppercase tracking-widest text-red-700">Article à débloquer</p>
+                            <p className="mt-1 text-lg font-black text-red-950">{selectedProduct.name}</p>
+                            <p className="mt-1 text-xs font-mono font-black text-red-700">
+                                {activeSupplierFixContext?.reference || selectedProduct.reference_base} · fournisseur actuel : {selectedProduct.supplier || 'non renseigné'}
+                            </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <button
+                                type="button"
+                                onClick={() => setSupplierResolutionForm({...supplierResolutionForm, mode: 'link'})}
+                                className={`rounded-2xl border p-4 text-left ${
+                                    supplierResolutionForm.mode === 'link'
+                                        ? 'border-blue-300 bg-blue-50 text-blue-900'
+                                        : 'border-slate-200 bg-slate-50 text-slate-600'
+                                }`}
+                            >
+                                <p className="text-[10px] font-black uppercase tracking-widest">Option 1</p>
+                                <p className="mt-1 font-black">Rapprocher un fournisseur existant</p>
+                                <p className="mt-1 text-xs font-bold opacity-75">À privilégier pour CORTIZO, TECHNAL/HYDRO, GEZE…</p>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setSupplierResolutionForm({...supplierResolutionForm, mode: 'create'})}
+                                className={`rounded-2xl border p-4 text-left ${
+                                    supplierResolutionForm.mode === 'create'
+                                        ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                                        : 'border-slate-200 bg-slate-50 text-slate-600'
+                                }`}
+                            >
+                                <p className="text-[10px] font-black uppercase tracking-widest">Option 2</p>
+                                <p className="mt-1 font-black">Créer le fournisseur détecté</p>
+                                <p className="mt-1 text-xs font-bold opacity-75">À utiliser seulement si le fournisseur n’existe pas encore.</p>
+                            </button>
+                        </div>
+
+                        <div className="mt-5 space-y-4">
+                            <div>
+                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Fournisseur cible</label>
+                                {supplierResolutionForm.mode === 'link' ? (
+                                    <select
+                                        value={supplierResolutionForm.supplierName}
+                                        onChange={e => setSupplierResolutionForm({...supplierResolutionForm, supplierName: e.target.value})}
+                                        className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="">-- Choisir dans le référentiel --</option>
+                                        {supplierDirectory.filter(supplier => supplier.is_active !== false).map(supplier => (
+                                            <option key={supplier.id || supplier.name} value={supplier.name}>{supplier.name}</option>
+                                        ))}
+                                    </select>
+                                ) : (
+                                    <input
+                                        value={supplierResolutionForm.supplierName}
+                                        onChange={e => setSupplierResolutionForm({...supplierResolutionForm, supplierName: e.target.value})}
+                                        className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                                        placeholder="Ex: CORTIZO, GEZE, TECHNAL/HYDRO..."
+                                    />
+                                )}
+                            </div>
+
+                            <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <input
+                                    type="checkbox"
+                                    checked={supplierResolutionForm.applySimilar}
+                                    onChange={e => setSupplierResolutionForm({...supplierResolutionForm, applySimilar: e.target.checked})}
+                                    className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span>
+                                    <span className="block text-sm font-black text-slate-800">
+                                        Appliquer aussi aux références similaires visibles
+                                    </span>
+                                    <span className="mt-1 block text-xs font-bold text-slate-500">
+                                        {supplierResolutionSimilarProducts.length} fiche(s) candidate(s) avec fournisseur/référence proche. À cocher seulement si le rapprochement est sûr.
+                                    </span>
+                                </span>
+                            </label>
+
+                            {supplierResolutionForm.applySimilar && supplierResolutionSimilarProducts.length > 0 && (
+                                <div className="max-h-32 overflow-auto rounded-2xl border border-slate-200 bg-white p-3">
+                                    {supplierResolutionSimilarProducts.slice(0, 12).map(product => (
+                                        <p key={product.id} className="text-xs font-bold text-slate-500 py-1">
+                                            {product.reference_base} · {product.name}
+                                        </p>
+                                    ))}
+                                </div>
+                            )}
+
+                            <textarea
+                                value={supplierResolutionForm.notes}
+                                onChange={e => setSupplierResolutionForm({...supplierResolutionForm, notes: e.target.value})}
+                                className="w-full min-h-[82px] rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="Commentaire de rapprochement fournisseur..."
+                            />
+
+                            <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm font-bold text-blue-800">
+                                Après validation, revenez sur Stock à risque : la ligne doit passer de “bloquée” à “Créer demande d’achat” si le fournisseur est actif.
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={submitSupplierResolution}
+                                disabled={supplierResolutionSaving || !supplierResolutionForm.supplierName.trim()}
+                                className="w-full rounded-xl bg-slate-900 px-5 py-4 text-sm font-black text-white shadow-md hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed"
+                            >
+                                {supplierResolutionSaving
+                                    ? 'Rapprochement en cours...'
+                                    : `Valider pour ${supplierResolutionForm.applySimilar ? supplierResolutionSimilarProducts.length + 1 : 1} fiche(s)`}
                             </button>
                         </div>
                     </div>
