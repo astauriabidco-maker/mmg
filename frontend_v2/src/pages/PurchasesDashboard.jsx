@@ -275,6 +275,8 @@ export default function PurchasesDashboard() {
     const [searchTerm, setSearchTerm] = useState("");
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [selectedPO, setSelectedPO] = useState(null);
+    const [conversionRequest, setConversionRequest] = useState(null);
+    const [conversionSaving, setConversionSaving] = useState(false);
     const [showReceiveModal, setShowReceiveModal] = useState(false);
     const [showSupplierInvoiceModal, setShowSupplierInvoiceModal] = useState(false);
     const [selectedSupplierInvoice, setSelectedSupplierInvoice] = useState(null);
@@ -705,13 +707,19 @@ export default function PurchasesDashboard() {
         }
     };
 
+    const openPurchaseRequestConversion = (request) => {
+        setConversionRequest(request);
+    };
+
     const handleConvertPurchaseRequest = async (requestId) => {
+        setConversionSaving(true);
         try {
             const res = await api.post(`/v2/purchases/requests/${requestId}/convert`);
             queryClient.invalidateQueries(['purchase-requests']);
             queryClient.invalidateQueries(['purchases']);
             queryClient.invalidateQueries(['purchase-dashboard']);
             await refetchPurchaseRequests();
+            setConversionRequest(null);
             if (res.data?.purchase_order?.id) {
                 await openPODetails(res.data.purchase_order.id);
                 setCurrentTab('orders');
@@ -719,6 +727,8 @@ export default function PurchasesDashboard() {
         } catch (err) {
             console.error(err);
             alert(err.response?.data?.detail || "Erreur lors de la conversion en bon fournisseur.");
+        } finally {
+            setConversionSaving(false);
         }
     };
 
@@ -927,6 +937,20 @@ export default function PurchasesDashboard() {
         p.reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
         p.supplier.toLowerCase().includes(searchTerm.toLowerCase())
     );
+    const conversionLines = conversionRequest?.lines || [];
+    const conversionWarnings = conversionRequest ? [
+        !conversionRequest.supplier && 'Fournisseur manquant.',
+        conversionLines.length === 0 && 'Aucune ligne à convertir.',
+        conversionLines.some(line => !line.variant_id) && 'Certaines lignes ne sont pas liées à une variante stock.',
+        conversionLines.some(line => Number(line.quantity || 0) <= 0) && 'Certaines quantités sont nulles ou invalides.',
+        conversionLines.some(line => Number(line.unit_price || 0) <= 0) && 'Prix fournisseur à zéro : à compléter sur le bon avant envoi.',
+    ].filter(Boolean) : [];
+    const conversionTotalQuantity = conversionLines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    const conversionTotalAmount = conversionLines.reduce((sum, line) => sum + Number(line.line_total || 0), 0);
+    const conversionCanProceed = conversionRequest?.status === 'APPROVED'
+        && Boolean(conversionRequest?.supplier)
+        && conversionLines.length > 0
+        && conversionLines.every(line => Number(line.quantity || 0) > 0);
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
@@ -1266,7 +1290,7 @@ export default function PurchasesDashboard() {
                             canOrder={canCreatePurchaseOrder}
                             onApprove={handleApprovePurchaseRequest}
                             onReject={handleRejectPurchaseRequest}
-                            onConvert={handleConvertPurchaseRequest}
+                            onConvert={openPurchaseRequestConversion}
                         />
                 ) : currentTab === 'disputes' ? (
                     <SupplierDisputesBoard
@@ -1581,6 +1605,135 @@ export default function PurchasesDashboard() {
                     </div>
                 )}
             </div>
+
+            {/* PURCHASE REQUEST CONVERSION CONTROL */}
+            {conversionRequest && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full border border-slate-100 max-h-[92vh] flex flex-col overflow-hidden">
+                        <div className="px-8 py-6 bg-blue-950 text-white flex flex-wrap items-start justify-between gap-4">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-200">Commande fournisseur assistée</p>
+                                <h3 className="mt-1 text-3xl font-black">Contrôler avant création du bon fournisseur</h3>
+                                <p className="mt-2 text-sm font-bold text-blue-100">
+                                    La demande validée sera convertie sans ressaisie : fournisseur, lignes, quantités, notes et traçabilité.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setConversionRequest(null)}
+                                className="rounded-full bg-white/10 p-2 text-blue-100 hover:bg-white/20"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <div className="overflow-y-auto p-8 space-y-5">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Demande</p>
+                                    <p className="mt-1 text-lg font-black text-slate-950">{conversionRequest.reference}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fournisseur</p>
+                                    <p className="mt-1 text-lg font-black text-slate-950">{conversionRequest.supplier || 'Manquant'}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Lignes</p>
+                                    <p className="mt-1 text-lg font-black text-slate-950">{conversionLines.length}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Quantité totale</p>
+                                    <p className="mt-1 text-lg font-black text-slate-950">{conversionTotalQuantity.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}</p>
+                                </div>
+                            </div>
+
+                            <div className={`rounded-2xl border p-4 ${conversionCanProceed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
+                                <div className="flex items-start gap-3">
+                                    {conversionCanProceed ? <CheckCircle className="mt-0.5 h-5 w-5" /> : <AlertTriangle className="mt-0.5 h-5 w-5" />}
+                                    <div>
+                                        <p className="font-black">
+                                            {conversionCanProceed ? 'Conversion autorisée' : 'Conversion à corriger avant engagement'}
+                                        </p>
+                                        <p className="mt-1 text-sm font-bold opacity-80">
+                                            {conversionCanProceed
+                                                ? 'Le bon fournisseur peut être créé. Les prix à zéro restent signalés pour contrôle avant envoi.'
+                                                : 'Le fournisseur, les lignes et les quantités doivent être valides avant création du bon.'}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {conversionWarnings.length > 0 && (
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Points à vérifier</p>
+                                    <ul className="mt-2 space-y-1 text-sm font-bold text-amber-800">
+                                        {conversionWarnings.map(warning => (
+                                            <li key={warning}>• {warning}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+
+                            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                                <div className="grid grid-cols-[1fr_90px_110px_120px] gap-3 border-b border-slate-100 bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                    <span>Article</span>
+                                    <span className="text-right">Qté</span>
+                                    <span className="text-right">Prix unit.</span>
+                                    <span className="text-right">Total</span>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {conversionLines.map(line => (
+                                        <div key={line.id} className="grid grid-cols-[1fr_90px_110px_120px] gap-3 px-4 py-3 items-center">
+                                            <div className="min-w-0">
+                                                <p className="truncate font-black text-slate-900">{line.product_name || 'Article'}</p>
+                                                <p className="mt-1 text-[10px] font-mono font-black uppercase text-slate-400">{line.variant_ref || `Variante #${line.variant_id}`}</p>
+                                                {line.need_reason && <p className="mt-1 text-xs font-bold text-slate-500">{line.need_reason}</p>}
+                                            </div>
+                                            <p className={`text-right font-black ${Number(line.quantity || 0) <= 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                                                {Number(line.quantity || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+                                            </p>
+                                            <p className={`text-right font-black ${Number(line.unit_price || 0) <= 0 ? 'text-amber-600' : 'text-slate-900'}`}>
+                                                {Number(line.unit_price || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                                            </p>
+                                            <p className="text-right font-black text-slate-900">
+                                                {Number(line.line_total || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                                            </p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Traçabilité</p>
+                                <p className="mt-1 text-sm font-bold text-slate-600">
+                                    Le bon fournisseur reprendra les lignes de {conversionRequest.reference}. La demande passera en statut converti et conservera le lien vers le bon créé.
+                                </p>
+                                <p className="mt-2 text-sm font-black text-slate-900">
+                                    Total estimé actuel : {conversionTotalAmount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="px-8 py-5 bg-white border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setConversionRequest(null)}
+                                className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-slate-50"
+                            >
+                                Annuler
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleConvertPurchaseRequest(conversionRequest.id)}
+                                disabled={!canCreatePurchaseOrder || !conversionCanProceed || conversionSaving}
+                                className="px-8 py-4 rounded-xl bg-blue-600 text-white font-black shadow-lg hover:bg-blue-500 disabled:bg-slate-300 disabled:cursor-not-allowed"
+                            >
+                                {conversionSaving ? 'Création du bon...' : 'Créer le bon fournisseur'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* CREATE MODAL */}
             {showCreateModal && (
@@ -3216,7 +3369,7 @@ const PurchaseRequestsView = ({ requests, canApprove, canOrder, onApprove, onRej
                             </>
                         )}
                         {request.status === 'APPROVED' && (
-                            <button disabled={!canOrder} onClick={() => onConvert(request.id)} className="w-full py-3 rounded-xl bg-blue-600 disabled:bg-slate-300 text-white font-black">Créer le bon fournisseur</button>
+                            <button disabled={!canOrder} onClick={() => onConvert(request)} className="w-full py-3 rounded-xl bg-blue-600 disabled:bg-slate-300 text-white font-black">Contrôler puis créer le bon fournisseur</button>
                         )}
                         {request.purchase_order_id && (
                             <p className="text-xs font-bold text-blue-700 bg-blue-50 rounded-xl p-3">Bon fournisseur lié #{request.purchase_order_id}</p>
