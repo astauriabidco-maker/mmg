@@ -172,6 +172,7 @@ export default function StockDashboard({ surface = 'management' }) {
     // Mémorise l'écran d'origine de la fiche produit (catalogue, fiche
     // emplacement...) pour que "Retour" restaure le bon contexte.
     const [productDetailReturnMenu, setProductDetailReturnMenu] = useState(null);
+    const [supplierFixContext, setSupplierFixContext] = useState(null);
 
     useEffect(() => {
         setCurrentMenu(isDashboardSurface ? 'todo' : 'management-home');
@@ -179,6 +180,7 @@ export default function StockDashboard({ surface = 'management' }) {
         setSelectedProductId(null);
         setSelectedLocationId(null);
         setProductDetailReturnMenu(null);
+        setSupplierFixContext(null);
     }, [isDashboardSurface]);
 
     // Inline edit states
@@ -1648,9 +1650,10 @@ export default function StockDashboard({ surface = 'management' }) {
             .slice(0, 6);
     };
 
-    const openProductDetail = (event, product) => {
+    const openProductDetail = (event, product, options = {}) => {
         event?.stopPropagation?.();
-        setProductDetailReturnMenu(currentMenu);
+        setProductDetailReturnMenu(options.returnMenu || currentMenu);
+        setSupplierFixContext(options.supplierFixContext || null);
         setSelectedProductId(product.id);
         setCurrentMenu('product-detail');
         setShowLowStockOnly(false);
@@ -1661,7 +1664,28 @@ export default function StockDashboard({ surface = 'management' }) {
             ? productDetailReturnMenu
             : (inventoryFocus || 'catalog');
         setProductDetailReturnMenu(null);
+        setSupplierFixContext(null);
         setCurrentMenu(target);
+    };
+
+    const openSupplierFixFromRisk = (need) => {
+        const product = products.find(item => item.id === need?.product_id);
+        if (!product) {
+            goToPurchases();
+            return;
+        }
+        openProductDetail(null, product, {
+            returnMenu: 'risk',
+            supplierFixContext: {
+                productId: product.id,
+                reference: need.reference,
+                suggestedSupplier: need.supplier || String(need.reference || '').split(':')[0] || '',
+                blockedReason: need.blocked_reason || need.reason || "Fournisseur absent du référentiel fournisseurs.",
+                netNeedQuantity: need.net_need_quantity,
+                suggestedQuantity: need.suggested_quantity,
+                priority: need.priority,
+            },
+        });
     };
 
     const openLocationDetail = (event, location) => {
@@ -1943,6 +1967,13 @@ export default function StockDashboard({ surface = 'management' }) {
     const selectedProductPurchases = selectedProduct ? purchases.filter(purchase =>
         (purchase.lines || []).some(line => selectedProductVariantIds.has(line.variant_id))
     ) : [];
+    const activeSupplierFixContext = selectedProduct && supplierFixContext?.productId === selectedProduct.id ? supplierFixContext : null;
+    const selectedProductSupplierInDirectory = selectedProduct?.supplier
+        ? supplierDirectory.some(supplier =>
+            supplier.is_active !== false
+            && String(supplier.name || '').trim().toUpperCase() === String(selectedProduct.supplier || '').trim().toUpperCase()
+        )
+        : false;
     const selectedLocation = locations.find(location => location.id === selectedLocationId);
     const selectedLocationStockRows = selectedLocation ? getLocationStockRows(selectedLocation) : [];
     const selectedLocationMovements = selectedLocation ? getLocationMovements(selectedLocation) : [];
@@ -2781,6 +2812,53 @@ export default function StockDashboard({ surface = 'management' }) {
                                     </div>
                                 )}
 
+                                {activeSupplierFixContext && (
+                                    <div className="mx-6 mt-6 rounded-2xl border border-red-200 bg-red-50 p-4">
+                                        <div className="flex flex-wrap items-start justify-between gap-4">
+                                            <div className="max-w-3xl">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-red-700">Réapprovisionnement bloqué</p>
+                                                <h3 className="mt-1 text-base font-black text-red-950">Fournisseur à créer, rapprocher ou corriger avant demande d’achat</h3>
+                                                <p className="mt-1 text-xs font-bold text-red-700">
+                                                    {activeSupplierFixContext.reference || selectedProduct.reference_base} · besoin net {formatQty(activeSupplierFixContext.netNeedQuantity)} · suggéré {formatQty(activeSupplierFixContext.suggestedQuantity)}
+                                                </p>
+                                                <p className="mt-2 text-sm font-bold text-red-800">
+                                                    {activeSupplierFixContext.blockedReason}
+                                                </p>
+                                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                                    <span className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-red-700">
+                                                        détecté : {activeSupplierFixContext.suggestedSupplier || 'à renseigner'}
+                                                    </span>
+                                                    <span className={`rounded-lg border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${
+                                                        selectedProductSupplierInDirectory
+                                                            ? 'border-emerald-200 bg-white text-emerald-700'
+                                                            : 'border-red-200 bg-white text-red-700'
+                                                    }`}>
+                                                        {selectedProductSupplierInDirectory ? 'fournisseur lié' : 'absent du référentiel'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {stockPermissions.qualifyCatalog && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={(event) => openEditProduct(event, selectedProduct)}
+                                                        className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black text-white hover:bg-red-500"
+                                                    >
+                                                        Modifier fournisseur
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={goToPurchases}
+                                                    className="rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-black text-red-700 hover:bg-red-100"
+                                                >
+                                                    Ouvrir achats
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
                                 <div className="p-6 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
                                     <div className="space-y-4">
                                         <div className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -3128,9 +3206,44 @@ export default function StockDashboard({ surface = 'management' }) {
                                             <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
                                                 <div className="px-5 py-4 border-b border-slate-100">
                                                     <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Achats & fournisseur</p>
-                                                    <h3 className="text-lg font-black text-slate-950">{selectedProduct.supplier || 'Fournisseur à renseigner'}</h3>
+                                                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                                                        <h3 className="text-lg font-black text-slate-950">{selectedProduct.supplier || 'Fournisseur à renseigner'}</h3>
+                                                        <span className={`rounded-lg border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${
+                                                            selectedProductSupplierInDirectory
+                                                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                                : 'border-red-200 bg-red-50 text-red-700'
+                                                        }`}>
+                                                            {selectedProductSupplierInDirectory ? 'lié au référentiel' : 'à créer / rapprocher'}
+                                                        </span>
+                                                    </div>
                                                 </div>
                                                 <div className="p-5 space-y-3">
+                                                    {!selectedProductSupplierInDirectory && (
+                                                        <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+                                                            <p className="text-sm font-black text-red-800">Demande d’achat bloquée tant que le fournisseur n’est pas clair.</p>
+                                                            <p className="mt-1 text-xs font-bold text-red-700">
+                                                                Renseignez un fournisseur existant ou créez-le dans le référentiel achats, puis relancez Stock à risque.
+                                                            </p>
+                                                            <div className="mt-3 flex flex-wrap gap-2">
+                                                                {stockPermissions.qualifyCatalog && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={(event) => openEditProduct(event, selectedProduct)}
+                                                                        className="rounded-xl bg-red-600 px-3 py-2 text-xs font-black text-white hover:bg-red-500"
+                                                                    >
+                                                                        Modifier fournisseur
+                                                                    </button>
+                                                                )}
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={goToPurchases}
+                                                                    className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-black text-red-700 hover:bg-red-100"
+                                                                >
+                                                                    Ouvrir référentiel achats
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                     <div className="flex items-center justify-between gap-3">
                                                         <span className="text-sm font-bold text-slate-500">Commandes liées</span>
                                                         <span className="text-xl font-black text-slate-950">{selectedProductPurchases.length}</span>
@@ -3241,6 +3354,7 @@ export default function StockDashboard({ surface = 'management' }) {
                             canCreatePurchaseRequest={stockPermissions.requestPurchases}
                             riskActionVariantId={riskActionVariantId}
                             onCreatePurchaseRequest={createPurchaseRequestFromRisk}
+                            onResolveBlockedNeed={openSupplierFixFromRisk}
                             onOpenProduct={(productId) => {
                                 const product = products.find(item => item.id === productId);
                                 if (product) openProductDetail(null, product);
@@ -6640,6 +6754,7 @@ function StockRiskView({
     canCreatePurchaseRequest,
     riskActionVariantId,
     onCreatePurchaseRequest,
+    onResolveBlockedNeed,
     onOpenProduct,
 }) {
     const formatQty = value => Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
@@ -6828,7 +6943,9 @@ function StockRiskView({
                                     </div>
                                     <div className="space-y-2">
                                         <p className="truncate text-xs font-black uppercase tracking-widest text-slate-400">{need.supplier || 'Sans fournisseur'}</p>
-                                        <p className="text-xs font-bold text-slate-500">{need.blocked_reason || need.recommended_action}</p>
+                                        <p className={`text-xs font-bold ${need.is_orderable ? 'text-slate-500' : 'text-red-600'}`}>
+                                            {need.blocked_reason || need.recommended_action || (need.is_orderable ? 'Prêt pour demande achat.' : 'Fournisseur à créer ou rapprocher.')}
+                                        </p>
                                         {need.is_orderable && Number(need.net_need_quantity || 0) > 0 ? (
                                             <button
                                                 type="button"
@@ -6841,10 +6958,10 @@ function StockRiskView({
                                         ) : (
                                             <button
                                                 type="button"
-                                                onClick={onOpenPurchases}
-                                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                                                onClick={() => onResolveBlockedNeed?.(need)}
+                                                className="w-full rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700 hover:bg-red-100"
                                             >
-                                                Corriger / suivre
+                                                {need.supplier ? 'Corriger fournisseur' : 'Renseigner fournisseur'}
                                             </button>
                                         )}
                                         {need.is_orderable && !canCreatePurchaseRequest && (
