@@ -48,7 +48,7 @@ const COMMERCIAL_STATUS_STYLES = {
 export default function CRMClientsDashboard() {
     const navigate = useNavigate();
     const { user } = useAuth();
-    const [crmView, setCrmView] = useState('cockpit');
+    const [crmView, setCrmView] = useState('home');
     const [searchTerm, setSearchTerm] = useState('');
     const [segmentFilter, setSegmentFilter] = useState('');
     const [tagFilter, setTagFilter] = useState('');
@@ -608,6 +608,61 @@ export default function CRMClientsDashboard() {
         return actions.slice(0, 3);
     }, [activePresalesQuotes, selectedClient, openMeasureDossiers]);
 
+    const commerceOverview = useMemo(() => {
+        const draftQuotes = sales.filter(sale => sale.status === 'DRAFT');
+        const sentQuotes = sales.filter(sale => sale.status === 'SENT');
+        const signedOrders = sales.filter(sale => !isPresalesStatus(sale.status));
+        const openMeasures = dossiers.filter(dossier => dossier.status !== 'VALIDATED');
+        const clientSignals = segmentationQuery.data?.client_signals || {};
+        const followUpClients = Object.values(clientSignals).filter(signal => (signal.statuses || []).includes('to_follow_up')).length;
+        const withoutActionClients = Object.values(clientSignals).filter(signal => (signal.statuses || []).includes('missing_next_action')).length;
+        return {
+            clients: clients.filter(client => client.is_active !== false).length,
+            draftQuotes: draftQuotes.length,
+            sentQuotes: sentQuotes.length,
+            signedOrders: signedOrders.length,
+            openMeasures: openMeasures.length,
+            followUpClients,
+            withoutActionClients,
+            signedAmount: signedOrders.reduce((sum, sale) => sum + saleAmount(sale), 0),
+        };
+    }, [clients, sales, dossiers, segmentationQuery.data]);
+
+    const sellerQueue = useMemo(() => ([
+        {
+            key: 'follow-up',
+            label: 'Relances à faire',
+            value: commerceOverview.followUpClients,
+            detail: 'Clients avec relance ou décision attendue.',
+            tone: 'red',
+            view: 'cockpit',
+        },
+        {
+            key: 'quotes',
+            label: 'Devis envoyés',
+            value: commerceOverview.sentQuotes,
+            detail: 'À suivre jusqu’à signature ou relance.',
+            tone: 'blue',
+            view: 'pipeline',
+        },
+        {
+            key: 'missing-action',
+            label: 'Sans prochaine action',
+            value: commerceOverview.withoutActionClients,
+            detail: 'À reprendre pour éviter les opportunités dormantes.',
+            tone: 'amber',
+            view: 'cockpit',
+        },
+        {
+            key: 'measures',
+            label: 'Métrés ouverts',
+            value: commerceOverview.openMeasures,
+            detail: 'À contrôler avec BE avant proposition finale.',
+            tone: 'emerald',
+            view: 'measures',
+        },
+    ]), [commerceOverview]);
+
     const clientTimeline = useMemo(() => {
         const events = [];
         clientSales.forEach(sale => {
@@ -667,72 +722,142 @@ export default function CRMClientsDashboard() {
         return 'border-slate-200 bg-slate-50 text-slate-600';
     };
 
+    const navItems = [
+        { key: 'home', label: 'Parcours vendeur', group: 'Accueil', icon: ArrowRight },
+        { key: 'cockpit', label: 'Pilotage commercial', group: 'Décider', icon: BellRing },
+        { key: 'pipeline', label: 'Pipeline', group: 'Suivre', icon: ClipboardList },
+        { key: 'clients', label: 'Clients & contacts', group: 'Gérer', icon: Users },
+        { key: 'measures', label: 'Métrés / BE', group: 'Préparer', icon: Wrench },
+    ];
+
     return (
-        <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in">
-            <div className="bg-slate-900 px-8 py-6 text-white shrink-0">
-                <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+        <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-slate-50 border-y border-slate-200/80 animate-fade-in">
+            <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-5 lg:px-8">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                     <div>
-                        <div className="inline-flex items-center gap-2 rounded-xl bg-white/10 border border-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-blue-100 mb-3">
-                            <Users className="w-4 h-4" />
-                            CRM Avant-vente
+                        <div className="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-blue-700">
+                            <Users className="h-4 w-4" />
+                            Commerce & ventes
                         </div>
-                        <h2 className="text-3xl font-black tracking-tight">Avant-vente & relation client</h2>
-                        <p className="mt-2 text-sm font-bold text-slate-300 max-w-3xl">
-                            Qualifiez les clients, les prises de côte et les propositions avant leur passage en commande signée.
+                        <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-950">Commencer par la prochaine action commerciale.</h2>
+                        <p className="mt-2 max-w-3xl text-sm font-bold text-slate-500">
+                            Un parcours simple pour qualifier, relancer, préparer le devis, puis passer en commande signée.
                         </p>
                     </div>
-                    <div className="flex flex-wrap items-center gap-3">
-                        <div className="inline-flex rounded-xl border border-white/10 bg-white/10 p-1">
-                            <button
-                                onClick={() => setCrmView('cockpit')}
-                                className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${crmView === 'cockpit' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'}`}
-                            >
-                                Cockpit équipe
-                            </button>
-                            <button
-                                onClick={() => setCrmView('pipeline')}
-                                className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${crmView === 'pipeline' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'}`}
-                            >
-                                Pipeline avant-vente
-                            </button>
-                            <button
-                                onClick={() => setCrmView('measures')}
-                                className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${crmView === 'measures' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'}`}
-                            >
-                                Métrés fabrication
-                            </button>
-                            <button
-                                onClick={() => setCrmView('clients')}
-                                className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${crmView === 'clients' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'}`}
-                            >
-                                Fiches clients
-                            </button>
-                        </div>
+                    <div className="flex flex-wrap items-center gap-2">
                         <button
                             onClick={() => setShowClientModal(true)}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/15"
+                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 hover:bg-slate-50"
                         >
-                            <Users className="w-4 h-4" />
+                            <Users className="h-4 w-4" />
                             Nouveau client
                         </button>
                         <button
                             onClick={createQuoteForClient}
                             disabled={!selectedClient}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-400"
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
                         >
-                            <Plus className="w-4 h-4" />
-                            Créer une proposition
+                            <Plus className="h-4 w-4" />
+                            Préparer un devis
                         </button>
                         <button
                             onClick={planMeasureForClient}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-500"
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-500"
                         >
-                            <ClipboardList className="w-4 h-4" />
-                            Prise de côte
+                            <ClipboardList className="h-4 w-4" />
+                            Lancer un métré
                         </button>
                     </div>
                 </div>
+                <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
+                    <div className="flex min-w-max items-center gap-2">
+                        {navItems.map(item => {
+                            const Icon = item.icon;
+                            const selected = crmView === item.key;
+                            return (
+                                <button
+                                    key={item.key}
+                                    type="button"
+                                    onClick={() => setCrmView(item.key)}
+                                    className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-all ${selected ? 'bg-slate-950 text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-blue-50 hover:text-blue-700'}`}
+                                >
+                                    <Icon className={`h-4 w-4 ${selected ? 'text-white' : 'text-slate-400'}`} />
+                                    <span>
+                                        <span className={`block text-[9px] font-black uppercase tracking-widest ${selected ? 'text-blue-100' : 'text-slate-400'}`}>{item.group}</span>
+                                        <span className="block text-sm font-black">{item.label}</span>
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
             </div>
+
+            {crmView === 'home' && (
+                <div className="flex-1 overflow-y-auto p-5 lg:p-8">
+                    <section className="rounded-3xl border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-emerald-50 p-5 shadow-sm lg:p-6">
+                        <div className="flex flex-col gap-6 xl:flex-row xl:items-stretch">
+                            <div className="flex-1">
+                                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-600">Parcours vendeur</p>
+                                <h3 className="mt-3 text-3xl font-black tracking-tight text-slate-950">À traiter maintenant</h3>
+                                <p className="mt-2 max-w-2xl text-sm font-bold leading-6 text-slate-600">
+                                    Le commercial part des relances et devis ouverts. Les vues de gestion restent disponibles, mais ne prennent plus toute la place.
+                                </p>
+                                <div className="mt-5 grid gap-3 md:grid-cols-4">
+                                    <JourneyStep number="1" title="Qualifier" detail="Client, besoin, budget, chantier." />
+                                    <JourneyStep number="2" title="Métrer" detail="Cotes client ou rendez-vous terrain." />
+                                    <JourneyStep number="3" title="Deviser" detail="Préparer, envoyer, suivre." />
+                                    <JourneyStep number="4" title="Signer" detail="Commande puis passage production." />
+                                </div>
+                            </div>
+                            <div className="rounded-2xl border border-white/80 bg-white p-5 shadow-sm xl:w-80">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Portefeuille</p>
+                                <p className="mt-3 text-4xl font-black text-slate-950">{commerceOverview.clients}</p>
+                                <p className="text-xs font-black uppercase tracking-widest text-slate-400">client(s) actifs</p>
+                                <div className="mt-4 grid grid-cols-2 gap-2">
+                                    <MiniKpi label="Devis envoyés" value={commerceOverview.sentQuotes} />
+                                    <MiniKpi label="CA signé" value={formatMoney(commerceOverview.signedAmount)} />
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <div className="flex items-center justify-between gap-4">
+                                <div>
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">File commerciale</p>
+                                    <h3 className="mt-1 text-2xl font-black text-slate-950">Prochaines priorités visibles</h3>
+                                </div>
+                                <button onClick={() => setCrmView('cockpit')} className="hidden rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white hover:bg-slate-800 md:inline-flex">
+                                    Ouvrir le pilotage
+                                </button>
+                            </div>
+                            <div className="mt-5 grid gap-3 md:grid-cols-2">
+                                {sellerQueue.map(item => (
+                                    <SellerQueueCard key={item.key} item={item} onOpen={() => setCrmView(item.view)} />
+                                ))}
+                            </div>
+                        </div>
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Actions rapides</p>
+                            <div className="mt-4 space-y-3">
+                                <QuickAction icon={Users} title="Créer une fiche client" detail="Prospect, contact, segment." onClick={() => setShowClientModal(true)} />
+                                <QuickAction icon={Plus} title="Préparer un devis" detail={selectedClient ? selectedClient.name : 'Sélectionner un client d’abord.'} onClick={createQuoteForClient} disabled={!selectedClient} />
+                                <QuickAction icon={ClipboardList} title="Lancer un métré" detail="Chantier, plans ou saisie agence." onClick={planMeasureForClient} />
+                                <QuickAction icon={Search} title="Retrouver un client" detail="Liste, filtres, contacts, doublons." onClick={() => setCrmView('clients')} />
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                        <WorkspaceCard icon={BellRing} eyebrow="Décider" title="Pilotage commercial" detail="KPIs, relances, portefeuille et attention commerciale." onOpen={() => setCrmView('cockpit')} />
+                        <WorkspaceCard icon={ClipboardList} eyebrow="Suivre" title="Pipeline avant-vente" detail="Opportunités, devis envoyés, signatures et pertes." onOpen={() => setCrmView('pipeline')} />
+                        <WorkspaceCard icon={Users} eyebrow="Gérer" title="Clients & contacts" detail="Fiches, contacts multiples, imports, exports, doublons." onOpen={() => setCrmView('clients')} />
+                        <WorkspaceCard icon={Wrench} eyebrow="Préparer" title="Métrés / BE" detail="Prise de cotes, contrôle BE et liaison au devis." onOpen={() => setCrmView('measures')} />
+                    </section>
+                </div>
+            )}
 
             {crmView === 'cockpit' && (
                 <CRMCockpit
@@ -1968,6 +2093,91 @@ function MetricPill({ label, value }) {
             <p className="text-[9px] font-black uppercase text-slate-400">{label}</p>
             <p className="truncate text-xs font-black text-slate-800">{value}</p>
         </div>
+    );
+}
+
+function JourneyStep({ number, title, detail }) {
+    return (
+        <div className="rounded-2xl border border-white/80 bg-white/90 p-4 shadow-sm">
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-xs font-black text-white">{number}</span>
+            <p className="mt-3 text-sm font-black text-slate-950">{title}</p>
+            <p className="mt-1 text-xs font-bold leading-5 text-slate-500">{detail}</p>
+        </div>
+    );
+}
+
+function MiniKpi({ label, value }) {
+    return (
+        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</p>
+            <p className="mt-1 truncate text-lg font-black text-slate-950">{value}</p>
+        </div>
+    );
+}
+
+function SellerQueueCard({ item, onOpen }) {
+    const tones = {
+        red: 'border-red-100 bg-red-50 text-red-950',
+        blue: 'border-blue-100 bg-blue-50 text-blue-950',
+        amber: 'border-amber-100 bg-amber-50 text-amber-950',
+        emerald: 'border-emerald-100 bg-emerald-50 text-emerald-950',
+    };
+    return (
+        <button
+            type="button"
+            onClick={onOpen}
+            className={`group rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${tones[item.tone] || tones.blue}`}
+        >
+            <div className="flex items-start justify-between gap-4">
+                <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{item.label}</p>
+                    <p className="mt-3 text-4xl font-black">{item.value}</p>
+                </div>
+                <span className="rounded-full bg-white/80 p-2 transition-transform group-hover:translate-x-1">
+                    <ArrowRight className="h-4 w-4" />
+                </span>
+            </div>
+            <p className="mt-3 text-sm font-bold leading-5 opacity-75">{item.detail}</p>
+        </button>
+    );
+}
+
+function QuickAction({ icon: Icon, title, detail, onClick, disabled = false }) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-blue-600 shadow-sm">
+                <Icon className="h-5 w-5" />
+            </span>
+            <span className="min-w-0">
+                <span className="block text-sm font-black text-slate-950">{title}</span>
+                <span className="mt-0.5 block truncate text-xs font-bold text-slate-500">{detail}</span>
+            </span>
+        </button>
+    );
+}
+
+function WorkspaceCard({ icon: Icon, eyebrow, title, detail, onOpen }) {
+    return (
+        <button
+            type="button"
+            onClick={onOpen}
+            className="group rounded-3xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+        >
+            <div className="flex items-start justify-between gap-4">
+                <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+                    <Icon className="h-5 w-5" />
+                </span>
+                <ArrowRight className="h-4 w-4 text-slate-300 transition-transform group-hover:translate-x-1 group-hover:text-blue-600" />
+            </div>
+            <p className="mt-5 text-[10px] font-black uppercase tracking-widest text-blue-600">{eyebrow}</p>
+            <h4 className="mt-1 text-lg font-black text-slate-950">{title}</h4>
+            <p className="mt-2 text-sm font-bold leading-6 text-slate-500">{detail}</p>
+        </button>
     );
 }
 
