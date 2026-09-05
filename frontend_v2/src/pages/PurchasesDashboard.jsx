@@ -387,6 +387,14 @@ export default function PurchasesDashboard() {
         }
     });
 
+    const { data: supplierOperations = { summary: {}, top_risks: [], recommendations: [] } } = useQuery({
+        queryKey: ['supplier-operations-dashboard'],
+        queryFn: async () => {
+            const res = await api.get('/v2/suppliers/operations-dashboard');
+            return res.data;
+        }
+    });
+
     const { data: suppliers = [] } = useQuery({
         queryKey: ['suppliers', 'v2'],
         queryFn: async () => {
@@ -1378,7 +1386,9 @@ export default function PurchasesDashboard() {
                 {currentTab === 'dashboard' ? (
                     <PurchaseDashboardOverview
                         dashboard={purchaseDashboard}
+                        supplierOperations={supplierOperations}
                         setCurrentTab={setCurrentTab}
+                        setSelectedSupplierId={setSelectedSupplierId}
                         openPODetails={openPODetails}
                         openSupplierInvoiceDetail={openSupplierInvoiceDetail}
                         openSupplierDisputeDetail={openSupplierDisputeDetail}
@@ -3156,12 +3166,22 @@ const SupplierDisputeDetailModal = ({ dispute, purchaseOrder, invoice, onClose, 
     );
 };
 
-const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, openSupplierInvoiceDetail, openSupplierDisputeDetail, handleRemindSupplier, disputes = [] }) => {
+const PurchaseDashboardOverview = ({ dashboard, supplierOperations = {}, setCurrentTab, setSelectedSupplierId, openPODetails, openSupplierInvoiceDetail, openSupplierDisputeDetail, handleRemindSupplier, disputes = [] }) => {
     const summary = dashboard?.summary || {};
+    const supplierSummary = supplierOperations?.summary || {};
+    const supplierRisks = supplierOperations?.top_risks || [];
+    const supplierRecommendations = supplierOperations?.recommendations || [];
     const actions = dashboard?.actions || [];
     const paymentSchedule = dashboard?.payment_schedule || [];
     const cashOutForecast = dashboard?.cash_out_forecast || [];
     const formatMoney = (amount) => Number(amount || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+    const formatRate = (rate) => rate === null || rate === undefined ? '-' : `${Number(rate).toLocaleString('fr-FR')}%`;
+    const openSupplier = (supplier) => {
+        if (supplier?.supplier_id) {
+            setSelectedSupplierId?.(supplier.supplier_id);
+        }
+        setCurrentTab('suppliers');
+    };
     const cards = [
         { label: 'Commandes ouvertes', value: summary.open_orders || 0, tone: 'bg-blue-50 border-blue-100 text-blue-700', tab: 'orders' },
         { label: 'À réceptionner', value: summary.to_receive || 0, tone: 'bg-emerald-50 border-emerald-100 text-emerald-700', tab: 'orders' },
@@ -3200,6 +3220,108 @@ const PurchaseDashboardOverview = ({ dashboard, setCurrentTab, openPODetails, op
                                 <p className="text-4xl font-black mt-2">{card.value}</p>
                             </button>
                         ))}
+                    </div>
+
+                    <div className="mt-6 rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                        <div className="px-5 py-4 border-b border-slate-100 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Pilotage fournisseur opérationnel</p>
+                                <h3 className="font-black text-slate-900 text-xl mt-1">Qui surveiller avant de commander, réceptionner ou payer ?</h3>
+                                <p className="text-xs font-bold text-slate-500 mt-1">Score fournisseur, retards, litiges, fiabilité prix/quantités et montant bloqué.</p>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-center">
+                                {[
+                                    ['Score moyen', supplierSummary.average_score ?? '-', 'text-emerald-700'],
+                                    ['À risque', supplierSummary.at_risk_suppliers || 0, 'text-orange-700'],
+                                    ['Critiques', supplierSummary.critical_suppliers || 0, 'text-red-700'],
+                                    ['Prix OK', formatRate(supplierSummary.price_match_rate), 'text-blue-700'],
+                                    ['Bloqué', formatMoney(supplierSummary.amount_blocked), 'text-rose-700'],
+                                ].map(([label, value, tone]) => (
+                                    <div key={label} className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2">
+                                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</p>
+                                        <p className={`font-black mt-1 ${tone}`}>{value}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-[1.5fr_0.8fr] gap-0">
+                            <div className="divide-y divide-slate-100 border-r border-slate-100">
+                                {supplierRisks.slice(0, 5).map(supplier => (
+                                    <button key={supplier.supplier} onClick={() => openSupplier(supplier)} className="w-full p-5 text-left hover:bg-slate-50 transition-colors flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                                        <div className="min-w-0">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
+                                                    supplier.score >= 85 ? 'bg-emerald-100 text-emerald-700'
+                                                        : supplier.score >= 70 ? 'bg-orange-100 text-orange-700'
+                                                            : 'bg-red-100 text-red-700'
+                                                }`}>
+                                                    Score {supplier.score} · {supplier.label}
+                                                </span>
+                                                {supplier.payment_blockers > 0 && <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-rose-100 text-rose-700">paiement bloqué</span>}
+                                                {supplier.late_orders > 0 && <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-red-100 text-red-700">{supplier.late_orders} retard(s)</span>}
+                                            </div>
+                                            <h4 className="font-black text-slate-950 text-lg mt-2 truncate">{supplier.supplier}</h4>
+                                            <p className="text-sm font-bold text-slate-500 mt-1">{supplier.recommendation}</p>
+                                        </div>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 shrink-0 text-center">
+                                            <div className="rounded-xl bg-blue-50 border border-blue-100 px-3 py-2">
+                                                <p className="text-[9px] font-black uppercase tracking-widest text-blue-400">Ouvertes</p>
+                                                <p className="font-black text-blue-700">{supplier.open_orders}</p>
+                                            </div>
+                                            <div className="rounded-xl bg-rose-50 border border-rose-100 px-3 py-2">
+                                                <p className="text-[9px] font-black uppercase tracking-widest text-rose-400">Litiges</p>
+                                                <p className="font-black text-rose-700">{supplier.open_disputes}</p>
+                                            </div>
+                                            <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2">
+                                                <p className="text-[9px] font-black uppercase tracking-widest text-emerald-500">Quantité</p>
+                                                <p className="font-black text-emerald-700">{formatRate(supplier.quantity_conformity_rate)}</p>
+                                            </div>
+                                            <div className="rounded-xl bg-slate-900 text-white px-3 py-2">
+                                                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">À payer</p>
+                                                <p className="font-black">{formatMoney(supplier.amount_to_pay)}</p>
+                                            </div>
+                                        </div>
+                                    </button>
+                                ))}
+                                {supplierRisks.length === 0 && (
+                                    <div className="p-8 text-center text-slate-400 font-bold">Aucun fournisseur à risque détecté.</div>
+                                )}
+                            </div>
+                            <div className="p-5 bg-slate-50">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Recommandations système</p>
+                                <div className="space-y-3">
+                                    {supplierRecommendations.map(recommendation => (
+                                        <button
+                                            key={recommendation.code}
+                                            onClick={() => {
+                                                if (recommendation.code === 'PAYMENT_BLOCKERS') setCurrentTab('disputes');
+                                                else if (recommendation.code === 'LATE_SUPPLIERS') setCurrentTab('orders');
+                                                else setCurrentTab('suppliers');
+                                            }}
+                                            className={`w-full rounded-xl border p-4 text-left ${
+                                                recommendation.enabled
+                                                    ? 'bg-white border-slate-200 text-slate-900 hover:border-slate-300'
+                                                    : 'bg-white/60 border-slate-100 text-slate-400'
+                                            }`}
+                                        >
+                                            <div className="flex items-center justify-between gap-3">
+                                                <span className="font-black">{recommendation.label}</span>
+                                                <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${recommendation.enabled ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                                    {recommendation.count}
+                                                </span>
+                                            </div>
+                                        </button>
+                                    ))}
+                                    <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Lecture rapide</p>
+                                        <p className="text-sm font-bold text-emerald-950 mt-1">
+                                            Priorité : litiges bloquants → retards → écarts prix → fournisseurs sous 70.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div className="mt-6 grid grid-cols-1 xl:grid-cols-[0.9fr_1.4fr] gap-6">
