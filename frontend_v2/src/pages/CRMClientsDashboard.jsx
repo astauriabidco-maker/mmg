@@ -1591,98 +1591,125 @@ export default function CRMClientsDashboard() {
 
             {showClientModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6">
-                    <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-                        <div className="bg-slate-900 px-6 py-5 text-white">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">CRM Avant-vente</p>
-                            <h3 className="mt-2 text-2xl font-black">Nouveau client</h3>
-                            <p className="mt-1 text-sm font-bold text-slate-300">Créez la fiche client avant toute proposition commerciale.</p>
+                    <div className="w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+                        <div className="bg-gradient-to-br from-slate-950 to-blue-950 px-6 py-5 text-white">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">Création guidée · CRM</p>
+                            <h3 className="mt-2 text-2xl font-black">Créer une fiche client exploitable</h3>
+                            <p className="mt-1 text-sm font-bold text-slate-300">Identité → contact → qualification. La fiche s’ouvrira directement après création.</p>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-6">
-                            <label className="md:col-span-2">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Nom client *</span>
-                                <input
-                                    value={clientDraft.name}
-                                    onChange={event => updateClientDraft('name', event.target.value)}
-                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="Entreprise ou particulier"
-                                />
-                            </label>
-                            <label>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contact</span>
-                                <input
-                                    value={clientDraft.contact_name}
-                                    onChange={event => updateClientDraft('contact_name', event.target.value)}
-                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="Nom du contact"
-                                />
-                            </label>
-                            <label>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Type</span>
-                                <select
-                                    value={clientDraft.customer_type}
-                                    onChange={event => updateClientDraft('customer_type', event.target.value)}
-                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                    <option value="B2B">Entreprise</option>
-                                    <option value="B2C">Particulier</option>
-                                </select>
-                            </label>
-                            <label>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Segment</span>
-                                <input
-                                    value={clientDraft.segment}
-                                    onChange={event => updateClientDraft('segment', event.target.value)}
-                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="Ex. Grands comptes"
-                                />
-                            </label>
-                            <label>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Tags</span>
-                                <input
-                                    value={clientDraft.tags}
-                                    onChange={event => updateClientDraft('tags', event.target.value)}
-                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="Prioritaire, Prescription"
-                                />
-                            </label>
-                            <label>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Téléphone</span>
-                                <input
-                                    value={clientDraft.phone}
-                                    onChange={event => updateClientDraft('phone', event.target.value)}
-                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="+237..."
-                                />
-                            </label>
-                            <label>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email</span>
-                                <input
-                                    value={clientDraft.email}
-                                    onChange={event => updateClientDraft('email', event.target.value)}
-                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="client@example.com"
-                                />
-                            </label>
-                            <label className="md:col-span-2">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Adresse</span>
-                                <input
-                                    value={clientDraft.address}
-                                    onChange={event => updateClientDraft('address', event.target.value)}
-                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="Adresse client ou chantier"
-                                />
-                            </label>
-                            <label className="md:col-span-2">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Identifiant fiscal</span>
-                                <input
-                                    value={clientDraft.tax_id}
-                                    onChange={event => updateClientDraft('tax_id', event.target.value)}
-                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="Optionnel"
-                                />
-                            </label>
+                        <div className="max-h-[70vh] overflow-y-auto p-6">
+                            <div className="mb-5 grid gap-3 md:grid-cols-3">
+                                <ModalStepBadge number="1" title="Identifier" detail="Nom et type client" active={Boolean(clientDraft.name.trim())} />
+                                <ModalStepBadge number="2" title="Joindre" detail="Téléphone ou email" active={Boolean(clientDraft.phone.trim() || clientDraft.email.trim())} />
+                                <ModalStepBadge number="3" title="Qualifier" detail="Segment et tags" active={Boolean(clientDraft.segment.trim() || clientDraft.tags.trim())} />
+                            </div>
+                            <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">1 · Identité client</p>
+                                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                                    <label className="md:col-span-2">
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Nom client *</span>
+                                        <input
+                                            value={clientDraft.name}
+                                            onChange={event => updateClientDraft('name', event.target.value)}
+                                            className="mt-2 w-full rounded-xl border border-blue-100 bg-white px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="Entreprise, promoteur, particulier..."
+                                        />
+                                    </label>
+                                    <label>
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Type</span>
+                                        <select
+                                            value={clientDraft.customer_type}
+                                            onChange={event => updateClientDraft('customer_type', event.target.value)}
+                                            className="mt-2 w-full rounded-xl border border-blue-100 bg-white px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                        >
+                                            <option value="B2B">Entreprise</option>
+                                            <option value="B2C">Particulier</option>
+                                        </select>
+                                    </label>
+                                    <label>
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Identifiant fiscal</span>
+                                        <input
+                                            value={clientDraft.tax_id}
+                                            onChange={event => updateClientDraft('tax_id', event.target.value)}
+                                            className="mt-2 w-full rounded-xl border border-blue-100 bg-white px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="Optionnel"
+                                        />
+                                    </label>
+                                </div>
+                            </div>
+                            <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">2 · Contact principal</p>
+                                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                                    <label>
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contact</span>
+                                        <input
+                                            value={clientDraft.contact_name}
+                                            onChange={event => updateClientDraft('contact_name', event.target.value)}
+                                            className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="Décideur, assistant, responsable chantier..."
+                                        />
+                                    </label>
+                                    <label>
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Téléphone</span>
+                                        <input
+                                            value={clientDraft.phone}
+                                            onChange={event => updateClientDraft('phone', event.target.value)}
+                                            className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="+237..."
+                                        />
+                                    </label>
+                                    <label>
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email</span>
+                                        <input
+                                            value={clientDraft.email}
+                                            onChange={event => updateClientDraft('email', event.target.value)}
+                                            className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="client@example.com"
+                                        />
+                                    </label>
+                                    <label>
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Adresse</span>
+                                        <input
+                                            value={clientDraft.address}
+                                            onChange={event => updateClientDraft('address', event.target.value)}
+                                            className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="Adresse client ou chantier"
+                                        />
+                                    </label>
+                                </div>
+                                {!clientDraft.phone.trim() && !clientDraft.email.trim() && (
+                                    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800">
+                                        Ajoutez idéalement un téléphone ou un email : les relances et devis seront plus simples à suivre.
+                                    </div>
+                                )}
+                            </div>
+                            <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">3 · Qualification commerciale</p>
+                                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                                    <label>
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Segment</span>
+                                        <input
+                                            value={clientDraft.segment}
+                                            onChange={event => updateClientDraft('segment', event.target.value)}
+                                            className="mt-2 w-full rounded-xl border border-emerald-100 bg-white px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                                            placeholder="Ex. Promoteur, architecte, particulier..."
+                                        />
+                                    </label>
+                                    <label>
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Tags</span>
+                                        <input
+                                            value={clientDraft.tags}
+                                            onChange={event => updateClientDraft('tags', event.target.value)}
+                                            className="mt-2 w-full rounded-xl border border-emerald-100 bg-white px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                                            placeholder="Prioritaire, prescription, chantier chaud..."
+                                        />
+                                    </label>
+                                </div>
+                            </div>
                         </div>
-                        <div className="flex items-center justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
+                        <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                            <p className="text-xs font-bold text-slate-500">Après création : ouverture automatique de la fiche pour ajouter opportunité, devis ou métré.</p>
+                            <div className="flex items-center justify-end gap-3">
                             <button
                                 onClick={() => {
                                     setShowClientModal(false);
@@ -1697,8 +1724,9 @@ export default function CRMClientsDashboard() {
                                 disabled={isCreatingClient}
                                 className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-300"
                             >
-                                {isCreatingClient ? 'Création...' : 'Créer le client'}
+                                {isCreatingClient ? 'Création...' : 'Créer et ouvrir la fiche'}
                             </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1811,6 +1839,7 @@ function CRMQuoteComposer({ client, onClose, onCreated }) {
     const quoteTotal = quote.lines.reduce((sum, line) => (
         sum + Number(line.quantity || 0) * Number(line.unit_price || 0) * (1 - Number(line.discount_pct || 0) / 100)
     ), 0);
+    const validQuoteLines = quote.lines.filter(line => String(line.description || '').trim() && Number(line.quantity || 0) > 0);
 
     const updateQuote = (field, value) => {
         setQuote(prev => ({ ...prev, [field]: value }));
@@ -1919,11 +1948,17 @@ function CRMQuoteComposer({ client, onClose, onCreated }) {
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-6">
             <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-                <div className="flex items-center justify-between bg-slate-900 px-6 py-5 text-white">
+                <div className="flex items-start justify-between bg-gradient-to-br from-slate-950 to-blue-950 px-6 py-5 text-white">
                     <div>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">CRM avant-vente</p>
-                        <h3 className="mt-2 text-2xl font-black">Composer une proposition</h3>
-                        <p className="mt-1 text-sm font-bold text-slate-300">{client.name} · brouillon de devis libre</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">Devis assisté · Avant-vente</p>
+                        <h3 className="mt-2 text-2xl font-black">Préparer un brouillon de devis</h3>
+                        <p className="mt-1 text-sm font-bold text-slate-300">{client.name} · aucun stock réservé à cette étape</p>
+                        <div className="mt-4 grid max-w-3xl gap-2 sm:grid-cols-4">
+                            <ModalStepBadge number="1" title="Choisir" detail="Article ou prestation" dark active={Boolean(quote.lines.length)} />
+                            <ModalStepBadge number="2" title="Chiffrer" detail="Quantité et prix" dark active={Boolean(validQuoteLines.length)} />
+                            <ModalStepBadge number="3" title="Contrôler" detail="Validité et TVA" dark active />
+                            <ModalStepBadge number="4" title="Créer" detail="Brouillon CRM" dark active={Boolean(validQuoteLines.length)} />
+                        </div>
                     </div>
                     <button onClick={onClose} className="rounded-full p-2 text-slate-300 hover:bg-white/10 hover:text-white">
                         <X className="h-6 w-6" />
@@ -1936,6 +1971,9 @@ function CRMQuoteComposer({ client, onClose, onCreated }) {
                             <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Client sélectionné</p>
                             <p className="mt-2 text-xl font-black text-blue-950">{client.name}</p>
                             <p className="mt-1 text-xs font-bold text-blue-700">{[client.phone, client.email].filter(Boolean).join(' · ') || 'Coordonnées à compléter'}</p>
+                            {(!client.phone && !client.email) && (
+                                <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">Coordonnées à compléter avant envoi réel.</p>
+                            )}
                         </div>
 
                         <div className="mb-4 flex rounded-xl border border-slate-200 bg-white p-1">
@@ -2002,6 +2040,12 @@ function CRMQuoteComposer({ client, onClose, onCreated }) {
                     </aside>
 
                     <main className="min-h-0 overflow-y-auto p-6">
+                        <div className="mb-5 rounded-2xl border border-blue-100 bg-blue-50 px-5 py-4">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">Mode recommandé</p>
+                            <p className="mt-1 text-sm font-bold text-blue-950">
+                                Utilisez ce devis libre pour cadrer l’avant-vente. Pour une fabrication réelle, rattachez ensuite le métré/BE avant lancement industriel.
+                            </p>
+                        </div>
                         <div className="mb-5 grid grid-cols-3 gap-4">
                             <label>
                                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Validité</span>
@@ -2073,12 +2117,12 @@ function CRMQuoteComposer({ client, onClose, onCreated }) {
                 </div>
 
                 <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-6 py-4">
-                    <p className="text-sm font-bold text-slate-500">La proposition sera créée en brouillon CRM, sans réservation stock.</p>
+                    <p className="text-sm font-bold text-slate-500">{validQuoteLines.length} ligne(s) valide(s) · création en brouillon CRM, sans réservation stock.</p>
                     <div className="flex items-center gap-3">
                         <button onClick={onClose} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-600 hover:bg-slate-100">Annuler</button>
                         <button onClick={createQuote} disabled={isCreating} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-300">
                             <Send className="h-4 w-4" />
-                            {isCreating ? 'Création...' : 'Créer le brouillon'}
+                            {isCreating ? 'Création...' : 'Créer le brouillon de devis'}
                         </button>
                     </div>
                 </div>
@@ -2092,6 +2136,25 @@ function MetricPill({ label, value }) {
         <div className="rounded-lg border border-slate-100 bg-slate-50 px-2 py-1.5">
             <p className="text-[9px] font-black uppercase text-slate-400">{label}</p>
             <p className="truncate text-xs font-black text-slate-800">{value}</p>
+        </div>
+    );
+}
+
+function ModalStepBadge({ number, title, detail, active = false, dark = false }) {
+    const base = dark
+        ? active
+            ? 'border-white/20 bg-white/10 text-white'
+            : 'border-white/10 bg-white/5 text-slate-300'
+        : active
+            ? 'border-blue-200 bg-blue-50 text-blue-950'
+            : 'border-slate-200 bg-slate-50 text-slate-500';
+    return (
+        <div className={`rounded-2xl border px-4 py-3 ${base}`}>
+            <div className="flex items-center gap-2">
+                <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ${dark ? 'bg-white text-slate-950' : 'bg-slate-950 text-white'}`}>{number}</span>
+                <p className="text-sm font-black">{title}</p>
+            </div>
+            <p className={`mt-1 text-[11px] font-bold ${dark ? 'text-slate-300' : 'text-slate-500'}`}>{detail}</p>
         </div>
     );
 }
@@ -2202,6 +2265,8 @@ function MeasureFlowStarter({ client, onClose, onStart }) {
             title: 'Planifier un métré sur chantier',
             description: 'MMG affecte un métreur, planifie le rendez-vous et relève les cotes sur place.',
             tone: 'border-emerald-200 bg-emerald-50 text-emerald-950',
+            recommended: true,
+            cta: 'Choisir le métré chantier',
         },
         {
             source: 'CLIENT_DOCUMENTS',
@@ -2211,6 +2276,7 @@ function MeasureFlowStarter({ client, onClose, onStart }) {
             title: 'Importer les cotes du client',
             description: 'Le client apporte plans, croquis ou relevés. Le BE les contrôle avant fabrication.',
             tone: 'border-amber-200 bg-amber-50 text-amber-950',
+            cta: 'Choisir les documents client',
         },
         {
             source: 'AGENCY_ASSISTED',
@@ -2220,19 +2286,25 @@ function MeasureFlowStarter({ client, onClose, onStart }) {
             title: 'Saisir les cotes en agence',
             description: 'Un commercial ou technicien structure les ouvrages avec le client au comptoir.',
             tone: 'border-blue-200 bg-blue-50 text-blue-950',
+            cta: 'Choisir la saisie agence',
         },
     ];
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
             <div className="w-full max-w-4xl overflow-hidden border border-slate-200 bg-white shadow-2xl">
-                <div className="flex items-start justify-between bg-slate-900 px-6 py-5 text-white">
+                <div className="flex items-start justify-between bg-gradient-to-br from-slate-950 to-emerald-950 px-6 py-5 text-white">
                     <div>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">Dossier fabrication</p>
-                        <h3 className="mt-2 text-2xl font-black">Comment les cotes sont-elles obtenues ?</h3>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-200">Métré assisté · BE</p>
+                        <h3 className="mt-2 text-2xl font-black">Choisir la source des cotes</h3>
                         <p className="mt-1 text-sm font-bold text-slate-300">
                             {client ? `${client.name} est déjà sélectionné.` : 'Le client pourra être sélectionné à l’étape suivante.'}
                         </p>
+                        <div className="mt-4 grid max-w-2xl gap-2 sm:grid-cols-3">
+                            <ModalStepBadge number="1" title="Source" detail="Chantier, plans ou agence" dark active />
+                            <ModalStepBadge number="2" title="Responsabilité" detail="Origine des cotes tracée" dark active />
+                            <ModalStepBadge number="3" title="BE" detail="Contrôle avant devis" dark active />
+                        </div>
                     </div>
                     <button onClick={onClose} className="rounded-full p-2 text-slate-300 hover:bg-white/10 hover:text-white"><X className="h-5 w-5" /></button>
                 </div>
@@ -2243,21 +2315,24 @@ function MeasureFlowStarter({ client, onClose, onStart }) {
                             <button
                                 key={option.source}
                                 onClick={() => onStart(option.source, option.scope)}
-                                className={`min-h-52 border p-5 text-left transition-transform hover:-translate-y-0.5 hover:shadow-md ${option.tone}`}
+                                className={`relative min-h-56 border p-5 text-left transition-transform hover:-translate-y-0.5 hover:shadow-md ${option.tone}`}
                             >
+                                {option.recommended && (
+                                    <span className="absolute right-4 top-4 rounded-full bg-emerald-600 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white">Recommandé</span>
+                                )}
                                 <Icon className="h-7 w-7" />
                                 <p className="mt-5 text-lg font-black">{option.title}</p>
                                 <p className="mt-2 text-sm font-semibold leading-6 opacity-80">{option.description}</p>
                                 <span className="mt-4 inline-flex rounded-md border border-current/20 px-2 py-1 text-[10px] font-black uppercase tracking-widest">
                                     {option.scopeLabel}
                                 </span>
-                                <span className="mt-5 inline-flex items-center gap-2 text-xs font-black uppercase tracking-widest">Continuer <ArrowRight className="h-4 w-4" /></span>
+                                <span className="mt-5 inline-flex items-center gap-2 text-xs font-black uppercase tracking-widest">{option.cta} <ArrowRight className="h-4 w-4" /></span>
                             </button>
                         );
                     })}
                 </div>
                 <div className="border-t border-slate-200 bg-slate-50 px-6 py-4 text-xs font-bold text-slate-600">
-                    Dans tous les cas : saisie multi-ouvrages, contrôle BE et traçabilité de la responsabilité des cotes.
+                    Garde-fou : les cotes alimentent le BE et le devis, mais ne lancent pas la fabrication sans validation du dossier.
                 </div>
             </div>
         </div>
