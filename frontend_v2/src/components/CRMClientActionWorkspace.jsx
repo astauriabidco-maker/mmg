@@ -231,6 +231,96 @@ export default function CRMClientActionWorkspace({
                 tone: 'slate',
             };
 
+    const commercialIntelligence = useMemo(() => {
+        const sentQuotes = presalesQuotes.filter(quote => quote.status === 'SENT');
+        const draftQuotes = presalesQuotes.filter(quote => quote.status === 'DRAFT');
+        const latestQuote = [...presalesQuotes].sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))[0];
+        const lastTouchDate = [
+            ...activities.map(activity => activity.completedAt || activity.dueAt || activity.updated_at || activity.created_at),
+            ...presalesQuotes.map(quote => quote.updated_at || quote.created_at),
+            ...executionOrders.map(order => order.updated_at || order.created_at),
+        ].filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0];
+        const daysSinceTouch = daysSince(lastTouchDate);
+        const quoteAgeDays = daysSince(latestQuote?.updated_at || latestQuote?.created_at);
+        const hasContact = Boolean(client.phone || client.email || contacts.some(contact => contact.phone || contact.email));
+        const hasDecisionContact = contacts.some(contact => ['DECISION_MAKER', 'BUYER', 'PRESCRIBER'].includes(contact.influence_role));
+        const overdueCount = pendingActivities.filter(activity => isOverdue(activity.dueAt)).length;
+        const hotQuote = sentQuotes.some(quote => daysSince(quote.updated_at || quote.created_at) <= 7 && saleAmount(quote) >= 1000);
+        const coldQuote = sentQuotes.some(quote => daysSince(quote.updated_at || quote.created_at) > 14);
+        const dormant = openOpportunities.length > 0 && pendingActivities.length === 0;
+        const reasons = [];
+        let score = 35;
+
+        if (hasContact) {
+            score += 15;
+            reasons.push('coordonnées disponibles');
+        } else {
+            score -= 15;
+            reasons.push('coordonnées à compléter');
+        }
+        if (hasDecisionContact) {
+            score += 10;
+            reasons.push('décideur/prescripteur identifié');
+        }
+        if (openOpportunities.length) {
+            score += 15;
+            reasons.push(`${openOpportunities.length} opportunité(s) ouverte(s)`);
+        }
+        if (sentQuotes.length) {
+            score += 15;
+            reasons.push(`${sentQuotes.length} devis envoyé(s)`);
+        }
+        if (draftQuotes.length) {
+            score += 5;
+            reasons.push(`${draftQuotes.length} brouillon(s) à finaliser`);
+        }
+        if (overdueCount) {
+            score -= 15;
+            reasons.push(`${overdueCount} action(s) en retard`);
+        }
+        if (dormant) {
+            score -= 20;
+            reasons.push('opportunité sans prochaine action');
+        }
+        if (typeof daysSinceTouch === 'number' && daysSinceTouch > 21) {
+            score -= 15;
+            reasons.push(`aucun contact depuis ${daysSinceTouch} j`);
+        }
+        if (executionOrders.length) {
+            score += 10;
+            reasons.push('client déjà signé');
+        }
+
+        score = Math.max(0, Math.min(100, score));
+        const temperature = hotQuote
+            ? { label: 'Chaud', tone: 'red', detail: 'Devis récent ou montant significatif à suivre vite.' }
+            : coldQuote || dormant
+                ? { label: 'Froid', tone: 'slate', detail: 'Relance ou prochaine action à reposer.' }
+                : sentQuotes.length || openOpportunities.length
+                    ? { label: 'Tiède', tone: 'amber', detail: 'Potentiel actif, suivi à maintenir.' }
+                    : { label: 'À qualifier', tone: 'blue', detail: 'Besoin à cadrer avant devis.' };
+        const bestAction = overdueCount
+            ? { title: 'Traiter la relance en retard', detail: 'Commencer par reprendre contact.', onClick: () => resetAndOpen('follow-up') }
+            : !hasContact
+                ? { title: 'Compléter les coordonnées', detail: 'Téléphone ou email nécessaire pour suivre le devis.', onClick: () => setShowContactForm(true) }
+                : sentQuotes.length
+                    ? { title: 'Relancer le devis envoyé', detail: `${sentQuotes[0].reference} · ${formatMoney(saleAmount(sentQuotes[0]))}`, onClick: () => onOpenSale(sentQuotes[0].id) }
+                    : draftQuotes.length
+                        ? { title: 'Finaliser le brouillon', detail: `${draftQuotes[0].reference} · ${formatMoney(saleAmount(draftQuotes[0]))}`, onClick: () => onOpenSale(draftQuotes[0].id) }
+                        : openOpportunities.length && !pendingActivities.length
+                            ? { title: 'Planifier la prochaine action', detail: openOpportunities[0].title, onClick: () => resetAndOpen('follow-up') }
+                            : { title: 'Créer ou qualifier une opportunité', detail: 'Cadrer le besoin commercial.', onClick: () => resetAndOpen('opportunity') };
+        const summary = [
+            `${client.name} est ${temperature.label.toLowerCase()} avec un score de ${score}/100.`,
+            sentQuotes.length ? `${sentQuotes.length} devis envoyé(s) à suivre.` : null,
+            openOpportunities.length ? `${openOpportunities.length} opportunité(s) ouverte(s).` : null,
+            typeof quoteAgeDays === 'number' ? `Dernier devis mis à jour il y a ${quoteAgeDays} j.` : null,
+            typeof daysSinceTouch === 'number' ? `Dernier signal commercial il y a ${daysSinceTouch} j.` : 'Aucun historique commercial récent.',
+        ].filter(Boolean).join(' ');
+
+        return { score, reasons: reasons.slice(0, 5), temperature, bestAction, summary };
+    }, [client, contacts, pendingActivities, openOpportunities, presalesQuotes, executionOrders]);
+
     const resetAndOpen = (mode) => {
         setSubmitError('');
         setActionMode(mode);
@@ -471,6 +561,48 @@ export default function CRMClientActionWorkspace({
                     <MiniMetric label="Opportunités" value={openOpportunities.length} />
                     <MiniMetric label="À faire" value={pendingActivities.length} />
                     <MiniMetric label="CA signé" value={formatMoney(totals.orderAmount)} />
+                </div>
+            </section>
+
+            <section className="grid gap-4 rounded-2xl border border-blue-100 bg-white p-5 shadow-sm xl:grid-cols-[260px_minmax(0,1fr)_320px]">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Score commercial</p>
+                    <div className="mt-3 flex items-end gap-2">
+                        <p className="text-5xl font-black text-slate-950">{commercialIntelligence.score}</p>
+                        <p className="pb-2 text-sm font-black text-slate-400">/100</p>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                        <div className={`h-full ${scoreBarClass(commercialIntelligence.score)}`} style={{ width: `${commercialIntelligence.score}%` }} />
+                    </div>
+                </div>
+                <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${temperatureClass(commercialIntelligence.temperature.tone)}`}>
+                            Devis {commercialIntelligence.temperature.label}
+                        </span>
+                        <span className="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-blue-700">Résumé auto</span>
+                    </div>
+                    <p className="mt-3 text-sm font-bold leading-6 text-slate-700">{commercialIntelligence.summary}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        {commercialIntelligence.reasons.map(reason => (
+                            <span key={reason} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-slate-500">
+                                {reason}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Meilleure prochaine action</p>
+                    <p className="mt-2 text-lg font-black text-emerald-950">{commercialIntelligence.bestAction.title}</p>
+                    <p className="mt-1 text-xs font-bold leading-5 text-emerald-800">{commercialIntelligence.bestAction.detail}</p>
+                    <button
+                        type="button"
+                        onClick={commercialIntelligence.bestAction.onClick}
+                        className="mt-4 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-500"
+                    >
+                        Agir maintenant
+                        <ArrowRight className="h-4 w-4" />
+                    </button>
                 </div>
             </section>
 
@@ -1191,9 +1323,26 @@ function nextActionTone(tone) {
         red: 'border-red-500 bg-red-50 text-red-950',
         blue: 'border-blue-600 bg-blue-50 text-blue-950',
         amber: 'border-amber-500 bg-amber-50 text-amber-950',
+        emerald: 'border-emerald-500 bg-emerald-50 text-emerald-950',
         slate: 'border-slate-400 bg-slate-50 text-slate-900',
     };
     return tones[tone] || tones.slate;
+}
+
+function scoreBarClass(score) {
+    if (score >= 75) return 'bg-emerald-500';
+    if (score >= 50) return 'bg-amber-500';
+    return 'bg-red-500';
+}
+
+function temperatureClass(tone) {
+    const tones = {
+        red: 'bg-red-100 text-red-700',
+        amber: 'bg-amber-100 text-amber-800',
+        blue: 'bg-blue-100 text-blue-700',
+        slate: 'bg-slate-100 text-slate-600',
+    };
+    return tones[tone] || tones.blue;
 }
 
 function opportunityLabel(stage) {
@@ -1219,6 +1368,13 @@ function opportunityLabel(stage) {
 
 function isOverdue(value) {
     return Boolean(value) && new Date(value).getTime() < Date.now();
+}
+
+function daysSince(value) {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return Math.max(0, Math.floor((Date.now() - date.getTime()) / 86_400_000));
 }
 
 function toLocalDateTimeInput(date) {
