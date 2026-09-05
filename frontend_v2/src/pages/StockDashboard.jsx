@@ -240,6 +240,7 @@ export default function StockDashboard({ surface = 'management' }) {
         notes: '',
     });
     const [supplierResolutionSaving, setSupplierResolutionSaving] = useState(false);
+    const [groupPurchaseRequestSaving, setGroupPurchaseRequestSaving] = useState(false);
 
     const { data: productHistory = [] } = useQuery({
         queryKey: ['product-history', selectedProductId],
@@ -624,6 +625,61 @@ export default function StockDashboard({ surface = 'management' }) {
             alert(e.response?.data?.detail || "Erreur lors de la création de la demande d'achat.");
         } finally {
             setRiskActionVariantId(null);
+        }
+    };
+
+    const createGroupedPurchaseRequestsFromRisk = async (selectedNeeds = []) => {
+        if (!stockPermissions.requestPurchases) return;
+        const orderableNeeds = selectedNeeds.filter(need =>
+            need?.variant_id
+            && need?.supplier
+            && need.is_orderable
+            && Number(need.suggested_quantity || need.net_need_quantity || 0) > 0
+        );
+        if (orderableNeeds.length === 0) {
+            alert("Sélectionnez au moins une ligne prête avec fournisseur actif et quantité positive.");
+            return;
+        }
+        const grouped = orderableNeeds.reduce((acc, need) => {
+            const supplier = need.supplier;
+            if (!acc[supplier]) acc[supplier] = [];
+            acc[supplier].push(need);
+            return acc;
+        }, {});
+
+        setGroupPurchaseRequestSaving(true);
+        try {
+            await Promise.all(Object.entries(grouped).map(([supplier, lines]) =>
+                api.post('/v2/purchases/requests', {
+                    supplier,
+                    expected_date: null,
+                    global_discount_percent: 0,
+                    sensitivity_reason: `Réapprovisionnement groupé stock - ${supplier}`,
+                    notes: [
+                        `Créé depuis Inventaire > Stock à risque.`,
+                        `Demande groupée : ${lines.length} ligne(s).`,
+                        `Références: ${lines.map(line => line.reference).filter(Boolean).slice(0, 12).join(', ')}`,
+                    ].filter(Boolean).join('\n'),
+                    lines: lines.map(need => ({
+                        variant_id: need.variant_id,
+                        quantity: Number(need.suggested_quantity || need.net_need_quantity || 0),
+                        unit_price: 0,
+                        discount_percent: 0,
+                        need_priority: need.priority || null,
+                        need_reason: need.reason || need.blocked_reason || 'Réapprovisionnement groupé stock',
+                    })),
+                })
+            ));
+            await queryClient.invalidateQueries({ queryKey: ['purchase-needs'] });
+            await queryClient.invalidateQueries({ queryKey: ['purchase-needs', 'stock-risk'] });
+            await queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
+            alert(`${Object.keys(grouped).length} demande(s) d'achat créée(s) pour ${orderableNeeds.length} ligne(s).`);
+            return true;
+        } catch (e) {
+            alert(e.response?.data?.detail || "Erreur lors de la création groupée des demandes d'achat.");
+            return false;
+        } finally {
+            setGroupPurchaseRequestSaving(false);
         }
     };
 
@@ -3452,6 +3508,8 @@ export default function StockDashboard({ surface = 'management' }) {
                             canCreatePurchaseRequest={stockPermissions.requestPurchases}
                             riskActionVariantId={riskActionVariantId}
                             onCreatePurchaseRequest={createPurchaseRequestFromRisk}
+                            onCreateGroupedPurchaseRequests={createGroupedPurchaseRequestsFromRisk}
+                            groupPurchaseRequestSaving={groupPurchaseRequestSaving}
                             onResolveBlockedNeed={openSupplierFixFromRisk}
                             onOpenProduct={(productId) => {
                                 const product = products.find(item => item.id === productId);
@@ -6984,9 +7042,12 @@ function StockRiskView({
     canCreatePurchaseRequest,
     riskActionVariantId,
     onCreatePurchaseRequest,
+    onCreateGroupedPurchaseRequests,
+    groupPurchaseRequestSaving,
     onResolveBlockedNeed,
     onOpenProduct,
 }) {
+    const [selectedNeedIds, setSelectedNeedIds] = useState([]);
     const formatQty = value => Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
     const priorityLabel = priority => ({
         CRITICAL: 'Rupture',
@@ -7049,6 +7110,39 @@ function StockRiskView({
     const supplierPlans = Object.values(supplierBuckets)
         .sort((a, b) => b.critical - a.critical || b.quantity - a.quantity || a.supplier.localeCompare(b.supplier))
         .slice(0, 5);
+    const orderableNeeds = sortedNeeds.filter(need =>
+        need.is_orderable
+        && Number(need.net_need_quantity || 0) > 0
+        && Number(need.suggested_quantity || need.net_need_quantity || 0) > 0
+    );
+    const selectedNeeds = orderableNeeds.filter(need => selectedNeedIds.includes(need.variant_id));
+    const selectedGroups = selectedNeeds.reduce((acc, need) => {
+        const supplier = need.supplier || 'Sans fournisseur';
+        if (!acc[supplier]) acc[supplier] = { supplier, lines: 0, quantity: 0 };
+        acc[supplier].lines += 1;
+        acc[supplier].quantity += Number(need.suggested_quantity || need.net_need_quantity || 0);
+        return acc;
+    }, {});
+    const toggleNeedSelection = (need) => {
+        if (!need?.variant_id) return;
+        setSelectedNeedIds(prev => (
+            prev.includes(need.variant_id)
+                ? prev.filter(id => id !== need.variant_id)
+                : [...prev, need.variant_id]
+        ));
+    };
+    const selectSupplierNeeds = (supplier) => {
+        const ids = orderableNeeds
+            .filter(need => need.supplier === supplier)
+            .map(need => need.variant_id);
+        setSelectedNeedIds(prev => Array.from(new Set([...prev, ...ids])));
+    };
+    const selectAllOrderableNeeds = () => setSelectedNeedIds(orderableNeeds.map(need => need.variant_id));
+    const clearSelectedNeeds = () => setSelectedNeedIds([]);
+    const submitGroupedSelection = async () => {
+        const ok = await onCreateGroupedPurchaseRequests?.(selectedNeeds);
+        if (ok) clearSelectedNeeds();
+    };
 
     return (
         <div className="w-full space-y-6">
@@ -7113,6 +7207,78 @@ function StockRiskView({
                 </div>
             </section>
 
+            <section className="rounded-3xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
+                <div className="grid gap-4 xl:grid-cols-[1fr_360px] xl:items-center">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-700">Demandes d’achat groupées</p>
+                        <h3 className="mt-1 text-xl font-black text-slate-950">Sélectionner plusieurs besoins prêts, puis créer une demande par fournisseur</h3>
+                        <p className="mt-2 text-sm font-bold text-blue-900/70">
+                            Seules les lignes non bloquées, avec fournisseur actif et quantité positive, peuvent être groupées.
+                        </p>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                onClick={selectAllOrderableNeeds}
+                                disabled={orderableNeeds.length === 0}
+                                className="rounded-xl bg-white px-3 py-2 text-xs font-black text-blue-700 shadow-sm hover:bg-blue-100 disabled:text-slate-400"
+                            >
+                                Tout sélectionner ({orderableNeeds.length})
+                            </button>
+                            <button
+                                type="button"
+                                onClick={clearSelectedNeeds}
+                                disabled={selectedNeeds.length === 0}
+                                className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 hover:bg-white disabled:text-slate-400"
+                            >
+                                Vider sélection
+                            </button>
+                            {supplierPlans.filter(plan => !plan.blocked).slice(0, 4).map(plan => (
+                                <button
+                                    key={plan.supplier}
+                                    type="button"
+                                    onClick={() => selectSupplierNeeds(plan.supplier)}
+                                    className="rounded-xl border border-blue-100 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:text-blue-700"
+                                >
+                                    + {plan.supplier}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="rounded-2xl border border-blue-200 bg-white p-4">
+                        <div className="flex items-end justify-between gap-3">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Sélection</p>
+                                <p className="mt-1 text-4xl font-black text-blue-700">{selectedNeeds.length}</p>
+                            </div>
+                            <p className="pb-1 text-right text-xs font-black uppercase tracking-widest text-slate-400">
+                                {Object.keys(selectedGroups).length} fournisseur(s)
+                            </p>
+                        </div>
+                        {selectedNeeds.length > 0 && (
+                            <div className="mt-3 space-y-1 border-t border-slate-100 pt-3">
+                                {Object.values(selectedGroups).slice(0, 4).map(group => (
+                                    <div key={group.supplier} className="flex items-center justify-between gap-2 text-xs font-bold text-slate-600">
+                                        <span className="truncate">{group.supplier}</span>
+                                        <span>{group.lines} l. · {formatQty(group.quantity)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        <button
+                            type="button"
+                            onClick={submitGroupedSelection}
+                            disabled={!canCreatePurchaseRequest || selectedNeeds.length === 0 || groupPurchaseRequestSaving}
+                            className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500"
+                        >
+                            {groupPurchaseRequestSaving ? 'Création groupée...' : 'Créer demandes groupées'}
+                        </button>
+                        {!canCreatePurchaseRequest && (
+                            <p className="mt-2 text-xs font-bold text-amber-600">Permission achats requise.</p>
+                        )}
+                    </div>
+                </div>
+            </section>
+
             <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[1fr_420px]">
                 <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
@@ -7136,7 +7302,24 @@ function StockRiskView({
                     ) : (
                         <div className="divide-y divide-slate-100">
                             {sortedNeeds.map(need => (
-                                <div key={need.variant_id} className="grid grid-cols-1 gap-4 px-5 py-4 xl:grid-cols-[1.2fr_140px_140px_150px_170px] xl:items-center">
+                                <div key={need.variant_id} className="grid grid-cols-1 gap-4 px-5 py-4 xl:grid-cols-[42px_1.2fr_140px_140px_150px_170px] xl:items-center">
+                                    <div>
+                                        {need.is_orderable && Number(need.net_need_quantity || 0) > 0 ? (
+                                            <label className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedNeedIds.includes(need.variant_id)}
+                                                    onChange={() => toggleNeedSelection(need)}
+                                                    className="h-4 w-4 rounded border-blue-300 text-blue-600 focus:ring-blue-500"
+                                                    title="Ajouter à la demande groupée"
+                                                />
+                                            </label>
+                                        ) : (
+                                            <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-100 bg-slate-50 text-slate-300">
+                                                —
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className="min-w-0">
                                         <div className="flex flex-wrap items-center gap-2">
                                             <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${priorityClass(need.priority)}`}>
