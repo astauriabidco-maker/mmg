@@ -156,7 +156,7 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
         location_response = client.post(
             "/v2/stock/locations",
             headers=headers,
-            json={"name": "WH/Test Achats", "usage": "internal"},
+            json={"name": "Rack Achats", "usage": "internal"},
         )
         assert location_response.status_code == 200, location_response.text
         target_location_id = location_response.json()["id"]
@@ -180,6 +180,20 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
         )
         assert purchase_response.status_code == 200, purchase_response.text
         po_id = purchase_response.json()["id"]
+
+        vague_location_response = client.post(
+            "/v2/stock/locations",
+            headers=headers,
+            json={"name": "Stock vague achats", "usage": "internal"},
+        )
+        assert vague_location_response.status_code == 200, vague_location_response.text
+        blocked_receive_response = client.post(
+            f"/v2/purchases/{po_id}/receive",
+            headers=headers,
+            json={"target_location_id": vague_location_response.json()["id"]},
+        )
+        assert blocked_receive_response.status_code == 400
+        assert "Emplacement non exploitable" in blocked_receive_response.json()["detail"]
 
         receive_response = client.post(
             f"/v2/purchases/{po_id}/receive",
@@ -308,7 +322,7 @@ def test_purchase_order_can_be_received_partially_then_completed():
         location_response = client.post(
             "/v2/stock/locations",
             headers=headers,
-            json={"name": "WH/Réception partielle", "usage": "internal"},
+            json={"name": "Rack Réception partielle", "usage": "internal"},
         )
         assert location_response.status_code == 200, location_response.text
         target_location_id = location_response.json()["id"]
@@ -549,7 +563,7 @@ def test_supplier_operational_purchase_list_flags_open_receipt_invoice_and_overb
         location_response = client.post(
             "/v2/stock/locations",
             headers=headers,
-            json={"name": "WH/Fiche Fournisseur", "usage": "internal"},
+            json={"name": "Rack Fiche Fournisseur", "usage": "internal"},
         )
         assert location_response.status_code == 200, location_response.text
         target_location_id = location_response.json()["id"]
