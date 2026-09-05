@@ -1834,6 +1834,14 @@ export default function StockDashboard({ surface = 'management' }) {
             ],
         },
         {
+            label: 'Atelier',
+            items: [
+                ...(stockPermissions.reserveWorkshop || stockPermissions.consumeWorkshop ? [
+                    { key: 'workshop', label: 'Débit atelier', Icon: ArrowRight, count: reservations.length, tone: 'amber', onClick: () => setCurrentMenu('workshop') },
+                ] : []),
+            ],
+        },
+        {
             label: 'Priorités',
             items: [
                 { key: 'todo', label: 'À traiter', Icon: AlertTriangle, count: todoTotal, tone: 'slate', onClick: selectTodo },
@@ -1853,9 +1861,6 @@ export default function StockDashboard({ surface = 'management' }) {
         {
             label: 'Flux & contrôle',
             items: [
-                ...(stockPermissions.reserveWorkshop || stockPermissions.consumeWorkshop ? [
-                    { key: 'workshop', label: 'Débit atelier', Icon: ArrowRight, count: reservations.length, tone: 'amber', onClick: () => setCurrentMenu('workshop') },
-                ] : []),
                 { key: 'audit', label: 'Mouvements', Icon: Layers, tone: 'blue', onClick: () => setCurrentMenu('audit') },
                 { key: 'physical-inventory', label: 'Inventaire physique', Icon: ClipboardCheck, tone: 'blue', onClick: () => setCurrentMenu('physical-inventory') },
                 { key: 'import-export', label: 'Import / Export', Icon: Download, tone: 'blue', onClick: () => setCurrentMenu('import-export') },
@@ -2045,7 +2050,7 @@ export default function StockDashboard({ surface = 'management' }) {
                 <div className={`${isDashboardSurface ? 'hidden' : ''} px-4 sm:px-6 ${compactCatalogMode ? 'pb-2' : 'pb-3'}`}>
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
                         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
-                        {stockNavGroups.map(group => (
+                        {stockNavGroups.filter(group => group.items.length > 0).map(group => (
                             <div key={group.label} className="flex shrink-0 items-center gap-1.5">
                                 <p className="hidden lg:block pl-2 pr-1 text-[9px] font-black uppercase tracking-widest text-slate-400">
                                     {group.label}
@@ -2106,9 +2111,12 @@ export default function StockDashboard({ surface = 'management' }) {
                             movementCount={transactions.length}
                             inventoryCount={openInventorySessions.length}
                             draftCount={totalDraftCount}
+                            reservationsCount={reservations.length}
+                            canUseWorkshop={stockPermissions.reserveWorkshop || stockPermissions.consumeWorkshop}
                             currentMenu={currentMenu}
                             onCatalog={() => selectInventoryFocus('catalog')}
                             onStock={() => selectInventoryFocus('stock')}
+                            onWorkshop={() => setCurrentMenu('workshop')}
                             onMovements={() => setCurrentMenu('audit')}
                             onInventory={() => setCurrentMenu('physical-inventory')}
                         />
@@ -2966,53 +2974,78 @@ export default function StockDashboard({ surface = 'management' }) {
                 ) : currentMenu === 'workshop' ? (
                     <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
                         <div className="w-full p-6 space-y-6">
-                            <div className="border border-slate-200 bg-white overflow-hidden shadow-sm">
-                                <div className="px-6 py-5 bg-amber-50 border-b border-amber-100 flex flex-wrap items-start justify-between gap-4">
+                            <div className="border border-amber-200 bg-white overflow-hidden shadow-sm">
+                                <div className="px-6 py-6 bg-gradient-to-r from-amber-50 via-orange-50 to-white border-b border-amber-100 flex flex-wrap items-start justify-between gap-5">
                                     <div>
-                                        <p className="text-[10px] uppercase font-black tracking-widest text-amber-700 mb-2">Réservations atelier</p>
-                                        <h2 className="text-2xl font-black text-slate-950 flex items-center gap-3">
-                                            <ArrowRight className="w-6 h-6 text-amber-600" />
+                                        <p className="text-[10px] uppercase font-black tracking-[0.24em] text-amber-700 mb-2">Poste atelier · démarrage direct</p>
+                                        <h2 className="text-3xl font-black text-slate-950 flex items-center gap-3">
+                                            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-500 text-white shadow-sm">
+                                                <ArrowRight className="w-6 h-6" />
+                                            </span>
                                             Débit atelier
                                         </h2>
                                         <p className="text-sm font-bold text-slate-600 mt-1 max-w-3xl">
-                                            Réservez les matières, préparez le bon magasin, remettez-les à l’atelier, puis consommez-les seulement au débit réel.
+                                            Point d’entrée des équipes atelier : importer un débit, contrôler la réservation, préparer le bon magasin, remettre à l’atelier, puis consommer au débit réel.
                                         </p>
                                     </div>
                                     {stockPermissions.reserveWorkshop && (
                                         <button
                                             type="button"
                                             onClick={() => setShowWorkshopDebitModal(true)}
-                                            className="px-4 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-white text-sm font-black inline-flex items-center gap-2 shadow-sm"
+                                            className="px-5 py-4 rounded-2xl bg-amber-500 hover:bg-amber-400 text-white text-sm font-black inline-flex items-center gap-2 shadow-lg shadow-amber-500/20"
                                         >
                                             <FileText className="w-4 h-4" />
-                                            Importer débit atelier
+                                            Commencer : importer un débit
                                         </button>
                                     )}
                                 </div>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-6 border-b border-slate-100">
-                                    <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">Réservations ouvertes</p>
-                                        <p className="text-3xl font-black text-amber-800 mt-2">{reservations.length}</p>
-                                        <p className="text-xs font-bold text-amber-700 mt-1">À préparer, remettre, consommer ou annuler.</p>
+                                <div className="grid grid-cols-1 gap-3 p-6 border-b border-slate-100 lg:grid-cols-[1.1fr_2fr]">
+                                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+                                        <p className="text-[10px] uppercase tracking-[0.22em] font-black text-amber-700">À traiter maintenant</p>
+                                        <div className="mt-2 flex items-end justify-between gap-4">
+                                            <div>
+                                                <p className="text-4xl font-black text-amber-900">{reservations.length}</p>
+                                                <p className="text-xs font-black uppercase tracking-widest text-amber-700">débit(s) atelier ouvert(s)</p>
+                                            </div>
+                                            <ArrowRight className="h-8 w-8 text-amber-500" />
+                                        </div>
+                                        <p className="text-sm font-bold text-amber-800 mt-3">
+                                            L’opérateur part d’ici : aucun besoin d’ouvrir le catalogue pour traiter un bon atelier.
+                                        </p>
                                     </div>
-                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Règle</p>
-                                        <p className="text-lg font-black text-slate-950 mt-2">Remise interne avant débit</p>
-                                        <p className="text-xs font-bold text-slate-500 mt-1">La remise déplace le stock en zone atelier. Le débit réel le consomme.</p>
-                                    </div>
-                                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Contrôle</p>
-                                        <p className="text-lg font-black text-emerald-800 mt-2">Devis / ordre obligatoire</p>
-                                        <p className="text-xs font-bold text-emerald-700 mt-1">Aucune consommation sans contexte validé.</p>
+                                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                                        {[
+                                            ['1', 'Importer', 'Débit atelier PDF / dossier validé', 'bg-white text-slate-900 border-slate-200'],
+                                            ['2', 'Préparer', 'Créer le bon magasin et les lignes', 'bg-blue-50 text-blue-900 border-blue-100'],
+                                            ['3', 'Remettre', 'Sortir vers zone atelier interne', 'bg-amber-50 text-amber-900 border-amber-100'],
+                                            ['4', 'Consommer', 'Débit réel seulement après lancement', 'bg-emerald-50 text-emerald-900 border-emerald-100'],
+                                        ].map(([step, title, detail, className]) => (
+                                            <div key={step} className={`rounded-2xl border p-4 ${className}`}>
+                                                <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Étape {step}</p>
+                                                <p className="mt-1 text-lg font-black">{title}</p>
+                                                <p className="mt-1 text-xs font-bold opacity-70">{detail}</p>
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
                                 <div className="p-6">
                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden">
-                                        <div className="px-5 py-4 border-b border-slate-200 bg-white flex items-center justify-between">
+                                        <div className="px-5 py-4 border-b border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3">
                                             <div>
-                                                <p className="text-xs uppercase tracking-widest font-black text-slate-400">À traiter</p>
-                                                <h3 className="text-xl font-black text-slate-900">Réservations atelier actives</h3>
+                                                <p className="text-xs uppercase tracking-widest font-black text-amber-600">File atelier</p>
+                                                <h3 className="text-xl font-black text-slate-900">Débits à préparer / remettre / consommer</h3>
+                                                <p className="mt-1 text-xs font-bold text-slate-500">Chaque ligne garde le bon ordre : réserver → préparer → remettre → lancer fabrication → débit réel.</p>
                                             </div>
+                                            {stockPermissions.reserveWorkshop && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowWorkshopDebitModal(true)}
+                                                    className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-black uppercase tracking-widest text-amber-800 hover:bg-amber-100"
+                                                >
+                                                    <Plus className="h-4 w-4" />
+                                                    Nouveau débit
+                                                </button>
+                                            )}
                                         </div>
                                         {reservations.length > 0 ? (
                                             <div className="divide-y divide-slate-200">
@@ -3030,10 +3063,28 @@ export default function StockDashboard({ surface = 'management' }) {
                                                         cancelled: 'Annulé',
                                                     }[preparation?.status] || 'Bon à créer';
                                                     return (
-                                                        <div key={reservation.id} className="p-5 flex flex-wrap items-center justify-between gap-4 bg-white">
-                                                            <div>
-                                                                <p className="font-black text-slate-950">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
-                                                                <p className="text-sm font-bold text-slate-500 mt-1">{reservation.lines?.length || 0} ligne(s) - {totalReserved.toLocaleString('fr-FR')} réservé</p>
+                                                        <div key={reservation.id} className="p-5 bg-white">
+                                                            <div className="flex flex-wrap items-start justify-between gap-4">
+                                                                <div className="min-w-0">
+                                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Bon atelier</p>
+                                                                    <p className="font-black text-slate-950 break-all">{reservation.order_reference || reservation.project_reference || reservation.reference}</p>
+                                                                    <p className="text-sm font-bold text-slate-500 mt-1">{reservation.lines?.length || 0} ligne(s) · {totalReserved.toLocaleString('fr-FR')} réservé</p>
+                                                                </div>
+                                                                <div className="flex flex-wrap items-center gap-2">
+                                                                    {[
+                                                                        ['Réservé', true],
+                                                                        ['Préparé', ['ready', 'handed_over', 'consumed'].includes(preparation?.status)],
+                                                                        ['Remis atelier', ['handed_over', 'consumed'].includes(preparation?.status)],
+                                                                        ['Fabrication lancée', productionLaunched],
+                                                                    ].map(([label, done]) => (
+                                                                        <span key={label} className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${done ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-400'}`}>
+                                                                            {done ? '✓ ' : ''}{label}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                            <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
+                                                                <div>
                                                                 <div className="mt-2 flex flex-wrap items-center gap-2">
                                                                     <span className={`rounded-lg px-2 py-1 text-[10px] font-black uppercase ${
                                                                         preparation?.status === 'handed_over'
@@ -3050,8 +3101,8 @@ export default function StockDashboard({ surface = 'management' }) {
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                            </div>
-                                                            <div className="flex gap-2">
+                                                                </div>
+                                                            <div className="flex flex-wrap gap-2">
                                                                 {!preparation && (
                                                                     <button onClick={() => createWorkshopPreparation(reservation)} disabled={!stockPermissions.transfer || reservationActionId === reservation.id} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white text-sm font-black">
                                                                         Créer bon atelier
@@ -3092,6 +3143,7 @@ export default function StockDashboard({ surface = 'management' }) {
                                                                     Annuler
                                                                 </button>
                                                             </div>
+                                                        </div>
                                                         </div>
                                                     );
                                                 })}
@@ -5372,13 +5424,27 @@ function StockManagementHome({
     movementCount,
     inventoryCount,
     draftCount,
+    reservationsCount,
+    canUseWorkshop,
     currentMenu,
     onCatalog,
     onStock,
+    onWorkshop,
     onMovements,
     onInventory,
 }) {
     const cards = [
+        canUseWorkshop && {
+            key: 'workshop',
+            title: 'Débit atelier',
+            detail: 'Démarrer par le bon de débit : importer, préparer, remettre, consommer.',
+            metric: reservationsCount,
+            suffix: 'réservation(s) ouverte(s)',
+            Icon: ArrowRight,
+            tone: 'amber',
+            action: 'Ouvrir atelier',
+            onClick: onWorkshop,
+        },
         {
             key: 'catalog',
             title: 'Articles / catalogue',
@@ -5423,7 +5489,7 @@ function StockManagementHome({
             action: 'Compter',
             onClick: onInventory,
         },
-    ];
+    ].filter(Boolean);
     const toneClasses = {
         blue: 'border-blue-100 bg-blue-50 text-blue-900',
         emerald: 'border-emerald-100 bg-emerald-50 text-emerald-900',
@@ -5431,6 +5497,7 @@ function StockManagementHome({
         amber: 'border-amber-100 bg-amber-50 text-amber-900',
     };
     const activeKeys = {
+        workshop: ['workshop'],
         catalog: ['catalog', 'drafts', 'services', 'product-detail'],
         stock: ['stock', 'locations', 'location-detail'],
         audit: ['audit'],
@@ -5443,9 +5510,9 @@ function StockManagementHome({
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
                     <div>
                         <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Accueil gestion stock</p>
-                        <h3 className="text-lg font-black text-slate-950">Choisissez le parcours, puis exécutez l’action.</h3>
+                        <h3 className="text-lg font-black text-slate-950">Commencez par le débit atelier, puis ouvrez les autres outils si besoin.</h3>
                     </div>
-                    <p className="text-xs font-bold text-slate-500">Simple par défaut · détails disponibles dans les fiches</p>
+                    <p className="text-xs font-bold text-slate-500">Mode atelier d’abord · catalogue et audit restent disponibles</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                     {cards.map(card => {
