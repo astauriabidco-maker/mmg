@@ -1,11 +1,19 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
-import { LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive, ShoppingCart, Truck, Users, UserCircle, FileText, BarChart3, CalendarDays, UserRoundCheck } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import {
+    LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive,
+    ShoppingCart, Truck, Users, UserCircle, FileText, BarChart3, CalendarDays,
+    UserRoundCheck, ArrowRight, AlertTriangle, Package, MapPin, Layers,
+    ClipboardCheck, Download, TrendingUp
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { canAccessManagerView } from '../utils/roleNavigation';
 
 export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }) {
     const { logout, user } = useAuth();
+    const routeLocation = useLocation();
+    const routeParams = new URLSearchParams(routeLocation.search);
+    const activeStockMenu = routeParams.get('stockMenu') || 'management-home';
     const canAccess = (item) => {
         if (!canAccessManagerView(user, item.id)) return false;
         if (item.anyPermission) {
@@ -15,6 +23,12 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
         if (!item.permission) return true;
         const permissions = user?.permissions || [];
         return permissions.includes('*') || permissions.includes(item.permission);
+    };
+    const canAccessSubItem = (item) => {
+        const permissions = user?.permissions || [];
+        if (item.anyPermission) return permissions.includes('*') || item.anyPermission.some(permission => permissions.includes(permission));
+        if (item.permission) return permissions.includes('*') || permissions.includes(item.permission);
+        return true;
     };
 
     const menuCategories = [
@@ -48,7 +62,27 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
             title: 'Supply Chain',
             items: [
                 { id: 'stock_dashboard', label: 'Pilotage stock', icon: BarChart3, type: 'internal', anyPermission: ['STOCK_VIEW', 'inventory.approve_value'] },
-                { id: 'stock', label: 'Gestion stock', icon: Archive, type: 'internal', anyPermission: ['STOCK_VIEW', 'inventory.approve_value'] },
+                {
+                    id: 'stock',
+                    label: 'Gestion stock',
+                    icon: Archive,
+                    type: 'internal',
+                    anyPermission: ['STOCK_VIEW', 'inventory.approve_value'],
+                    subItems: [
+                        { id: 'management-home', label: 'Parcours', icon: LayoutDashboard },
+                        { id: 'workshop', label: 'Débit atelier', icon: ArrowRight },
+                        { id: 'todo', label: 'À traiter', icon: AlertTriangle },
+                        { id: 'risk', label: 'Stock à risque', icon: AlertTriangle },
+                        { id: 'catalog', label: 'Catalogue', icon: Package },
+                        { id: 'stock', label: 'Stock réel', icon: MapPin },
+                        { id: 'drafts', label: 'Brouillons', icon: FileText },
+                        { id: 'locations', label: 'Zones & emplacements', icon: MapPin },
+                        { id: 'audit', label: 'Mouvements', icon: Layers },
+                        { id: 'physical-inventory', label: 'Inventaire physique', icon: ClipboardCheck },
+                        { id: 'import-export', label: 'Import / Export', icon: Download },
+                        { id: 'valuation', label: 'Valorisation', icon: TrendingUp, anyPermission: ['inventory.approve_value'] },
+                    ],
+                },
                 { id: 'purchases', label: 'Achats & Appro', icon: ShoppingCart, type: 'internal', permission: 'PURCHASES_VIEW' },
                 { id: 'logistics', label: 'Logistique & Expédition', icon: Truck, type: 'internal' },
             ]
@@ -130,18 +164,46 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                         }
 
                                         return (
-                                            <Link
-                                                key={item.id}
-                                                to={`/manager${item.id === 'dashboard' ? '' : `?view=${item.id}`}`}
-                                                state={{ view: item.id }}
-                                                onClick={() => {
-                                                    if (setActiveView) setActiveView(item.id);
-                                                    if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
-                                                }}
-                                                className={className}
-                                            >
-                                                {content}
-                                            </Link>
+                                            <div key={item.id}>
+                                                <Link
+                                                    to={`/manager${item.id === 'dashboard' ? '' : `?view=${item.id}`}`}
+                                                    state={{ view: item.id }}
+                                                    onClick={() => {
+                                                        if (setActiveView) setActiveView(item.id);
+                                                        if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
+                                                    }}
+                                                    className={className}
+                                                >
+                                                    {content}
+                                                </Link>
+                                                {item.id === 'stock' && isSelected && item.subItems?.length > 0 && (
+                                                    <div className="mt-2 ml-4 space-y-1 border-l border-slate-700/70 pl-3">
+                                                        {item.subItems.filter(canAccessSubItem).map((subItem) => {
+                                                            const SubIcon = subItem.icon;
+                                                            const isSubSelected = activeStockMenu === subItem.id;
+                                                            return (
+                                                                <Link
+                                                                    key={subItem.id}
+                                                                    to={`/manager?view=stock&stockMenu=${subItem.id}`}
+                                                                    state={{ view: 'stock', stockMenu: subItem.id }}
+                                                                    onClick={() => {
+                                                                        if (setActiveView) setActiveView('stock');
+                                                                        if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
+                                                                    }}
+                                                                    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-black transition-colors ${
+                                                                        isSubSelected
+                                                                            ? 'bg-slate-800 text-white'
+                                                                            : 'text-slate-500 hover:bg-slate-800/70 hover:text-slate-200'
+                                                                    }`}
+                                                                >
+                                                                    <SubIcon className={`h-3.5 w-3.5 ${isSubSelected ? 'text-blue-300' : 'text-slate-600'}`} />
+                                                                    <span className="truncate">{subItem.label}</span>
+                                                                </Link>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
                                         );
                                     })}
                                 </nav>

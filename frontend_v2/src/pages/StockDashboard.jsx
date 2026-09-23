@@ -50,6 +50,21 @@ const DEFAULT_STOCK_UNITS = [
     'lot',
 ];
 
+const STOCK_SIDEBAR_MENUS = [
+    'management-home',
+    'workshop',
+    'todo',
+    'risk',
+    'catalog',
+    'stock',
+    'drafts',
+    'locations',
+    'audit',
+    'physical-inventory',
+    'import-export',
+    'valuation',
+];
+
 const CATALOG_STATUS_META = {
     DRAFT: { label: 'Brouillon', className: 'bg-slate-100 text-slate-700 border-slate-200' },
     TO_QUALIFY: { label: 'À qualifier', className: 'bg-amber-50 text-amber-700 border-amber-200' },
@@ -221,13 +236,26 @@ export default function StockDashboard({ surface = 'management' }) {
     const [supplierFixContext, setSupplierFixContext] = useState(null);
 
     useEffect(() => {
-        setCurrentMenu(isDashboardSurface ? 'todo' : 'management-home');
-        setInventoryFocus('catalog');
+        const requestedStockMenu = new URLSearchParams(location.search).get('stockMenu');
+        const nextMenu = !isDashboardSurface && STOCK_SIDEBAR_MENUS.includes(requestedStockMenu)
+            ? requestedStockMenu
+            : (isDashboardSurface ? 'todo' : 'management-home');
+        setCurrentMenu(nextMenu);
+        setInventoryFocus(['catalog', 'stock', 'drafts', 'services'].includes(nextMenu) ? nextMenu : 'catalog');
         setSelectedProductId(null);
         setSelectedLocationId(null);
         setProductDetailReturnMenu(null);
         setSupplierFixContext(null);
-    }, [isDashboardSurface]);
+    }, [isDashboardSurface, location.search]);
+
+    useEffect(() => {
+        if (isDashboardSurface || location.pathname !== '/manager' || !STOCK_SIDEBAR_MENUS.includes(currentMenu)) return;
+        const params = new URLSearchParams(location.search);
+        if (params.get('view') !== 'stock' || params.get('stockMenu') === currentMenu) return;
+        params.set('view', 'stock');
+        params.set('stockMenu', currentMenu);
+        navigate(`/manager?${params.toString()}`, { replace: true });
+    }, [currentMenu, isDashboardSurface, location.pathname, location.search, navigate]);
 
     // Inline edit states
     const [addingSubLocTo, setAddingSubLocTo] = useState(null);
@@ -2212,20 +2240,6 @@ export default function StockDashboard({ surface = 'management' }) {
             ],
         },
     ];
-    const navToneClasses = {
-        slate: 'bg-slate-950 text-white shadow-sm',
-        red: 'bg-red-600 text-white shadow-sm',
-        blue: 'bg-blue-600 text-white shadow-sm',
-        emerald: 'bg-emerald-600 text-white shadow-sm',
-        amber: 'bg-amber-500 text-white shadow-sm',
-    };
-    const navCountClasses = {
-        slate: 'bg-slate-100 text-slate-700',
-        red: 'bg-red-100 text-red-700',
-        blue: 'bg-blue-100 text-blue-700',
-        emerald: 'bg-emerald-100 text-emerald-700',
-        amber: 'bg-amber-100 text-amber-700',
-    };
     const activeNavItem = stockNavGroups
         .flatMap(group => group.items.map(item => ({ ...item, group: group.label })))
         .find(item => item.key === currentMenu);
@@ -2393,46 +2407,6 @@ export default function StockDashboard({ surface = 'management' }) {
                         onOpenManagement={() => switchStockSurface('management')}
                     />
                 )}
-
-                <div className={`${isDashboardSurface ? 'hidden' : ''} px-4 sm:px-6 ${compactCatalogMode ? 'pb-2' : 'pb-3'}`}>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
-                        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
-                        {stockNavGroups.filter(group => group.items.length > 0).map(group => (
-                            <div key={group.label} className="flex shrink-0 items-center gap-1.5">
-                                <p className="hidden lg:block pl-2 pr-1 text-[9px] font-black uppercase tracking-widest text-slate-400">
-                                    {group.label}
-                                </p>
-                                <div className="flex items-center gap-1.5">
-                                    {group.items.map(item => {
-                                        const Icon = item.Icon;
-                                        const active = currentMenu === item.key;
-                                        const count = Number(item.count || 0);
-                                        return (
-                                            <button
-                                                key={item.key}
-                                                type="button"
-                                                onClick={item.onClick}
-                                                className={`inline-flex min-h-[36px] items-center gap-2 rounded-xl px-3 py-2 text-xs font-black transition-all ${active ? navToneClasses[item.tone] : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 hover:text-slate-950'}`}
-                                            >
-                                                <Icon className="w-4 h-4 shrink-0" />
-                                                <span className="whitespace-nowrap">{item.label}</span>
-                                                {count > 0 && (
-                                                    <span className={`rounded-lg px-2 py-0.5 text-[10px] font-black ${active ? 'bg-white/15 text-white' : navCountClasses[item.tone]}`}>
-                                                        {count}
-                                                    </span>
-                                                )}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                                {group.label !== 'Flux & contrôle' && (
-                                    <div className="mx-1 h-7 w-px bg-slate-200" />
-                                )}
-                            </div>
-                        ))}
-                        </div>
-                    </div>
-                </div>
 
                 <div className={`${isDashboardSurface ? 'hidden' : ''} border-t border-slate-100 bg-slate-50/70 px-6 py-2`}>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-500">
