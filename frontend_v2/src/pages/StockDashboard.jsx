@@ -234,19 +234,34 @@ export default function StockDashboard({ surface = 'management' }) {
     // emplacement...) pour que "Retour" restaure le bon contexte.
     const [productDetailReturnMenu, setProductDetailReturnMenu] = useState(null);
     const [supplierFixContext, setSupplierFixContext] = useState(null);
+    const navigateStockMenu = (menu) => {
+        if (isDashboardSurface || location.pathname !== '/manager' || !STOCK_SIDEBAR_MENUS.includes(menu)) {
+            setCurrentMenu(menu);
+            return;
+        }
+        const params = new URLSearchParams(location.search);
+        params.set('view', 'stock');
+        params.set('stockMenu', menu);
+        const nextSearch = params.toString();
+        if (`?${nextSearch}` !== location.search) {
+            navigate(`/manager?${nextSearch}`);
+        }
+        setCurrentMenu(menu);
+    };
 
     useEffect(() => {
         const requestedStockMenu = new URLSearchParams(location.search).get('stockMenu');
         const nextMenu = !isDashboardSurface && STOCK_SIDEBAR_MENUS.includes(requestedStockMenu)
             ? requestedStockMenu
             : (isDashboardSurface ? 'todo' : 'management-home');
+        if (nextMenu === currentMenu) return;
         setCurrentMenu(nextMenu);
         setInventoryFocus(['catalog', 'stock', 'drafts', 'services'].includes(nextMenu) ? nextMenu : 'catalog');
         setSelectedProductId(null);
         setSelectedLocationId(null);
         setProductDetailReturnMenu(null);
         setSupplierFixContext(null);
-    }, [isDashboardSurface, location.search]);
+    }, [currentMenu, isDashboardSurface, location.search]);
 
     useEffect(() => {
         if (isDashboardSurface || location.pathname !== '/manager' || !STOCK_SIDEBAR_MENUS.includes(currentMenu)) return;

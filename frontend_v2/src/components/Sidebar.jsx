@@ -187,7 +187,6 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                                                     to={`/manager?view=stock&stockMenu=${subItem.id}`}
                                                                     state={{ view: 'stock', stockMenu: subItem.id }}
                                                                     onClick={() => {
-                                                                        if (setActiveView) setActiveView('stock');
                                                                         if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
                                                                     }}
                                                                     className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-black transition-colors ${
