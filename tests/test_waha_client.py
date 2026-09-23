@@ -70,7 +70,6 @@ def test_send_waha_text_message_posts_expected_payload(monkeypatch):
         captured["timeout"] = timeout
         return _Response()
 
-    monkeypatch.setenv("WAHA_LINK_PREVIEW", "true")
     settings = WahaSettings(
         base_url="https://waha.example.test/",
         api_key="secret-key",
@@ -88,6 +87,5 @@ def test_send_waha_text_message_posts_expected_payload(monkeypatch):
         "session": "mmg-prod",
         "chatId": "33612345678@c.us",
         "text": "Bonjour",
-        "linkPreview": True,
     }
     assert captured["timeout"] == 7

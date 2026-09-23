@@ -11,6 +11,7 @@ from urllib.parse import urljoin
 
 logger = logging.getLogger(__name__)
 _MAX_ACTIVITY_EVENTS = 50
+_DEFAULT_TIMEOUT_SECONDS = 15
 _ACTIVITY_EVENTS = deque(maxlen=_MAX_ACTIVITY_EVENTS)
 
 
@@ -19,11 +20,7 @@ class WahaSettings:
     base_url: str
     api_key: str
     session: str = "default"
-    timeout_seconds: int = 15
-
-
-def _env_enabled(value: Optional[str]) -> bool:
-    return (value or "").strip().lower() not in {"", "0", "false", "no", "non", "off"}
+    timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS
 
 
 def get_waha_settings() -> Optional[WahaSettings]:
@@ -32,16 +29,11 @@ def get_waha_settings() -> Optional[WahaSettings]:
     if not base_url or not api_key:
         return None
 
-    try:
-        timeout_seconds = int(os.environ.get("WAHA_TIMEOUT_SECONDS", "15"))
-    except ValueError:
-        timeout_seconds = 15
-
     return WahaSettings(
         base_url=base_url.rstrip("/") + "/",
         api_key=api_key,
         session=(os.environ.get("WAHA_SESSION") or "default").strip() or "default",
-        timeout_seconds=max(1, timeout_seconds),
+        timeout_seconds=_DEFAULT_TIMEOUT_SECONDS,
     )
 
 
@@ -152,7 +144,6 @@ def send_waha_text_message(to: str, message: str, settings: Optional[WahaSetting
         "session": settings.session,
         "chatId": normalize_waha_chat_id(to),
         "text": message,
-        "linkPreview": _env_enabled(os.environ.get("WAHA_LINK_PREVIEW")),
     }
     try:
         _waha_request("api/sendText", settings, method="POST", payload=payload)
