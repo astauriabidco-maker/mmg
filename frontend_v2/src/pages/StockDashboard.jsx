@@ -57,6 +57,7 @@ const STOCK_SIDEBAR_MENUS = [
     'risk',
     'catalog',
     'stock',
+    'services',
     'drafts',
     'locations',
     'audit',
@@ -2260,6 +2261,60 @@ export default function StockDashboard({ surface = 'management' }) {
     const activeNavItem = stockNavGroups
         .flatMap(group => group.items.map(item => ({ ...item, group: group.label })))
         .find(item => item.key === currentMenu);
+    const stockPageCopy = {
+        'management-home': {
+            title: 'Parcours stock',
+            subtitle: 'Commencer par le flux atelier, puis ouvrir les outils seulement quand ils servent l’action.',
+        },
+        workshop: {
+            title: 'Débit atelier',
+            subtitle: 'Préparer, remettre et consommer la matière réellement utilisée en fabrication.',
+        },
+        todo: {
+            title: 'À traiter',
+            subtitle: 'Ruptures, brouillons, réservations et inventaires à arbitrer en priorité.',
+        },
+        risk: {
+            title: 'Stock à risque',
+            subtitle: 'Articles sous seuil ou critiques à sécuriser avant promesse client.',
+        },
+        catalog: {
+            title: 'Catalogue articles',
+            subtitle: 'Créer, qualifier et retrouver les références exploitables par l’atelier.',
+        },
+        stock: {
+            title: 'Stock réel',
+            subtitle: 'Contrôler les quantités disponibles par article, variante et emplacement physique.',
+        },
+        services: {
+            title: 'Prestations',
+            subtitle: 'Gérer les lignes de service hors stock physique.',
+        },
+        drafts: {
+            title: 'Brouillons catalogue',
+            subtitle: 'Compléter les références importées avant exploitation industrielle.',
+        },
+        locations: {
+            title: 'Zones & emplacements',
+            subtitle: 'Structurer magasin, zones, racks et casiers avant réception ou inventaire.',
+        },
+        audit: {
+            title: 'Mouvements stock',
+            subtitle: 'Auditer les entrées, sorties, transferts, débits atelier et ajustements.',
+        },
+        'physical-inventory': {
+            title: 'Inventaire physique',
+            subtitle: 'Compter une zone réelle, justifier les écarts puis valider les ajustements.',
+        },
+        'import-export': {
+            title: 'Import / Export',
+            subtitle: 'Importer les fichiers stock et exporter les états d’inventaire.',
+        },
+        valuation: {
+            title: 'Valorisation stock',
+            subtitle: 'Suivre la valeur du stock et les impacts financiers des écarts.',
+        },
+    };
     const editProductActivationIssues = editProductForm
         ? getCatalogActivationIssues({
             ...editProductForm,
@@ -2284,10 +2339,12 @@ export default function StockDashboard({ surface = 'management' }) {
         );
     const selectedProductActivationIssues = selectedProduct ? getCatalogActivationIssues(selectedProduct) : [];
     const compactCatalogMode = ['catalog', 'drafts'].includes(currentMenu);
-    const surfaceTitle = isDashboardSurface ? 'Pilotage stock' : 'Gestion de stock';
+    const currentStockPage = stockPageCopy[currentMenu] || { title: activeNavItem?.label || 'Gestion stock', subtitle: 'Gérer le catalogue, les emplacements, les mouvements et les inventaires.' };
+    const HeaderIcon = isDashboardSurface ? Box : (activeNavItem?.Icon || Archive);
+    const surfaceTitle = isDashboardSurface ? 'Pilotage stock' : currentStockPage.title;
     const surfaceSubtitle = isDashboardSurface
         ? 'Voir les priorités, alertes, réservations et inventaires à traiter.'
-        : 'Gérer le catalogue, les emplacements, les mouvements et les inventaires.';
+        : currentStockPage.subtitle;
     const switchStockSurface = (targetSurface) => {
         if (targetSurface === surface) return;
         const targetView = targetSurface === 'dashboard' ? 'stock_dashboard' : 'stock';
@@ -2297,6 +2354,33 @@ export default function StockDashboard({ surface = 'management' }) {
         }
         navigate(targetSurface === 'dashboard' ? '/stock/dashboard' : '/stock');
     };
+    const stockPrimaryAction = !isDashboardSurface ? ({
+        'management-home': reservations.length > 0
+            ? { label: 'Traiter le débit atelier', onClick: () => navigateStockMenu('workshop'), Icon: ArrowRight }
+            : { label: 'Organiser les emplacements', onClick: () => navigateStockMenu('locations'), Icon: MapPin },
+        workshop: (stockPermissions.reserveWorkshop || stockPermissions.consumeWorkshop)
+            ? { label: 'Importer un débit', onClick: () => setShowWorkshopDebitModal(true), Icon: Download }
+            : null,
+        catalog: stockPermissions.qualifyCatalog
+            ? { label: 'Nouvel article', onClick: () => openNewProductModal('stockable'), Icon: Plus }
+            : null,
+        stock: stockPermissions.receive
+            ? { label: 'Entrée stock', onClick: openReceptionModal, Icon: Truck }
+            : null,
+        services: stockPermissions.qualifyCatalog
+            ? { label: 'Nouvelle prestation', onClick: () => openNewProductModal('service'), Icon: Plus }
+            : null,
+        drafts: stockPermissions.qualifyCatalog
+            ? { label: 'Qualifier les brouillons', onClick: () => setCatalogQuickFilter('draft'), Icon: FileEdit }
+            : null,
+        locations: canManageLocations
+            ? { label: 'Créer une zone', onClick: () => setAddingSubLocTo('root'), Icon: Plus }
+            : null,
+        audit: stockPermissions.receive
+            ? { label: 'Entrée stock', onClick: openReceptionModal, Icon: Truck }
+            : null,
+        'import-export': { label: 'Importer un fichier', onClick: () => setShowImportModal(true), Icon: Download },
+    })[currentMenu] : null;
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
@@ -2310,7 +2394,7 @@ export default function StockDashboard({ surface = 'management' }) {
                     <div className="flex flex-wrap items-center justify-between gap-4">
                         <div className="min-w-0">
                             <h3 className="font-black flex items-center gap-3 tracking-tight text-xl text-slate-950">
-                                <Box className="text-blue-600 w-5 h-5" /> {surfaceTitle}
+                                <HeaderIcon className="text-blue-600 w-5 h-5" /> {surfaceTitle}
                             </h3>
                             <p className="text-sm font-bold text-slate-500 mt-0.5">
                                 {surfaceSubtitle}
@@ -2341,6 +2425,16 @@ export default function StockDashboard({ surface = 'management' }) {
                         </div>
 
                         <div className="flex flex-1 flex-wrap items-center justify-end gap-2 min-w-[280px]">
+                            {stockPrimaryAction && (
+                                <button
+                                    type="button"
+                                    onClick={stockPrimaryAction.onClick}
+                                    className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-black text-white shadow-sm hover:bg-slate-800"
+                                >
+                                    <stockPrimaryAction.Icon className="h-4 w-4" />
+                                    {stockPrimaryAction.label}
+                                </button>
+                            )}
                             <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1">
                                 <button
                                     type="button"

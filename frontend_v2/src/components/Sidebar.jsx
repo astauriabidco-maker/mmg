@@ -76,6 +76,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                         { id: 'risk', label: 'Stock à risque', icon: AlertTriangle },
                         { id: 'catalog', label: 'Catalogue', icon: Package },
                         { id: 'stock', label: 'Stock réel', icon: MapPin },
+                        { id: 'services', label: 'Prestations', icon: FileText },
                         { id: 'drafts', label: 'Brouillons', icon: FileText },
                         { id: 'locations', label: 'Zones & emplacements', icon: MapPin },
                         { id: 'audit', label: 'Mouvements', icon: Layers },
