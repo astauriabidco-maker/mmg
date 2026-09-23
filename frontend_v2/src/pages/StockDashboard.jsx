@@ -132,6 +132,52 @@ export default function StockDashboard({ surface = 'management' }) {
             return res.data;
         },
     });
+    const getFullLocationName = (loc) => {
+        if (!loc.parent_id) return loc.name;
+        const parent = locations.find(l => l.id === loc.parent_id);
+        return parent ? `${getFullLocationName(parent)} > ${loc.name}` : loc.name;
+    };
+
+    const vagueLocationWords = ['divers', 'stock', 'test', 'zone', 'autre', 'temp', 'temporary', 'vrac', 'inconnu', 'unknown'];
+    const getLocationDepth = (loc) => {
+        if (!loc?.parent_id) return 0;
+        const parent = locations.find(item => item.id === loc.parent_id);
+        return parent ? 1 + getLocationDepth(parent) : 0;
+    };
+    const getLocationRole = (loc) => {
+        const label = `${loc?.name || ''} ${getFullLocationName(loc || {})}`.toLowerCase();
+        if (loc?.usage === 'production' || label.includes('atelier') || label.includes('préparation') || label.includes('preparation')) return 'Zone atelier';
+        if (label.includes('casier') || label.includes('case') || label.includes('bac') || /\b[a-z]\d+\b/i.test(label)) return 'Casier final';
+        if (label.includes('rack') || label.includes('travée') || label.includes('travee') || label.includes('étag') || label.includes('etag')) return 'Rack';
+        return loc?.parent_id ? 'Zone parent' : 'Magasin';
+    };
+    const getLocationQuality = (loc) => {
+        if (!loc) return { role: 'Inconnu', exploitable: false, issues: ['emplacement absent'] };
+        const fullName = getFullLocationName(loc);
+        const normalizedName = String(loc.name || '').trim().toLowerCase();
+        const ambiguousPrefixWords = vagueLocationWords.filter(word => word !== 'zone');
+        const role = getLocationRole(loc);
+        const issues = [];
+        if (loc.usage !== 'internal' && loc.usage !== 'production') issues.push('lieu virtuel');
+        if (!normalizedName) issues.push('nom absent');
+        if (normalizedName.length < 3) issues.push('nom trop court');
+        if (vagueLocationWords.includes(normalizedName)) issues.push('nom trop vague');
+        if (ambiguousPrefixWords.some(word => normalizedName === word || normalizedName.startsWith(`${word} `))) issues.push('nom à préciser');
+        if (role === 'Magasin' && getLocationDepth(loc) === 0 && !locations.some(child => child.parent_id === loc.id)) issues.push('structure à détailler');
+        if (['Magasin', 'Zone parent'].includes(role)) issues.push('point de prélèvement à préciser');
+        const exploitable = issues.length === 0 && ['Rack', 'Casier final', 'Zone atelier'].includes(role);
+        return { role, exploitable, issues, fullName };
+    };
+    const getLocationNameIssues = (name) => {
+        const normalizedName = String(name || '').trim().toLowerCase();
+        const ambiguousPrefixWords = vagueLocationWords.filter(word => word !== 'zone');
+        const issues = [];
+        if (!normalizedName) issues.push('Nom obligatoire');
+        if (normalizedName && normalizedName.length < 3) issues.push('Nom trop court');
+        if (vagueLocationWords.includes(normalizedName)) issues.push('Nom trop vague');
+        if (ambiguousPrefixWords.some(word => normalizedName === word || normalizedName.startsWith(`${word} `))) issues.push('Précisez le rack, casier ou usage réel');
+        return issues;
+    };
     const catalogCategoryOptions = normalizedOptions([
         ...DEFAULT_CATALOG_CATEGORIES,
         ...appConfigs.filter(config => config.category === 'product_category').map(config => config.value),
@@ -1394,53 +1440,6 @@ export default function StockDashboard({ surface = 'management' }) {
 
     const toggleExpand = (id) => {
         setExpandedProducts(prev => ({ ...prev, [id]: !prev[id] }));
-    };
-
-    const getFullLocationName = (loc) => {
-        if (!loc.parent_id) return loc.name;
-        const parent = locations.find(l => l.id === loc.parent_id);
-        return parent ? `${getFullLocationName(parent)} > ${loc.name}` : loc.name;
-    };
-
-    const vagueLocationWords = ['divers', 'stock', 'test', 'zone', 'autre', 'temp', 'temporary', 'vrac', 'inconnu', 'unknown'];
-    const getLocationDepth = (loc) => {
-        if (!loc?.parent_id) return 0;
-        const parent = locations.find(item => item.id === loc.parent_id);
-        return parent ? 1 + getLocationDepth(parent) : 0;
-    };
-    const getLocationRole = (loc) => {
-        const label = `${loc?.name || ''} ${getFullLocationName(loc || {})}`.toLowerCase();
-        if (loc?.usage === 'production' || label.includes('atelier') || label.includes('préparation') || label.includes('preparation')) return 'Zone atelier';
-        if (label.includes('casier') || label.includes('case') || label.includes('bac') || /\b[a-z]\d+\b/i.test(label)) return 'Casier final';
-        if (label.includes('rack') || label.includes('travée') || label.includes('travee') || label.includes('étag') || label.includes('etag')) return 'Rack';
-        return loc?.parent_id ? 'Zone parent' : 'Magasin';
-    };
-    const getLocationQuality = (loc) => {
-        if (!loc) return { role: 'Inconnu', exploitable: false, issues: ['emplacement absent'] };
-        const fullName = getFullLocationName(loc);
-        const normalizedName = String(loc.name || '').trim().toLowerCase();
-        const ambiguousPrefixWords = vagueLocationWords.filter(word => word !== 'zone');
-        const role = getLocationRole(loc);
-        const issues = [];
-        if (loc.usage !== 'internal' && loc.usage !== 'production') issues.push('lieu virtuel');
-        if (!normalizedName) issues.push('nom absent');
-        if (normalizedName.length < 3) issues.push('nom trop court');
-        if (vagueLocationWords.includes(normalizedName)) issues.push('nom trop vague');
-        if (ambiguousPrefixWords.some(word => normalizedName === word || normalizedName.startsWith(`${word} `))) issues.push('nom à préciser');
-        if (role === 'Magasin' && getLocationDepth(loc) === 0 && !locations.some(child => child.parent_id === loc.id)) issues.push('structure à détailler');
-        if (['Magasin', 'Zone parent'].includes(role)) issues.push('point de prélèvement à préciser');
-        const exploitable = issues.length === 0 && ['Rack', 'Casier final', 'Zone atelier'].includes(role);
-        return { role, exploitable, issues, fullName };
-    };
-    const getLocationNameIssues = (name) => {
-        const normalizedName = String(name || '').trim().toLowerCase();
-        const ambiguousPrefixWords = vagueLocationWords.filter(word => word !== 'zone');
-        const issues = [];
-        if (!normalizedName) issues.push('Nom obligatoire');
-        if (normalizedName && normalizedName.length < 3) issues.push('Nom trop court');
-        if (vagueLocationWords.includes(normalizedName)) issues.push('Nom trop vague');
-        if (ambiguousPrefixWords.some(word => normalizedName === word || normalizedName.startsWith(`${word} `))) issues.push('Précisez le rack, casier ou usage réel');
-        return issues;
     };
 
     const getLocationDescendantIds = (locationId) => {
