@@ -96,7 +96,8 @@ Constats :
   - réservation stock atelier ;
   - ordre de fabrication ;
   - débit atelier réel ;
-- les permissions visibles incluent `PRODUCTION_MANAGE` et `STOCK_MANAGE` ;
+- les permissions visibles incluent les codes RBAC réels `SALES_EDIT`,
+  `workshop.reserve_stock`, `stock.transfer` et `workshop.consume_stock` ;
 - l'ordre métier verrouillé est affiché :
   1. réserver stock ;
   2. préparer / remettre le bon atelier ;
@@ -140,7 +141,7 @@ Constats :
   - bon de préparation atelier ;
   - ordre de fabrication ;
   - débit atelier réel ;
-- la permission `STOCK_MANAGE` est affichée.
+- la permission `workshop.consume_stock` est affichée pour le débit réel.
 
 ## Décision
 
@@ -156,4 +157,3 @@ Les avertissements techniques restants sont hors périmètre fonctionnel de cett
 
 - cache navigateur ou service worker à vider si une ancienne URL de déploiement est conservée ;
 - environnement de test Python local à reconstruire si l'on souhaite relancer les tests backend depuis ce poste.
-

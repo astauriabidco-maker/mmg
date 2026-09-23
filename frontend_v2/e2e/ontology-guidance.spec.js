@@ -164,12 +164,12 @@ const ontology = {
         { entity: 'crm_opportunity', action: 'read', permission: 'SALES_VIEW', description: 'Consulter le pipeline avant-vente.' },
         { entity: 'crm_opportunity', action: 'write', permission: 'SALES_EDIT', description: 'Modifier une opportunité.' },
         { entity: 'measure_mission', action: 'write', permission: 'SALES_EDIT', description: 'Créer ou soumettre une mission de métré.' },
-        { entity: 'technical_dossier', action: 'review', permission: 'PRODUCTION_MANAGE', description: 'Valider ou rejeter le dossier BE.' },
+        { entity: 'technical_dossier', action: 'review', permission: 'SALES_EDIT', description: 'Soumettre le dossier technique ; validation réservée aux rôles BE.' },
         { entity: 'commercial_quote', action: 'write', permission: 'SALES_EDIT', description: 'Préparer un devis commercial.' },
-        { entity: 'stock_reservation', action: 'write', permission: 'STOCK_MANAGE', description: 'Créer une réservation matière.' },
-        { entity: 'workshop_preparation', action: 'write', permission: 'STOCK_MANAGE', description: 'Préparer le bon atelier.' },
-        { entity: 'production_order', action: 'launch', permission: 'PRODUCTION_MANAGE', description: 'Lancer la fabrication.' },
-        { entity: 'real_workshop_debit', action: 'consume', permission: 'STOCK_MANAGE', description: 'Débiter réellement la matière.' },
+        { entity: 'stock_reservation', action: 'write', permission: 'workshop.reserve_stock', description: 'Créer une réservation matière.' },
+        { entity: 'workshop_preparation', action: 'write', permission: 'stock.transfer', description: 'Préparer le bon atelier.' },
+        { entity: 'production_order', action: 'launch', permission: 'SALES_EDIT', description: 'Transmettre la commande préparée à l’atelier.' },
+        { entity: 'real_workshop_debit', action: 'consume', permission: 'workshop.consume_stock', description: 'Débiter réellement la matière.' },
     ],
     workflow_gates: [],
     relations: [],
@@ -338,8 +338,7 @@ async function authenticate(page) {
             'SALES_VIEW',
             'SALES_EDIT',
             'STOCK_VIEW',
-            'STOCK_MANAGE',
-            'PRODUCTION_MANAGE',
+            'stock.transfer',
             'workshop.reserve_stock',
             'workshop.consume_stock',
         ]));
@@ -462,7 +461,7 @@ test('BE and workshop dossier expose ontology guardrails and ORGADATA classifica
     await expect(page.getByText('Fiche de débit', { exact: true }).first()).toBeVisible();
     await expect(page.getByText('Ordre métier verrouillé')).toBeVisible();
     await expect(page.getByText('Réserver stock → préparer/remettre le bon atelier → lancer fabrication → consommer le débit réel.')).toBeVisible();
-    await expect(page.getByText('CONSUME · STOCK_MANAGE').first()).toBeVisible();
+    await expect(page.getByText(/CONSUME · workshop\.consume_stock/i).first()).toBeVisible();
 
     await page.getByRole('button', { name: 'Importer une nouvelle révision' }).click();
     await page.locator('select').first().selectOption('FABRICATION');
@@ -486,5 +485,5 @@ test('stock dashboard exposes ontology guardrail before workshop debit', async (
     await expect(page.getByText(/Bon de préparation atelier/i)).toBeVisible();
     await expect(page.getByText(/Ordre de fabrication/i)).toBeVisible();
     await expect(page.getByText(/Débit atelier réel/i)).toBeVisible();
-    await expect(page.getByText('CONSUME · STOCK_MANAGE').first()).toBeVisible();
+    await expect(page.getByText(/CONSUME · workshop\.consume_stock/i).first()).toBeVisible();
 });

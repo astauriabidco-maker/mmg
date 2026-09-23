@@ -159,7 +159,8 @@ def test_ontology_declares_step_rbac_rules():
     }
 
     assert permissions_by_entity_action[("crm_opportunity", "write")] == "SALES_EDIT"
-    assert permissions_by_entity_action[("technical_dossier", "review")] == "PRODUCTION_MANAGE"
-    assert permissions_by_entity_action[("stock_reservation", "write")] == "STOCK_MANAGE"
-    assert permissions_by_entity_action[("production_order", "launch")] == "PRODUCTION_MANAGE"
-    assert permissions_by_entity_action[("real_workshop_debit", "consume")] == "STOCK_MANAGE"
+    assert permissions_by_entity_action[("technical_dossier", "review")] == "SALES_EDIT"
+    assert permissions_by_entity_action[("stock_reservation", "write")] == "workshop.reserve_stock"
+    assert permissions_by_entity_action[("workshop_preparation", "write")] == "stock.transfer"
+    assert permissions_by_entity_action[("production_order", "launch")] == "SALES_EDIT"
+    assert permissions_by_entity_action[("real_workshop_debit", "consume")] == "workshop.consume_stock"

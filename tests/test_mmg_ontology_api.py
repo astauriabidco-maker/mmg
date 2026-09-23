@@ -51,8 +51,8 @@ def test_mmg_ontology_api_exposes_active_business_reference(isolated_client):
     }
     assert "quote_signed" in {item["code"] for item in payload["business_events"]}
     assert {
-        ("production_order", "launch", "PRODUCTION_MANAGE"),
-        ("real_workshop_debit", "consume", "STOCK_MANAGE"),
+        ("production_order", "launch", "SALES_EDIT"),
+        ("real_workshop_debit", "consume", "workshop.consume_stock"),
     }.issubset(
         {
             (item["entity"], item["action"], item["permission"])

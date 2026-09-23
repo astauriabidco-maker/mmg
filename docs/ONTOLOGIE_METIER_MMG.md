@@ -140,6 +140,13 @@ rôle métier exact du fichier importé.
 | Zone | Permission de référence |
 | --- | --- |
 | CRM lecture | `SALES_VIEW` |
-| CRM écriture, devis, conversion commande | `SALES_EDIT` |
-| Validation BE et lancement fabrication | `PRODUCTION_MANAGE` |
-| Réservation, préparation atelier et débit réel | `STOCK_MANAGE` |
+| CRM écriture, devis, conversion commande et soumission technique | `SALES_EDIT` |
+| Réservation stock atelier | `workshop.reserve_stock` |
+| Préparation, remise et retour atelier | `stock.transfer` |
+| Débit réel atelier | `workshop.consume_stock` |
+
+Les validations BE, stock et lancement atelier combinent ces permissions avec
+des rôles métier dédiés côté API : BE (`ADMIN`, `MANAGER`,
+`QUALITY_CONTROLLER`, `WORKSHOP_LEAD`, `TECHNICO_COMMERCIAL`), stock
+(`ADMIN`, `MANAGER`, `CHEF_STOCK`) et lancement (`ADMIN`, `MANAGER`,
+`WORKSHOP_LEAD`).

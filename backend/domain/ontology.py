@@ -567,13 +567,13 @@ STEP_RBAC: tuple[StepPermission, ...] = (
     StepPermission("crm_opportunity", "write", "SALES_EDIT", "Créer, qualifier ou déplacer une opportunité."),
     StepPermission("measure_mission", "read", "SALES_VIEW", "Consulter les missions de métré depuis le CRM."),
     StepPermission("measure_mission", "write", "SALES_EDIT", "Créer ou soumettre une mission de métré."),
-    StepPermission("technical_dossier", "review", "PRODUCTION_MANAGE", "Valider ou rejeter le dossier technique BE."),
+    StepPermission("technical_dossier", "review", "SALES_EDIT", "Soumettre le dossier technique ; la validation reste réservée aux rôles BE habilités."),
     StepPermission("commercial_quote", "write", "SALES_EDIT", "Préparer et envoyer un devis commercial."),
     StepPermission("signed_order", "convert", "SALES_EDIT", "Transformer un devis accepté en commande."),
-    StepPermission("stock_reservation", "write", "STOCK_MANAGE", "Créer ou annuler une réservation matière."),
-    StepPermission("workshop_preparation", "write", "STOCK_MANAGE", "Préparer et remettre le bon atelier."),
-    StepPermission("production_order", "launch", "PRODUCTION_MANAGE", "Lancer la fabrication."),
-    StepPermission("real_workshop_debit", "consume", "STOCK_MANAGE", "Débiter réellement la matière."),
+    StepPermission("stock_reservation", "write", "workshop.reserve_stock", "Créer ou annuler une réservation matière."),
+    StepPermission("workshop_preparation", "write", "stock.transfer", "Préparer, remettre ou retourner le bon atelier."),
+    StepPermission("production_order", "launch", "SALES_EDIT", "Transmettre la commande préparée à l'atelier ; l'autorisation reste contrôlée par les rôles de lancement."),
+    StepPermission("real_workshop_debit", "consume", "workshop.consume_stock", "Débiter réellement la matière."),
 )
 
 
