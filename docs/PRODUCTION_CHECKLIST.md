@@ -138,8 +138,10 @@ Ne pas tout activer le jour J. Ordre conseillé :
 3. **Logistique / watcher fichiers** : monter les volumes `WATCH_DIR` /
    `LABEL_OUTPUT_DIR` / `OUTPUT_QR_DIR` et vérifier les droits avant d'activer
    le pipeline d'import.
-4. **WhatsApp** : nécessite les 4 variables `WHATSAPP_*` + `MANAGER_PHONE` ;
-   sans elles les notifications sont simplement journalisées.
+4. **WhatsApp** : transport recommandé via WAHA avec `WAHA_BASE_URL`,
+   `WAHA_API_KEY`, `WAHA_SESSION` et `MANAGER_PHONE`. L'ancien transport Meta
+   Cloud API reste disponible avec les variables `WHATSAPP_*`. Sans WAHA ni
+   Meta, les notifications sont simplement journalisées.
 5. **IA** : nécessite `OPENAI_API_KEY` ; sans clé, les fonctions IA sont
    inactives.
 6. **Email SMTP** : emails transactionnels réels (confirmation de devis signé,

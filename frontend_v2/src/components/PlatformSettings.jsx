@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     Settings, Users, Network, BrainCircuit, Box, Shield,
-    Building2, Database, Save, CheckCircle2
+    Building2, Database, Save, CheckCircle2, MessageCircle,
+    Activity, RefreshCw, AlertTriangle, Send, WifiOff
 } from 'lucide-react';
 import StationManager from './StationManager';
 import RBACMatrix from './RBACMatrix';
@@ -22,6 +23,40 @@ export default function PlatformSettings() {
         recipient: ''
     });
     const [smtpTestStatus, setSmtpTestStatus] = useState({ loading: false, message: '', type: '' });
+    const [wahaStatus, setWahaStatus] = useState(null);
+    const [wahaLoading, setWahaLoading] = useState(false);
+    const [wahaTest, setWahaTest] = useState({
+        recipient: '',
+        message: 'Test MMG : connexion WAHA opérationnelle.'
+    });
+    const [wahaTestStatus, setWahaTestStatus] = useState({ loading: false, message: '', type: '' });
+
+    const loadWahaStatus = async () => {
+        setWahaLoading(true);
+        try {
+            const res = await api.get('/v2/config/waha/status');
+            setWahaStatus(res.data);
+        } catch (err) {
+            const detail = err.response?.data?.detail || 'Statut WAHA indisponible';
+            setWahaStatus({
+                configured: false,
+                healthy: false,
+                status: 'error',
+                detail,
+                activity: [],
+                checked_at: new Date().toISOString()
+            });
+        } finally {
+            setWahaLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab !== 'ai') return undefined;
+        loadWahaStatus();
+        const timer = window.setInterval(loadWahaStatus, 30000);
+        return () => window.clearInterval(timer);
+    }, [activeTab]);
 
     const handleSmtpTest = async () => {
         setSmtpTestStatus({ loading: true, message: 'Test en cours...', type: 'info' });
@@ -34,6 +69,23 @@ export default function PlatformSettings() {
         } catch (err) {
             const detail = err.response?.data?.detail || 'Erreur réseau';
             setSmtpTestStatus({ loading: false, message: 'Erreur: ' + detail, type: 'error' });
+        }
+    };
+
+    const handleWahaTest = async () => {
+        setWahaTestStatus({ loading: true, message: 'Envoi du message test...', type: 'info' });
+        try {
+            const res = await api.post('/v2/config/waha/test-message', wahaTest);
+            setWahaTestStatus({
+                loading: false,
+                message: `Message envoyé via la session ${res.data?.session || 'WAHA'}.`,
+                type: 'success'
+            });
+            await loadWahaStatus();
+        } catch (err) {
+            const detail = err.response?.data?.detail || 'Erreur WAHA';
+            setWahaTestStatus({ loading: false, message: detail, type: 'error' });
+            await loadWahaStatus();
         }
     };
     
@@ -241,15 +293,148 @@ export default function PlatformSettings() {
                                 <div className="h-px bg-slate-100"></div>
 
                                 <section>
-                                    <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4">WhatsApp Business API</h3>
-                                    <div className="grid grid-cols-2 gap-6">
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 mb-2">Phone Number ID</label>
-                                            <input type="text" placeholder="Ex: 1047583920" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500" />
+                                    <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                        <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">WhatsApp WAHA</h3>
+                                        <button
+                                            type="button"
+                                            onClick={loadWahaStatus}
+                                            disabled={wahaLoading}
+                                            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-slate-600 transition-colors hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50"
+                                        >
+                                            <RefreshCw className={`h-4 w-4 ${wahaLoading ? 'animate-spin' : ''}`} />
+                                            Actualiser
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.15fr]">
+                                        <div className="rounded-lg border border-slate-200 bg-white p-4">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="flex min-w-0 items-start gap-3">
+                                                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+                                                        wahaStatus?.healthy
+                                                            ? 'bg-emerald-100 text-emerald-700'
+                                                            : wahaStatus?.configured
+                                                                ? 'bg-amber-100 text-amber-700'
+                                                                : 'bg-slate-100 text-slate-500'
+                                                    }`}>
+                                                        {wahaStatus?.healthy ? <MessageCircle className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <p className="text-sm font-black text-slate-900">
+                                                            {wahaStatus?.healthy
+                                                                ? 'Session connectée'
+                                                                : wahaStatus?.configured
+                                                                    ? 'Session à surveiller'
+                                                                    : 'WAHA non configuré'}
+                                                        </p>
+                                                        <p className="mt-1 truncate text-xs font-semibold text-slate-500">
+                                                            {wahaStatus?.base_url || 'WAHA_BASE_URL absent'} · {wahaStatus?.session || 'session inconnue'}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-black uppercase ${
+                                                    wahaStatus?.healthy
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : wahaStatus?.configured
+                                                            ? 'bg-amber-100 text-amber-700'
+                                                            : 'bg-slate-100 text-slate-500'
+                                                }`}>
+                                                    {wahaStatus?.status || 'inconnu'}
+                                                </span>
+                                            </div>
+
+                                            {wahaStatus?.detail && (
+                                                <div className={`mt-4 flex items-start gap-2 rounded-lg px-3 py-2 text-xs font-bold ${
+                                                    wahaStatus?.healthy ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'
+                                                }`}>
+                                                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                                                    <span className="min-w-0 break-words">{wahaStatus.detail}</span>
+                                                </div>
+                                            )}
+
+                                            <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                                                <div className="rounded-lg bg-slate-50 p-3">
+                                                    <p className="font-black uppercase text-slate-400">Dernier contrôle</p>
+                                                    <p className="mt-1 font-bold text-slate-700">
+                                                        {wahaStatus?.checked_at ? new Date(wahaStatus.checked_at).toLocaleString('fr-FR') : 'Jamais'}
+                                                    </p>
+                                                </div>
+                                                <div className="rounded-lg bg-slate-50 p-3">
+                                                    <p className="font-black uppercase text-slate-400">Transport actif</p>
+                                                    <p className="mt-1 font-bold text-slate-700">{wahaStatus?.configured ? 'WAHA' : 'Fallback / log'}</p>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 mb-2">Access Token</label>
-                                            <input type="password" placeholder="EAAL..." className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500" />
+
+                                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                                            <h4 className="mb-4 flex items-center gap-2 text-sm font-black text-slate-800">
+                                                <Send className="h-4 w-4 text-emerald-600" />
+                                                Message test
+                                            </h4>
+                                            <div className="grid grid-cols-1 gap-3 md:grid-cols-[0.9fr_1.3fr_auto]">
+                                                <input
+                                                    type="tel"
+                                                    placeholder="33612345678"
+                                                    value={wahaTest.recipient}
+                                                    onChange={e => setWahaTest({ ...wahaTest, recipient: e.target.value })}
+                                                    className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                                                />
+                                                <input
+                                                    type="text"
+                                                    value={wahaTest.message}
+                                                    onChange={e => setWahaTest({ ...wahaTest, message: e.target.value })}
+                                                    className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={handleWahaTest}
+                                                    disabled={wahaTestStatus.loading || !wahaTest.recipient || !wahaStatus?.configured}
+                                                    className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-black text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+                                                >
+                                                    <Send className="h-4 w-4" />
+                                                    Envoyer
+                                                </button>
+                                            </div>
+                                            {wahaTestStatus.message && (
+                                                <div className={`mt-3 rounded-lg px-3 py-2 text-sm font-bold ${
+                                                    wahaTestStatus.type === 'success'
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : wahaTestStatus.type === 'error'
+                                                            ? 'bg-red-100 text-red-700'
+                                                            : 'bg-blue-100 text-blue-700'
+                                                }`}>
+                                                    {wahaTestStatus.message}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-4 rounded-lg border border-slate-200 bg-white">
+                                        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                                            <h4 className="flex items-center gap-2 text-sm font-black text-slate-800">
+                                                <Activity className="h-4 w-4 text-slate-500" />
+                                                Activité des flux WAHA
+                                            </h4>
+                                            <span className="text-xs font-bold text-slate-400">Polling 30 s</span>
+                                        </div>
+                                        <div className="max-h-64 overflow-y-auto">
+                                            {(wahaStatus?.activity || []).length === 0 ? (
+                                                <div className="px-4 py-6 text-sm font-semibold text-slate-400">Aucun événement WAHA capturé depuis le démarrage backend.</div>
+                                            ) : (
+                                                <div className="divide-y divide-slate-100">
+                                                    {wahaStatus.activity.map((event, index) => (
+                                                        <div key={`${event.at}-${index}`} className="grid grid-cols-[120px_90px_1fr] gap-3 px-4 py-3 text-xs">
+                                                            <span className="font-bold text-slate-500">{new Date(event.at).toLocaleTimeString('fr-FR')}</span>
+                                                            <span className={`font-black uppercase ${event.status === 'ok' ? 'text-emerald-700' : 'text-red-700'}`}>
+                                                                {event.type}
+                                                            </span>
+                                                            <span className="min-w-0 break-words font-semibold text-slate-700">
+                                                                {event.recipient ? `${event.recipient} · ` : ''}{event.detail}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </section>

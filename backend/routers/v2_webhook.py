@@ -5,6 +5,7 @@ import os
 import urllib.request
 from sqlalchemy.orm import Session
 from ..database import get_db
+from ..services.waha_client import send_waha_text_message
 
 router = APIRouter(
     prefix="/v2/webhook",
@@ -95,8 +96,15 @@ def process_ai_intent(message: str, db: Session) -> str:
 
 def send_whatsapp_message(to: str, message: str):
     """
-    Envoi effectif du message via Meta Cloud API.
+    Envoi effectif du message WhatsApp.
+
+    Si WAHA est configuré (WAHA_BASE_URL + WAHA_API_KEY), il devient le
+    transport prioritaire. Sinon on conserve le fallback historique Meta Cloud
+    API pour compatibilité avec l'existant.
     """
+    if send_waha_text_message(to, message):
+        return
+
     wa_token = os.environ.get("WHATSAPP_ACCESS_TOKEN")
     phone_id = os.environ.get("WHATSAPP_PHONE_ID")
     

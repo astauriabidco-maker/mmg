@@ -7,6 +7,7 @@ from ..database import get_db
 from .. import models, schemas
 from ..core import security
 from ..core.events import _send_smtp_email
+from ..services.waha_client import get_waha_session_status, send_waha_test_message
 
 router = APIRouter(
     prefix="/v2/config",
@@ -75,6 +76,28 @@ def _send_invitation_best_effort(recipient: str, display_name: str, username: st
         # L'invitation ne doit jamais annuler la création d'accès. Le statut
         # reste PENDING côté UI pour permettre un renvoi manuel.
         pass
+
+
+@router.get("/waha/status")
+def get_waha_status(role: str = Depends(security.require_roles("ADMIN", "MANAGER"))):
+    return get_waha_session_status()
+
+
+@router.post("/waha/test-message")
+def test_waha_message(payload: dict, role: str = Depends(security.require_roles("ADMIN", "MANAGER"))):
+    recipient = (payload.get("recipient") or "").strip()
+    message = (payload.get("message") or "").strip() or None
+    if not recipient:
+        raise HTTPException(400, "Numéro destinataire requis.")
+    try:
+        result = send_waha_test_message(recipient, message)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    if not result["success"]:
+        raise HTTPException(502, "WAHA n'a pas confirmé l'envoi du message.")
+    return result
 
 @router.get("/stations", response_model=List[schemas.Station])
 def get_stations(db: Session = Depends(get_db)):
