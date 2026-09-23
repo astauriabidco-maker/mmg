@@ -266,6 +266,8 @@ export default function StockDashboard({ surface = 'management' }) {
     useEffect(() => {
         if (isDashboardSurface || location.pathname !== '/manager' || !STOCK_SIDEBAR_MENUS.includes(currentMenu)) return;
         const params = new URLSearchParams(location.search);
+        const requestedStockMenu = params.get('stockMenu');
+        if (STOCK_SIDEBAR_MENUS.includes(requestedStockMenu)) return;
         if (params.get('view') !== 'stock' || params.get('stockMenu') === currentMenu) return;
         params.set('view', 'stock');
         params.set('stockMenu', currentMenu);
