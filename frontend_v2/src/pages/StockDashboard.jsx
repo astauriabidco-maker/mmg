@@ -8308,6 +8308,11 @@ function PhysicalInventoryView({
         },
     });
     const sessions = sessionPage.items || [];
+    const getFullLocationName = (loc) => {
+        if (!loc.parent_id) return loc.name;
+        const parent = locations.find(l => l.id === loc.parent_id);
+        return parent ? `${getFullLocationName(parent)} > ${loc.name}` : loc.name;
+    };
     const { data: inventoryUsers = [] } = useQuery({
         queryKey: ['inventory-users'],
         queryFn: async () => {
