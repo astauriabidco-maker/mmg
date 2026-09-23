@@ -17,7 +17,6 @@ from .. import models, schemas
 from ..core import security
 from ..core import uploads
 from ..core.events import _send_smtp_email, _smtp_settings
-from ..domain.ontology import ontology_as_dict
 from ..services.document_sequences import next_number
 from ..services.technical_document_analysis import analyze_technical_document
 from ..services.commercial_quote_analysis import compare_commercial_quote_versions
@@ -40,6 +39,7 @@ from ..services.technical_dossier_governance import (
     build_document_matrix,
     compare_material_versions,
 )
+from ..services.ontology_runtime import ontology_with_data_profile
 from ..services.stock_reservations import (
     create_reservation,
     preview_records,
@@ -62,10 +62,10 @@ CRM_EDIT_DEPENDENCIES = [
 
 
 @router.get("/ontology")
-def get_mmg_business_ontology():
-    """Expose le référentiel métier MMG pour l'UI, les parseurs et les usages IA/RAG."""
+def get_mmg_business_ontology(db: Session = Depends(get_db)):
+    """Expose le référentiel MMG enrichi par les données réelles."""
 
-    return ontology_as_dict()
+    return ontology_with_data_profile(db)
 
 
 # Helper to save base64 image

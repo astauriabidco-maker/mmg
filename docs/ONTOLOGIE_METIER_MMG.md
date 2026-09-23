@@ -83,6 +83,15 @@ Le module `backend/domain/ontology.py` expose :
 - `resolve_external_document()` : résolution d'un document externe ;
 - `validate_ontology()` : contrôle structurel utilisé par les tests.
 
+Le service `backend/services/ontology_runtime.py` enrichit ce référentiel avec
+les données réelles de la base :
+
+- compteurs par entité canonique ;
+- répartition des statuts observés ;
+- documents externes réellement importés par source et type ;
+- correspondances PROGES/ORGADATA observées ;
+- disponibilité des permissions RBAC déclarées et rôles qui les portent.
+
 ## API
 
 L'ontologie est exposée en lecture via :
@@ -93,6 +102,12 @@ GET /v2/mmg/ontology
 
 La réponse est pensée pour les écrans UI, les parseurs, les tests de recette et
 les futurs usages IA/RAG.
+
+Elle contient deux couches :
+
+- le référentiel canonique versionné (`entities`, `relations`, `workflow_gates`,
+  `step_rbac`, etc.) ;
+- `data_profile`, calculé à la requête depuis la base active.
 
 ## Utilisation par les parseurs
 
