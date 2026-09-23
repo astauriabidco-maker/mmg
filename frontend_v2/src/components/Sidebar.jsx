@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive,
     ShoppingCart, Truck, Users, UserCircle, FileText, BarChart3, CalendarDays,
     UserRoundCheck, ArrowRight, AlertTriangle, Package, MapPin, Layers,
-    ClipboardCheck, Download, TrendingUp
+    ClipboardCheck, Download, TrendingUp, ChevronDown
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { canAccessManagerView } from '../utils/roleNavigation';
@@ -14,6 +14,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
     const routeLocation = useLocation();
     const routeParams = new URLSearchParams(routeLocation.search);
     const activeStockMenu = routeParams.get('stockMenu') || 'management-home';
+    const [expandedMenus, setExpandedMenus] = useState({});
     const canAccess = (item) => {
         if (!canAccessManagerView(user, item.id)) return false;
         if (item.anyPermission) {
@@ -137,6 +138,8 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                 <nav className="space-y-1">
                                     {category.items.filter(canAccess).map((item) => {
                                         const isSelected = activeView === item.id;
+                                        const hasSubItems = item.subItems?.some(canAccessSubItem);
+                                        const isExpanded = Boolean(expandedMenus[item.id]);
                                         const content = (
                                             <>
                                                 <item.icon className={`w-5 h-5 ${isSelected ? 'text-white' : 'text-slate-500'}`} />
@@ -163,6 +166,68 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                             );
                                         }
 
+                                        if (hasSubItems) {
+                                            return (
+                                                <div key={item.id}>
+                                                    <div className={`flex items-center rounded-xl transition-all duration-200 ${
+                                                        isSelected
+                                                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
+                                                            : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                                                    }`}>
+                                                        <Link
+                                                            to={`/manager?view=${item.id}`}
+                                                            state={{ view: item.id }}
+                                                            onClick={() => {
+                                                                if (setActiveView) setActiveView(item.id);
+                                                                if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
+                                                            }}
+                                                            className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2.5 text-sm font-bold"
+                                                        >
+                                                            {content}
+                                                        </Link>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(event) => {
+                                                                event.preventDefault();
+                                                                event.stopPropagation();
+                                                                setExpandedMenus(prev => ({ ...prev, [item.id]: !prev[item.id] }));
+                                                            }}
+                                                            className={`mr-2 rounded-lg p-1.5 transition-colors ${isSelected ? 'text-white/80 hover:bg-white/10 hover:text-white' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-200'}`}
+                                                            aria-label={isExpanded ? `Replier ${item.label}` : `Déplier ${item.label}`}
+                                                        >
+                                                            <ChevronDown className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                                        </button>
+                                                    </div>
+                                                    {isExpanded && isSelected && (
+                                                        <div className="mt-2 ml-4 space-y-1 border-l border-slate-700/70 pl-3">
+                                                            {item.subItems.filter(canAccessSubItem).map((subItem) => {
+                                                                const SubIcon = subItem.icon;
+                                                                const isSubSelected = activeStockMenu === subItem.id;
+                                                                return (
+                                                                    <Link
+                                                                        key={subItem.id}
+                                                                        to={`/manager?view=stock&stockMenu=${subItem.id}`}
+                                                                        state={{ view: 'stock', stockMenu: subItem.id }}
+                                                                        onClick={() => {
+                                                                            if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
+                                                                        }}
+                                                                        className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-black transition-colors ${
+                                                                            isSubSelected
+                                                                                ? 'bg-slate-800 text-white'
+                                                                                : 'text-slate-500 hover:bg-slate-800/70 hover:text-slate-200'
+                                                                        }`}
+                                                                    >
+                                                                        <SubIcon className={`h-3.5 w-3.5 ${isSubSelected ? 'text-blue-300' : 'text-slate-600'}`} />
+                                                                        <span className="truncate">{subItem.label}</span>
+                                                                    </Link>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        }
+
                                         return (
                                             <div key={item.id}>
                                                 <Link
@@ -176,32 +241,6 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                                 >
                                                     {content}
                                                 </Link>
-                                                {item.id === 'stock' && isSelected && item.subItems?.length > 0 && (
-                                                    <div className="mt-2 ml-4 space-y-1 border-l border-slate-700/70 pl-3">
-                                                        {item.subItems.filter(canAccessSubItem).map((subItem) => {
-                                                            const SubIcon = subItem.icon;
-                                                            const isSubSelected = activeStockMenu === subItem.id;
-                                                            return (
-                                                                <Link
-                                                                    key={subItem.id}
-                                                                    to={`/manager?view=stock&stockMenu=${subItem.id}`}
-                                                                    state={{ view: 'stock', stockMenu: subItem.id }}
-                                                                    onClick={() => {
-                                                                        if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
-                                                                    }}
-                                                                    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-black transition-colors ${
-                                                                        isSubSelected
-                                                                            ? 'bg-slate-800 text-white'
-                                                                            : 'text-slate-500 hover:bg-slate-800/70 hover:text-slate-200'
-                                                                    }`}
-                                                                >
-                                                                    <SubIcon className={`h-3.5 w-3.5 ${isSubSelected ? 'text-blue-300' : 'text-slate-600'}`} />
-                                                                    <span className="truncate">{subItem.label}</span>
-                                                                </Link>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                )}
                                             </div>
                                         );
                                     })}
