@@ -496,8 +496,11 @@ def _naive_utc(value: Optional[datetime]) -> Optional[datetime]:
 
 
 def _zone_location_ids(db: Session, location_id: Optional[int]) -> List[int]:
-    """Emplacements de la zone d'inventaire : cible + descendants, ou tous les
-    emplacements internes actifs pour une campagne globale."""
+    """Emplacements de la zone d'inventaire : cible + descendants.
+
+    Les nouvelles campagnes exigent une zone physique explicite. Le cas
+    ``None`` reste toléré pour les anciennes campagnes déjà présentes.
+    """
     if location_id is None:
         rows = (
             db.query(models.StockLocation.id)
@@ -517,6 +520,65 @@ def _zone_location_ids(db: Session, location_id: Optional[int]) -> List[int]:
         ids.extend(new_ids)
         frontier = new_ids
     return ids
+
+
+def _assert_inventory_location_ready(db: Session, location_id: Optional[int]) -> models.StockLocation:
+    if not location_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Choisissez un emplacement interne actif avant de créer une campagne d'inventaire.",
+        )
+    location = db.query(models.StockLocation).filter_by(id=location_id, is_active=True).first()
+    if not location:
+        raise HTTPException(status_code=404, detail="Emplacement introuvable.")
+    if location.usage != "internal":
+        raise HTTPException(
+            status_code=400,
+            detail="Une campagne d'inventaire doit cibler un emplacement physique interne.",
+        )
+    return location
+
+
+def _location_tree_ids(db: Session, location_id: int) -> List[int]:
+    ids = [location_id]
+    frontier = [location_id]
+    while frontier:
+        children = (
+            db.query(models.StockLocation.id)
+            .filter(models.StockLocation.parent_id.in_(frontier))
+            .all()
+        )
+        next_ids = [row.id for row in children if row.id not in ids]
+        ids.extend(next_ids)
+        frontier = next_ids
+    return ids
+
+
+def _location_ancestor_ids(db: Session, location_id: int) -> List[int]:
+    ids = []
+    current = db.query(models.StockLocation).filter_by(id=location_id).first()
+    while current and current.parent_id:
+        ids.append(current.parent_id)
+        current = db.query(models.StockLocation).filter_by(id=current.parent_id).first()
+    return ids
+
+
+def _inventory_conflict_location_ids(db: Session, location_id: int) -> List[int]:
+    return list(dict.fromkeys(_location_tree_ids(db, location_id) + _location_ancestor_ids(db, location_id)))
+
+
+def _open_inventory_session_for_locations(db: Session, location_ids: List[int]) -> Optional[models.InventorySession]:
+    if not location_ids:
+        return None
+    return (
+        db.query(models.InventorySession)
+        .filter(
+            models.InventorySession.location_id.in_(location_ids),
+            models.InventorySession.status.in_(["scheduled", "draft", "counting", "pending_approval"]),
+        )
+        .order_by(models.InventorySession.created_at.desc())
+        .first()
+    )
 
 
 def _prefill_inventory_lines(db: Session, session: models.InventorySession, include_all_variants: bool) -> None:
@@ -812,10 +874,13 @@ def create_inventory_session(
     user: dict = Depends(get_current_user),
 ):
     _require_permission(db, user, "inventory.validate")
-    if payload.location_id:
-        location = db.query(models.StockLocation).filter_by(id=payload.location_id, is_active=True).first()
-        if not location:
-            raise HTTPException(status_code=404, detail="Emplacement introuvable.")
+    location = _assert_inventory_location_ready(db, payload.location_id)
+    open_session = _open_inventory_session_for_locations(db, _inventory_conflict_location_ids(db, location.id))
+    if open_session:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Une campagne ouverte utilise déjà cette zone ({open_session.reference}). Terminez-la ou annulez-la avant d'en créer une nouvelle.",
+        )
     if not payload.name.strip():
         raise HTTPException(status_code=400, detail="Nom de campagne obligatoire.")
     inventory_type = str(payload.inventory_type or "full").strip().lower()
@@ -828,12 +893,9 @@ def create_inventory_session(
     _assert_known_inventory_counters(db, assigned_usernames)
     scheduled_for = _naive_utc(payload.scheduled_for)
     is_scheduled = bool(scheduled_for and scheduled_for > utcnow())
-    # Gel de zone imposé à True par défaut côté serveur : le client peut
-    # explicitement demander False, la garde anti-dérive 409 à la validation
-    # reste alors le filet (cf. doc du schéma InventorySessionCreate).
-    zone_locked = False if is_scheduled else (
-        True if payload.zone_locked is None else bool(payload.zone_locked)
-    )
+    # Une campagne exploitable doit toujours geler sa zone au démarrage.
+    # Les campagnes planifiées ne gèlent qu'au moment du démarrage.
+    zone_locked = False if is_scheduled else True
     reference = f"INV-{int(time.time() * 1000)}"
     session = models.InventorySession(
         reference=reference,
@@ -922,6 +984,21 @@ def start_inventory_session(
         raise HTTPException(status_code=404, detail="Campagne d'inventaire introuvable.")
     if session.status != "scheduled":
         raise HTTPException(status_code=409, detail="Cette campagne n'est pas planifiée.")
+    location = _assert_inventory_location_ready(db, session.location_id)
+    open_session = (
+        db.query(models.InventorySession)
+        .filter(
+            models.InventorySession.id != session.id,
+            models.InventorySession.location_id.in_(_inventory_conflict_location_ids(db, location.id)),
+            models.InventorySession.status.in_(["draft", "counting", "pending_approval"]),
+        )
+        .first()
+    )
+    if open_session:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Une campagne ouverte utilise déjà cette zone ({open_session.reference}).",
+        )
     session.status = "draft"
     session.zone_locked = True
     session.locked_at = utcnow()
@@ -2582,15 +2659,17 @@ def delete_location(loc_id: int, db: Session = Depends(get_db), user: dict = Dep
     if check_active_stock(loc_id):
         raise HTTPException(400, "Action Interdite : Cet emplacement (ou une de ses étagères) contient du stock actif. Transférez le stock avant la suppression/archivage.")
 
-    # Get all descendants
-    def get_all_descendants(location_id):
-        children = db.query(models.StockLocation).filter(models.StockLocation.parent_id == location_id).all()
-        descendants = [c.id for c in children]
-        for c in children:
-            descendants.extend(get_all_descendants(c.id))
-        return descendants
-        
-    all_loc_ids = [loc_id] + get_all_descendants(loc_id)
+    all_loc_ids = _location_tree_ids(db, loc_id)
+
+    open_session = _open_inventory_session_for_locations(
+        db,
+        list(dict.fromkeys(all_loc_ids + _location_ancestor_ids(db, loc_id))),
+    )
+    if open_session:
+        raise HTTPException(
+            400,
+            f"Action Interdite : l'emplacement est utilisé par une campagne d'inventaire ouverte ({open_session.reference}). Clôturez ou annulez la campagne avant archivage.",
+        )
 
     # Protection 3 : Archivage au lieu de suppression s'il y a un historique dans l'arbre
     historical_moves = db.query(models.StockMove).filter(

@@ -90,6 +90,69 @@ def _count_line(client, headers, session_id, variant_id, location_id, counted, r
     return response.json()
 
 
+def test_inventory_session_requires_explicit_internal_location():
+    client, TestingSessionLocal, engine, headers = _client_with_db()
+    try:
+        missing_location = client.post(
+            "/v2/stock/inventory-sessions",
+            headers=headers,
+            json={"name": "Campagne sans zone"},
+        )
+        assert missing_location.status_code == 400
+        assert "emplacement interne actif" in missing_location.json()["detail"]
+
+        virtual_id = _create_location(client, headers, "Virtual/Test Inventaire", usage="inventory")
+        virtual_location = client.post(
+            "/v2/stock/inventory-sessions",
+            headers=headers,
+            json={"name": "Campagne virtuelle", "location_id": virtual_id},
+        )
+        assert virtual_location.status_code == 400
+        assert "emplacement physique interne" in virtual_location.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_open_inventory_session_blocks_location_archive():
+    client, TestingSessionLocal, engine, headers = _client_with_db()
+    try:
+        location_id = _create_location(client, headers, "WH/Archive bloquée")
+        session = _create_session(client, headers, name="Campagne archive bloquée", location_id=location_id)
+
+        blocked = client.delete(f"/v2/stock/locations/{location_id}", headers=headers)
+        assert blocked.status_code == 400
+        assert session["reference"] in blocked.json()["detail"]
+
+        cancelled = client.post(f"/v2/stock/inventory-sessions/{session['id']}/cancel", headers=headers)
+        assert cancelled.status_code == 200, cancelled.text
+
+        allowed = client.delete(f"/v2/stock/locations/{location_id}", headers=headers)
+        assert allowed.status_code in {200, 204}
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
+def test_inventory_session_blocks_overlapping_parent_child_zones():
+    client, TestingSessionLocal, engine, headers = _client_with_db()
+    try:
+        parent_id = _create_location(client, headers, "WH/Zone gel parent")
+        child_id = _create_location(client, headers, "Rack enfant gelé", parent_id=parent_id)
+        session = _create_session(client, headers, name="Campagne parent", location_id=parent_id)
+
+        child_session = client.post(
+            "/v2/stock/inventory-sessions",
+            headers=headers,
+            json={"name": "Campagne enfant concurrente", "location_id": child_id},
+        )
+        assert child_session.status_code == 409
+        assert session["reference"] in child_session.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+        models.Base.metadata.drop_all(bind=engine)
+
+
 def test_prefill_lines_from_zone_quants_including_children():
     client, TestingSessionLocal, engine, headers = _client_with_db()
     try:
@@ -270,11 +333,13 @@ def test_zone_locked_defaults_true_server_side():
         default_session = _create_session(client, headers, name="Gel par défaut", location_id=location_id)
         assert default_session["zone_locked"] is True
 
-        # Le client peut explicitement demander False (garde anti-dérive 409 conservée).
-        unlocked_session = _create_session(
-            client, headers, name="Gel désactivé", location_id=location_id, zone_locked=False
+        # Le client ne peut plus désactiver le gel : l'inventaire se fait sur
+        # une zone physique sécurisée jusqu'à clôture.
+        second_location_id = _create_location(client, headers, "WH/Gel Forcé")
+        forced_lock_session = _create_session(
+            client, headers, name="Gel forcé", location_id=second_location_id, zone_locked=False
         )
-        assert unlocked_session["zone_locked"] is False
+        assert forced_lock_session["zone_locked"] is True
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)

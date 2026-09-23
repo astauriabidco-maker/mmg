@@ -1575,11 +1575,13 @@ class WorkshopDebitPreviewResponse(BaseModel):
 
 class InventorySessionCreate(BaseModel):
     name: str
+    # Zone physique interne obligatoire côté API métier. Le type reste
+    # optionnel pour conserver un message 400 explicite plutôt qu'une erreur
+    # de validation brute si un ancien client omet encore ce champ.
     location_id: Optional[int] = None
     notes: Optional[str] = None
-    # Gel de zone imposé à True par défaut côté serveur. Le client peut
-    # explicitement demander False (comptage sans gel) ; la garde anti-dérive
-    # 409 à la validation reste alors le filet de sécurité.
+    # Gel de zone imposé par le serveur au démarrage d'une campagne. Les
+    # campagnes planifiées ne gèlent la zone qu'au moment du démarrage.
     zone_locked: Optional[bool] = None
     # Pré-remplit aussi les variantes actives sans stock dans la zone (espéré 0)
     # pour détecter les oublis de comptage.

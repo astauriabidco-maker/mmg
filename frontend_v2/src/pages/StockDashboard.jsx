@@ -7029,6 +7029,120 @@ function InventoryCountingGuide({
     );
 }
 
+function InventoryValidationReviewPanel({
+    session,
+    impactLines,
+    summary,
+    priorityAnomalyCount,
+    recommendedRecountCount,
+    canViewExpected,
+    busy,
+    onClose,
+    onConfirm,
+}) {
+    const formatQty = value => Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+    const formatMoney = value => Number(value || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+    const shownLines = impactLines.slice(0, 6);
+    const isApplyAfterApproval = session?.status === 'pending_approval' && session?.finance_approved_at;
+    return (
+        <section className="rounded-3xl border border-emerald-200 bg-emerald-50/60 p-5 shadow-sm">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-emerald-700">Revue avant ajustement</p>
+                    <h5 className="mt-1 text-xl font-black text-slate-950">
+                        {isApplyAfterApproval ? 'Appliquer les ajustements approuvés' : 'Valider les écarts comptés'}
+                    </h5>
+                    <p className="mt-1 max-w-3xl text-sm font-bold text-slate-600">
+                        Ces lignes créeront des mouvements de stock traçables sur la campagne {session?.reference}. Le stock réel sera modifié seulement après confirmation.
+                    </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        disabled={busy}
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                        Continuer à vérifier
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onConfirm}
+                        disabled={busy}
+                        className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-500 disabled:bg-slate-300"
+                    >
+                        {busy ? 'Application...' : isApplyAfterApproval ? 'Appliquer au stock' : 'Valider cette campagne'}
+                    </button>
+                </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-4">
+                <div className="rounded-2xl border border-white bg-white p-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Lignes avec écart</p>
+                    <p className="mt-2 text-2xl font-black text-slate-950">{impactLines.length}</p>
+                </div>
+                <div className="rounded-2xl border border-white bg-white p-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Entrées stock</p>
+                    <p className="mt-2 text-2xl font-black text-blue-700">+{formatQty(summary.positiveQty)}</p>
+                </div>
+                <div className="rounded-2xl border border-white bg-white p-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Sorties stock</p>
+                    <p className="mt-2 text-2xl font-black text-amber-700">-{formatQty(summary.negativeQty)}</p>
+                </div>
+                <div className="rounded-2xl border border-white bg-white p-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Valeur absolue</p>
+                    <p className="mt-2 text-2xl font-black text-slate-950">
+                        {canViewExpected ? formatMoney(session?.absolute_variance_value ?? summary.absoluteValue) : 'Masquée'}
+                    </p>
+                </div>
+            </div>
+
+            {(priorityAnomalyCount > 0 || recommendedRecountCount > 0 || summary.missingReasons > 0) && (
+                <div className="mt-4 rounded-2xl border border-amber-200 bg-white p-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-amber-600">Points de contrôle</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        {priorityAnomalyCount > 0 && <span className="rounded-lg bg-red-50 px-3 py-1 text-xs font-black text-red-700">{priorityAnomalyCount} anomalie(s) prioritaire(s)</span>}
+                        {recommendedRecountCount > 0 && <span className="rounded-lg bg-orange-50 px-3 py-1 text-xs font-black text-orange-700">{recommendedRecountCount} recompte(s) conseillé(s)</span>}
+                        {summary.missingReasons > 0 && <span className="rounded-lg bg-amber-50 px-3 py-1 text-xs font-black text-amber-700">{summary.missingReasons} motif(s) manquant(s)</span>}
+                    </div>
+                </div>
+            )}
+
+            <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div className="grid grid-cols-[1.3fr_1fr_100px_1fr] gap-3 border-b border-slate-100 bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                    <span>Référence</span>
+                    <span>Emplacement</span>
+                    <span className="text-right">Écart</span>
+                    <span>Motif</span>
+                </div>
+                {shownLines.map(line => (
+                    <div key={line.id} className="grid grid-cols-[1.3fr_1fr_100px_1fr] gap-3 border-b border-slate-100 px-4 py-3 text-sm last:border-b-0">
+                        <div className="min-w-0">
+                            <p className="truncate font-black text-slate-900">{line.variant?.reference || `Variante #${line.variant_id}`}</p>
+                            <p className="truncate text-xs font-bold text-slate-400">{line.variant?.product_name || line.variant?.color || 'Article stock'}</p>
+                        </div>
+                        <p className="truncate font-bold text-slate-600">{line.location?.name || `Lieu #${line.location_id}`}</p>
+                        <p className={`text-right font-black ${Number(line.variance_quantity || 0) > 0 ? 'text-blue-700' : 'text-amber-700'}`}>
+                            {Number(line.variance_quantity || 0) > 0 ? '+' : ''}{formatQty(line.variance_quantity)}
+                        </p>
+                        <p className="truncate font-bold text-slate-600">{line.reason || 'Motif non renseigné'}</p>
+                    </div>
+                ))}
+                {impactLines.length === 0 && (
+                    <div className="px-4 py-6 text-center text-sm font-bold text-emerald-700">
+                        Aucun écart : la validation clôture la campagne sans mouvement d'ajustement.
+                    </div>
+                )}
+            </div>
+            {impactLines.length > shownLines.length && (
+                <p className="mt-2 text-xs font-bold text-slate-500">
+                    {impactLines.length - shownLines.length} autre(s) ligne(s) avec écart restent visibles dans le tableau complet.
+                </p>
+            )}
+        </section>
+    );
+}
+
 function StockRiskView({
     loading,
     needs,
@@ -8220,6 +8334,7 @@ function PhysicalInventoryView({
     const [scanValue, setScanValue] = useState('');
     const [evidenceFile, setEvidenceFile] = useState(null);
     const [syncError, setSyncError] = useState('');
+    const [validationReviewOpen, setValidationReviewOpen] = useState(false);
     const [busy, setBusy] = useState(false);
     const offlineQueueKey = `mmg.inventory.pending.${currentUsername || 'anonymous'}`;
     const [offlineQueue, setOfflineQueue] = useState(() => {
@@ -8286,6 +8401,24 @@ function PhysicalInventoryView({
     const recommendedRecountCount = (selectedSession?.lines || []).filter(
         line => line.recount_recommended
     ).length;
+    const validationImpactLines = (selectedSession?.lines || [])
+        .filter(line => Math.abs(Number(line.variance_quantity || 0)) > 0.000001);
+    const validationImpactSummary = validationImpactLines.reduce((acc, line) => {
+        const varianceQty = Number(line.variance_quantity || 0);
+        const varianceValue = Number(line.variance_value || 0);
+        if (varianceQty > 0) acc.positiveQty += varianceQty;
+        if (varianceQty < 0) acc.negativeQty += Math.abs(varianceQty);
+        acc.netValue += varianceValue;
+        acc.absoluteValue += Math.abs(varianceValue);
+        if (!String(line.reason || '').trim()) acc.missingReasons += 1;
+        return acc;
+    }, {
+        positiveQty: 0,
+        negativeQty: 0,
+        netValue: 0,
+        absoluteValue: 0,
+        missingReasons: 0,
+    });
 
     const matchVariantFromScan = (value) => {
         const needle = value.trim().toLowerCase();
@@ -8325,7 +8458,7 @@ function PhysicalInventoryView({
 
     const createSession = async (event) => {
         event.preventDefault();
-        if (!newSession.name.trim() || busy) return;
+        if (!newSession.name.trim() || !newSession.location_id || busy) return;
         setBusy(true);
         try {
             const payload = {
@@ -8553,10 +8686,10 @@ function PhysicalInventoryView({
 
     const validateSession = async () => {
         if (!selectedSession || busy) return;
-        if (!window.confirm(`Valider ${selectedSession.reference} ? Les écarts créeront des mouvements d'ajustement stock.`)) return;
         setBusy(true);
         try {
             const response = await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/validate`);
+            setValidationReviewOpen(false);
             await refreshInventory();
             if (response.data.status === 'pending_approval') {
                 alert(`Le seuil de ${Number(response.data.approval_threshold_value || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })} est dépassé. Approbation Finance/Manager requise.`);
@@ -8622,6 +8755,10 @@ function PhysicalInventoryView({
             setBusy(false);
         }
     };
+
+    useEffect(() => {
+        setValidationReviewOpen(false);
+    }, [selectedSession?.id, selectedSession?.status]);
 
     const statusLabel = {
         scheduled: 'Planifiée',
@@ -8713,11 +8850,20 @@ function PhysicalInventoryView({
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
                                 disabled={!canValidate || busy}
                             >
-                                <option value="">Tous emplacements internes</option>
+                                <option value="">Choisir une zone physique à compter</option>
                                 {internalLocations.map(location => (
-                                    <option key={location.id} value={location.id}>{location.name}</option>
+                                    <option key={location.id} value={location.id}>{getFullLocationName(location)}</option>
                                 ))}
                             </select>
+                            {internalLocations.length === 0 ? (
+                                <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-black text-red-700">
+                                    Créez d'abord au moins un emplacement interne actif dans le référentiel des zones.
+                                </div>
+                            ) : (
+                                <p className="text-[10px] font-bold text-slate-400">
+                                    L'inventaire se fait toujours sur une zone physique afin de tracer et geler le bon périmètre.
+                                </p>
+                            )}
                             <div className="grid grid-cols-2 gap-2">
                                 <select
                                     value={newSession.inventory_type}
@@ -8810,7 +8956,7 @@ function PhysicalInventoryView({
                             </label>
                             <button
                                 type="submit"
-                                disabled={!canValidate || busy || !newSession.name.trim()}
+                                disabled={!canValidate || busy || !newSession.name.trim() || !newSession.location_id}
                                 className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black text-sm"
                             >
                                 Créer la campagne
@@ -9027,8 +9173,8 @@ function PhysicalInventoryView({
                                                 <button onClick={cancelSession} disabled={!canValidate || busy} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm">
                                                     Annuler
                                                 </button>
-                                                <button onClick={validateSession} disabled={!canValidate || busy || !selectedSession.lines?.length || hasRecountLines || hasPendingLines || unjustifiedVarianceLines.length > 0} title={hasPendingLines ? 'Toutes les lignes doivent être comptées avant validation' : unjustifiedVarianceLines.length > 0 ? 'Chaque écart doit avoir un motif avant validation' : undefined} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
-                                                    Valider les écarts
+                                                <button onClick={() => setValidationReviewOpen(true)} disabled={!canValidate || busy || !selectedSession.lines?.length || hasRecountLines || hasPendingLines || unjustifiedVarianceLines.length > 0} title={hasPendingLines ? 'Toutes les lignes doivent être comptées avant validation' : unjustifiedVarianceLines.length > 0 ? 'Chaque écart doit avoir un motif avant validation' : undefined} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
+                                                    Revoir et valider
                                                 </button>
                                             </>
                                         )}
@@ -9038,8 +9184,8 @@ function PhysicalInventoryView({
                                             </button>
                                         )}
                                         {selectedSession.status === 'pending_approval' && selectedSession.finance_approved_at && (
-                                            <button onClick={validateSession} disabled={!canValidate || busy} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
-                                                Appliquer les ajustements
+                                            <button onClick={() => setValidationReviewOpen(true)} disabled={!canValidate || busy} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
+                                                Revoir et appliquer
                                             </button>
                                         )}
                                         {['validated', 'cancelled'].includes(selectedSession.status) && canValidate && (
@@ -9069,6 +9215,20 @@ function PhysicalInventoryView({
                                             Synchroniser
                                         </button>
                                     </div>
+                                )}
+
+                                {validationReviewOpen && (
+                                    <InventoryValidationReviewPanel
+                                        session={selectedSession}
+                                        impactLines={validationImpactLines}
+                                        summary={validationImpactSummary}
+                                        priorityAnomalyCount={priorityAnomalyCount}
+                                        recommendedRecountCount={recommendedRecountCount}
+                                        canViewExpected={selectedSession.can_view_expected}
+                                        busy={busy}
+                                        onClose={() => setValidationReviewOpen(false)}
+                                        onConfirm={validateSession}
+                                    />
                                 )}
 
                                 {['draft', 'counting'].includes(selectedSession.status) && (
