@@ -3796,6 +3796,50 @@ export default function StockDashboard({ surface = 'management' }) {
                                     </div>
                                 </div>
 
+                                <div className="border-b border-slate-100 bg-white px-6 py-5">
+                                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+                                        <div>
+                                            <p className="text-[10px] uppercase tracking-[0.24em] font-black text-blue-600">Prochaine action</p>
+                                            <h3 className="mt-1 text-xl font-black text-slate-950">
+                                                {physicalLocations.length === 0
+                                                    ? 'Créer le premier emplacement physique'
+                                                    : unclearInternalLocations.length > 0
+                                                        ? `Clarifier ${unclearInternalLocations.length} emplacement(s) avant inventaire`
+                                                        : 'Le plan atelier est prêt pour les comptages'}
+                                            </h3>
+                                            <p className="mt-1 max-w-3xl text-sm font-bold text-slate-500">
+                                                {physicalLocations.length === 0
+                                                    ? 'Commencez par un magasin ou une zone racine. Les réceptions et inventaires auront ensuite un lieu réel.'
+                                                    : unclearInternalLocations.length > 0
+                                                        ? 'Les zones parent ou noms vagues restent visibles, mais il vaut mieux les transformer en rack/casier exploitable avant de compter.'
+                                                        : 'Les opérateurs peuvent ranger, retrouver et compter le stock sur des emplacements suffisamment précis.'}
+                                            </p>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            {canManageLocations && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => physicalLocations.length === 0 ? setAddingSubLocTo('root') : setShowLocationManagerModal(true)}
+                                                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-blue-500"
+                                                >
+                                                    <Plus className="h-4 w-4" />
+                                                    {physicalLocations.length === 0 ? 'Créer maintenant' : 'Corriger le plan'}
+                                                </button>
+                                            )}
+                                            {physicalLocations.length > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCurrentMenu('physical-inventory')}
+                                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
+                                                >
+                                                    <ClipboardCheck className="h-4 w-4" />
+                                                    Compter une zone
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-6 border-b border-slate-100">
                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                                         <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Plan atelier</p>
@@ -8334,6 +8378,7 @@ function PhysicalInventoryView({
         approval_threshold_value: '',
         assigned_usernames: [],
     });
+    const [showNewSessionAdvanced, setShowNewSessionAdvanced] = useState(false);
     const [lineForm, setLineForm] = useState({ variant_id: '', location_id: '', counted_quantity: '', reason: '' });
     const [scanValue, setScanValue] = useState('');
     const [evidenceFile, setEvidenceFile] = useState(null);
@@ -8350,6 +8395,8 @@ function PhysicalInventoryView({
     });
 
     const internalLocations = locations.filter(location => location.usage === 'internal' && location.is_active !== false);
+    const selectedNewSessionLocation = internalLocations.find(location => String(location.id) === String(newSession.location_id));
+    const canCreateSession = canValidate && !busy && Boolean(newSession.name.trim()) && Boolean(newSession.location_id);
     const selectedSession = sessions.find(session => session.id === selectedSessionId)
         || initialSessions.find(session => session.id === selectedSessionId)
         || sessions[0]
@@ -8837,14 +8884,17 @@ function PhysicalInventoryView({
                 <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] min-h-[620px]">
                     <aside className="border-r border-slate-100 bg-slate-50/80 p-5 space-y-4">
                         <form onSubmit={createSession} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3">
-                            <p className="text-xs font-black uppercase tracking-widest text-slate-400">Nouvelle campagne</p>
-                            <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] font-black text-amber-700">
-                                La zone sélectionnée sera gelée jusqu'à validation ou annulation.
+                            <div>
+                                <p className="text-xs font-black uppercase tracking-widest text-blue-600">Compter une zone</p>
+                                <h4 className="mt-1 text-lg font-black text-slate-950">Nouvelle campagne</h4>
+                                <p className="mt-1 text-xs font-bold text-slate-500">
+                                    Choisissez d'abord le périmètre réel. Les réglages avancés restent optionnels.
+                                </p>
                             </div>
                             <input
                                 value={newSession.name}
                                 onChange={event => setNewSession(prev => ({ ...prev, name: event.target.value }))}
-                                placeholder="Ex: Comptage WH semaine 29"
+                                placeholder="Nom du comptage"
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
                                 disabled={!canValidate || busy}
                             />
@@ -8864,106 +8914,120 @@ function PhysicalInventoryView({
                                     Créez d'abord au moins un emplacement interne actif dans le référentiel des zones.
                                 </div>
                             ) : (
-                                <p className="text-[10px] font-bold text-slate-400">
-                                    L'inventaire se fait toujours sur une zone physique afin de tracer et geler le bon périmètre.
-                                </p>
+                                <div className={`rounded-xl border px-3 py-2 text-[11px] font-black ${selectedNewSessionLocation ? 'border-amber-100 bg-amber-50 text-amber-700' : 'border-slate-100 bg-slate-50 text-slate-500'}`}>
+                                    {selectedNewSessionLocation
+                                        ? `${getFullLocationName(selectedNewSessionLocation)} sera gelé jusqu'à validation ou annulation.`
+                                        : "Sélectionnez l'emplacement réel à isoler pour le comptage."}
+                                </div>
                             )}
-                            <div className="grid grid-cols-2 gap-2">
-                                <select
-                                    value={newSession.inventory_type}
-                                    onChange={event => setNewSession(prev => ({ ...prev, inventory_type: event.target.value }))}
-                                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                    disabled={!canValidate || busy}
-                                >
-                                    <option value="full">Inventaire complet</option>
-                                    <option value="cycle">Inventaire cyclique</option>
-                                </select>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={newSession.approval_threshold_value}
-                                    onChange={event => setNewSession(prev => ({ ...prev, approval_threshold_value: event.target.value }))}
-                                    placeholder="Seuil approb. €"
-                                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                    disabled={!canValidate || busy}
-                                />
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <input
-                                    type="datetime-local"
-                                    value={newSession.scheduled_for}
-                                    onChange={event => setNewSession(prev => ({ ...prev, scheduled_for: event.target.value }))}
-                                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                    disabled={!canValidate || busy}
-                                    title="Laisser vide pour démarrer immédiatement"
-                                />
-                                <input
-                                    type="number"
-                                    min="1"
-                                    max="366"
-                                    value={newSession.cycle_frequency_days}
-                                    onChange={event => setNewSession(prev => ({ ...prev, cycle_frequency_days: event.target.value }))}
-                                    placeholder="Cycle (jours)"
-                                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
-                                    disabled={!canValidate || busy || newSession.inventory_type !== 'cycle'}
-                                />
-                            </div>
-                            {inventoryUsers.length > 0 && (
-                                <label className="block space-y-1">
-                                    <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">Compteurs affectés</span>
-                                    <select
-                                        multiple
-                                        value={newSession.assigned_usernames}
-                                        onChange={event => setNewSession(prev => ({
-                                            ...prev,
-                                            assigned_usernames: Array.from(event.target.selectedOptions).map(option => option.value),
-                                        }))}
-                                        className="w-full min-h-[76px] rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                            <button
+                                type="button"
+                                onClick={() => setShowNewSessionAdvanced(prev => !prev)}
+                                className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-100"
+                            >
+                                <span>Paramètres avancés</span>
+                                <ChevronDown className={`h-4 w-4 transition-transform ${showNewSessionAdvanced ? 'rotate-180' : ''}`} />
+                            </button>
+                            {showNewSessionAdvanced && (
+                                <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <select
+                                            value={newSession.inventory_type}
+                                            onChange={event => setNewSession(prev => ({ ...prev, inventory_type: event.target.value }))}
+                                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                            disabled={!canValidate || busy}
+                                        >
+                                            <option value="full">Inventaire complet</option>
+                                            <option value="cycle">Inventaire cyclique</option>
+                                        </select>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            value={newSession.approval_threshold_value}
+                                            onChange={event => setNewSession(prev => ({ ...prev, approval_threshold_value: event.target.value }))}
+                                            placeholder="Seuil approb. €"
+                                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                            disabled={!canValidate || busy}
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <input
+                                            type="datetime-local"
+                                            value={newSession.scheduled_for}
+                                            onChange={event => setNewSession(prev => ({ ...prev, scheduled_for: event.target.value }))}
+                                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                            disabled={!canValidate || busy}
+                                            title="Laisser vide pour démarrer immédiatement"
+                                        />
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="366"
+                                            value={newSession.cycle_frequency_days}
+                                            onChange={event => setNewSession(prev => ({ ...prev, cycle_frequency_days: event.target.value }))}
+                                            placeholder="Cycle (jours)"
+                                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                                            disabled={!canValidate || busy || newSession.inventory_type !== 'cycle'}
+                                        />
+                                    </div>
+                                    {inventoryUsers.length > 0 && (
+                                        <label className="block space-y-1">
+                                            <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">Compteurs affectés</span>
+                                            <select
+                                                multiple
+                                                value={newSession.assigned_usernames}
+                                                onChange={event => setNewSession(prev => ({
+                                                    ...prev,
+                                                    assigned_usernames: Array.from(event.target.selectedOptions).map(option => option.value),
+                                                }))}
+                                                className="w-full min-h-[76px] rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                                disabled={!canValidate || busy}
+                                            >
+                                                {inventoryUsers.filter(item => item.is_active !== false).map(item => (
+                                                    <option key={item.id} value={item.username}>
+                                                        {[item.first_name, item.last_name].filter(Boolean).join(' ') || item.username} · {item.role}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <span className="text-[10px] font-bold text-slate-400">Aucune sélection = tous les compteurs autorisés.</span>
+                                        </label>
+                                    )}
+                                    <input
+                                        value={newSession.notes}
+                                        onChange={event => setNewSession(prev => ({ ...prev, notes: event.target.value }))}
+                                        placeholder="Note optionnelle"
+                                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
                                         disabled={!canValidate || busy}
-                                    >
-                                        {inventoryUsers.filter(item => item.is_active !== false).map(item => (
-                                            <option key={item.id} value={item.username}>
-                                                {[item.first_name, item.last_name].filter(Boolean).join(' ') || item.username} · {item.role}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <span className="text-[10px] font-bold text-slate-400">Aucune sélection = tous les compteurs autorisés.</span>
-                                </label>
+                                    />
+                                    <label className="flex items-start gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={newSession.include_all_variants}
+                                            onChange={event => setNewSession(prev => ({ ...prev, include_all_variants: event.target.checked }))}
+                                            className="mt-0.5"
+                                            disabled={!canValidate || busy}
+                                        />
+                                        <span>Inclure toutes les variantes actives pour détecter les oublis</span>
+                                    </label>
+                                    <label className="flex items-start gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={newSession.blind_counting}
+                                            onChange={event => setNewSession(prev => ({ ...prev, blind_counting: event.target.checked }))}
+                                            className="mt-0.5"
+                                            disabled={!canValidate || busy}
+                                        />
+                                        <span>Comptage aveugle</span>
+                                    </label>
+                                </div>
                             )}
-                            <input
-                                value={newSession.notes}
-                                onChange={event => setNewSession(prev => ({ ...prev, notes: event.target.value }))}
-                                placeholder="Note optionnelle"
-                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                disabled={!canValidate || busy}
-                            />
-                            <label className="flex items-start gap-2 text-xs font-bold text-slate-600 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={newSession.include_all_variants}
-                                    onChange={event => setNewSession(prev => ({ ...prev, include_all_variants: event.target.checked }))}
-                                    className="mt-0.5"
-                                    disabled={!canValidate || busy}
-                                />
-                                <span>Inclure toutes les variantes actives (espéré 0) pour détecter les oublis</span>
-                            </label>
-                            <label className="flex items-start gap-2 text-xs font-bold text-slate-600 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={newSession.blind_counting}
-                                    onChange={event => setNewSession(prev => ({ ...prev, blind_counting: event.target.checked }))}
-                                    className="mt-0.5"
-                                    disabled={!canValidate || busy}
-                                />
-                                <span>Comptage aveugle (espéré masqué jusqu'à validation)</span>
-                            </label>
                             <button
                                 type="submit"
-                                disabled={!canValidate || busy || !newSession.name.trim() || !newSession.location_id}
+                                disabled={!canCreateSession}
                                 className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white font-black text-sm"
                             >
-                                Créer la campagne
+                                {newSession.location_id ? 'Créer la campagne' : 'Choisir une zone pour continuer'}
                             </button>
                         </form>
 
