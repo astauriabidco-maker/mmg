@@ -2372,7 +2372,7 @@ export default function StockDashboard({ surface = 'management' }) {
             ? { label: 'Nouvelle prestation', onClick: () => openNewProductModal('service'), Icon: Plus }
             : null,
         drafts: stockPermissions.qualifyCatalog
-            ? { label: 'Qualifier les brouillons', onClick: () => setCatalogQuickFilter('draft'), Icon: FileEdit }
+            ? { label: 'Importer brouillons', onClick: () => setShowImportModal(true), Icon: FileText }
             : null,
         locations: canManageLocations
             ? { label: 'Créer une zone', onClick: () => setAddingSubLocTo('root'), Icon: Plus }
@@ -4242,17 +4242,10 @@ export default function StockDashboard({ surface = 'management' }) {
                             </>
                         )}
                         {currentMenu === 'drafts' && (
-                            <>
-                                {stockPermissions.qualifyCatalog && (
-                                    <button onClick={() => setShowImportModal(true)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-white text-sm font-black shadow-sm">
-                                        <FileText className="w-4 h-4"/> Importer brouillons
-                                    </button>
-                                )}
-                                <div className="px-4 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-700 inline-flex items-center gap-2">
-                                    <span className="text-[10px] uppercase font-black tracking-widest">Brouillons</span>
-                                    <span className="text-lg font-black tracking-tight">{totalDraftCount}</span>
-                                </div>
-                            </>
+                            <div className="px-4 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-700 inline-flex items-center gap-2">
+                                <span className="text-[10px] uppercase font-black tracking-widest">Brouillons</span>
+                                <span className="text-lg font-black tracking-tight">{totalDraftCount}</span>
+                            </div>
                         )}
                     </div>
                 </div>
@@ -4281,20 +4274,6 @@ export default function StockDashboard({ surface = 'management' }) {
                             <Box className="w-12 h-12 text-slate-300 mb-4" />
                             <p className="text-center text-slate-400 font-bold">
                                 {inventoryFocus === 'services' ? 'Aucune prestation trouvée avec le filtre actuel.' : 'Aucun produit trouvé avec le filtre actuel.'} <br/> <span className="text-sm font-medium italic">Réinitialisez les filtres ou changez d'emplacement.</span>
-                            </p>
-                        </div>
-                    )}
-
-                    {groupedData.length > 0 && (
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-                            <div>
-                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Liste des articles</p>
-                                <h3 className="text-base font-black text-slate-900">
-                                    {groupedData.length.toLocaleString('fr-FR')} fiche(s) affichée(s)
-                                </h3>
-                            </div>
-                            <p className="text-xs font-bold text-slate-500">
-                                Par défaut : articles actifs et mieux qualifiés en premier, brouillons ensuite.
                             </p>
                         </div>
                     )}
