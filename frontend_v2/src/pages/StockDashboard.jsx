@@ -3660,16 +3660,6 @@ export default function StockDashboard({ surface = 'management' }) {
                                             Point d’entrée des équipes atelier : importer un débit, contrôler la réservation, préparer le bon magasin, remettre à l’atelier, puis consommer au débit réel.
                                         </p>
                                     </div>
-                                    {stockPermissions.reserveWorkshop && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowWorkshopDebitModal(true)}
-                                            className="px-5 py-4 rounded-2xl bg-amber-500 hover:bg-amber-400 text-white text-sm font-black inline-flex items-center gap-2 shadow-lg shadow-amber-500/20"
-                                        >
-                                            <FileText className="w-4 h-4" />
-                                            Commencer : importer un débit
-                                        </button>
-                                    )}
                                 </div>
                                 <div className="grid grid-cols-1 gap-3 p-6 border-b border-slate-100 lg:grid-cols-[1.1fr_2fr]">
                                     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
@@ -3708,16 +3698,9 @@ export default function StockDashboard({ surface = 'management' }) {
                                                 <h3 className="text-xl font-black text-slate-900">Débits à préparer / remettre / consommer</h3>
                                                 <p className="mt-1 text-xs font-bold text-slate-500">Chaque ligne garde le bon ordre : réserver → préparer → remettre → lancer fabrication → débit réel.</p>
                                             </div>
-                                            {stockPermissions.reserveWorkshop && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setShowWorkshopDebitModal(true)}
-                                                    className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-black uppercase tracking-widest text-amber-800 hover:bg-amber-100"
-                                                >
-                                                    <Plus className="h-4 w-4" />
-                                                    Nouveau débit
-                                                </button>
-                                            )}
+                                            <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-500">
+                                                {reservations.length} débit(s)
+                                            </span>
                                         </div>
                                         {reservations.length > 0 ? (
                                             <div className="divide-y divide-slate-200">
@@ -3897,24 +3880,14 @@ export default function StockDashboard({ surface = 'management' }) {
                                     </div>
                                     <div className="flex flex-wrap gap-2">
                                         {canManageLocations ? (
-                                            <>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setAddingSubLocTo('root')}
-                                                    className="px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black inline-flex items-center gap-2 shadow-sm"
-                                                >
-                                                    <Plus className="w-4 h-4" />
-                                                    Nouvel entrepôt
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setShowLocationManagerModal(true)}
-                                                    className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white text-sm font-black inline-flex items-center gap-2"
-                                                >
-                                                    <Edit3 className="w-4 h-4" />
-                                                    Gestion avancée
-                                                </button>
-                                            </>
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowLocationManagerModal(true)}
+                                                className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white text-sm font-black inline-flex items-center gap-2"
+                                            >
+                                                <Edit3 className="w-4 h-4" />
+                                                Gestion avancée
+                                            </button>
                                         ) : (
                                             <span className="px-4 py-3 rounded-xl bg-white/10 border border-white/15 text-sm font-black text-slate-200">
                                                 Lecture seule
@@ -3943,14 +3916,14 @@ export default function StockDashboard({ surface = 'management' }) {
                                             </p>
                                         </div>
                                         <div className="flex flex-wrap gap-2">
-                                            {canManageLocations && (
+                                            {canManageLocations && unclearInternalLocations.length > 0 && (
                                                 <button
                                                     type="button"
-                                                    onClick={() => physicalLocations.length === 0 ? setAddingSubLocTo('root') : setShowLocationManagerModal(true)}
+                                                    onClick={() => setShowLocationManagerModal(true)}
                                                     className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-blue-500"
                                                 >
-                                                    <Plus className="h-4 w-4" />
-                                                    {physicalLocations.length === 0 ? 'Créer maintenant' : 'Corriger le plan'}
+                                                    <Edit3 className="h-4 w-4" />
+                                                    Corriger le plan
                                                 </button>
                                             )}
                                             {physicalLocations.length > 0 && (
@@ -4126,15 +4099,6 @@ export default function StockDashboard({ surface = 'management' }) {
                                             <p className="text-xs uppercase tracking-widest font-black text-slate-400">Actions rapides</p>
                                             <h3 className="font-black text-slate-900 mt-1">Faire vivre les emplacements</h3>
                                             <div className="mt-4 grid grid-cols-1 gap-2">
-                                                {canManageLocations && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setAddingSubLocTo('root')}
-                                                        className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-500"
-                                                    >
-                                                        Créer une zone principale
-                                                    </button>
-                                                )}
                                                 <button
                                                     type="button"
                                                     onClick={() => setCurrentMenu('stock')}
@@ -4224,14 +4188,12 @@ export default function StockDashboard({ surface = 'management' }) {
                 ) : currentMenu === 'management-home' ? null : (
                     <>
                         {/* HEADER INFO */}
-                <div className="px-6 py-4 bg-white border-b border-slate-200 shrink-0 flex flex-wrap justify-between items-center gap-4">
+                <div className="px-6 py-3 bg-white border-b border-slate-200 shrink-0 flex flex-wrap justify-between items-center gap-4">
                     <div>
-                        <h2 className="text-xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
-                            {inventoryTitle}
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{inventoryTitle}</p>
+                        <h2 className="text-xl font-black text-slate-900 tracking-tight">
+                            {groupedData.length.toLocaleString('fr-FR')} fiche(s) affichée(s)
                         </h2>
-                        <p className="text-sm font-bold text-slate-500 mt-1">
-                            {inventorySubtitle}
-                        </p>
                     </div>
 
                     <div className="flex flex-wrap gap-2">
@@ -4258,23 +4220,8 @@ export default function StockDashboard({ surface = 'management' }) {
                                 Tous
                             </button>
                         )}
-                        {currentMenu === 'catalog' && stockPermissions.qualifyCatalog && (
-                            <button onClick={() => openNewProductModal('stockable')} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black shadow-sm">
-                                <Plus className="w-4 h-4"/> Nouvel article
-                            </button>
-                        )}
-                        {currentMenu === 'services' && stockPermissions.qualifyCatalog && (
-                            <button onClick={() => openNewProductModal('service')} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-sm">
-                                <FileEdit className="w-4 h-4"/> Nouvelle prestation
-                            </button>
-                        )}
                         {currentMenu === 'stock' && (
                             <>
-                                {stockPermissions.receive && (
-                                    <button onClick={openReceptionModal} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-sm">
-                                        <Truck className="w-4 h-4"/> Entrée stock
-                                    </button>
-                                )}
                                 {stockPermissions.adjust && (
                                     <button onClick={openCustomerIssueModal} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-black shadow-sm">
                                         <ArrowRight className="w-4 h-4"/> Sortie stock
