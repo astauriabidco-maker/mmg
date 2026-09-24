@@ -3963,29 +3963,11 @@ export default function StockDashboard({ surface = 'management' }) {
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-6 border-b border-slate-100 bg-white">
-                                    {[
-                                        ['1', 'Créer la zone', 'Magasin, atelier, vitrage, quincaillerie…'],
-                                        ['2', 'Ajouter le rack', 'Travée, étagère, niveau ou chariot.'],
-                                        ['3', 'Réceptionner ici', 'Les entrées stock alimentent un emplacement réel.'],
-                                        ['4', 'Retrouver sur fiche', 'La fiche article affiche le chemin complet.'],
-                                    ].map(([step, title, detail]) => (
-                                        <div key={step} className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
-                                            <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-black text-white">{step}</div>
-                                            <p className="font-black text-slate-950">{title}</p>
-                                            <p className="mt-1 text-xs font-bold text-slate-500">{detail}</p>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                <div className="p-6 border-b border-slate-100 bg-slate-50">
-                                    <div className="flex flex-wrap items-start justify-between gap-4">
+                                <div className="px-6 py-4 border-b border-slate-100 bg-slate-50">
+                                    <div className="flex flex-wrap items-center justify-between gap-4">
                                         <div>
                                             <p className="text-[10px] uppercase tracking-[0.24em] font-black text-blue-600">Création assistée</p>
-                                            <h3 className="mt-1 text-xl font-black text-slate-950">Créer avec un modèle atelier</h3>
-                                            <p className="mt-1 text-sm font-bold text-slate-500">
-                                                Structure recommandée : Magasin → Zone → Rack → Casier. Les noms restent modifiables avant validation.
-                                            </p>
+                                            <h3 className="mt-1 text-base font-black text-slate-950">Modèles rapides</h3>
                                         </div>
                                         {!canManageLocations && (
                                             <span className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-500">
@@ -3993,18 +3975,17 @@ export default function StockDashboard({ surface = 'management' }) {
                                             </span>
                                         )}
                                     </div>
-                                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                                    <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
                                         {locationTemplates.map(template => (
                                             <button
                                                 key={template.label}
                                                 type="button"
                                                 disabled={!canManageLocations}
                                                 onClick={() => openLocationTemplateForm(template)}
-                                                className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-blue-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                className="min-w-[180px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-left shadow-sm hover:border-blue-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
                                             >
                                                 <p className="text-[10px] uppercase tracking-widest font-black text-blue-500">Modèle</p>
-                                                <p className="mt-1 font-black text-slate-950">{template.label}</p>
-                                                <p className="mt-1 text-xs font-bold text-slate-500">{template.hint}</p>
+                                                <p className="mt-0.5 font-black text-slate-950">{template.label}</p>
                                             </button>
                                         ))}
                                     </div>
@@ -7006,20 +6987,15 @@ function InventoryCountingGuide({
         { label: 'À justifier', value: unjustifiedVarianceCount, className: 'bg-orange-100 text-orange-700' },
         { label: 'OK', value: okCount, className: 'bg-emerald-100 text-emerald-700' },
     ];
-    const operatorSteps = [
-        { label: '1. Créer', detail: 'Choisir zone et type de campagne.' },
-        { label: '2. Compter', detail: 'Scanner ou charger la prochaine ligne.' },
-        { label: '3. Justifier', detail: 'Motif obligatoire si écart.' },
-        { label: '4. Valider', detail: 'Ajustement stock seulement à la fin.' },
-    ];
+    const operatorSteps = ['Créer', 'Compter', 'Justifier', 'Valider'];
 
     return (
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-5 grid gap-2 md:grid-cols-4">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-4 flex flex-wrap gap-2">
                 {operatorSteps.map((step, index) => (
-                    <div
-                        key={step.label}
-                        className={`rounded-2xl border p-3 ${
+                    <span
+                        key={step}
+                        className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${
                             index === 1
                                 ? 'border-blue-200 bg-blue-50'
                                 : index === 2 && (varianceCount > 0 || currentLineNeedsReason || unjustifiedVarianceCount > 0)
@@ -7027,23 +7003,22 @@ function InventoryCountingGuide({
                                     : 'border-slate-100 bg-slate-50'
                         }`}
                     >
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{step.label}</p>
-                        <p className="mt-1 text-xs font-bold text-slate-600">{step.detail}</p>
-                    </div>
+                        {index + 1}. {step}
+                    </span>
                 ))}
             </div>
             <div className="flex flex-col gap-4 xl:flex-row xl:items-stretch xl:justify-between">
                 <div className="min-w-0 flex-1">
                     <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-600">Comptage guidé</p>
-                    <h5 className="mt-1 text-xl font-black text-slate-950">Une référence, une quantité réelle, puis suivant.</h5>
-                    <p className="mt-1 text-sm font-bold text-slate-500">
+                    <h5 className="mt-1 text-lg font-black text-slate-950">Une référence, une quantité réelle, puis suivant.</h5>
+                    <p className="mt-1 text-xs font-bold text-slate-500">
                         Mode opérateur : le tableau complet reste dessous, le comptage se fait ici sans lire tout l’audit.
                     </p>
-                    <div className="mt-4 grid gap-2 sm:grid-cols-5">
+                    <div className="mt-3 grid gap-2 sm:grid-cols-5">
                         {stepItems.map(item => (
-                            <div key={item.label} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                            <div key={item.label} className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{item.label}</p>
-                                <p className={`mt-2 inline-flex min-w-12 justify-center rounded-xl px-3 py-1 text-lg font-black ${item.className}`}>
+                                <p className={`mt-1 inline-flex min-w-10 justify-center rounded-lg px-2 py-1 text-base font-black ${item.className}`}>
                                     {Number(item.value || 0).toLocaleString('fr-FR')}
                                 </p>
                             </div>
@@ -8858,28 +8833,23 @@ function PhysicalInventoryView({
     return (
         <div className="w-full space-y-6">
             <div className="bg-white border border-slate-200 shadow-sm overflow-hidden">
-                <div className="px-8 py-6 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                <div className="px-5 py-3 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
                     <div>
-                        <h3 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-                            <ClipboardCheck className="w-6 h-6 text-blue-600" />
-                            Inventaire physique
-                        </h3>
-                        <p className="text-sm font-bold text-slate-500 mt-1">
-                            Comptez le réel, justifiez les écarts, puis validez pour créer les ajustements stock.
-                        </p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Campagnes d’inventaire</p>
+                        <h3 className="text-lg font-black text-slate-900">Compter, justifier, valider</h3>
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
-                        <div className="px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200">
+                    <div className="grid grid-cols-3 gap-2">
+                        <div className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200">
                             <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">Campagnes</p>
-                            <p className="text-xl font-black text-slate-900">{sessionPage.total ?? sessions.length}</p>
+                            <p className="text-lg font-black text-slate-900">{sessionPage.total ?? sessions.length}</p>
                         </div>
-                        <div className="px-4 py-3 rounded-2xl bg-amber-50 border border-amber-100">
+                        <div className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-100">
                             <p className="text-[10px] uppercase font-black tracking-widest text-amber-500">En cours</p>
-                            <p className="text-xl font-black text-amber-700">{sessions.filter(s => ['draft', 'counting'].includes(s.status)).length}</p>
+                            <p className="text-lg font-black text-amber-700">{sessions.filter(s => ['draft', 'counting'].includes(s.status)).length}</p>
                         </div>
-                        <div className="px-4 py-3 rounded-2xl bg-emerald-50 border border-emerald-100">
+                        <div className="px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-100">
                             <p className="text-[10px] uppercase font-black tracking-widest text-emerald-500">Validées</p>
-                            <p className="text-xl font-black text-emerald-700">{sessions.filter(s => s.status === 'validated').length}</p>
+                            <p className="text-lg font-black text-emerald-700">{sessions.filter(s => s.status === 'validated').length}</p>
                         </div>
                     </div>
                 </div>
@@ -9635,15 +9605,15 @@ function AuditLogs({ transactions }) {
 
     return (
         <div className="bg-white border border-slate-200 shadow-sm overflow-hidden w-full">
-            <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap justify-between items-center gap-3 bg-slate-50">
                 <div>
-                    <h3 className="font-black text-xl flex items-center gap-2">
+                    <h3 className="font-black text-base flex items-center gap-2">
                         <Layers className="w-5 h-5 text-slate-800" />
-                        Journal d'Audit des Mouvements
+                        Journal d’audit
                     </h3>
-                    <p className="text-xs font-medium text-slate-500 mt-1">Traçabilité complète des entrées, sorties et transferts (100 derniers mouvements).</p>
+                    <p className="text-xs font-bold text-slate-500 mt-0.5">{filteredTransactions.length} mouvement(s) affiché(s).</p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                     <div className="flex bg-white border border-slate-200 rounded-xl p-1 shadow-sm">
                         <button
                             onClick={() => setMovementFilter('all')}
