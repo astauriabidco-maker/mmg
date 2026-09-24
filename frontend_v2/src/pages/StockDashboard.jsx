@@ -153,7 +153,6 @@ export default function StockDashboard({ surface = 'management' }) {
         const parent = locations.find(l => l.id === loc.parent_id);
         return parent ? `${getFullLocationName(parent)} > ${loc.name}` : loc.name;
     };
-
     const vagueLocationWords = ['divers', 'stock', 'test', 'zone', 'autre', 'temp', 'temporary', 'vrac', 'inconnu', 'unknown'];
     const getLocationDepth = (loc) => {
         if (!loc?.parent_id) return 0;
@@ -171,12 +170,13 @@ export default function StockDashboard({ surface = 'management' }) {
         if (!loc) return { role: 'Inconnu', exploitable: false, issues: ['emplacement absent'] };
         const fullName = getFullLocationName(loc);
         const normalizedName = String(loc.name || '').trim().toLowerCase();
+        const compactSlot = /^[a-z]\d+$/i.test(normalizedName);
         const ambiguousPrefixWords = vagueLocationWords.filter(word => word !== 'zone');
         const role = getLocationRole(loc);
         const issues = [];
         if (loc.usage !== 'internal' && loc.usage !== 'production') issues.push('lieu virtuel');
         if (!normalizedName) issues.push('nom absent');
-        if (normalizedName.length < 3) issues.push('nom trop court');
+        if (normalizedName.length < 3 && !compactSlot) issues.push('nom trop court');
         if (vagueLocationWords.includes(normalizedName)) issues.push('nom trop vague');
         if (ambiguousPrefixWords.some(word => normalizedName === word || normalizedName.startsWith(`${word} `))) issues.push('nom à préciser');
         if (role === 'Magasin' && getLocationDepth(loc) === 0 && !locations.some(child => child.parent_id === loc.id)) issues.push('structure à détailler');
@@ -186,10 +186,11 @@ export default function StockDashboard({ surface = 'management' }) {
     };
     const getLocationNameIssues = (name) => {
         const normalizedName = String(name || '').trim().toLowerCase();
+        const compactSlot = /^[a-z]\d+$/i.test(normalizedName);
         const ambiguousPrefixWords = vagueLocationWords.filter(word => word !== 'zone');
         const issues = [];
         if (!normalizedName) issues.push('Nom obligatoire');
-        if (normalizedName && normalizedName.length < 3) issues.push('Nom trop court');
+        if (normalizedName && normalizedName.length < 3 && !compactSlot) issues.push('Nom trop court');
         if (vagueLocationWords.includes(normalizedName)) issues.push('Nom trop vague');
         if (ambiguousPrefixWords.some(word => normalizedName === word || normalizedName.startsWith(`${word} `))) issues.push('Précisez le rack, casier ou usage réel');
         return issues;
@@ -999,6 +1000,7 @@ export default function StockDashboard({ surface = 'management' }) {
     // interne actif — convention alignée sur le backfill de la migration
     // d'ancrage des réservations.
     const internalLocations = locations.filter(l => l.usage === 'internal');
+    const operationTargetLocations = internalLocations.filter(location => getLocationQuality(location).exploitable);
     const defaultWorkshopSourceLocation = internalLocations.find(l => l.name === 'WH/Stock')?.name || internalLocations[0]?.name || 'WH/Stock';
     const effectiveWorkshopSourceLocation = workshopSourceLocation || defaultWorkshopSourceLocation;
 
@@ -1686,6 +1688,26 @@ export default function StockDashboard({ surface = 'management' }) {
             .sort((a, b) => a.locationName.localeCompare(b.locationName));
     };
 
+    const getProductZoningSummary = (product) => {
+        const stockRows = getProductLocationRows(product);
+        const exploitableRows = stockRows.filter(row => getLocationQuality(row.location).exploitable);
+        const primaryRow = [...stockRows].sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0))[0] || null;
+        const indicativeLocations = [
+            ...new Set((product?.variants || [])
+                .map(variant => String(variant.location || '').trim())
+                .filter(Boolean)),
+        ];
+        return {
+            primaryRow,
+            stockRows,
+            realLocationCount: new Set(stockRows.map(row => row.location_id)).size,
+            exploitableCount: new Set(exploitableRows.map(row => row.location_id)).size,
+            hasUnclearStock: stockRows.some(row => !getLocationQuality(row.location).exploitable),
+            hasConfiguredTarget: indicativeLocations.length > 0,
+            indicativeLocations,
+        };
+    };
+
     const getProductMovements = (product) => {
         const variantIds = new Set((product?.variants || []).map(variant => variant.id));
         return transactions
@@ -2138,9 +2160,11 @@ export default function StockDashboard({ surface = 'management' }) {
         : 0;
     const inventoryPageMenus = ['catalog', 'stock', 'services', 'drafts'];
     const isInventoryPage = inventoryPageMenus.includes(currentMenu);
+    const effectiveViewMode = currentMenu === 'catalog' ? 'list' : viewMode;
     const selectedProduct = products.find(product => product.id === selectedProductId);
     const selectedProductSummary = selectedProduct ? getProductSummary(selectedProduct) : null;
     const selectedProductLocationRows = selectedProduct ? getProductLocationRows(selectedProduct) : [];
+    const selectedProductZoning = selectedProduct ? getProductZoningSummary(selectedProduct) : null;
     const selectedProductPrimaryLocations = selectedProductLocationRows
         .filter(row => Number(row.quantity || 0) > 0)
         .sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0))
@@ -2470,18 +2494,18 @@ export default function StockDashboard({ surface = 'management' }) {
                                     className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-11 pr-4 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500/30 placeholder-slate-400"
                                 />
                             </div>
-                            {isInventoryPage && (
+                            {isInventoryPage && currentMenu !== 'catalog' && (
                                 <div className="flex items-center bg-slate-50 rounded-xl p-1 border border-slate-200">
                                     <button
                                         onClick={() => setViewMode('list')}
-                                        className={`px-3 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'list' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                                        className={`px-3 py-2 rounded-lg flex items-center justify-center transition-all ${effectiveViewMode === 'list' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
                                         title="Vue liste"
                                     >
                                         <List className="w-4 h-4" />
                                     </button>
                                     <button
                                         onClick={() => setViewMode('kanban')}
-                                        className={`px-3 py-2 rounded-lg flex items-center justify-center transition-all ${viewMode === 'kanban' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                                        className={`px-3 py-2 rounded-lg flex items-center justify-center transition-all ${effectiveViewMode === 'kanban' ? 'bg-white shadow border border-slate-200 text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
                                         title="Vue cartes"
                                     >
                                         <LayoutGrid className="w-4 h-4" />
@@ -3226,19 +3250,53 @@ export default function StockDashboard({ surface = 'management' }) {
                                         <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-5">
                                             <div className="flex flex-wrap items-start justify-between gap-4">
                                                 <div>
-                                                    <p className="text-[10px] uppercase tracking-widest font-black text-blue-700">Repère atelier</p>
-                                                    <h3 className="mt-1 text-lg font-black text-slate-950">Où prendre cet article en premier ?</h3>
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-blue-700">Zonage article</p>
+                                                    <h3 className="mt-1 text-lg font-black text-slate-950">Où ranger et où prendre cet article ?</h3>
                                                     <p className="mt-1 text-sm font-bold text-slate-600">
-                                                        Affichage par chemin complet pour éviter les ambiguïtés entre magasin, rack et casier.
+                                                        Le réel vient des mouvements stock. Le repère cible se configure sur les variantes.
                                                     </p>
                                                 </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setCurrentMenu('locations')}
-                                                    className="rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-black text-blue-700 hover:bg-blue-50"
-                                                >
-                                                    Gérer le plan
-                                                </button>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {stockPermissions.qualifyCatalog && selectedProduct.variants?.[0] && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(event) => openEditVariant(event, selectedProduct.variants[0])}
+                                                            className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white hover:bg-blue-500"
+                                                        >
+                                                            Configurer zonage
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setCurrentMenu('locations')}
+                                                        className="rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-black text-blue-700 hover:bg-blue-50"
+                                                    >
+                                                        Gérer le plan
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                                                <div className="rounded-2xl border border-white bg-white p-4">
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Emplacements réels</p>
+                                                    <p className="mt-2 text-3xl font-black text-slate-950">{selectedProductZoning.realLocationCount}</p>
+                                                    <p className="text-xs font-bold text-slate-500">zone(s) contenant du stock</p>
+                                                </div>
+                                                <div className="rounded-2xl border border-white bg-white p-4">
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Exploitables atelier</p>
+                                                    <p className="mt-2 text-3xl font-black text-emerald-700">{selectedProductZoning.exploitableCount}</p>
+                                                    <p className="text-xs font-bold text-slate-500">rack, casier ou zone atelier</p>
+                                                </div>
+                                                <div className={`rounded-2xl border p-4 ${selectedProductZoning.hasConfiguredTarget ? 'border-blue-100 bg-white' : 'border-amber-200 bg-amber-50'}`}>
+                                                    <p className={`text-[10px] uppercase tracking-widest font-black ${selectedProductZoning.hasConfiguredTarget ? 'text-blue-700' : 'text-amber-700'}`}>Cible fiche</p>
+                                                    <p className="mt-2 text-sm font-black text-slate-950 break-words">
+                                                        {selectedProductZoning.indicativeLocations[0] || 'À configurer'}
+                                                    </p>
+                                                    <p className="mt-1 text-xs font-bold text-slate-500">
+                                                        {selectedProductZoning.indicativeLocations.length > 1
+                                                            ? `${selectedProductZoning.indicativeLocations.length} repères selon variante`
+                                                            : 'emplacement cible indicatif'}
+                                                    </p>
+                                                </div>
                                             </div>
                                             {selectedProductHasUnclearLocation && (
                                                 <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4">
@@ -4260,13 +4318,14 @@ export default function StockDashboard({ surface = 'management' }) {
                         </div>
                     )}
 
-                    {viewMode === 'list' && groupedData.length > 0 && (
+                    {effectiveViewMode === 'list' && groupedData.length > 0 && (
                         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-50/80 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-10">
                                     <tr>
-                                        <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest w-2/5">Article</th>
+                                        <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest w-[34%]">Article</th>
                                         <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Fournisseur</th>
+                                        <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Zonage</th>
                                         <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Statut</th>
                                         <th className="py-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Stock total</th>
                                         <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Action</th>
@@ -4278,6 +4337,7 @@ export default function StockDashboard({ surface = 'management' }) {
                                         const draftProduct = isDraftProduct(product);
                                         const catalogQuality = getCatalogQuality(product);
                                         const catalogSource = getCatalogSource(product);
+                                        const zoningSummary = getProductZoningSummary(product);
                                         const totalProductStock = variants.reduce((sum, variant) => sum + Number(variant.stockToDisplay || 0), 0);
                                         const statusMeta = CATALOG_STATUS_META[String(product.catalog_status || (draftProduct ? 'DRAFT' : 'ACTIVE')).toUpperCase()] || CATALOG_STATUS_META.ACTIVE;
                                         return (
@@ -4328,6 +4388,48 @@ export default function StockDashboard({ surface = 'management' }) {
                                                             <span className="bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg text-xs uppercase tracking-wide font-black border border-slate-200">{product.supplier}</span>
                                                         ) : (
                                                             <span className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-1.5 text-xs font-black text-amber-700">À renseigner</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="py-4 px-4">
+                                                        {inventoryFocus === 'services' ? (
+                                                            <span className="text-xs font-bold text-slate-400">Non stocké</span>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => openProductDetail(e, product)}
+                                                                className={`max-w-[280px] rounded-xl border px-3 py-2 text-left transition-colors ${
+                                                                    zoningSummary.hasUnclearStock
+                                                                        ? 'border-red-200 bg-red-50 hover:bg-red-100'
+                                                                        : zoningSummary.primaryRow
+                                                                            ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100'
+                                                                            : zoningSummary.hasConfiguredTarget
+                                                                                ? 'border-blue-200 bg-blue-50 hover:bg-blue-100'
+                                                                                : 'border-amber-200 bg-amber-50 hover:bg-amber-100'
+                                                                }`}
+                                                            >
+                                                                <span className={`block text-[9px] uppercase tracking-widest font-black ${
+                                                                    zoningSummary.hasUnclearStock
+                                                                        ? 'text-red-700'
+                                                                        : zoningSummary.primaryRow
+                                                                            ? 'text-emerald-700'
+                                                                            : zoningSummary.hasConfiguredTarget
+                                                                                ? 'text-blue-700'
+                                                                                : 'text-amber-700'
+                                                                }`}>
+                                                                    {zoningSummary.hasUnclearStock
+                                                                        ? 'À clarifier'
+                                                                        : zoningSummary.primaryRow
+                                                                            ? `${zoningSummary.realLocationCount} zone(s) réelle(s)`
+                                                                            : zoningSummary.hasConfiguredTarget
+                                                                                ? 'Cible configurée'
+                                                                                : 'Zonage absent'}
+                                                                </span>
+                                                                <span className="mt-1 block truncate text-xs font-black text-slate-900">
+                                                                    {zoningSummary.primaryRow?.locationName
+                                                                        || zoningSummary.indicativeLocations[0]
+                                                                        || 'Configurer emplacement cible'}
+                                                                </span>
+                                                            </button>
                                                         )}
                                                     </td>
                                                     <td className="py-4 px-4">
@@ -4390,7 +4492,7 @@ export default function StockDashboard({ surface = 'management' }) {
                                                     const variantTransactions = getVariantTransactions(v.variantId);
                                                     return (
                                                         <tr key={v.variantId} className="bg-slate-50/40 transition-colors border-l-4 border-l-blue-400">
-                                                            <td colSpan="5" className="py-0 px-0">
+                                                            <td colSpan="6" className="py-0 px-0">
                                                                 <div className="pl-24 pr-6 py-4 border-b border-slate-100/50 hover:bg-white transition-colors group/var">
                                                                     <div className="flex items-center justify-between">
                                                                         <div className="flex flex-col">
@@ -4504,7 +4606,7 @@ export default function StockDashboard({ surface = 'management' }) {
                         </div>
                     )}
 
-                    {viewMode === 'kanban' && groupedData.length > 0 && (
+                    {effectiveViewMode === 'kanban' && groupedData.length > 0 && (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
                             {groupedData.map(({ product, variants }) => {
                                 const totalStock = variants.reduce((acc, v) => acc + (v.stockToDisplay || 0), 0);
@@ -4762,9 +4864,8 @@ export default function StockDashboard({ surface = 'management' }) {
                                         value={transferData.targetLocId} onChange={e=>setTransferData({...transferData, targetLocId: e.target.value})}
                                     >
                                         <option value="">-- Choisir un rack, casier ou emplacement atelier --</option>
-                                        {locations.filter(l => l.usage === 'internal').map(l => (
+                                        {operationTargetLocations.map(l => (
                                             <option key={l.id} value={l.id} disabled={l.id === transferData.sourceLocId}>
-                                                {getLocationQuality(l).exploitable ? '✓ ' : '⚠ '}
                                                 {getFullLocationName(l)}
                                             </option>
                                         ))}
@@ -4928,9 +5029,8 @@ export default function StockDashboard({ surface = 'management' }) {
                                         value={receptionData.targetLocId} onChange={e=>setReceptionData({...receptionData, targetLocId: e.target.value})}
                                     >
                                         <option value="">- Choisir un rack, casier ou emplacement atelier -</option>
-                                        {locations.filter(l => l.usage === 'internal').map(l => (
+                                        {operationTargetLocations.map(l => (
                                             <option key={l.id} value={l.id}>
-                                                {getLocationQuality(l).exploitable ? '✓ ' : '⚠ '}
                                                 {getFullLocationName(l)}
                                             </option>
                                         ))}
@@ -8336,6 +8436,26 @@ function PhysicalInventoryView({
         const parent = locations.find(l => l.id === loc.parent_id);
         return parent ? `${getFullLocationName(parent)} > ${loc.name}` : loc.name;
     };
+    const vagueLocationWords = ['divers', 'stock', 'test', 'zone', 'autre', 'temp', 'temporary', 'vrac', 'inconnu', 'unknown'];
+    const getLocationRole = (loc) => {
+        const label = `${loc?.name || ''} ${getFullLocationName(loc || {})}`.toLowerCase();
+        if (loc?.usage === 'production' || label.includes('atelier') || label.includes('préparation') || label.includes('preparation')) return 'Zone atelier';
+        if (label.includes('casier') || label.includes('case') || label.includes('bac') || /\b[a-z]\d+\b/i.test(label)) return 'Casier final';
+        if (label.includes('rack') || label.includes('travée') || label.includes('travee') || label.includes('étag') || label.includes('etag')) return 'Rack';
+        return loc?.parent_id ? 'Zone parent' : 'Magasin';
+    };
+    const isInventoryReadyLocation = (loc) => {
+        if (!loc || loc.usage !== 'internal' || loc.is_active === false) return false;
+        const normalizedName = String(loc.name || '').trim().toLowerCase();
+        const firstWord = normalizedName.split(' ')[0];
+        const compactSlot = /^[a-z]\d+$/i.test(normalizedName);
+        const role = getLocationRole(loc);
+        const hasChildren = locations.some(child => child.parent_id === loc.id && child.is_active !== false);
+        if (!normalizedName) return false;
+        if (normalizedName.length < 3 && !compactSlot) return false;
+        if (vagueLocationWords.includes(normalizedName) || vagueLocationWords.filter(word => word !== 'zone').includes(firstWord)) return false;
+        return ['Rack', 'Casier final', 'Zone atelier'].includes(role) || hasChildren;
+    };
     const { data: inventoryUsers = [] } = useQuery({
         queryKey: ['inventory-users'],
         queryFn: async () => {
@@ -8374,8 +8494,9 @@ function PhysicalInventoryView({
     });
 
     const internalLocations = locations.filter(location => location.usage === 'internal' && location.is_active !== false);
+    const inventoryReadyLocations = internalLocations.filter(isInventoryReadyLocation);
     const selectedNewSessionLocation = internalLocations.find(location => String(location.id) === String(newSession.location_id));
-    const canCreateSession = canValidate && !busy && Boolean(newSession.name.trim()) && Boolean(newSession.location_id);
+    const canCreateSession = canValidate && !busy && Boolean(newSession.name.trim()) && Boolean(newSession.location_id) && isInventoryReadyLocation(selectedNewSessionLocation);
     const selectedSession = sessions.find(session => session.id === selectedSessionId)
         || initialSessions.find(session => session.id === selectedSessionId)
         || sessions[0]
@@ -8879,18 +9000,20 @@ function PhysicalInventoryView({
                                 disabled={!canValidate || busy}
                             >
                                 <option value="">Choisir une zone physique à compter</option>
-                                {internalLocations.map(location => (
+                                {inventoryReadyLocations.map(location => (
                                     <option key={location.id} value={location.id}>{getFullLocationName(location)}</option>
                                 ))}
                             </select>
-                            {internalLocations.length === 0 ? (
+                            {inventoryReadyLocations.length === 0 ? (
                                 <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-black text-red-700">
-                                    Créez d'abord au moins un emplacement interne actif dans le référentiel des zones.
+                                    Créez d'abord au moins une zone interne claire dans le référentiel des zones.
                                 </div>
                             ) : (
                                 <div className={`rounded-xl border px-3 py-2 text-[11px] font-black ${selectedNewSessionLocation ? 'border-amber-100 bg-amber-50 text-amber-700' : 'border-slate-100 bg-slate-50 text-slate-500'}`}>
                                     {selectedNewSessionLocation
-                                        ? `${getFullLocationName(selectedNewSessionLocation)} sera gelé jusqu'à validation ou annulation.`
+                                        ? isInventoryReadyLocation(selectedNewSessionLocation)
+                                            ? `${getFullLocationName(selectedNewSessionLocation)} sera gelé jusqu'à validation ou annulation.`
+                                            : "Cette zone doit être clarifiée avant comptage."
                                         : "Sélectionnez l'emplacement réel à isoler pour le comptage."}
                                 </div>
                             )}

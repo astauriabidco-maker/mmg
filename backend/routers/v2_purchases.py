@@ -18,7 +18,7 @@ from backend import models
 from backend.core import security, uploads
 from backend.core.events import _send_smtp_email
 from backend.services.stock_service import InventoryService
-from backend.services.stock_reservations import active_reserved_quantity, physical_quantity_all_internal
+from backend.services.stock_reservations import active_reserved_quantity
 from backend.services.document_sequences import next_number
 from ..core.time import utcnow
 
@@ -829,13 +829,7 @@ def _location_role(db: Session, location: models.StockLocation) -> str:
     return "Zone parent" if location.parent_id else "Magasin"
 
 
-def _assert_receipt_target_exploitable(db: Session, location_id: int) -> models.StockLocation:
-    location = db.query(models.StockLocation).filter_by(id=location_id, is_active=True).first()
-    if not location:
-        raise HTTPException(status_code=400, detail="Emplacement de réception introuvable ou archivé.")
-    if location.usage not in {"internal", "production"}:
-        raise HTTPException(status_code=400, detail="La réception fournisseur doit cibler un emplacement physique interne.")
-
+def _location_quality_issues(db: Session, location: models.StockLocation) -> list[str]:
     name = (location.name or "").strip().lower()
     first_word = name.split(" ", 1)[0] if name else ""
     compact_slot = len(name) >= 2 and name[0].isalpha() and name[1:].isdigit()
@@ -849,7 +843,68 @@ def _assert_receipt_target_exploitable(db: Session, location_id: int) -> models.
         issues.append("nom trop vague")
     if role in {"Magasin", "Zone parent"}:
         issues.append("rack, casier ou zone atelier à préciser")
+    return issues
 
+
+def _is_exploitable_stock_location(db: Session, location: models.StockLocation | None) -> bool:
+    return bool(
+        location
+        and location.is_active
+        and location.usage == "internal"
+        and not _location_quality_issues(db, location)
+    )
+
+
+def _stock_quantities_by_location_quality(db: Session, variant_id: int) -> dict:
+    rows = (
+        db.query(models.StockQuant)
+        .join(models.StockLocation, models.StockQuant.location_id == models.StockLocation.id)
+        .filter(
+            models.StockQuant.variant_id == variant_id,
+            models.StockLocation.usage == "internal",
+            models.StockLocation.is_active == True,
+        )
+        .all()
+    )
+    exploitable = 0.0
+    unclear = 0.0
+    unclear_locations = []
+    exploitable_locations = set()
+    for quant in rows:
+        quantity = float(quant.quantity or 0)
+        if quantity == 0:
+            continue
+        location = quant.location
+        if _is_exploitable_stock_location(db, location):
+            exploitable += quantity
+            if location:
+                exploitable_locations.add(location.id)
+        else:
+            unclear += quantity
+            if location:
+                unclear_locations.append({
+                    "location_id": location.id,
+                    "location_name": _location_full_name(db, location),
+                    "quantity": quantity,
+                    "issues": _location_quality_issues(db, location),
+                })
+    return {
+        "physical_quantity": exploitable + unclear,
+        "exploitable_quantity": exploitable,
+        "unclear_quantity": unclear,
+        "exploitable_locations_count": len(exploitable_locations),
+        "unclear_locations": unclear_locations[:5],
+    }
+
+
+def _assert_receipt_target_exploitable(db: Session, location_id: int) -> models.StockLocation:
+    location = db.query(models.StockLocation).filter_by(id=location_id, is_active=True).first()
+    if not location:
+        raise HTTPException(status_code=400, detail="Emplacement de réception introuvable ou archivé.")
+    if location.usage not in {"internal", "production"}:
+        raise HTTPException(status_code=400, detail="La réception fournisseur doit cibler un emplacement physique interne.")
+
+    issues = _location_quality_issues(db, location)
     if issues:
         detail = ", ".join(issues)
         raise HTTPException(
@@ -895,7 +950,15 @@ def _open_purchase_request_quantity_by_variant(db: Session) -> dict[int, float]:
             requested[line.variant_id] = requested.get(line.variant_id, 0.0) + quantity
     return requested
 
-def _need_priority(available_quantity: float, min_threshold: float, net_need_quantity: float) -> str:
+def _need_priority(
+    available_quantity: float,
+    min_threshold: float,
+    net_need_quantity: float,
+    *,
+    requires_location_clarification: bool = False,
+) -> str:
+    if net_need_quantity <= 0 and requires_location_clarification:
+        return "TO_PLAN"
     if net_need_quantity <= 0:
         return "COVERED"
     if available_quantity <= 0:
@@ -910,6 +973,8 @@ def _need_origins(
     min_threshold: float,
     incoming_purchase_quantity: float,
     open_request_quantity: float = 0.0,
+    unclear_stock_quantity: float = 0.0,
+    supplier_lead_time_days: Optional[int] = None,
 ) -> list[str]:
     origins = []
     if available_quantity <= 0:
@@ -918,10 +983,14 @@ def _need_origins(
         origins.append("UNDER_MIN_THRESHOLD")
     if reserved_quantity > 0:
         origins.append("ACTIVE_RESERVATIONS")
+    if unclear_stock_quantity > 0:
+        origins.append("UNCLEAR_STOCK_LOCATION")
     if incoming_purchase_quantity > 0:
         origins.append("OPEN_PURCHASE_ORDER")
     if open_request_quantity > 0:
         origins.append("OPEN_PURCHASE_REQUEST")
+    if supplier_lead_time_days and supplier_lead_time_days >= 14:
+        origins.append("LONG_SUPPLIER_LEAD_TIME")
     return origins
 
 def _need_reason(
@@ -931,9 +1000,14 @@ def _need_reason(
     min_threshold: float,
     incoming_purchase_quantity: float,
     open_request_quantity: float = 0.0,
+    unclear_stock_quantity: float = 0.0,
+    supplier_lead_time_days: Optional[int] = None,
+    requires_location_clarification: bool = False,
 ) -> str:
     parts = []
-    if priority == "CRITICAL":
+    if requires_location_clarification and priority != "COVERED":
+        parts.append("Stock existant à clarifier avant achat")
+    elif priority == "CRITICAL":
         parts.append("Disponible nul ou négatif")
     elif priority == "URGENT":
         parts.append("Disponible sous seuil mini")
@@ -943,12 +1017,16 @@ def _need_reason(
         parts.append("Disponible proche du seuil")
     if reserved_quantity > 0:
         parts.append(f"{reserved_quantity:g} unité(s) déjà réservée(s)")
+    if unclear_stock_quantity > 0:
+        parts.append(f"{unclear_stock_quantity:g} unité(s) dans zone à clarifier")
     if incoming_purchase_quantity > 0:
         parts.append(f"{incoming_purchase_quantity:g} unité(s) déjà commandée(s)")
     if open_request_quantity > 0:
         parts.append(f"{open_request_quantity:g} unité(s) en demande d'achat")
     if min_threshold > 0:
         parts.append(f"seuil {min_threshold:g}")
+    if supplier_lead_time_days and supplier_lead_time_days >= 14:
+        parts.append(f"délai fournisseur {supplier_lead_time_days} j")
     return " · ".join(parts)
 
 def _recommend_purchase_quantity(
@@ -1011,30 +1089,48 @@ def get_procurement_needs(
         if not product:
             continue
         min_threshold = float(variant.min_threshold or 0)
-        physical_quantity = physical_quantity_all_internal(db, variant)
+        stock_quality = _stock_quantities_by_location_quality(db, variant.id)
+        physical_quantity = float(stock_quality["physical_quantity"])
+        exploitable_physical_quantity = float(stock_quality["exploitable_quantity"])
+        unclear_stock_quantity = float(stock_quality["unclear_quantity"])
         reserved_quantity = active_reserved_quantity(db, variant.id)
-        available_quantity = max(physical_quantity - reserved_quantity, 0.0)
+        available_quantity = max(exploitable_physical_quantity - reserved_quantity, 0.0)
+        total_available_quantity = max(physical_quantity - reserved_quantity, 0.0)
         incoming_purchase_quantity = float(incoming_by_variant.get(variant.id, 0.0))
         open_request_quantity = float(open_requests_by_variant.get(variant.id, 0.0))
-
-        is_near_threshold = min_threshold > 0 and available_quantity <= min_threshold * 1.25
-        if available_quantity > 0 and not is_near_threshold:
-            continue
-        if min_threshold <= 0 and available_quantity > 0:
-            continue
-        gross_need_quantity = max((min_threshold * 2 if min_threshold > 0 else 1.0) - available_quantity, 0.0)
-        net_need_quantity = max(gross_need_quantity - incoming_purchase_quantity - open_request_quantity, 0.0)
-        if net_need_quantity <= 0 and not include_covered:
-            continue
-
         supplier_name = (product.supplier or "").strip()
         supplier = suppliers.get(supplier_name.upper()) if supplier_name else None
+        supplier_lead_time_days = supplier.lead_time_days if supplier else None
+
+        is_near_threshold = min_threshold > 0 and available_quantity <= min_threshold * 1.25
+        target_quantity = min_threshold * 2 if min_threshold > 0 else 1.0
+        gross_need_quantity = max(target_quantity - available_quantity, 0.0)
+        gross_need_after_unclear_stock = max(target_quantity - total_available_quantity, 0.0)
+        requires_location_clarification = unclear_stock_quantity > 0 and gross_need_quantity > gross_need_after_unclear_stock
+        if available_quantity > 0 and not is_near_threshold and not requires_location_clarification:
+            continue
+        if min_threshold <= 0 and available_quantity > 0 and not requires_location_clarification:
+            continue
+        net_need_quantity = max(gross_need_after_unclear_stock - incoming_purchase_quantity - open_request_quantity, 0.0)
+        if net_need_quantity <= 0 and not include_covered and not requires_location_clarification:
+            continue
+
         supplier_status = supplier.supplier_status if supplier else None
         is_supplier_blocked = supplier_status == "BLOCKED" or bool(supplier and not supplier.is_active)
-        is_orderable = bool(supplier_name) and supplier is not None and not is_supplier_blocked and net_need_quantity > 0
-        priority = _need_priority(available_quantity, min_threshold, net_need_quantity)
-        suggested_quantity = _recommend_purchase_quantity(
+        is_orderable = (
+            bool(supplier_name)
+            and supplier is not None
+            and not is_supplier_blocked
+            and net_need_quantity > 0
+        )
+        priority = _need_priority(
             available_quantity,
+            min_threshold,
+            net_need_quantity,
+            requires_location_clarification=requires_location_clarification,
+        )
+        suggested_quantity = _recommend_purchase_quantity(
+            total_available_quantity,
             min_threshold,
             incoming_purchase_quantity,
             open_request_quantity,
@@ -1046,6 +1142,8 @@ def get_procurement_needs(
             blocked_reason = "Fournisseur absent du référentiel fournisseurs."
         elif is_supplier_blocked:
             blocked_reason = "Fournisseur bloqué."
+        elif requires_location_clarification and net_need_quantity <= 0:
+            blocked_reason = "Stock potentiellement disponible dans une zone à clarifier."
         else:
             blocked_reason = None
 
@@ -1061,8 +1159,12 @@ def get_procurement_needs(
             "supplier_id": supplier.id if supplier else None,
             "supplier_status": supplier_status,
             "supplier_category": supplier.supplier_category if supplier else None,
-            "supplier_lead_time_days": supplier.lead_time_days if supplier else None,
+            "supplier_lead_time_days": supplier_lead_time_days,
             "physical_quantity": physical_quantity,
+            "exploitable_physical_quantity": exploitable_physical_quantity,
+            "unclear_stock_quantity": unclear_stock_quantity,
+            "unclear_locations": stock_quality["unclear_locations"],
+            "total_available_quantity": total_available_quantity,
             "reserved_quantity": reserved_quantity,
             "available_quantity": available_quantity,
             "min_threshold": min_threshold,
@@ -1078,6 +1180,8 @@ def get_procurement_needs(
                 min_threshold,
                 incoming_purchase_quantity,
                 open_request_quantity,
+                unclear_stock_quantity,
+                supplier_lead_time_days,
             ),
             "reason": _need_reason(
                 priority,
@@ -1086,12 +1190,17 @@ def get_procurement_needs(
                 min_threshold,
                 incoming_purchase_quantity,
                 open_request_quantity,
+                unclear_stock_quantity,
+                supplier_lead_time_days,
+                requires_location_clarification,
             ),
             "is_orderable": is_orderable,
             "blocked_reason": blocked_reason,
             "recommended_action": (
                 "Créer bon fournisseur"
                 if is_orderable
+                else "Clarifier emplacement stock"
+                if requires_location_clarification
                 else "Suivre réception fournisseur"
                 if net_need_quantity <= 0 and incoming_purchase_quantity > 0
                 else "Corriger référentiel fournisseur"
@@ -1099,8 +1208,8 @@ def get_procurement_needs(
                 else "Surveiller"
             ),
             "estimated_delivery_date": (
-                (utcnow() + timedelta(days=supplier.lead_time_days)).date().isoformat()
-                if supplier and supplier.lead_time_days
+                (utcnow() + timedelta(days=supplier_lead_time_days)).date().isoformat()
+                if supplier_lead_time_days
                 else None
             ),
         })

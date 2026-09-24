@@ -231,7 +231,12 @@ const normalizePurchaseNeeds = (payload, variants, suppliers) => {
             product_name: need.product_name || variant?.product_name || 'Article stock',
             supplier,
             supplier_status: supplierRecord?.supplier_status || null,
-            current_stock: Number(need.current_stock ?? need.available_stock ?? variant?.quantity_in_stock ?? 0),
+            current_stock: Number(need.current_stock ?? need.available_stock ?? need.available_quantity ?? variant?.quantity_in_stock ?? 0),
+            physical_quantity: Number(need.physical_quantity ?? 0),
+            exploitable_physical_quantity: Number(need.exploitable_physical_quantity ?? need.physical_quantity ?? 0),
+            unclear_stock_quantity: Number(need.unclear_stock_quantity ?? 0),
+            total_available_quantity: Number(need.total_available_quantity ?? need.available_quantity ?? 0),
+            unclear_locations: need.unclear_locations || [],
             reserved_stock: Number(need.reserved_stock ?? need.reserved_quantity ?? 0),
             min_threshold: Number(need.min_threshold ?? need.threshold ?? variant?.min_threshold ?? 0),
             incoming_purchase_quantity: Number(need.incoming_purchase_quantity ?? 0),
@@ -535,6 +540,7 @@ export default function PurchasesDashboard() {
         if (['Magasin', 'Zone parent'].includes(role)) issues.push('rack, casier ou zone atelier à préciser');
         return { role, exploitable: issues.length === 0 && ['Rack', 'Casier final', 'Zone atelier'].includes(role), issues, fullName: getFullLocationName(loc) };
     };
+    const exploitableReceiptLocations = locations.filter(location => getLocationQuality(location).exploitable);
     const selectedSupplier = suppliers.find(s => s.name === newPO.supplier);
     const poGrossTotal = newPO.lines.reduce((sum, line) => {
         const qty = parseFloat(line.quantity || 0);
@@ -1411,9 +1417,15 @@ export default function PurchasesDashboard() {
 
                                             <div className="flex justify-between items-center mb-2 bg-white rounded-lg p-2 border border-indigo-50">
                                                 <div className="text-center">
-                                                    <div className="text-[10px] font-bold text-slate-400 uppercase">Disponible</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase">Exploitable</div>
                                                     <div className="font-black text-red-500">{rec.current_stock}</div>
                                                 </div>
+                                                {rec.unclear_stock_quantity > 0 && (
+                                                    <div className="text-center">
+                                                        <div className="text-[10px] font-bold text-amber-500 uppercase">À clarifier</div>
+                                                        <div className="font-black text-amber-600">{rec.unclear_stock_quantity}</div>
+                                                    </div>
+                                                )}
                                                 <div className="text-center">
                                                     <div className="text-[10px] font-bold text-slate-400 uppercase">À commander</div>
                                                     <div className="font-black text-indigo-600">+{rec.suggested_quantity}</div>
@@ -2171,14 +2183,11 @@ export default function PurchasesDashboard() {
                                         className={`w-full bg-slate-50 border rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 ${receiveTargetQuality && !receiveTargetQuality.exploitable ? 'border-red-300 text-red-700' : 'border-slate-200'}`}
                                     >
                                         <option value="">Choisir un rack, casier ou emplacement atelier</option>
-                                        {locations.map(l => {
-                                            const quality = getLocationQuality(l);
-                                            return (
-                                                <option key={l.id} value={l.id}>
-                                                    {quality.exploitable ? '✓ ' : '⚠ '} {quality.fullName}
-                                                </option>
-                                            );
-                                        })}
+                                        {exploitableReceiptLocations.map(l => (
+                                            <option key={l.id} value={l.id}>
+                                                {getFullLocationName(l)}
+                                            </option>
+                                        ))}
                                     </select>
                                     {receiveTargetQuality && (
                                         <p className={`mt-3 text-sm font-bold ${receiveTargetQuality.exploitable ? 'text-emerald-700' : 'text-red-700'}`}>
@@ -3993,8 +4002,13 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
                                                             )}
                                                         </div>
                                                         <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-center">
-                                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Disponible</p>
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Exploitable</p>
                                                             <p className="text-xl font-black text-slate-900">{need.current_stock.toLocaleString('fr-FR')}</p>
+                                                            {need.unclear_stock_quantity > 0 && (
+                                                                <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-amber-600">
+                                                                    {need.unclear_stock_quantity.toLocaleString('fr-FR')} à clarifier
+                                                                </p>
+                                                            )}
                                                         </div>
                                                         <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3 text-center">
                                                             <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Suggéré</p>

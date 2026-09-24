@@ -495,6 +495,90 @@ def _naive_utc(value: Optional[datetime]) -> Optional[datetime]:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+_VAGUE_LOCATION_WORDS = {
+    "divers",
+    "stock",
+    "test",
+    "zone",
+    "autre",
+    "temp",
+    "temporary",
+    "vrac",
+    "inconnu",
+    "unknown",
+}
+
+
+def _location_full_name(db: Session, location: models.StockLocation) -> str:
+    names = []
+    current = location
+    seen = set()
+    while current and current.id not in seen:
+        seen.add(current.id)
+        if current.name:
+            names.append(current.name)
+        current = db.query(models.StockLocation).filter_by(id=current.parent_id).first() if current.parent_id else None
+    return " > ".join(reversed(names))
+
+
+def _location_role(db: Session, location: models.StockLocation) -> str:
+    label = f"{location.name or ''} {_location_full_name(db, location)}".lower()
+    if location.usage == "production" or "atelier" in label or "préparation" in label or "preparation" in label:
+        return "Zone atelier"
+    if "casier" in label or "case" in label or "bac" in label:
+        return "Casier final"
+    if "rack" in label or "travée" in label or "travee" in label or "étag" in label or "etag" in label:
+        return "Rack"
+    last_segment = (location.name or "").split("/")[-1].strip().lower()
+    if len(last_segment) >= 2 and last_segment[0].isalpha() and last_segment[1:].isdigit():
+        return "Casier final"
+    return "Zone parent" if location.parent_id else "Magasin"
+
+
+def _location_quality_issues(db: Session, location: models.StockLocation, *, allow_structured_parent: bool = False) -> List[str]:
+    name = (location.name or "").strip().lower()
+    first_word = name.split(" ", 1)[0] if name else ""
+    compact_slot = len(name) >= 2 and name[0].isalpha() and name[1:].isdigit()
+    role = _location_role(db, location)
+    has_active_child = (
+        db.query(models.StockLocation.id)
+        .filter(models.StockLocation.parent_id == location.id, models.StockLocation.is_active == True)
+        .limit(1)
+        .first()
+        is not None
+    )
+    issues = []
+    if location.usage not in {"internal", "production"}:
+        issues.append("lieu virtuel")
+    if not name:
+        issues.append("nom absent")
+    if name and len(name) < 3 and not compact_slot:
+        issues.append("nom trop court")
+    if name in _VAGUE_LOCATION_WORDS or first_word in (_VAGUE_LOCATION_WORDS - {"zone"}):
+        issues.append("nom trop vague")
+    if role in {"Magasin", "Zone parent"} and not (allow_structured_parent and has_active_child):
+        issues.append("rack, casier ou zone atelier à préciser")
+    return issues
+
+
+def _assert_location_exploitable(
+    db: Session,
+    location: Optional[models.StockLocation],
+    *,
+    action_label: str,
+    allow_structured_parent: bool = False,
+) -> models.StockLocation:
+    if not location or not location.is_active:
+        raise HTTPException(status_code=400, detail=f"Emplacement introuvable ou archivé pour {action_label}.")
+    issues = _location_quality_issues(db, location, allow_structured_parent=allow_structured_parent)
+    if issues:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Emplacement non exploitable pour {action_label}: {', '.join(issues)}.",
+        )
+    return location
+
+
 def _zone_location_ids(db: Session, location_id: Optional[int]) -> List[int]:
     """Emplacements de la zone d'inventaire : cible + descendants.
 
@@ -536,6 +620,12 @@ def _assert_inventory_location_ready(db: Session, location_id: Optional[int]) ->
             status_code=400,
             detail="Une campagne d'inventaire doit cibler un emplacement physique interne.",
         )
+    _assert_location_exploitable(
+        db,
+        location,
+        action_label="inventaire physique",
+        allow_structured_parent=True,
+    )
     return location
 
 
@@ -1941,6 +2031,12 @@ def create_transaction(tx: schemas.StockMoveCreate, background_tasks: Background
         raise HTTPException(
             status_code=400,
             detail="Motif obligatoire pour un ajustement manuel d'inventaire.",
+        )
+    if dest_loc and dest_loc.usage in {"internal", "production"} and not is_manual_inventory_adjustment:
+        _assert_location_exploitable(
+            db,
+            dest_loc,
+            action_label="entrée ou transfert stock",
         )
     try:
         result = InventoryService.move_stock(
