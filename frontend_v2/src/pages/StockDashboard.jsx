@@ -2534,47 +2534,6 @@ export default function StockDashboard({ surface = 'management' }) {
                     </div>
                 </div>
 
-                {!isDashboardSurface && (
-                    <div className="border-t border-slate-100 bg-white px-6 py-3">
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-slate-400">Sous-menus gestion stock</p>
-                            <p className="text-xs font-bold text-slate-400">Parcours, priorités, référentiel et contrôle</p>
-                        </div>
-                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-6">
-                            {stockNavGroups.flatMap(group => group.items.map(item => ({ ...item, group: group.label }))).map((item) => {
-                                const SubIcon = item.Icon;
-                                const isActive = currentMenu === item.key;
-                                return (
-                                    <button
-                                        key={`stock-menu-${item.key}`}
-                                        type="button"
-                                        onClick={item.onClick}
-                                        className={`flex min-h-[56px] items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors ${
-                                            isActive
-                                                ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
-                                                : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-blue-200 hover:bg-blue-50/50'
-                                        }`}
-                                    >
-                                        <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                                            isActive ? 'bg-white/10 text-white' : 'bg-white text-slate-500 shadow-sm'
-                                        }`}>
-                                            <SubIcon className="h-4 w-4" />
-                                        </span>
-                                        <span className="min-w-0 flex-1">
-                                            <span className="block truncate text-xs font-black">{item.label}</span>
-                                            <span className={`block truncate text-[10px] font-black uppercase tracking-wider ${isActive ? 'text-white/60' : 'text-slate-400'}`}>{item.group}</span>
-                                        </span>
-                                        {typeof item.count === 'number' && item.count > 0 && (
-                                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${isActive ? 'bg-white text-slate-900' : 'bg-slate-200 text-slate-700'}`}>
-                                                {item.count}
-                                            </span>
-                                        )}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                )}
             </div>
 
             {/* MAIN CONTENT : GRID / AUDIT */}

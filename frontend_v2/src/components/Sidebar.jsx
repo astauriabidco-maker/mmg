@@ -3,7 +3,8 @@ import { Link, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive,
     ShoppingCart, Truck, Users, UserCircle, FileText, BarChart3, CalendarDays,
-    UserRoundCheck, ChevronDown, Factory
+    UserRoundCheck, ArrowRight, AlertTriangle, Package, MapPin, Layers,
+    ClipboardCheck, Download, TrendingUp, ChevronDown, Factory
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { canAccessManagerView } from '../utils/roleNavigation';
@@ -41,6 +42,13 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                     icon: Factory,
                     type: 'internal',
                     matchViews: ['dashboard', 'orders', 'workshop_supervisor', 'live', 'analytics_atelier'],
+                    subItems: [
+                        { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+                        { id: 'orders', label: 'Suivi commandes', icon: ClipboardList },
+                        { id: 'workshop_supervisor', label: "Chef d'atelier", icon: Users },
+                        { id: 'live', label: 'Atelier live', icon: Activity },
+                        { id: 'analytics_atelier', label: 'Analyse & perf.', icon: BarChart3 },
+                    ],
                 },
             ]
         },
@@ -70,6 +78,21 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                     icon: Archive,
                     type: 'internal',
                     anyPermission: ['STOCK_VIEW', 'inventory.approve_value'],
+                    subItems: [
+                        { id: 'management-home', label: 'Parcours', icon: LayoutDashboard },
+                        { id: 'workshop', label: 'Débit atelier', icon: ArrowRight },
+                        { id: 'todo', label: 'À traiter', icon: AlertTriangle },
+                        { id: 'risk', label: 'Stock à risque', icon: AlertTriangle },
+                        { id: 'catalog', label: 'Catalogue', icon: Package },
+                        { id: 'stock', label: 'Stock réel', icon: MapPin },
+                        { id: 'services', label: 'Prestations', icon: FileText },
+                        { id: 'drafts', label: 'Brouillons', icon: FileText },
+                        { id: 'locations', label: 'Zones & emplacements', icon: MapPin },
+                        { id: 'audit', label: 'Mouvements', icon: Layers },
+                        { id: 'physical-inventory', label: 'Inventaire physique', icon: ClipboardCheck },
+                        { id: 'import-export', label: 'Import / Export', icon: Download },
+                        { id: 'valuation', label: 'Valorisation', icon: TrendingUp, anyPermission: ['inventory.approve_value'] },
+                    ],
                 },
                 { id: 'purchases', label: 'Achats & Appro', icon: ShoppingCart, type: 'internal', permission: 'PURCHASES_VIEW' },
                 { id: 'logistics', label: 'Logistique & Expédition', icon: Truck, type: 'internal' },
