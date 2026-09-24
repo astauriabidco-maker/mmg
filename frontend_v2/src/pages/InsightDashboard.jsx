@@ -5,7 +5,8 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
-export default function InsightDashboard() {
+export default function InsightDashboard({ mode = 'page' }) {
+    const isDrawer = mode === 'drawer';
     const [messages, setMessages] = useState([
         { 
             id: 1, 
@@ -122,27 +123,27 @@ export default function InsightDashboard() {
     };
 
     return (
-        <div className="p-8 h-[calc(100vh-80px)] flex flex-col max-w-5xl mx-auto">
-            <div className="mb-6 flex justify-between items-center shrink-0">
+        <div className={`${isDrawer ? 'h-full p-4' : 'h-[calc(100vh-80px)] p-8'} flex w-full flex-col`}>
+            <div className={`${isDrawer ? 'mb-4' : 'mb-6'} flex justify-between items-center shrink-0`}>
                 <div>
-                    <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2">
-                        <Sparkles className="w-6 h-6 text-indigo-500" />
+                    <h2 className={`${isDrawer ? 'text-xl' : 'text-2xl'} font-black text-slate-800 flex items-center gap-2`}>
+                        <Sparkles className={`${isDrawer ? 'h-5 w-5' : 'h-6 w-6'} text-indigo-500`} />
                         Insight Engine
                     </h2>
-                    <p className="text-slate-500">Posez vos questions métiers en langage naturel, l'IA génère les analyses.</p>
+                    <p className={`${isDrawer ? 'text-sm' : ''} text-slate-500`}>Posez vos questions métiers en langage naturel, l'IA génère les analyses.</p>
                 </div>
             </div>
 
-            <div className="flex-1 bg-white border border-slate-200 rounded-3xl shadow-xl flex flex-col overflow-hidden">
-                <div className="flex-1 p-6 overflow-y-auto space-y-6 bg-slate-50">
+            <div className={`${isDrawer ? 'rounded-2xl shadow-sm' : 'rounded-3xl shadow-xl'} flex-1 bg-white border border-slate-200 flex flex-col overflow-hidden`}>
+                <div className={`${isDrawer ? 'p-4 space-y-4' : 'p-6 space-y-6'} flex-1 overflow-y-auto bg-slate-50`}>
                     {messages.map(msg => (
                         <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`flex max-w-[80%] ${msg.sender === 'user' ? 'flex-row-reverse' : 'flex-row'} items-end gap-3`}>
-                                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-md ${msg.sender === 'user' ? 'bg-slate-800' : 'bg-indigo-600'}`}>
-                                    {msg.sender === 'user' ? <User className="w-5 h-5 text-white" /> : <Bot className="w-5 h-5 text-white" />}
+                            <div className={`flex ${isDrawer ? 'max-w-[92%]' : 'max-w-[80%]'} ${msg.sender === 'user' ? 'flex-row-reverse' : 'flex-row'} items-end gap-3`}>
+                                <div className={`${isDrawer ? 'h-8 w-8' : 'h-10 w-10'} rounded-full flex items-center justify-center shrink-0 shadow-md ${msg.sender === 'user' ? 'bg-slate-800' : 'bg-indigo-600'}`}>
+                                    {msg.sender === 'user' ? <User className={`${isDrawer ? 'h-4 w-4' : 'h-5 w-5'} text-white`} /> : <Bot className={`${isDrawer ? 'h-4 w-4' : 'h-5 w-5'} text-white`} />}
                                 </div>
                                 <div className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
-                                    <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed ${
+                                    <div className={`${isDrawer ? 'p-3' : 'p-4'} rounded-2xl shadow-sm text-sm leading-relaxed ${
                                         msg.sender === 'user' 
                                             ? 'bg-slate-800 text-white rounded-br-sm' 
                                             : 'bg-white text-slate-700 border border-slate-100 rounded-bl-sm'
@@ -171,14 +172,14 @@ export default function InsightDashboard() {
                     <div ref={messagesEndRef} />
                 </div>
 
-                <div className="p-4 bg-white border-t border-slate-200 shrink-0">
-                    <form onSubmit={handleSend} className="relative max-w-4xl mx-auto">
+                <div className={`${isDrawer ? 'p-3' : 'p-4'} bg-white border-t border-slate-200 shrink-0`}>
+                    <form onSubmit={handleSend} className="relative">
                         <input 
                             type="text" 
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             placeholder="Ex: Quel est le CA de la semaine ?"
-                            className="w-full bg-slate-100 text-slate-800 font-medium rounded-full py-4 pl-6 pr-14 outline-none focus:ring-2 focus:ring-indigo-500 transition-all border border-transparent focus:border-indigo-300 focus:bg-white"
+                            className={`${isDrawer ? 'py-3 pl-4' : 'py-4 pl-6'} w-full bg-slate-100 text-slate-800 font-medium rounded-full pr-14 outline-none focus:ring-2 focus:ring-indigo-500 transition-all border border-transparent focus:border-indigo-300 focus:bg-white`}
                             disabled={loading}
                         />
                         <button 

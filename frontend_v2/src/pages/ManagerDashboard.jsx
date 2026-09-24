@@ -243,20 +243,33 @@ export default function ManagerDashboard() {
                 {/* CUTTING OPTIMIZER MODAL */}
                 {cuttingModalOpen && <CuttingOptimizerModal onClose={() => setCuttingModalOpen(false)} />}
 
-                {/* FLOATING INSIGHT MODAL */}
+                {/* INSIGHT CHAT DRAWER */}
                 {insightModalOpen && (
-                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                        <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col relative animate-fade-in border border-slate-200">
-                            <button 
-                                onClick={() => setInsightModalOpen(false)}
-                                className="absolute top-4 right-4 z-10 w-10 h-10 bg-white/80 backdrop-blur-md rounded-full flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors shadow-sm"
-                            >
-                                <X className="w-6 h-6" />
-                            </button>
-                            <div className="h-[80vh]">
-                                <InsightDashboard />
+                    <div className="fixed inset-0 z-[100]">
+                        <button
+                            type="button"
+                            aria-label="Fermer l'assistant IA"
+                            onClick={() => setInsightModalOpen(false)}
+                            className="absolute inset-0 bg-slate-950/30 backdrop-blur-[2px]"
+                        />
+                        <aside className="absolute right-0 top-0 flex h-full w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl animate-fade-in sm:w-[520px] xl:w-[560px]">
+                            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+                                <div>
+                                    <p className="text-[10px] font-black uppercase tracking-[0.28em] text-indigo-500">Assistant IA</p>
+                                    <h2 className="text-lg font-black text-slate-950">Insight Engine</h2>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setInsightModalOpen(false)}
+                                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
+                                >
+                                    <X className="h-5 w-5" />
+                                </button>
                             </div>
-                        </div>
+                            <div className="min-h-0 flex-1">
+                                <InsightDashboard mode="drawer" />
+                            </div>
+                        </aside>
                     </div>
                 )}
             </main>
