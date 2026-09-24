@@ -2345,6 +2345,7 @@ export default function StockDashboard({ surface = 'management' }) {
     const surfaceSubtitle = isDashboardSurface
         ? 'Voir les priorités, alertes, réservations et inventaires à traiter.'
         : currentStockPage.subtitle;
+    const showStockSearch = !isDashboardSurface && ['catalog', 'stock', 'services', 'drafts'].includes(currentMenu);
     const switchStockSurface = (targetSurface) => {
         if (targetSurface === surface) return;
         const targetView = targetSurface === 'dashboard' ? 'stock_dashboard' : 'stock';
@@ -2381,6 +2382,7 @@ export default function StockDashboard({ surface = 'management' }) {
             : null,
         'import-export': { label: 'Importer un fichier', onClick: () => setShowImportModal(true), Icon: Download },
     })[currentMenu] : null;
+    const PrimaryActionIcon = stockPrimaryAction?.Icon;
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
@@ -2431,7 +2433,7 @@ export default function StockDashboard({ surface = 'management' }) {
                                     onClick={stockPrimaryAction.onClick}
                                     className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-black text-white shadow-sm hover:bg-slate-800"
                                 >
-                                    <stockPrimaryAction.Icon className="h-4 w-4" />
+                                    {PrimaryActionIcon && <PrimaryActionIcon className="h-4 w-4" />}
                                     {stockPrimaryAction.label}
                                 </button>
                             )}
@@ -2451,7 +2453,7 @@ export default function StockDashboard({ surface = 'management' }) {
                                     Gestion
                                 </button>
                             </div>
-                            <div className={`${isDashboardSurface ? 'hidden' : 'relative'} w-full max-w-lg`}>
+                            <div className={`${showStockSearch ? 'relative' : 'hidden'} w-full max-w-lg`}>
                                 <Search className="w-4 h-4 text-slate-400 absolute left-4 top-3.5" />
                                 <input
                                     type="text"
@@ -2488,10 +2490,11 @@ export default function StockDashboard({ surface = 'management' }) {
                             )}
                             <button
                                 onClick={() => queryClient.invalidateQueries()}
+                                title="Actualiser"
                                 className="px-3 py-2.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-all flex items-center justify-center gap-2 font-black text-sm border border-slate-200 bg-white"
                             >
                                 <RefreshCw className="w-4 h-4" />
-                                <span className="hidden sm:inline">Actualiser</span>
+                                <span className="hidden xl:inline">Actualiser</span>
                             </button>
                         </div>
                     </div>
@@ -6696,59 +6699,61 @@ function StockManagementHome({
 
     return (
         <section className="px-6 pb-3">
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 px-1">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
                     <div>
                         <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Accueil gestion stock</p>
-                        <h3 className="text-lg font-black text-slate-950">Priorité atelier : traiter le débit, puis utiliser les outils stock.</h3>
+                        <h3 className="text-base font-black text-slate-950">Priorité atelier : traiter le débit, puis utiliser les outils stock.</h3>
                     </div>
                     <p className="text-xs font-bold text-slate-500">Lecture simple : action principale → outils → audit</p>
                 </div>
 
-                <div className="grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_300px]">
                     <button
                         type="button"
                         onClick={onWorkshop}
                         disabled={!canUseWorkshop}
-                        className={`group overflow-hidden rounded-3xl border text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg ${
+                        className={`group overflow-hidden rounded-2xl border text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${
                             canUseWorkshop
-                                ? 'border-amber-200 bg-gradient-to-br from-amber-50 via-orange-50 to-white text-amber-950'
+                                ? 'border-amber-200 bg-amber-50 text-amber-950'
                                 : 'border-slate-200 bg-white text-slate-400'
                         }`}
                     >
-                        <div className="flex flex-col gap-5 p-6 lg:flex-row lg:items-stretch lg:justify-between">
+                        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_240px] lg:items-stretch">
                             <div className="min-w-0 flex-1">
-                                <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-amber-500 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-white shadow-sm">
+                                <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-amber-500 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-white shadow-sm">
                                     <ArrowRight className="h-3.5 w-3.5" />
                                     Départ atelier
                                 </div>
-                                <h4 className="text-3xl font-black leading-tight text-slate-950">Commencer par le débit atelier</h4>
-                                <p className="mt-2 max-w-2xl text-sm font-bold text-slate-600">
+                                <h4 className="text-2xl font-black leading-tight text-slate-950">Commencer par le débit atelier</h4>
+                                <p className="mt-1.5 max-w-2xl text-sm font-bold leading-relaxed text-slate-600">
                                     L’opérateur importe le bon de débit, prépare la matière, remet à l’atelier puis consomme uniquement au débit réel.
                                 </p>
-                                <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                                <div className="mt-4 grid gap-2 md:grid-cols-4">
                                     {workshopSteps.map(([step, title, detail]) => (
-                                        <div key={step} className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm">
-                                            <p className="text-[10px] font-black uppercase tracking-widest text-amber-600">Étape {step}</p>
-                                            <p className="mt-1 font-black text-slate-950">{title}</p>
-                                            <p className="mt-1 text-[11px] font-bold text-slate-500">{detail}</p>
+                                        <div key={step} className="rounded-xl border border-amber-100 bg-white px-3 py-2.5 shadow-sm">
+                                            <div className="flex items-center gap-2">
+                                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-black text-amber-700">{step}</span>
+                                                <p className="font-black text-slate-950">{title}</p>
+                                            </div>
+                                            <p className="mt-1.5 text-xs font-bold leading-snug text-slate-500">{detail}</p>
                                         </div>
                                     ))}
                                 </div>
                             </div>
-                            <div className="flex min-w-[220px] flex-col justify-between rounded-2xl border border-amber-200 bg-white p-5">
+                            <div className="flex flex-col justify-between rounded-2xl border border-amber-200 bg-white p-4">
                                 <div>
                                     <p className="text-[10px] font-black uppercase tracking-widest text-amber-600">File en cours</p>
-                                    <p className="mt-2 text-5xl font-black text-amber-900">{Number(reservationsCount || 0).toLocaleString('fr-FR')}</p>
+                                    <p className="mt-1 text-4xl font-black text-amber-900">{Number(reservationsCount || 0).toLocaleString('fr-FR')}</p>
                                     <p className="text-xs font-black uppercase tracking-widest text-amber-700">réservation(s) ouverte(s)</p>
                                 </div>
-                                <span className="mt-5 inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white group-hover:bg-amber-600">
+                                <span className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-black text-white group-hover:bg-amber-600">
                                     Ouvrir débit atelier
                                     <ArrowRight className="h-4 w-4" />
                                 </span>
                             </div>
                         </div>
-                        <div className="border-t border-amber-100 bg-white/55 px-6 py-4">
+                        <div className="border-t border-amber-100 bg-white/70 px-5 py-3">
                             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                                 <div>
                                     <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-700">File guidée</p>
@@ -6761,7 +6766,7 @@ function StockManagementHome({
                                 )}
                             </div>
                             {guidedReservations.length > 0 ? (
-                                <div className="grid gap-2 lg:grid-cols-3">
+                                <div className="grid gap-2 xl:grid-cols-3">
                                     {guidedReservations.map(({ reservation, preparation, totalReserved, nextAction, tone, contextOk }) => {
                                         const toneClass = {
                                             amber: 'bg-amber-50 text-amber-800 border-amber-200',
@@ -6770,7 +6775,7 @@ function StockManagementHome({
                                             slate: 'bg-slate-50 text-slate-700 border-slate-200',
                                         }[tone];
                                         return (
-                                            <div key={reservation.id || reservation.reference} className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
+                                            <div key={reservation.id || reservation.reference} className="rounded-xl border border-amber-100 bg-white p-3 shadow-sm">
                                                 <div className="flex items-start justify-between gap-3">
                                                     <div className="min-w-0">
                                                         <p className="truncate text-sm font-black text-slate-950">
@@ -6784,7 +6789,7 @@ function StockManagementHome({
                                                         {nextAction}
                                                     </span>
                                                 </div>
-                                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                                <div className="mt-2 flex flex-wrap gap-1.5">
                                                     <span className={`rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-wide ${
                                                         contextOk ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
                                                     }`}>
@@ -6799,10 +6804,9 @@ function StockManagementHome({
                                                         </span>
                                                     )}
                                                 </div>
-                                                <div className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
-                                                    <p className="text-[11px] font-bold text-slate-400">Cliquez pour ouvrir la file atelier complète.</p>
-                                                    <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white">
-                                                        Traiter ce débit
+                                                <div className="mt-3 flex items-center justify-end border-t border-slate-100 pt-3">
+                                                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white">
+                                                        Traiter
                                                         <ArrowRight className="h-3.5 w-3.5" />
                                                     </span>
                                                 </div>
@@ -6826,11 +6830,11 @@ function StockManagementHome({
                                 slate: 'border-slate-200 bg-white text-slate-900',
                             }[tone];
                             return (
-                                <div key={label} className={`rounded-2xl border p-4 ${toneClass}`}>
-                                    <div className="flex items-end justify-between gap-3">
+                                <div key={label} className={`rounded-2xl border px-4 py-3 ${toneClass}`}>
+                                    <div className="flex items-center justify-between gap-3">
                                         <div>
                                             <p className="text-[10px] font-black uppercase tracking-widest opacity-60">{label}</p>
-                                            <p className="mt-1 text-3xl font-black">{Number(value || 0).toLocaleString('fr-FR')}</p>
+                                            <p className="mt-1 text-2xl font-black">{Number(value || 0).toLocaleString('fr-FR')}</p>
                                         </div>
                                         <p className="max-w-[150px] text-right text-xs font-bold opacity-70">{detail}</p>
                                     </div>
@@ -6840,14 +6844,14 @@ function StockManagementHome({
                     </div>
                 </div>
 
-                <div className="mt-4">
+                <div className="mt-3">
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
                         <div>
                             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Outils stock</p>
-                            <p className="text-sm font-bold text-slate-600">À ouvrir seulement quand il faut gérer le catalogue, contrôler, compter ou auditer.</p>
+                            <p className="text-xs font-bold text-slate-600">À ouvrir quand il faut gérer le catalogue, contrôler, compter ou auditer.</p>
                         </div>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
                         {secondaryCards.map(card => {
                         const Icon = card.Icon;
                         const active = (activeKeys[card.key] || [card.key]).includes(currentMenu);
@@ -6856,25 +6860,25 @@ function StockManagementHome({
                                 key={card.key}
                                 type="button"
                                 onClick={card.onClick}
-                                className={`rounded-2xl border bg-white p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
+                                className={`rounded-xl border bg-white p-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm ${
                                     active ? `${toneClasses[card.tone]} ring-2 ring-slate-900/10` : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
                                 }`}
                             >
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
-                                        <p className="truncate text-sm font-black">{card.title}</p>
-                                        <p className="mt-1 min-h-[36px] text-xs font-bold opacity-70">{card.detail}</p>
+                                        <p className="text-sm font-black leading-snug">{card.title}</p>
+                                        <p className="mt-1 text-xs font-bold leading-snug opacity-70">{card.detail}</p>
                                     </div>
                                     <span className="rounded-xl bg-white/70 p-2 shadow-sm">
                                         <Icon className="h-4 w-4" />
                                     </span>
                                 </div>
-                                <div className="mt-4 flex items-end justify-between gap-3">
+                                <div className="mt-3 flex items-end justify-between gap-3">
                                     <div>
                                         <p className="text-2xl font-black">{Number(card.metric || 0).toLocaleString('fr-FR')}</p>
                                         <p className="text-[10px] font-black uppercase tracking-widest opacity-60">{card.suffix}</p>
                                     </div>
-                                    <span className="rounded-xl bg-slate-950 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white">
+                                    <span className="rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white">
                                         {card.action}
                                     </span>
                                 </div>
