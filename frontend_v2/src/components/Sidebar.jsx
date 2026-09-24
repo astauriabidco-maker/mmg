@@ -4,7 +4,7 @@ import {
     LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive,
     ShoppingCart, Truck, Users, UserCircle, FileText, BarChart3, CalendarDays,
     UserRoundCheck, ArrowRight, AlertTriangle, Package, MapPin, Layers,
-    ClipboardCheck, Download, TrendingUp, ChevronDown
+    ClipboardCheck, Download, TrendingUp, ChevronDown, Factory
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { canAccessManagerView } from '../utils/roleNavigation';
@@ -36,11 +36,19 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
         {
             title: 'Atelier & Production',
             items: [
-                { id: 'dashboard', label: 'Tableau de Bord', icon: LayoutDashboard, type: 'internal' },
-                { id: 'orders', label: 'Suivi Commandes', icon: ClipboardList, type: 'internal' },
-                { id: 'workshop_supervisor', label: "Chef d'atelier", icon: Users, type: 'internal' },
-                { id: 'live', label: 'Atelier Live', icon: Activity, type: 'internal' },
-                { id: 'analytics_atelier', label: 'Analyse & Perf.', icon: BarChart3, type: 'internal' },
+                {
+                    id: 'atelier-production',
+                    label: 'Atelier & Production',
+                    icon: Factory,
+                    type: 'internal',
+                    subItems: [
+                        { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+                        { id: 'orders', label: 'Suivi commandes', icon: ClipboardList },
+                        { id: 'workshop_supervisor', label: "Chef d'atelier", icon: Users },
+                        { id: 'live', label: 'Atelier live', icon: Activity },
+                        { id: 'analytics_atelier', label: 'Analyse & perf.', icon: BarChart3 },
+                    ],
+                },
             ]
         },
         {
@@ -138,8 +146,12 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                 </h3>
                                 <nav className="space-y-1">
                                     {category.items.filter(canAccess).map((item) => {
-                                        const isSelected = activeView === item.id;
                                         const hasSubItems = item.subItems?.some(canAccessSubItem);
+                                        const isSubViewSelected = hasSubItems && item.subItems.some(subItem => {
+                                            if (item.id === 'stock') return activeView === 'stock';
+                                            return activeView === (subItem.view || subItem.id);
+                                        });
+                                        const isSelected = activeView === item.id || isSubViewSelected;
                                         const isExpanded = Boolean(expandedMenus[item.id]);
                                         const content = (
                                             <>
@@ -203,13 +215,20 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                                         <div className="mt-2 ml-4 max-h-[42vh] space-y-0.5 overflow-y-auto border-l border-slate-700/70 pl-3 pr-1">
                                                             {item.subItems.filter(canAccessSubItem).map((subItem) => {
                                                                 const SubIcon = subItem.icon;
-                                                                const isSubSelected = activeStockMenu === subItem.id;
+                                                                const targetView = item.id === 'stock' ? 'stock' : (subItem.view || subItem.id);
+                                                                const targetSearch = item.id === 'stock'
+                                                                    ? `view=stock&stockMenu=${subItem.id}`
+                                                                    : `view=${targetView}`;
+                                                                const isSubSelected = item.id === 'stock'
+                                                                    ? activeStockMenu === subItem.id
+                                                                    : activeView === targetView;
                                                                 return (
                                                                     <Link
                                                                         key={subItem.id}
-                                                                        to={`/manager?view=stock&stockMenu=${subItem.id}`}
-                                                                        state={{ view: 'stock', stockMenu: subItem.id }}
+                                                                        to={`/manager?${targetSearch}`}
+                                                                        state={item.id === 'stock' ? { view: 'stock', stockMenu: subItem.id } : { view: targetView }}
                                                                         onClick={() => {
+                                                                            if (setActiveView) setActiveView(targetView);
                                                                             if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
                                                                         }}
                                                                         className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] font-black transition-colors ${

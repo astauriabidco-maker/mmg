@@ -52,21 +52,22 @@ export default function ManagerDashboard() {
     const sidebarActiveView = activeView === 'sale-detail'
         ? (saleDetailSource === 'crm' ? 'crm' : 'sales')
         : activeView;
-    const headerTitle = activeView === 'dashboard' ? 'Vue d\'Ensemble' :
-        activeView === 'live' ? 'Atelier Live' :
-            activeView === 'workshop_supervisor' ? 'Chef d\'atelier' :
-            activeView === 'orders' ? 'Suivi Commandes' :
-                activeView === 'schedule' ? 'Planning & Agenda' :
-                activeView === 'stock_dashboard' ? 'Pilotage Stock' :
-                activeView === 'stock' ? 'Gestion de Stock' :
-                    activeView === 'purchases' ? 'Achats & Appro' :
-                        activeView === 'sale-detail' ? 'Dossier métier client' :
-                            activeView === 'sales' ? 'Commandes signées & exécution' :
-                            activeView === 'crm' ? 'CRM Avant-vente' :
-                                activeView === 'accounting' ? 'Facturation clients' :
-                                    activeView === 'logistics' ? 'Logistique & Expéditions' :
-                                        activeView === 'analytics_atelier' ? 'Performance Atelier' :
-                                            activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration';
+    const headerTitle = activeView === 'atelier-production' ? 'Atelier & Production' :
+        activeView === 'dashboard' ? 'Vue d\'Ensemble' :
+            activeView === 'live' ? 'Atelier Live' :
+                activeView === 'workshop_supervisor' ? 'Chef d\'atelier' :
+                    activeView === 'orders' ? 'Suivi Commandes' :
+                        activeView === 'schedule' ? 'Planning & Agenda' :
+                            activeView === 'stock_dashboard' ? 'Pilotage Stock' :
+                                activeView === 'stock' ? 'Gestion de Stock' :
+                                    activeView === 'purchases' ? 'Achats & Appro' :
+                                        activeView === 'sale-detail' ? 'Dossier métier client' :
+                                            activeView === 'sales' ? 'Commandes signées & exécution' :
+                                            activeView === 'crm' ? 'CRM Avant-vente' :
+                                                activeView === 'accounting' ? 'Facturation clients' :
+                                                    activeView === 'logistics' ? 'Logistique & Expéditions' :
+                                                        activeView === 'analytics_atelier' ? 'Performance Atelier' :
+                                                            activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration';
     const handleViewChange = (view) => {
         if (!canAccessManagerView(user, view)) return;
         setActiveView(view);
@@ -220,6 +221,7 @@ export default function ManagerDashboard() {
 
                 {/* View Container */}
                 <div className="manager-view-shell p-0 sm:p-4 xl:p-8">
+                    {activeView === 'atelier-production' && renderAtelierProductionView()}
                     {activeView === 'dashboard' && renderDashboardView()}
                     {activeView === 'live' && renderLiveView()}
                     {activeView === 'workshop_supervisor' && <WorkshopSupervisorView />}
@@ -260,6 +262,149 @@ export default function ManagerDashboard() {
             </main>
         </div>
     );
+
+    function renderAtelierProductionView() {
+        const activeOrders = trackingOrders.filter(order => !['DONE', 'READY', 'DELIVERED'].includes(order.status)).length;
+        const issueOrders = trackingOrders.filter(order => ['ISSUE', 'DEFECT'].includes(order.status)).length;
+        const activeStations = stations.length;
+        const modules = [
+            {
+                id: 'dashboard',
+                title: 'Tableau de bord',
+                subtitle: 'Synthèse direction, activité et rendement.',
+                metric: `${kpi.active_dossiers || stats.active || 0}`,
+                metricLabel: 'dossier(s) actifs',
+                icon: BarChart3,
+                tone: 'blue',
+            },
+            {
+                id: 'orders',
+                title: 'Suivi commandes',
+                subtitle: 'Piloter les commandes, statuts et dossiers.',
+                metric: `${activeOrders}`,
+                metricLabel: 'à suivre',
+                icon: Clock,
+                tone: 'amber',
+            },
+            {
+                id: 'workshop_supervisor',
+                title: "Chef d'atelier",
+                subtitle: 'Affecter, débloquer et contrôler les tâches.',
+                metric: `${issueOrders}`,
+                metricLabel: 'incident(s)',
+                icon: Users,
+                tone: issueOrders > 0 ? 'red' : 'emerald',
+            },
+            {
+                id: 'live',
+                title: 'Atelier live',
+                subtitle: 'Voir les files par poste en temps réel.',
+                metric: `${activeStations}`,
+                metricLabel: 'poste(s)',
+                icon: Activity,
+                tone: 'emerald',
+            },
+            {
+                id: 'analytics_atelier',
+                title: 'Analyse & perf.',
+                subtitle: 'Lire les temps, goulots et tendances.',
+                metric: `${workshopAnalytics?.summary?.completion_rate ?? kpi.yield_rate ?? 0}%`,
+                metricLabel: 'rendement',
+                icon: TrendingUp,
+                tone: 'slate',
+            },
+        ];
+        const toneClasses = {
+            blue: 'border-blue-200 bg-blue-50 text-blue-700',
+            amber: 'border-amber-200 bg-amber-50 text-amber-700',
+            red: 'border-red-200 bg-red-50 text-red-700',
+            emerald: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+            slate: 'border-slate-200 bg-slate-50 text-slate-700',
+        };
+
+        return (
+            <div className="mx-auto max-w-7xl space-y-6 pb-12 font-sans animate-fade-in">
+                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm shadow-slate-200/60">
+                    <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                        <div className="max-w-3xl">
+                            <p className="mb-2 text-[11px] font-black uppercase tracking-[0.35em] text-blue-500">Atelier & Production</p>
+                            <h2 className="text-3xl font-black tracking-tight text-slate-950">Piloter l'atelier depuis une seule entrée</h2>
+                            <p className="mt-2 text-base font-bold text-slate-500">
+                                Accès plein écran aux vues utiles : priorités, commandes, supervision, temps réel et performance.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => handleViewChange('orders')}
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-lg shadow-slate-200 transition-colors hover:bg-slate-800"
+                        >
+                            Suivre les commandes
+                            <ChevronRight className="h-4 w-4" />
+                        </button>
+                    </div>
+
+                    <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                        {modules.map((module) => {
+                            const Icon = module.icon;
+                            return (
+                                <button
+                                    key={module.id}
+                                    type="button"
+                                    onClick={() => handleViewChange(module.id)}
+                                    className="group flex min-h-[190px] flex-col rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg hover:shadow-slate-200/70"
+                                >
+                                    <div className="flex items-start justify-between gap-3">
+                                        <span className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border ${toneClasses[module.tone]}`}>
+                                            <Icon className="h-5 w-5" />
+                                        </span>
+                                        <ArrowUpRight className="h-4 w-4 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-blue-500" />
+                                    </div>
+                                    <div className="mt-5 flex-1">
+                                        <h3 className="text-lg font-black text-slate-950">{module.title}</h3>
+                                        <p className="mt-2 text-sm font-bold leading-5 text-slate-500">{module.subtitle}</p>
+                                    </div>
+                                    <div className="mt-5 border-t border-slate-100 pt-4">
+                                        <p className="text-2xl font-black text-slate-950">{module.metric}</p>
+                                        <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">{module.metricLabel}</p>
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </section>
+
+                <section className="grid gap-4 lg:grid-cols-3">
+                    <button
+                        type="button"
+                        onClick={() => handleViewChange('live')}
+                        className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-colors hover:border-blue-200"
+                    >
+                        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Temps réel</p>
+                        <h3 className="mt-2 text-xl font-black text-slate-950">Voir la charge par poste</h3>
+                        <p className="mt-2 text-sm font-bold text-slate-500">Stations, files d'attente, tâches actives et signaux de surcharge.</p>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => handleViewChange('workshop_supervisor')}
+                        className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-colors hover:border-blue-200"
+                    >
+                        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Supervision</p>
+                        <h3 className="mt-2 text-xl font-black text-slate-950">Débloquer les dossiers</h3>
+                        <p className="mt-2 text-sm font-bold text-slate-500">Actions chef d'atelier, affectations opérateurs et incidents à résoudre.</p>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => handleViewChange('analytics_atelier')}
+                        className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-colors hover:border-blue-200"
+                    >
+                        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Performance</p>
+                        <h3 className="mt-2 text-xl font-black text-slate-950">Mesurer les écarts</h3>
+                        <p className="mt-2 text-sm font-bold text-slate-500">Temps moyens, rendement atelier et tendances de production.</p>
+                    </button>
+                </section>
+            </div>
+        );
+    }
 
     function renderDashboardView() {
         const formatMoney = (v) => {
