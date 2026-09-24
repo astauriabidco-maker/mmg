@@ -2590,16 +2590,21 @@ export default function StockDashboard({ surface = 'management' }) {
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-2 max-h-32 overflow-y-auto pr-1">
+                        <div className="grid grid-cols-1 gap-2 md:grid-cols-3 xl:grid-cols-6">
                             <div
                                 onClick={() => {
                                     setActiveLocationId('global');
                                     setInventoryFocus('catalog');
                                 }}
-                                className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border ${activeLocationId === 'global' ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+                                className={`flex items-center gap-3 rounded-xl border p-3 cursor-pointer transition-all ${activeLocationId === 'global' ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
                             >
-                                <MapPin className={`w-5 h-5 ${activeLocationId === 'global' ? 'text-blue-600' : 'text-slate-400'}`} />
-                                <span className="font-black text-sm tracking-wide">Vue globale</span>
+                                <MapPin className={`h-4 w-4 ${activeLocationId === 'global' ? 'text-blue-600' : 'text-slate-400'}`} />
+                                <div className="min-w-0">
+                                    <p className="truncate text-sm font-black tracking-wide">Vue globale</p>
+                                    <p className="text-[10px] font-black uppercase tracking-widest opacity-60">
+                                        {Number(groupedData.length || 0).toLocaleString('fr-FR')} fiche(s)
+                                    </p>
+                                </div>
                             </div>
 
                             {addingSubLocTo === 'root' && (
@@ -2619,7 +2624,41 @@ export default function StockDashboard({ surface = 'management' }) {
                                 </div>
                             )}
 
-                            {locations.filter(l => !l.parent_id).map(rootLoc => renderLocationTree(rootLoc))}
+                            {internalRootLocations.slice(0, 10).map(rootLoc => {
+                                const descendantIds = getLocationDescendantIds(rootLoc.id);
+                                const stockLineCount = quants.filter(quant => descendantIds.includes(quant.location_id) && Number(quant.quantity || 0) !== 0).length;
+                                const isActive = activeLocationId === rootLoc.id;
+                                return (
+                                    <button
+                                        key={rootLoc.id}
+                                        type="button"
+                                        onClick={() => {
+                                            setActiveLocationId(rootLoc.id);
+                                            setInventoryFocus('stock');
+                                            setShowDraftOnly(false);
+                                            setSearchTerm('');
+                                        }}
+                                        className={`flex items-center gap-3 rounded-xl border p-3 text-left transition-all ${isActive ? 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+                                    >
+                                        <FolderOpen className={`h-4 w-4 shrink-0 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
+                                        <div className="min-w-0">
+                                            <p className="truncate text-sm font-black">{rootLoc.name}</p>
+                                            <p className="text-[10px] font-black uppercase tracking-widest opacity-60">
+                                                {Number(stockLineCount || 0).toLocaleString('fr-FR')} ligne(s)
+                                            </p>
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                            {internalRootLocations.length > 10 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowLocationManagerModal(true)}
+                                    className="rounded-xl border border-slate-200 bg-white p-3 text-left text-sm font-black text-slate-500 hover:bg-slate-50"
+                                >
+                                    +{internalRootLocations.length - 10} autre(s) zone(s)
+                                </button>
+                            )}
                         </div>
                     </div>
                 )}
@@ -6652,7 +6691,7 @@ function StockManagementHome({
     ];
     const guidedReservations = [...reservations]
         .sort((a, b) => new Date(a.created_at || a.updated_at || 0) - new Date(b.created_at || b.updated_at || 0))
-        .slice(0, 3)
+        .slice(0, 1)
         .map(reservation => {
             const preparation = workshopPreparations.find(item => item.reservation_id === reservation.id);
             const totalReserved = reservation.lines?.reduce((sum, line) => sum + Number(line.reserved_quantity || 0), 0) || 0;
@@ -6708,7 +6747,7 @@ function StockManagementHome({
                     <p className="text-xs font-bold text-slate-500">Lecture simple : action principale → outils → audit</p>
                 </div>
 
-                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_300px]">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_260px]">
                     <button
                         type="button"
                         onClick={onWorkshop}
@@ -6719,22 +6758,22 @@ function StockManagementHome({
                                 : 'border-slate-200 bg-white text-slate-400'
                         }`}
                     >
-                        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_240px] lg:items-stretch">
+                        <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-stretch">
                             <div className="min-w-0 flex-1">
                                 <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-amber-500 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-white shadow-sm">
                                     <ArrowRight className="h-3.5 w-3.5" />
                                     Départ atelier
                                 </div>
-                                <h4 className="text-2xl font-black leading-tight text-slate-950">Commencer par le débit atelier</h4>
+                                <h4 className="text-xl font-black leading-tight text-slate-950">Commencer par le débit atelier</h4>
                                 <p className="mt-1.5 max-w-2xl text-sm font-bold leading-relaxed text-slate-600">
                                     L’opérateur importe le bon de débit, prépare la matière, remet à l’atelier puis consomme uniquement au débit réel.
                                 </p>
-                                <div className="mt-4 grid gap-2 md:grid-cols-4">
+                                <div className="mt-4 grid gap-2 md:grid-cols-2 2xl:grid-cols-4">
                                     {workshopSteps.map(([step, title, detail]) => (
                                         <div key={step} className="rounded-xl border border-amber-100 bg-white px-3 py-2.5 shadow-sm">
                                             <div className="flex items-center gap-2">
                                                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-black text-amber-700">{step}</span>
-                                                <p className="font-black text-slate-950">{title}</p>
+                                                <p className="truncate text-sm font-black text-slate-950">{title}</p>
                                             </div>
                                             <p className="mt-1.5 text-xs font-bold leading-snug text-slate-500">{detail}</p>
                                         </div>
@@ -6753,11 +6792,11 @@ function StockManagementHome({
                                 </span>
                             </div>
                         </div>
-                        <div className="border-t border-amber-100 bg-white/70 px-5 py-3">
+                        <div className="border-t border-amber-100 bg-white/70 px-4 py-3">
                             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                                 <div>
                                     <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-700">File guidée</p>
-                                    <p className="text-sm font-bold text-slate-600">Prochains bons à traiter, avec la prochaine action visible.</p>
+                                    <p className="text-xs font-bold text-slate-600">Prochain bon à traiter, avec la prochaine action visible.</p>
                                 </div>
                                 {reservationsCount > guidedReservations.length && (
                                     <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-800">
@@ -6766,7 +6805,7 @@ function StockManagementHome({
                                 )}
                             </div>
                             {guidedReservations.length > 0 ? (
-                                <div className="grid gap-2 xl:grid-cols-3">
+                                <div className="grid gap-2">
                                     {guidedReservations.map(({ reservation, preparation, totalReserved, nextAction, tone, contextOk }) => {
                                         const toneClass = {
                                             amber: 'bg-amber-50 text-amber-800 border-amber-200',
@@ -6831,12 +6870,12 @@ function StockManagementHome({
                             }[tone];
                             return (
                                 <div key={label} className={`rounded-2xl border px-4 py-3 ${toneClass}`}>
-                                    <div className="flex items-center justify-between gap-3">
+                                    <div className="flex items-center justify-between gap-3 xl:flex-col xl:items-start">
                                         <div>
                                             <p className="text-[10px] font-black uppercase tracking-widest opacity-60">{label}</p>
                                             <p className="mt-1 text-2xl font-black">{Number(value || 0).toLocaleString('fr-FR')}</p>
                                         </div>
-                                        <p className="max-w-[150px] text-right text-xs font-bold opacity-70">{detail}</p>
+                                        <p className="max-w-[150px] text-right text-xs font-bold opacity-70 xl:text-left">{detail}</p>
                                     </div>
                                 </div>
                             );
