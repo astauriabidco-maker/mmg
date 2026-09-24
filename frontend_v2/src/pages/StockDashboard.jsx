@@ -7377,12 +7377,12 @@ function StockRiskView({
     };
 
     return (
-        <div className="w-full space-y-6">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div className="w-full space-y-4">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
                 <div>
                     <p className="text-[10px] font-black uppercase tracking-[0.24em] text-red-500">Pilotage intelligent stock</p>
-                    <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950">Stock à risque</h2>
-                    <p className="mt-2 max-w-3xl text-sm font-bold text-slate-500">
+                    <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950">Stock à risque</h2>
+                    <p className="mt-1 max-w-3xl text-sm font-bold text-slate-500">
                         Ruptures futures, seuils bas, fournisseurs bloquants, commandes entrantes et recommandations d'achat priorisées.
                     </p>
                 </div>
@@ -7398,56 +7398,24 @@ function StockRiskView({
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
                 <RiskMetric title="Critiques" value={summary.critical_count || criticalNeeds.length} tone="red" detail="Disponible nul ou négatif" />
                 <RiskMetric title="Sous seuil" value={summary.urgent_count || 0} tone="amber" detail="À sécuriser avant promesse" />
                 <RiskMetric title="Bloqués" value={summary.blocked_count || blockedNeeds.length} tone="rose" detail="Fournisseur absent/bloqué" />
                 <RiskMetric title="Couverts" value={summary.covered_count || coveredNeeds.length} tone="emerald" detail="Commande ou demande ouverte" />
                 <RiskMetric title="Délai long" value={longLeadTimeNeeds.length} tone="blue" detail="Fournisseur >= 14 jours" />
+                <RiskMetric title="À arbitrer" value={replenishmentQueue.length} tone="emerald" detail="Ligne(s) achat" />
             </div>
 
-            <section className="overflow-hidden rounded-3xl border border-emerald-200 bg-white shadow-sm">
-                <div className="grid gap-4 bg-gradient-to-r from-emerald-50 via-white to-blue-50 p-5 xl:grid-cols-[1fr_320px] xl:items-center">
-                    <div>
-                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-emerald-600">Réapprovisionnement guidé</p>
-                        <h3 className="mt-1 text-2xl font-black text-slate-950">Transformer les manques en demandes d’achat claires</h3>
-                        <p className="mt-2 max-w-3xl text-sm font-bold text-slate-600">
-                            Le système part du besoin net, vérifie fournisseur et couverture existante, puis propose une demande d’achat traçable.
+            <section className="rounded-2xl border border-blue-200 bg-blue-50/70 p-3 shadow-sm">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                    <div className="min-w-0">
+                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-700">Demandes groupées</p>
+                        <p className="mt-1 text-sm font-bold text-blue-900/70">
+                            Sélectionner les lignes prêtes, puis créer une demande par fournisseur.
                         </p>
                     </div>
-                    <div className="rounded-2xl border border-emerald-200 bg-white p-4">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">File achat à traiter</p>
-                        <div className="mt-2 flex items-end justify-between gap-3">
-                            <p className="text-4xl font-black text-emerald-700">{replenishmentQueue.length}</p>
-                            <p className="pb-1 text-right text-xs font-black uppercase tracking-widest text-slate-400">ligne(s)<br />à arbitrer</p>
-                        </div>
-                    </div>
-                </div>
-                <div className="grid gap-3 border-t border-emerald-100 bg-white p-5 md:grid-cols-4">
-                    {[
-                        ['1', 'Identifier', 'Référence, fournisseur, seuil et stock disponible.'],
-                        ['2', 'Calculer', 'Besoin net = seuil/réservation - stock couvert.'],
-                        ['3', 'Décider', 'Créer demande achat ou corriger la fiche bloquante.'],
-                        ['4', 'Suivre', 'Commande, réception puis rangement en emplacement clair.'],
-                    ].map(([step, title, detail]) => (
-                        <div key={step} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Étape {step}</p>
-                            <p className="mt-1 font-black text-slate-950">{title}</p>
-                            <p className="mt-1 text-xs font-bold text-slate-500">{detail}</p>
-                        </div>
-                    ))}
-                </div>
-            </section>
-
-            <section className="rounded-3xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
-                <div className="grid gap-4 xl:grid-cols-[1fr_360px] xl:items-center">
-                    <div>
-                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-700">Demandes d’achat groupées</p>
-                        <h3 className="mt-1 text-xl font-black text-slate-950">Sélectionner plusieurs besoins prêts, puis créer une demande par fournisseur</h3>
-                        <p className="mt-2 text-sm font-bold text-blue-900/70">
-                            Seules les lignes non bloquées, avec fournisseur actif et quantité positive, peuvent être groupées.
-                        </p>
-                        <div className="mt-4 flex flex-wrap gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                             <button
                                 type="button"
                                 onClick={selectAllOrderableNeeds}
@@ -7474,38 +7442,19 @@ function StockRiskView({
                                     + {plan.supplier}
                                 </button>
                             ))}
-                        </div>
-                    </div>
-                    <div className="rounded-2xl border border-blue-200 bg-white p-4">
-                        <div className="flex items-end justify-between gap-3">
-                            <div>
-                                <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Sélection</p>
-                                <p className="mt-1 text-4xl font-black text-blue-700">{selectedNeeds.length}</p>
-                            </div>
-                            <p className="pb-1 text-right text-xs font-black uppercase tracking-widest text-slate-400">
-                                {Object.keys(selectedGroups).length} fournisseur(s)
-                            </p>
-                        </div>
-                        {selectedNeeds.length > 0 && (
-                            <div className="mt-3 space-y-1 border-t border-slate-100 pt-3">
-                                {Object.values(selectedGroups).slice(0, 4).map(group => (
-                                    <div key={group.supplier} className="flex items-center justify-between gap-2 text-xs font-bold text-slate-600">
-                                        <span className="truncate">{group.supplier}</span>
-                                        <span>{group.lines} l. · {formatQty(group.quantity)}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+                        <span className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-black text-blue-700">
+                            {selectedNeeds.length} ligne(s) · {Object.keys(selectedGroups).length} fournisseur(s)
+                        </span>
                         <button
                             type="button"
                             onClick={submitGroupedSelection}
                             disabled={!canCreatePurchaseRequest || selectedNeeds.length === 0 || groupPurchaseRequestSaving}
-                            className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500"
+                            className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-black text-white shadow-sm hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500"
                         >
-                            {groupPurchaseRequestSaving ? 'Création groupée...' : 'Créer demandes groupées'}
+                            {groupPurchaseRequestSaving ? 'Création...' : 'Créer demandes'}
                         </button>
                         {!canCreatePurchaseRequest && (
-                            <p className="mt-2 text-xs font-bold text-amber-600">Permission achats requise.</p>
+                            <p className="text-xs font-bold text-amber-600">Permission achats requise.</p>
                         )}
                     </div>
                 </div>
@@ -7696,9 +7645,9 @@ function RiskMetric({ title, value, detail, tone }) {
         blue: 'border-blue-200 bg-blue-50 text-blue-700',
     }[tone] || 'border-slate-200 bg-white text-slate-700';
     return (
-        <div className={`rounded-2xl border p-5 shadow-sm ${toneClass}`}>
+        <div className={`rounded-2xl border px-4 py-3 shadow-sm ${toneClass}`}>
             <p className="text-[10px] font-black uppercase tracking-widest opacity-80">{title}</p>
-            <p className="mt-2 text-3xl font-black">{Number(value || 0).toLocaleString('fr-FR')}</p>
+            <p className="mt-1 text-2xl font-black">{Number(value || 0).toLocaleString('fr-FR')}</p>
             <p className="mt-1 text-xs font-bold opacity-80">{detail}</p>
         </div>
     );
