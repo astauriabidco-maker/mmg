@@ -11,7 +11,7 @@ export default function InsightDashboard({ mode = 'page' }) {
         { 
             id: 1, 
             sender: 'ai', 
-            text: "Bonjour ! Je suis l'Insight Engine de MMG. Posez-moi des questions sur le **chiffre d'affaires**, les **produits vendus** ou la **production**.",
+            text: "Bonjour, je suis **Aya**, votre copilote MMG. Posez-moi des questions sur le **chiffre d'affaires**, le **stock**, les **achats** ou la **production**.",
             widget: null
         }
     ]);
@@ -128,9 +128,9 @@ export default function InsightDashboard({ mode = 'page' }) {
                 <div>
                     <h2 className={`${isDrawer ? 'text-xl' : 'text-2xl'} font-black text-slate-800 flex items-center gap-2`}>
                         <Sparkles className={`${isDrawer ? 'h-5 w-5' : 'h-6 w-6'} text-indigo-500`} />
-                        Insight Engine
+                        Aya
                     </h2>
-                    <p className={`${isDrawer ? 'text-sm' : ''} text-slate-500`}>Posez vos questions métiers en langage naturel, l'IA génère les analyses.</p>
+                    <p className={`${isDrawer ? 'text-sm' : ''} text-slate-500`}>Posez vos questions métiers en langage naturel.</p>
                 </div>
             </div>
 

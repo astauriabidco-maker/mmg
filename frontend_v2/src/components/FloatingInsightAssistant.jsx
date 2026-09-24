@@ -33,8 +33,8 @@ export default function FloatingInsightAssistant() {
                 type="button"
                 onClick={() => setIsOpen(true)}
                 className="fixed bottom-5 right-5 z-[90] flex h-16 w-16 items-center justify-center rounded-full border border-indigo-200 bg-slate-950 text-white shadow-2xl shadow-indigo-500/30 transition duration-200 hover:-translate-y-0.5 hover:bg-indigo-600 focus:outline-none focus:ring-4 focus:ring-indigo-200 sm:bottom-7 sm:right-7"
-                aria-label="Ouvrir le copilote IA"
-                title="Copilote IA"
+                aria-label="Ouvrir Aya"
+                title="Aya"
             >
                 <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-emerald-500">
                     <span className="h-2 w-2 rounded-full bg-white" />
@@ -46,7 +46,7 @@ export default function FloatingInsightAssistant() {
                 <div className="fixed inset-0 z-[100]">
                     <button
                         type="button"
-                        aria-label="Fermer le copilote IA"
+                        aria-label="Fermer Aya"
                         onClick={() => setIsOpen(false)}
                         className="absolute inset-0 bg-slate-950/30 backdrop-blur-[2px]"
                     />
@@ -59,9 +59,9 @@ export default function FloatingInsightAssistant() {
                                 <div className="min-w-0">
                                     <p className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.26em] text-indigo-500">
                                         <Sparkles className="h-3.5 w-3.5" />
-                                        Copilote IA
+                                        Copilote
                                     </p>
-                                    <h2 className="truncate text-lg font-black text-slate-950">Insight Engine</h2>
+                                    <h2 className="truncate text-lg font-black text-slate-950">Aya</h2>
                                 </div>
                             </div>
                             <button
