@@ -416,7 +416,7 @@ export default function ManagerDashboard() {
         const defectCount = Number(stats.defects || 0);
 
         return (
-            <div className="space-y-6 max-w-7xl mx-auto font-sans animate-fade-in pb-12">
+            <div className="w-full space-y-6 font-sans animate-fade-in pb-12">
                 
                 {/* HERO EXECUTIVE SUMMARY */}
                 <div className="bg-slate-900 rounded-[2rem] p-8 md:p-10 text-white shadow-2xl relative overflow-hidden mb-8">
@@ -556,7 +556,7 @@ export default function ManagerDashboard() {
 
     function renderLiveView() {
         return (
-            <div className="max-w-7xl mx-auto space-y-6">
+            <div className="w-full space-y-6">
                 <div className="flex items-center justify-between mb-8">
                     <div>
                         <h2 className="text-2xl font-bold text-slate-900">Vue au Sol - Live</h2>
@@ -654,7 +654,7 @@ export default function ManagerDashboard() {
         const kpiIssue = trackingOrders.filter(o => o.status === 'ISSUE').length;
 
         return (
-            <div className="max-w-7xl mx-auto space-y-6">
+            <div className="w-full space-y-6">
                 {/* KPI STRIP */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
@@ -905,7 +905,7 @@ export default function ManagerDashboard() {
         const analytics = workshopAnalytics;
 
         return (
-            <div className="max-w-7xl mx-auto space-y-6 animate-fade-in">
+            <div className="w-full space-y-6 animate-fade-in">
                 <div className="flex items-center justify-between mb-8">
                     <div>
                         <h2 className="text-2xl font-bold text-slate-900">Analyse & Performance Atelier</h2>
@@ -1080,7 +1080,7 @@ function WorkshopSupervisorView() {
 
     if (isLoading && !overview) {
         return (
-            <div className="max-w-7xl mx-auto p-10 rounded-3xl border border-slate-200 bg-white text-slate-500 font-bold">
+            <div className="w-full p-10 rounded-3xl border border-slate-200 bg-white text-slate-500 font-bold">
                 Chargement du cockpit atelier...
             </div>
         );
@@ -1091,7 +1091,7 @@ function WorkshopSupervisorView() {
     const lateTasks = overview?.late_tasks || [];
 
     return (
-        <div className="max-w-7xl mx-auto space-y-6">
+        <div className="w-full space-y-6">
             <div className="bg-slate-950 text-white rounded-[2rem] p-8 shadow-xl overflow-hidden">
                 <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-6">
                     <div>
