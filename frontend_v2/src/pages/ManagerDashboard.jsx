@@ -23,6 +23,63 @@ import PlatformSettings from '../components/PlatformSettings';
 import ScheduleDashboard from './ScheduleDashboard';
 import { canAccessManagerView, getDefaultManagerView } from '../utils/roleNavigation';
 
+class StockModuleErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
+
+    static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+    }
+
+    componentDidCatch(error, info) {
+        console.error('Stock module render error', error, info);
+    }
+
+    componentDidUpdate(prevProps) {
+        if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+            this.setState({ hasError: false, error: null });
+        }
+    }
+
+    render() {
+        if (!this.state.hasError) return this.props.children;
+        return (
+            <div className="flex min-h-[60vh] items-center justify-center bg-slate-50 p-8">
+                <div className="max-w-xl rounded-2xl border border-red-200 bg-white p-6 shadow-sm">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-red-600">Module stock indisponible</p>
+                    <h2 className="mt-2 text-2xl font-black text-slate-950">Une fiche stock a déclenché une erreur d’affichage.</h2>
+                    <p className="mt-2 text-sm font-bold text-slate-500">
+                        La page reste contrôlable : revenez à la liste stock ou rechargez le module. L’erreur est conservée dans la console pour diagnostic.
+                    </p>
+                    {this.state.error?.message && (
+                        <p className="mt-4 rounded-xl border border-red-100 bg-red-50 p-3 text-xs font-mono text-red-700">
+                            {this.state.error.message}
+                        </p>
+                    )}
+                    <div className="mt-5 flex flex-wrap gap-2">
+                        <button
+                            type="button"
+                            onClick={() => { window.location.href = '/manager?view=stock&stockMenu=stock'; }}
+                            className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white hover:bg-slate-800"
+                        >
+                            Retour stock
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => window.location.reload()}
+                            className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
+                        >
+                            Recharger
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+}
+
 export default function ManagerDashboard() {
     const { logout, user } = useAuth();
     const location = useLocation();
@@ -208,8 +265,16 @@ export default function ManagerDashboard() {
                     {activeView === 'workshop_supervisor' && <WorkshopSupervisorView />}
                     {activeView === 'orders' && renderOrdersView()}
                     {activeView === 'schedule' && <ScheduleDashboard />}
-                    {activeView === 'stock_dashboard' && <StockDashboard key="stock-dashboard" surface="dashboard" />}
-                    {activeView === 'stock' && <StockDashboard key="stock-management" surface="management" />}
+                    {activeView === 'stock_dashboard' && (
+                        <StockModuleErrorBoundary resetKey={`${activeView}:${location.search}`}>
+                            <StockDashboard key="stock-dashboard" surface="dashboard" />
+                        </StockModuleErrorBoundary>
+                    )}
+                    {activeView === 'stock' && (
+                        <StockModuleErrorBoundary resetKey={`${activeView}:${location.search}`}>
+                            <StockDashboard key="stock-management" surface="management" />
+                        </StockModuleErrorBoundary>
+                    )}
                     {activeView === 'purchases' && <PurchasesDashboard />}
                     {activeView === 'sales' && <SalesDashboard />}
                     {activeView === 'crm' && <CRMClientsDashboard />}

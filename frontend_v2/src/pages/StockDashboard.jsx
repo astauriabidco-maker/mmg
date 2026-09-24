@@ -1791,11 +1791,27 @@ export default function StockDashboard({ surface = 'management' }) {
             .slice(0, 6);
     };
 
+    const isUiEvent = (candidate) => (
+        candidate
+        && typeof candidate === 'object'
+        && (
+            typeof candidate.stopPropagation === 'function'
+            || typeof candidate.preventDefault === 'function'
+            || 'nativeEvent' in candidate
+            || 'currentTarget' in candidate
+        )
+    );
+
     const openProductDetail = (event, product, options = {}) => {
-        event?.stopPropagation?.();
+        const eventLike = isUiEvent(event) ? event : null;
+        const productLike = product
+            || (!eventLike && typeof event === 'object' ? event : null)
+            || (!eventLike ? products.find(item => String(item.id) === String(event)) : null);
+        if (!productLike?.id) return;
+        eventLike?.stopPropagation?.();
         setProductDetailReturnMenu(options.returnMenu || currentMenu);
         setSupplierFixContext(options.supplierFixContext || null);
-        setSelectedProductId(product.id);
+        setSelectedProductId(productLike.id);
         setCurrentMenu('product-detail');
         setShowLowStockOnly(false);
     };
@@ -1806,7 +1822,8 @@ export default function StockDashboard({ surface = 'management' }) {
             : (inventoryFocus || 'catalog');
         setProductDetailReturnMenu(null);
         setSupplierFixContext(null);
-        setCurrentMenu(target);
+        setSelectedProductId(null);
+        navigateStockMenu(target);
     };
 
     const openSupplierFixFromRisk = (need) => {
@@ -1906,12 +1923,17 @@ export default function StockDashboard({ surface = 'management' }) {
     };
 
     const openLocationDetail = (event, location, options = {}) => {
-        event?.stopPropagation?.();
+        const eventLike = isUiEvent(event) ? event : null;
+        const locationLike = location
+            || (!eventLike && typeof event === 'object' ? event : null)
+            || (!eventLike ? locations.find(item => String(item.id) === String(event)) : null);
+        if (!locationLike?.id) return;
+        eventLike?.stopPropagation?.();
         const returnMenu = options.returnMenu
             || (currentMenu === 'location-detail' ? locationDetailReturnMenu : currentMenu)
             || 'locations';
         setLocationDetailReturnMenu(returnMenu);
-        setSelectedLocationId(location.id);
+        setSelectedLocationId(locationLike.id);
         setCurrentMenu('location-detail');
     };
 
@@ -1920,7 +1942,8 @@ export default function StockDashboard({ surface = 'management' }) {
             ? locationDetailReturnMenu
             : 'locations';
         setLocationDetailReturnMenu(null);
-        setCurrentMenu(target);
+        setSelectedLocationId(null);
+        navigateStockMenu(target);
     };
 
     const inventoryTitle = showDraftOnly
