@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import FloatingInsightAssistant from './components/FloatingInsightAssistant';
 import { getDefaultManagerView, getDefaultPathForUser, userHasAnyRole } from './utils/roleNavigation';
 
 const Login = lazy(() => import('./pages/Login'));
@@ -199,6 +200,7 @@ export default function App() {
                             />
                             <Route path="*" element={<Navigate to="/dashboard" replace />} />
                         </Routes>
+                        <FloatingInsightAssistant />
                     </Suspense>
                 </BrowserRouter>
             </AuthProvider>

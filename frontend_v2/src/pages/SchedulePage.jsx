@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { Menu, Sparkles } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import ScheduleDashboard from './ScheduleDashboard';
@@ -37,15 +37,6 @@ export default function SchedulePage() {
                         <h1 className="truncate text-lg font-bold text-slate-900 sm:text-xl">
                             Planning & Agenda
                         </h1>
-                    </div>
-
-                    <div className="mx-4 hidden min-w-0 max-w-lg flex-1 items-center rounded-full border border-transparent bg-slate-100 px-5 py-2 md:flex lg:mx-6">
-                        <Sparkles className="mr-2 h-4 w-4 shrink-0 text-indigo-500" />
-                        <span className="truncate text-sm font-medium text-slate-400">Demander à l'IA...</span>
-                        <div className="ml-auto flex items-center gap-1">
-                            <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-slate-400">⌘</kbd>
-                            <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-slate-400">K</kbd>
-                        </div>
                     </div>
 
                     <div className="flex items-center gap-3">

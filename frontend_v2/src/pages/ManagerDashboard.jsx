@@ -4,7 +4,7 @@ import { openPdfWithFeedback, downloadFileWithFeedback } from '../services/pdf';
 import { useAuth } from '../context/AuthContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
-import { TrendingUp, AlertTriangle, Clock, Activity, LogOut, Upload, Menu, Search, Filter, ArrowUpRight, ArrowDownRight, ChevronRight, ChevronLeft, Users, Settings, Box, Banknote, CheckCircle2, Factory, Package, BarChart3, Sparkles, X, Scissors, Download, FileText, FileSpreadsheet, ArrowUpDown } from 'lucide-react';
+import { TrendingUp, AlertTriangle, Clock, Activity, LogOut, Upload, Menu, Search, Filter, ArrowUpRight, ArrowDownRight, ChevronRight, ChevronLeft, Users, Settings, Box, Banknote, CheckCircle2, Factory, Package, BarChart3, Scissors, Download, FileText, FileSpreadsheet, ArrowUpDown } from 'lucide-react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import StationManager from '../components/StationManager';
 import OperatorManager from '../components/OperatorManager';
@@ -18,7 +18,6 @@ import SaleDetailPage from './SaleDetailPage';
 import ConfigDashboard from './ConfigDashboard';
 import AccountingDashboard from './AccountingDashboard';
 import DeliveryDashboard from './DeliveryDashboard';
-import InsightDashboard from './InsightDashboard';
 import RBACMatrix from '../components/RBACMatrix';
 import PlatformSettings from '../components/PlatformSettings';
 import ScheduleDashboard from './ScheduleDashboard';
@@ -39,7 +38,6 @@ export default function ManagerDashboard() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [materialFilter, setMaterialFilter] = useState('ALL');
-    const [insightModalOpen, setInsightModalOpen] = useState(false);
     const [cuttingModalOpen, setCuttingModalOpen] = useState(false);
     const [statusFilter, setStatusFilter] = useState('ALL');
     const [selectedOrder, setSelectedOrder] = useState(null);
@@ -67,7 +65,7 @@ export default function ManagerDashboard() {
                                                 activeView === 'accounting' ? 'Facturation clients' :
                                                     activeView === 'logistics' ? 'Logistique & Expéditions' :
                                                         activeView === 'analytics_atelier' ? 'Performance Atelier' :
-                                                            activeView === 'insight' ? 'Insight Engine (IA)' : 'Configuration';
+                                                        'Configuration';
     const handleViewChange = (view) => {
         if (!canAccessManagerView(user, view)) return;
         setActiveView(view);
@@ -190,24 +188,7 @@ export default function ManagerDashboard() {
                         </h1>
                     </div>
 
-                    {/* AI Search Bar - Global */}
-                    <div 
-                        onClick={() => setInsightModalOpen(true)}
-                        className="hidden md:flex min-w-0 flex-1 max-w-lg mx-4 lg:mx-6 bg-slate-100 hover:bg-slate-200 cursor-pointer transition-colors rounded-full items-center px-5 py-2 border border-transparent hover:border-indigo-300 hover:shadow-sm"
-                    >
-                        <Sparkles className="w-4 h-4 text-indigo-500 mr-2 shrink-0" />
-                        <span className="text-sm font-medium text-slate-400 truncate">Demander à l'IA...</span>
-                        <div className="flex items-center gap-1 ml-auto">
-                            <kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 text-[10px] font-bold text-slate-400">⌘</kbd>
-                            <kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 text-[10px] font-bold text-slate-400">K</kbd>
-                        </div>
-                    </div>
-
                     <div className="flex items-center gap-4">
-                        {/* Mobile AI button */}
-                        <button onClick={() => setInsightModalOpen(true)} className="md:hidden p-2 text-indigo-500 hover:bg-indigo-50 rounded-lg">
-                            <Sparkles className="w-5 h-5" />
-                        </button>
                         <div className="flex items-center gap-3">
                             <span className="relative flex h-3 w-3">
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -236,42 +217,12 @@ export default function ManagerDashboard() {
                     {activeView === 'accounting' && <AccountingDashboard />}
                     {activeView === 'logistics' && <DeliveryDashboard />}
                     {activeView === 'analytics_atelier' && renderAtelierAnalyticsView()}
-                    {activeView === 'insight' && <InsightDashboard />}
                     {activeView === 'config' && <PlatformSettings />}
                 </div>
 
                 {/* CUTTING OPTIMIZER MODAL */}
                 {cuttingModalOpen && <CuttingOptimizerModal onClose={() => setCuttingModalOpen(false)} />}
 
-                {/* INSIGHT CHAT DRAWER */}
-                {insightModalOpen && (
-                    <div className="fixed inset-0 z-[100]">
-                        <button
-                            type="button"
-                            aria-label="Fermer l'assistant IA"
-                            onClick={() => setInsightModalOpen(false)}
-                            className="absolute inset-0 bg-slate-950/30 backdrop-blur-[2px]"
-                        />
-                        <aside className="absolute right-0 top-0 flex h-full w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl animate-fade-in sm:w-[520px] xl:w-[560px]">
-                            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-                                <div>
-                                    <p className="text-[10px] font-black uppercase tracking-[0.28em] text-indigo-500">Assistant IA</p>
-                                    <h2 className="text-lg font-black text-slate-950">Insight Engine</h2>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setInsightModalOpen(false)}
-                                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
-                                >
-                                    <X className="h-5 w-5" />
-                                </button>
-                            </div>
-                            <div className="min-h-0 flex-1">
-                                <InsightDashboard mode="drawer" />
-                            </div>
-                        </aside>
-                    </div>
-                )}
             </main>
         </div>
     );
