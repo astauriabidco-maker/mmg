@@ -66,6 +66,8 @@ const STOCK_SIDEBAR_MENUS = [
     'valuation',
 ];
 
+const STOCK_DETAIL_MENUS = ['product-detail', 'location-detail'];
+
 const CATALOG_STATUS_META = {
     DRAFT: { label: 'Brouillon', className: 'bg-slate-100 text-slate-700 border-slate-200' },
     TO_QUALIFY: { label: 'À qualifier', className: 'bg-amber-50 text-amber-700 border-amber-200' },
@@ -235,6 +237,7 @@ export default function StockDashboard({ surface = 'management' }) {
     // Mémorise l'écran d'origine de la fiche produit (catalogue, fiche
     // emplacement...) pour que "Retour" restaure le bon contexte.
     const [productDetailReturnMenu, setProductDetailReturnMenu] = useState(null);
+    const [locationDetailReturnMenu, setLocationDetailReturnMenu] = useState(null);
     const [supplierFixContext, setSupplierFixContext] = useState(null);
     const navigateStockMenu = (menu) => {
         if (isDashboardSurface || location.pathname !== '/manager' || !STOCK_SIDEBAR_MENUS.includes(menu)) {
@@ -256,14 +259,21 @@ export default function StockDashboard({ surface = 'management' }) {
         const nextMenu = !isDashboardSurface && STOCK_SIDEBAR_MENUS.includes(requestedStockMenu)
             ? requestedStockMenu
             : (isDashboardSurface ? 'todo' : 'management-home');
+        if (STOCK_DETAIL_MENUS.includes(currentMenu)) {
+            const returnMenu = currentMenu === 'product-detail'
+                ? (productDetailReturnMenu || inventoryFocus || 'catalog')
+                : (locationDetailReturnMenu || 'locations');
+            if (!STOCK_SIDEBAR_MENUS.includes(requestedStockMenu) || requestedStockMenu === returnMenu) return;
+        }
         if (nextMenu === currentMenu) return;
         setCurrentMenu(nextMenu);
         setInventoryFocus(['catalog', 'stock', 'drafts', 'services'].includes(nextMenu) ? nextMenu : 'catalog');
         setSelectedProductId(null);
         setSelectedLocationId(null);
         setProductDetailReturnMenu(null);
+        setLocationDetailReturnMenu(null);
         setSupplierFixContext(null);
-    }, [currentMenu, isDashboardSurface, location.search]);
+    }, [currentMenu, inventoryFocus, isDashboardSurface, location.search, locationDetailReturnMenu, productDetailReturnMenu]);
 
     useEffect(() => {
         if (isDashboardSurface || location.pathname !== '/manager' || !STOCK_SIDEBAR_MENUS.includes(currentMenu)) return;
@@ -1895,14 +1905,22 @@ export default function StockDashboard({ surface = 'management' }) {
         }
     };
 
-    const openLocationDetail = (event, location) => {
+    const openLocationDetail = (event, location, options = {}) => {
         event?.stopPropagation?.();
+        const returnMenu = options.returnMenu
+            || (currentMenu === 'location-detail' ? locationDetailReturnMenu : currentMenu)
+            || 'locations';
+        setLocationDetailReturnMenu(returnMenu);
         setSelectedLocationId(location.id);
         setCurrentMenu('location-detail');
     };
 
     const closeLocationDetail = () => {
-        setCurrentMenu('locations');
+        const target = locationDetailReturnMenu && locationDetailReturnMenu !== 'location-detail'
+            ? locationDetailReturnMenu
+            : 'locations';
+        setLocationDetailReturnMenu(null);
+        setCurrentMenu(target);
     };
 
     const inventoryTitle = showDraftOnly
@@ -2688,7 +2706,25 @@ export default function StockDashboard({ surface = 'management' }) {
                     </div>
                 )}
 
-                {currentMenu === 'location-detail' && selectedLocation ? (
+                {currentMenu === 'location-detail' && !selectedLocation ? (
+                    <div className="flex-1 overflow-y-auto w-full bg-slate-50 p-6">
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+                            <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">Fiche zone indisponible</p>
+                            <h2 className="mt-2 text-2xl font-black text-amber-950">Cette zone n’est plus disponible dans le référentiel chargé.</h2>
+                            <p className="mt-2 text-sm font-bold text-amber-800">
+                                La liste a peut-être été rafraîchie ou l’emplacement a été renommé/supprimé. Revenez au plan des zones pour reprendre.
+                            </p>
+                            <button
+                                type="button"
+                                onClick={closeLocationDetail}
+                                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white hover:bg-slate-800"
+                            >
+                                <ArrowLeft className="w-4 h-4" />
+                                Retour zones
+                            </button>
+                        </div>
+                    </div>
+                ) : currentMenu === 'location-detail' && selectedLocation ? (
                     <div className="flex-1 overflow-y-auto w-full bg-slate-50">
                         <div className="w-full p-6 space-y-6">
                             <div className="border border-slate-200 bg-white overflow-hidden shadow-sm">
@@ -3009,6 +3045,24 @@ export default function StockDashboard({ surface = 'management' }) {
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                ) : currentMenu === 'product-detail' && !selectedProduct ? (
+                    <div className="flex-1 overflow-y-auto w-full bg-slate-50 p-6">
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+                            <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">Fiche article indisponible</p>
+                            <h2 className="mt-2 text-2xl font-black text-amber-950">Cet article n’est plus disponible dans le catalogue chargé.</h2>
+                            <p className="mt-2 text-sm font-bold text-amber-800">
+                                La liste a peut-être été rafraîchie ou le filtre courant ne contient plus cette référence. Revenez au catalogue pour reprendre.
+                            </p>
+                            <button
+                                type="button"
+                                onClick={closeProductDetail}
+                                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white hover:bg-slate-800"
+                            >
+                                <ArrowLeft className="w-4 h-4" />
+                                Retour catalogue
+                            </button>
                         </div>
                     </div>
                 ) : currentMenu === 'product-detail' && selectedProduct ? (
