@@ -343,6 +343,34 @@ export default function ManagerDashboard() {
                         </button>
                     </div>
 
+                    <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Sous-menus atelier</p>
+                            <p className="hidden text-xs font-bold text-slate-400 sm:block">Choisir une vue de travail</p>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                            {modules.map((module) => {
+                                const Icon = module.icon;
+                                return (
+                                    <button
+                                        key={`atelier-menu-${module.id}`}
+                                        type="button"
+                                        onClick={() => handleViewChange(module.id)}
+                                        className="flex min-h-[64px] items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50/40"
+                                    >
+                                        <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${toneClasses[module.tone]}`}>
+                                            <Icon className="h-4 w-4" />
+                                        </span>
+                                        <span className="min-w-0">
+                                            <span className="block truncate text-sm font-black text-slate-950">{module.title}</span>
+                                            <span className="block truncate text-xs font-bold text-slate-500">{module.metricLabel}</span>
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
                     <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                         {modules.map((module) => {
                             const Icon = module.icon;
