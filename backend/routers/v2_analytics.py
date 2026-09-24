@@ -4,11 +4,17 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Dict
 from datetime import datetime, date, timedelta
+import json
+import os
+import re
+import unicodedata
+import urllib.request
 from ..database import get_db
 from .. import models
 from ..core.config import STANDARDS, ALERT_THRESHOLD_PERCENT
 from ..core import security
 from ..core.time import utcnow
+from ..domain.ontology import ENTITIES
 
 router = APIRouter(
     prefix="/v2/analytics",
@@ -183,17 +189,205 @@ def get_hourly_stats(db: Session = Depends(get_db)):
 class InsightQuery(BaseModel):
     query: str
 
-import urllib.request
-import json
-import os
+INSIGHT_INTENT_PROFILES = {
+    "SALES": {
+        "type": "barchart",
+        "entities": ("commercial_quote", "signed_order"),
+        "terms": (
+            "chiffre d'affaires",
+            "ca",
+            "vente",
+            "ventes",
+            "revenu",
+            "facture",
+            "factures",
+            "encaissement",
+            "devis commercial",
+            "commande signee",
+            "commande client",
+        ),
+        "message": "Analyse priorisée par l'ontologie commerciale et les factures réelles.",
+    },
+    "PRODUCTS": {
+        "type": "piechart",
+        "entities": ("stock_item", "commercial_quote"),
+        "terms": (
+            "produit",
+            "produits",
+            "article",
+            "articles",
+            "reference",
+            "references",
+            "top",
+            "best seller",
+            "vendu",
+            "vendus",
+        ),
+        "message": "Analyse priorisée par les références articles et les ventes réelles.",
+    },
+    "PRODUCTION": {
+        "type": "linechart",
+        "entities": ("production_order", "industrial_dossier", "fabrication_sheet"),
+        "terms": (
+            "production",
+            "atelier",
+            "fabrication",
+            "rendement",
+            "retard",
+            "tache",
+            "taches",
+            "poste",
+            "station",
+            "chef atelier",
+        ),
+        "message": "Analyse priorisée par l'ontologie atelier et les journaux de production.",
+    },
+    "INVENTORY": {
+        "type": "barchart",
+        "entities": ("stock_item", "stock_reservation", "workshop_preparation", "real_workshop_debit", "cutting_sheet"),
+        "terms": (
+            "stock",
+            "inventaire",
+            "rupture",
+            "ruptures",
+            "seuil",
+            "valorisation",
+            "emplacement",
+            "emplacements",
+            "zone",
+            "zones",
+            "reservation",
+            "reservations",
+            "debit atelier",
+            "matiere",
+        ),
+        "message": "Analyse priorisée par l'ontologie stock et les mouvements réels.",
+    },
+    "PURCHASES": {
+        "type": "barchart",
+        "entities": ("stock_item",),
+        "terms": (
+            "achat",
+            "achats",
+            "fournisseur",
+            "fournisseurs",
+            "appro",
+            "approvisionnement",
+            "commande fournisseur",
+            "bon de commande",
+            "demande achat",
+        ),
+        "message": "Analyse priorisée par le besoin matière, les fournisseurs et les achats.",
+    },
+    "LOGISTICS": {
+        "type": "barchart",
+        "entities": ("signed_order",),
+        "terms": (
+            "livraison",
+            "livraisons",
+            "expedition",
+            "expeditions",
+            "logistique",
+            "tournee",
+            "tournees",
+            "bl",
+            "bon livraison",
+        ),
+        "message": "Analyse priorisée par les flux logistiques et bons de livraison.",
+    },
+    "CLIENTS": {
+        "type": "piechart",
+        "entities": ("client", "contact", "crm_opportunity", "commercial_quote"),
+        "terms": (
+            "client",
+            "clients",
+            "crm",
+            "prospect",
+            "prospects",
+            "devis",
+            "opportunite",
+            "avant vente",
+        ),
+        "message": "Analyse priorisée par l'ontologie CRM et les données clients.",
+    },
+}
 
-@router.post("/ask")
-def ask_insight_engine(query_obj: InsightQuery, db: Session = Depends(get_db)):
-    """
-    Insight Engine propulsé par IA (Ollama / OpenAI).
-    L'IA analyse la question pour déterminer l'intention.
-    Le backend injecte ensuite les vraies données de la base.
-    """
+
+def _normalize_insight_text(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = unicodedata.normalize("NFKD", value)
+    ascii_text = "".join(c for c in normalized if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", ascii_text.lower()).strip()
+
+
+def _entity_terms(entity_id: str) -> set[str]:
+    entity = ENTITIES.get(entity_id)
+    if not entity:
+        return {entity_id}
+    terms = {entity.id, entity.label, entity.module, *entity.aliases, *entity.source_models}
+    return {_normalize_insight_text(term.replace("_", " ")) for term in terms if term}
+
+
+def _term_matches(normalized_query: str, term: str) -> bool:
+    if not term:
+        return False
+    if len(term) <= 3:
+        return bool(re.search(rf"(^|\W){re.escape(term)}($|\W)", normalized_query))
+    return term in normalized_query
+
+
+def _resolve_insight_from_ontology(query: str) -> dict[str, object] | None:
+    normalized_query = _normalize_insight_text(query)
+    if not normalized_query:
+        return None
+
+    scored_intents = []
+    for intent, profile in INSIGHT_INTENT_PROFILES.items():
+        matched_terms = set()
+        matched_entities = []
+        score = 0
+
+        for term in profile["terms"]:
+            normalized_term = _normalize_insight_text(term)
+            if _term_matches(normalized_query, normalized_term):
+                matched_terms.add(term)
+                score += 3 if " " in normalized_term else 2
+
+        for entity_id in profile["entities"]:
+            entity_matched = False
+            for term in _entity_terms(entity_id):
+                if _term_matches(normalized_query, term):
+                    matched_terms.add(term)
+                    entity_matched = True
+                    score += 4
+            if entity_matched:
+                matched_entities.append(entity_id)
+
+        if score:
+            scored_intents.append((score, intent, profile, sorted(matched_terms), matched_entities))
+
+    if not scored_intents:
+        return None
+
+    scored_intents.sort(reverse=True, key=lambda item: item[0])
+    top_score, intent, profile, matched_terms, matched_entities = scored_intents[0]
+    second_score = scored_intents[1][0] if len(scored_intents) > 1 else 0
+
+    if top_score < 2 or (second_score and top_score == second_score):
+        return None
+
+    return {
+        "intent": intent,
+        "type": profile["type"],
+        "message": profile["message"],
+        "engine": "ontology_data",
+        "matched_terms": matched_terms,
+        "matched_entities": matched_entities,
+    }
+
+
+def _ask_llm_for_insight(query: str) -> dict[str, object] | None:
     system_prompt = """Tu es l'Analyste Décisionnel (Insight Engine) de MMG ERP, une usine de menuiserie en France.
 Le manager te pose une question sur son activité.
 Tu dois analyser la question et retourner UNIQUEMENT un objet JSON valide.
@@ -213,10 +407,8 @@ Règles:
 - clients, CRM, devis, prospects -> intent: CLIENTS, type: piechart
 - Sinon -> intent: UNKNOWN, type: text
 """
-    ai_response = None
     openai_key = os.environ.get("OPENAI_API_KEY")
-    
-    # 1. Tentative OpenAI
+
     if openai_key:
         try:
             url = "https://api.openai.com/v1/chat/completions"
@@ -224,62 +416,81 @@ Règles:
                 "model": "gpt-4o-mini",
                 "messages": [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": query_obj.query}
+                    {"role": "user", "content": query}
                 ],
                 "response_format": {"type": "json_object"}
             }).encode("utf-8")
-            
+
             headers = {"Content-Type": "application/json", "Authorization": f"Bearer {openai_key}"}
             request = urllib.request.Request(url, data=data, headers=headers, method="POST")
             with urllib.request.urlopen(request, timeout=10) as response:
                 result = json.loads(response.read().decode())
                 content = result["choices"][0]["message"]["content"]
                 ai_response = json.loads(content)
+                ai_response["engine"] = "openai"
+                return ai_response
         except Exception as e:
             print(f"Erreur OpenAI Analytics: {e}")
 
-    # 2. Tentative Ollama
-    if not ai_response:
-        try:
-            url = "http://localhost:11434/api/generate"
-            data = json.dumps({
-                "model": "mistral",
-                "prompt": f"{system_prompt}\nQuestion: {query_obj.query}\nJSON:",
-                "stream": False,
-                "format": "json"
-            }).encode("utf-8")
-            
-            request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(request, timeout=15) as response:
-                result = json.loads(response.read().decode())
-                ai_response = json.loads(result["response"])
-        except Exception as e:
-            print(f"Erreur Ollama Analytics: {e}")
+    try:
+        url = "http://localhost:11434/api/generate"
+        data = json.dumps({
+            "model": "mistral",
+            "prompt": f"{system_prompt}\nQuestion: {query}\nJSON:",
+            "stream": False,
+            "format": "json"
+        }).encode("utf-8")
 
-    # 3. Fallback intelligent par mots-clés
+        request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=15) as response:
+            result = json.loads(response.read().decode())
+            ai_response = json.loads(result["response"])
+            ai_response["engine"] = "ollama"
+            return ai_response
+    except Exception as e:
+        print(f"Erreur Ollama Analytics: {e}")
+
+    return None
+
+
+def _fallback_insight(query: str) -> dict[str, object]:
+    q = _normalize_insight_text(query)
+    intent, chart_type = "UNKNOWN", "text"
+    if any(k in q for k in ["chiffre", "vente", "ca ", "revenu", "factur", "encaiss"]):
+        intent, chart_type = "SALES", "barchart"
+    elif any(k in q for k in ["produit", "top", "best", "vendu"]):
+        intent, chart_type = "PRODUCTS", "piechart"
+    elif any(k in q for k in ["production", "retard", "atelier", "rendement", "tache"]):
+        intent, chart_type = "PRODUCTION", "linechart"
+    elif any(k in q for k in ["stock", "inventaire", "rupture", "seuil", "valorisation"]):
+        intent, chart_type = "INVENTORY", "barchart"
+    elif any(k in q for k in ["achat", "fournisseur", "appro", "commande fournisseur", "bon de commande"]):
+        intent, chart_type = "PURCHASES", "barchart"
+    elif any(k in q for k in ["livraison", "expedition", "logistique", "tournee", "bl"]):
+        intent, chart_type = "LOGISTICS", "barchart"
+    elif any(k in q for k in ["client", "crm", "devis", "prospect"]):
+        intent, chart_type = "CLIENTS", "piechart"
+
+    return {
+        "intent": intent,
+        "type": chart_type,
+        "message": "Analyse générée via moteur de secours lexical hors ligne.",
+        "engine": "lexical_fallback",
+        "matched_terms": [],
+        "matched_entities": [],
+    }
+
+@router.post("/ask")
+def ask_insight_engine(query_obj: InsightQuery, db: Session = Depends(get_db)):
+    """
+    Insight Engine piloté d'abord par l'ontologie MMG, puis par IA si besoin.
+    Le backend injecte ensuite les vraies données de la base.
+    """
+    ai_response = _resolve_insight_from_ontology(query_obj.query)
     if not ai_response:
-        q = query_obj.query.lower()
-        intent, chart_type = "UNKNOWN", "text"
-        if any(k in q for k in ["chiffre", "vente", "ca ", "revenu", "factur", "encaiss"]):
-            intent, chart_type = "SALES", "barchart"
-        elif any(k in q for k in ["produit", "top", "best", "vendu"]):
-            intent, chart_type = "PRODUCTS", "piechart"
-        elif any(k in q for k in ["production", "retard", "atelier", "rendement", "tâche"]):
-            intent, chart_type = "PRODUCTION", "linechart"
-        elif any(k in q for k in ["stock", "inventaire", "rupture", "seuil", "valorisation"]):
-            intent, chart_type = "INVENTORY", "barchart"
-        elif any(k in q for k in ["achat", "fournisseur", "appro", "commande fournisseur", "bon de commande"]):
-            intent, chart_type = "PURCHASES", "barchart"
-        elif any(k in q for k in ["livraison", "expédition", "logistique", "tournée", "bl"]):
-            intent, chart_type = "LOGISTICS", "barchart"
-        elif any(k in q for k in ["client", "crm", "devis", "prospect"]):
-            intent, chart_type = "CLIENTS", "piechart"
-            
-        ai_response = {
-            "intent": intent,
-            "type": chart_type,
-            "message": "Analyse générée via moteur de secours (hors ligne)."
-        }
+        ai_response = _ask_llm_for_insight(query_obj.query)
+    if not ai_response:
+        ai_response = _fallback_insight(query_obj.query)
 
     # ================================================================
     # FETCH REAL DATA FROM DATABASE BASED ON AI INTENT
@@ -455,7 +666,11 @@ Règles:
     return {
         "type": chart_type,
         "message": message,
-        "data": chart_data
+        "data": chart_data,
+        "intent": intent,
+        "engine": ai_response.get("engine", "unknown"),
+        "matched_terms": ai_response.get("matched_terms", []),
+        "matched_entities": ai_response.get("matched_entities", []),
     }
 
 @router.get("/workshop")
