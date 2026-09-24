@@ -41,13 +41,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                     label: 'Atelier & Production',
                     icon: Factory,
                     type: 'internal',
-                    subItems: [
-                        { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
-                        { id: 'orders', label: 'Suivi commandes', icon: ClipboardList },
-                        { id: 'workshop_supervisor', label: "Chef d'atelier", icon: Users },
-                        { id: 'live', label: 'Atelier live', icon: Activity },
-                        { id: 'analytics_atelier', label: 'Analyse & perf.', icon: BarChart3 },
-                    ],
+                    matchViews: ['dashboard', 'orders', 'workshop_supervisor', 'live', 'analytics_atelier'],
                 },
             ]
         },
@@ -151,7 +145,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                             if (item.id === 'stock') return activeView === 'stock';
                                             return activeView === (subItem.view || subItem.id);
                                         });
-                                        const isSelected = activeView === item.id || isSubViewSelected;
+                                        const isSelected = activeView === item.id || isSubViewSelected || item.matchViews?.includes(activeView);
                                         const isExpanded = Boolean(expandedMenus[item.id]);
                                         const content = (
                                             <>

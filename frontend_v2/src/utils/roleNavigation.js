@@ -46,7 +46,7 @@ export function canAccessManagerView(user, view) {
 
 export function getDefaultManagerView(user) {
     const roles = getUserRoles(user);
-    if (roles.some(role => MANAGER_ROLES.has(role))) return 'dashboard';
+    if (roles.some(role => MANAGER_ROLES.has(role))) return 'atelier-production';
     if (roles.includes('FINANCE') && userHasPermission(user, 'ACC_VIEW')) return 'accounting';
     if (roles.includes('TECHNICO_COMMERCIAL') && userHasPermission(user, 'SALES_VIEW')) return 'crm';
     if (userHasPermission(user, 'SALES_VIEW')) return 'crm';
