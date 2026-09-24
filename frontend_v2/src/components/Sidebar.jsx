@@ -213,7 +213,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                                         </button>
                                                     </div>
                                                     {isExpanded && isSelected && (
-                                                        <div className="mt-2 ml-4 max-h-[42vh] space-y-0.5 overflow-y-auto border-l border-slate-700/70 pl-3 pr-1">
+                                                        <div className="mt-2 ml-4 max-h-[42vh] space-y-1 overflow-y-auto border-l border-slate-700/70 pl-3 pr-1">
                                                             {item.subItems.filter(canAccessSubItem).map((subItem) => {
                                                                 const SubIcon = subItem.icon;
                                                                 const targetView = item.id === 'stock' ? 'stock' : (subItem.view || subItem.id);
@@ -232,13 +232,13 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                                                             if (setActiveView) setActiveView(targetView);
                                                                             if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);
                                                                         }}
-                                                                        className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] font-black transition-colors ${
+                                                                        className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-black transition-colors ${
                                                                             isSubSelected
                                                                                 ? 'bg-slate-800 text-white'
-                                                                                : 'text-slate-500 hover:bg-slate-800/70 hover:text-slate-200'
+                                                                                : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-100'
                                                                         }`}
                                                                     >
-                                                                        <SubIcon className={`h-3.5 w-3.5 ${isSubSelected ? 'text-blue-300' : 'text-slate-600'}`} />
+                                                                        <SubIcon className={`h-4 w-4 ${isSubSelected ? 'text-blue-300' : 'text-slate-500'}`} />
                                                                         <span className="truncate">{subItem.label}</span>
                                                                     </Link>
                                                                 );

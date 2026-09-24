@@ -323,7 +323,7 @@ export default function ManagerDashboard() {
         };
 
         return (
-            <div className="mx-auto max-w-7xl space-y-6 pb-12 font-sans animate-fade-in">
+            <div className="w-full space-y-6 pb-12 font-sans animate-fade-in">
                 <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm shadow-slate-200/60">
                     <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                         <div className="max-w-3xl">
@@ -351,7 +351,7 @@ export default function ManagerDashboard() {
                                     key={module.id}
                                     type="button"
                                     onClick={() => handleViewChange(module.id)}
-                                    className="group flex min-h-[190px] flex-col rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg hover:shadow-slate-200/70"
+                                    className="group flex min-h-[190px] flex-col rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg hover:shadow-slate-200/70 2xl:min-h-[210px] 2xl:p-6"
                                 >
                                     <div className="flex items-start justify-between gap-3">
                                         <span className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border ${toneClasses[module.tone]}`}>
