@@ -7,7 +7,7 @@ import os
 import time
 import uuid
 from . import models, database
-from .routers import api, v2_planning, v2_schedule, v2_analytics, v2_printer, v2_ingest, v2_config, v2_mmg, v2_stock, v2_sales, v2_pos, v2_purchases, v2_suppliers, v2_pdf, v2_accounting, v2_logistics, v2_webhook
+from .routers import api, v2_planning, v2_schedule, v2_analytics, v2_printer, v2_ingest, v2_config, v2_mmg, v2_stock, v2_stock_migration, v2_sales, v2_pos, v2_purchases, v2_suppliers, v2_pdf, v2_accounting, v2_logistics, v2_webhook
 from .core.websocket import manager
 from .core import security
 from .core.logger import logger
@@ -238,6 +238,7 @@ app.include_router(v2_ingest.router)
 app.include_router(v2_config.router)
 app.include_router(v2_mmg.router)
 app.include_router(v2_stock.router)
+app.include_router(v2_stock_migration.router)
 app.include_router(v2_sales.router)
 app.include_router(v2_pos.router)
 app.include_router(v2_purchases.router)
