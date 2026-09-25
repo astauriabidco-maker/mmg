@@ -3777,12 +3777,79 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
     const firstNeed = sortedNeeds[0];
     const primaryActionLabel = canCreatePurchaseOrder ? 'Créer bon fournisseur' : 'Créer demande';
     const lineActionLabel = canCreatePurchaseOrder ? 'Commander' : 'Demander';
+    const formatNumber = value => Number(value || 0).toLocaleString('fr-FR');
+    const readyGroups = groups.filter(group => group.orderable_count > 0);
+    const blockedGroups = groups.filter(group => group.orderable_count === 0);
+    const firstOrderableNeed = orderableNeeds[0];
+    const nextDecision = firstOrderableNeed || firstNeed;
+    const selectedSupplier = firstOrderableGroup?.supplier || nextDecision?.supplier || 'Aucun fournisseur prêt';
+    const selectedSupplierNeeds = firstOrderableGroup?.needs?.filter(need => need.can_order) || [];
+    const selectedSupplierQuantity = selectedSupplierNeeds.reduce((total, need) => total + Number(need.suggested_quantity || 0), 0);
     const needsByPriority = [
         { label: 'Critiques', value: summary.critical_count ?? criticalNeeds.length, tone: 'bg-red-50 border-red-100 text-red-700' },
         { label: 'Urgents', value: summary.urgent_count ?? urgentNeeds.length, tone: 'bg-orange-50 border-orange-100 text-orange-700' },
         { label: 'Commandables', value: orderableNeeds.length, tone: 'bg-emerald-50 border-emerald-100 text-emerald-700' },
         { label: 'À qualifier', value: summary.blocked_count ?? blockedNeeds.length, tone: 'bg-amber-50 border-amber-100 text-amber-700' },
     ];
+    const buildNeedSignals = need => [
+        { label: 'Exploitable', value: formatNumber(need.current_stock), tone: Number(need.current_stock || 0) <= 0 ? 'text-red-700 bg-red-50 border-red-100' : 'text-emerald-700 bg-emerald-50 border-emerald-100' },
+        { label: 'Seuil', value: formatNumber(need.min_threshold), tone: 'text-slate-700 bg-slate-50 border-slate-100' },
+        Number(need.reserved_stock || 0) > 0 && { label: 'Réservé', value: formatNumber(need.reserved_stock), tone: 'text-blue-700 bg-blue-50 border-blue-100' },
+        Number(need.incoming_purchase_quantity || 0) > 0 && { label: 'Déjà commandé', value: formatNumber(need.incoming_purchase_quantity), tone: 'text-emerald-700 bg-emerald-50 border-emerald-100' },
+        Number(need.open_purchase_request_quantity || 0) > 0 && { label: 'Demande ouverte', value: formatNumber(need.open_purchase_request_quantity), tone: 'text-indigo-700 bg-indigo-50 border-indigo-100' },
+        Number(need.unclear_stock_quantity || 0) > 0 && { label: 'Stock flou', value: formatNumber(need.unclear_stock_quantity), tone: 'text-amber-700 bg-amber-50 border-amber-100' },
+    ].filter(Boolean);
+    const decisionText = nextDecision?.can_order
+        ? `Commander chez ${nextDecision.supplier} : besoin net +${formatNumber(nextDecision.suggested_quantity)}.`
+        : nextDecision
+            ? `Qualifier avant achat : ${nextDecision.blocked_reason || 'donnée fournisseur incomplète'}.`
+            : 'Aucun besoin achat prioritaire.';
+    const renderNeedRow = (need, index, compact = false) => (
+        <div key={`${compact ? 'compact' : 'need'}-${need.variant_id}-${need.reference}-${index}`} className="px-5 py-4 bg-white hover:bg-slate-50 transition-colors">
+            <div className="grid grid-cols-1 xl:grid-cols-[44px_1fr_160px_140px] gap-4 items-start">
+                <div className="h-10 w-10 rounded-full bg-slate-900 text-white flex items-center justify-center font-black">{index + 1}</div>
+                <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest ${priorityTone(need.priority).badge}`}>
+                            {priorityLabel(need.priority)}
+                        </span>
+                        <span className="text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest bg-slate-100 text-slate-500">{need.supplier}</span>
+                        <span className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest ${need.can_order ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                            {need.can_order ? 'Prêt à commander' : 'À qualifier'}
+                        </span>
+                    </div>
+                    <h4 className="font-black text-slate-950 mt-2">{need.product_name}</h4>
+                    <p className="text-xs font-bold text-slate-500">{need.reference} · {need.reason}</p>
+                    {!compact && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            {buildNeedSignals(need).map(signal => (
+                                <span key={`${need.variant_id}-${signal.label}`} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-widest ${signal.tone}`}>
+                                    {signal.label} <strong className="text-sm tracking-normal">{signal.value}</strong>
+                                </span>
+                            ))}
+                        </div>
+                    )}
+                    {!need.can_order && (
+                        <p className="mt-3 rounded-xl bg-amber-50 border border-amber-100 px-3 py-2 text-xs font-black text-amber-800">
+                            Blocage : {need.blocked_reason || 'qualification fournisseur ou fiche article à compléter'}
+                        </p>
+                    )}
+                </div>
+                <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Besoin net</p>
+                    <p className="text-xl font-black text-indigo-700">+{formatNumber(need.suggested_quantity)}</p>
+                    <p className="text-[10px] font-bold text-indigo-500 mt-1">seuil + réservations - stock - achats</p>
+                </div>
+                <button
+                    onClick={() => preparePOFromNeeds([need], need.supplier)}
+                    disabled={!need.can_order}
+                    className="px-4 py-3 rounded-xl bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black hover:bg-slate-800 flex items-center justify-center gap-2"
+                >
+                    {need.can_order ? lineActionLabel : 'Qualifier'} <ArrowRight className="w-4 h-4" />
+                </button>
+            </div>
+        </div>
+    );
 
     return (
         <div className="p-8 w-full">
@@ -3843,122 +3910,120 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
                     ) : (
                         <div className="grid grid-cols-1 2xl:grid-cols-[1fr_380px] gap-6">
                             <div className="space-y-5">
+                                <div className="rounded-3xl border border-indigo-100 bg-indigo-50 overflow-hidden">
+                                    <div className="px-6 py-5 grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-5 items-center">
+                                        <div>
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500">Décision immédiate</p>
+                                            <h3 className="text-2xl font-black text-slate-950 mt-1">{decisionText}</h3>
+                                            <p className="text-sm font-bold text-slate-600 mt-2">
+                                                L'écran part des besoins nets, sépare ce qui est commandable de ce qui doit être qualifié, puis garde la commande modifiable par l'acheteur.
+                                            </p>
+                                        </div>
+                                        <div className="rounded-2xl bg-white border border-indigo-100 p-4 shadow-sm">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fournisseur prioritaire</p>
+                                            <p className="text-xl font-black text-slate-950 mt-1 truncate">{selectedSupplier}</p>
+                                            <div className="mt-3 grid grid-cols-2 gap-2">
+                                                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Lignes</p>
+                                                    <p className="text-2xl font-black text-slate-950">{formatNumber(selectedSupplierNeeds.length)}</p>
+                                                </div>
+                                                <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3">
+                                                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Qté</p>
+                                                    <p className="text-2xl font-black text-indigo-700">+{formatNumber(selectedSupplierQuantity)}</p>
+                                                </div>
+                                            </div>
+                                            {firstOrderableGroup && (
+                                                <button
+                                                    onClick={() => preparePOFromNeeds(selectedSupplierNeeds, firstOrderableGroup.supplier)}
+                                                    className="mt-4 w-full px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black flex items-center justify-center gap-2"
+                                                >
+                                                    <Plus className="w-4 h-4" /> Préparer maintenant
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div className="rounded-3xl border border-slate-200 bg-slate-50 overflow-hidden">
                                     <div className="px-5 py-4 border-b border-slate-200 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
                                         <div>
-                                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">File priorisée</p>
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">File intelligente</p>
                                             <h3 className="text-xl font-black text-slate-950">À traiter dans cet ordre</h3>
                                         </div>
                                         <p className="text-xs font-black text-slate-400">{sortedNeeds.length} ligne(s) calculée(s)</p>
                                     </div>
                                     <div className="divide-y divide-slate-200">
-                                        {sortedNeeds.slice(0, 6).map((need, index) => (
-                                            <div key={`queue-${need.variant_id}-${need.reference}`} className="px-5 py-4 grid grid-cols-1 xl:grid-cols-[44px_1fr_150px_150px] gap-4 items-center bg-white">
-                                                <div className="h-10 w-10 rounded-full bg-slate-900 text-white flex items-center justify-center font-black">{index + 1}</div>
-                                                <div className="min-w-0">
-                                                    <div className="flex flex-wrap items-center gap-2">
-                                                        <span className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest ${priorityTone(need.priority).badge}`}>
-                                                            {priorityLabel(need.priority)}
-                                                        </span>
-                                                        <span className="text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest bg-slate-100 text-slate-500">{need.supplier}</span>
-                                                        {!need.can_order && (
-                                                            <span className="text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest bg-red-50 text-red-600">
-                                                                {need.blocked_reason}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    <h4 className="font-black text-slate-950 mt-2 truncate">{need.product_name}</h4>
-                                                    <p className="text-xs font-bold text-slate-500">{need.reference} · {need.reason}</p>
-                                                </div>
-                                                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
-                                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Besoin net</p>
-                                                    <p className="text-xl font-black text-indigo-700">+{Number(need.suggested_quantity || 0).toLocaleString('fr-FR')}</p>
-                                                </div>
-                                                <button
-                                                    onClick={() => preparePOFromNeeds([need], need.supplier)}
-                                                    disabled={!need.can_order}
-                                                    className="px-4 py-3 rounded-xl bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black hover:bg-slate-800 flex items-center justify-center gap-2"
-                                                >
-                                                    {lineActionLabel} <ArrowRight className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                        ))}
+                                        {sortedNeeds.slice(0, 8).map((need, index) => renderNeedRow(need, index))}
                                     </div>
                                 </div>
 
-                                {groups.map(group => {
-                                    const orderableGroupNeeds = group.needs.filter(need => need.can_order);
-                                    return (
-                                        <div key={group.supplier} className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                                            <div className="px-5 py-4 bg-slate-50 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-                                                <div>
-                                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fournisseur proposé</p>
-                                                    <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
-                                                        <Truck className="w-5 h-5 text-indigo-500" /> {group.supplier}
-                                                    </h3>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    {group.critical_count > 0 && <span className="px-3 py-1 rounded-lg bg-red-100 text-red-700 text-xs font-black">{group.critical_count} critique(s)</span>}
-                                                    {group.urgent_count > 0 && <span className="px-3 py-1 rounded-lg bg-orange-100 text-orange-700 text-xs font-black">{group.urgent_count} urgent(s)</span>}
-                                                    <span className="px-3 py-1 rounded-lg bg-slate-100 text-slate-600 text-xs font-black">{group.needs.length} ligne(s)</span>
-                                                </div>
-                                                <button
-                                                    onClick={() => preparePOFromNeeds(orderableGroupNeeds, group.supplier)}
-                                                    disabled={orderableGroupNeeds.length === 0}
-                                                    className="px-4 py-3 rounded-xl bg-blue-600 disabled:bg-slate-300 text-white font-black hover:bg-blue-500 flex items-center gap-2"
-                                                >
-                                                    <Plus className="w-4 h-4" /> {primaryActionLabel}
-                                                </button>
-                                            </div>
-                                            <div className="divide-y divide-slate-100">
-                                                {group.needs.map(need => (
-                                                    <div key={`${need.variant_id}-${need.reference}`} className="px-5 py-4 grid grid-cols-1 xl:grid-cols-[1fr_120px_120px_150px] gap-4 items-center">
+                                {readyGroups.length > 0 && (
+                                    <div className="rounded-3xl border border-emerald-100 bg-emerald-50/40 overflow-hidden">
+                                        <div className="px-5 py-4 border-b border-emerald-100">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Prêt à transformer</p>
+                                            <h3 className="text-xl font-black text-slate-950">Fournisseurs commandables</h3>
+                                        </div>
+                                        <div className="divide-y divide-emerald-100">
+                                            {readyGroups.map(group => {
+                                                const orderableGroupNeeds = group.needs.filter(need => need.can_order);
+                                                const totalQuantity = orderableGroupNeeds.reduce((total, need) => total + Number(need.suggested_quantity || 0), 0);
+                                                return (
+                                                    <div key={`ready-${group.supplier}`} className="px-5 py-4 bg-white/80 grid grid-cols-1 xl:grid-cols-[1fr_160px_170px] gap-4 items-center">
                                                         <div>
-                                                            <div className="flex flex-wrap items-center gap-2 mb-1">
-                                                                <span className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest ${priorityTone(need.priority).badge}`}>
-                                                                    {priorityLabel(need.priority)}
-                                                                </span>
-                                                                {!need.can_order && (
-                                                                    <span className="text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest bg-red-50 text-red-600">
-                                                                        {need.blocked_reason}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <p className="font-black text-slate-900">{need.product_name}</p>
-                                                            <p className="text-[10px] font-mono font-black text-slate-400 uppercase">{need.reference}</p>
-                                                            <p className="mt-1 text-xs font-bold text-slate-500">{need.reason}</p>
-                                                            {need.open_purchase_request_quantity > 0 && (
-                                                                <p className="mt-1 text-xs font-black text-blue-600">
-                                                                    {need.open_purchase_request_quantity.toLocaleString('fr-FR')} déjà en demande d'achat
-                                                                </p>
-                                                            )}
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fournisseur</p>
+                                                            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2 mt-1">
+                                                                <Truck className="w-5 h-5 text-emerald-600" /> {group.supplier}
+                                                            </h3>
+                                                            <p className="text-sm font-bold text-slate-500 mt-1">
+                                                                {orderableGroupNeeds.length} ligne(s) prêtes, {blockedGroups.length > 0 ? 'les blocages restent séparés.' : 'aucun blocage fournisseur prioritaire.'}
+                                                            </p>
                                                         </div>
-                                                        <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-center">
-                                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Exploitable</p>
-                                                            <p className="text-xl font-black text-slate-900">{Number(need.current_stock || 0).toLocaleString('fr-FR')}</p>
-                                                            {need.unclear_stock_quantity > 0 && (
-                                                                <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-amber-600">
-                                                                    {Number(need.unclear_stock_quantity || 0).toLocaleString('fr-FR')} à clarifier
-                                                                </p>
-                                                            )}
-                                                        </div>
-                                                        <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3 text-center">
-                                                            <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Suggéré</p>
-                                                            <p className="text-xl font-black text-indigo-700">+{Number(need.suggested_quantity || 0).toLocaleString('fr-FR')}</p>
+                                                        <div className="rounded-xl bg-white border border-emerald-100 p-3">
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">À acheter</p>
+                                                            <p className="text-2xl font-black text-emerald-700">+{formatNumber(totalQuantity)}</p>
                                                         </div>
                                                         <button
-                                                            onClick={() => preparePOFromNeeds([need], need.supplier)}
-                                                            disabled={!need.can_order}
-                                                            className="px-4 py-3 rounded-xl bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black hover:bg-slate-800 flex items-center justify-center gap-2"
+                                                            onClick={() => preparePOFromNeeds(orderableGroupNeeds, group.supplier)}
+                                                            className="px-4 py-3 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500 flex items-center justify-center gap-2"
                                                         >
-                                                            {lineActionLabel} <ArrowRight className="w-4 h-4" />
+                                                            <Plus className="w-4 h-4" /> {primaryActionLabel}
                                                         </button>
                                                     </div>
-                                                ))}
-                                            </div>
+                                                );
+                                            })}
                                         </div>
-                                    );
-                                })}
+                                    </div>
+                                )}
+
+                                {blockedGroups.length > 0 && (
+                                    <div className="rounded-3xl border border-amber-100 bg-amber-50/50 overflow-hidden">
+                                        <div className="px-5 py-4 border-b border-amber-100">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-amber-600">À rendre commandable</p>
+                                            <h3 className="text-xl font-black text-slate-950">Blocages par fournisseur ou fiche article</h3>
+                                        </div>
+                                        <div className="divide-y divide-amber-100">
+                                            {blockedGroups.map(group => (
+                                                <div key={`blocked-${group.supplier}`} className="bg-white/85">
+                                                    <div className="px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+                                                        <div>
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Qualification requise</p>
+                                                            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2 mt-1">
+                                                                <AlertTriangle className="w-5 h-5 text-amber-600" /> {group.supplier}
+                                                            </h3>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            {group.critical_count > 0 && <span className="px-3 py-1 rounded-lg bg-red-100 text-red-700 text-xs font-black">{group.critical_count} critique(s)</span>}
+                                                            <span className="px-3 py-1 rounded-lg bg-amber-100 text-amber-700 text-xs font-black">{group.needs.length} ligne(s) bloquée(s)</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="divide-y divide-amber-100">
+                                                        {group.needs.slice(0, 4).map((need, index) => renderNeedRow(need, index, true))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             <aside className="space-y-4">
