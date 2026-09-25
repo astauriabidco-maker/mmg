@@ -1154,23 +1154,22 @@ export default function PurchasesDashboard() {
         && Boolean(conversionRequest?.supplier)
         && conversionLines.length > 0
         && conversionLines.every(line => Number(line.quantity || 0) > 0);
+    const showContextRail = ['orders', 'suppliers'].includes(currentTab);
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
 
             {/* LEFT RAIL : CONTEXTUAL LIST */}
+            {showContextRail && (
             <div className="w-[360px] bg-white border-r border-slate-200 flex flex-col items-stretch h-full shadow-xl z-20 relative">
                 <div className="p-5 border-b border-slate-200 flex flex-col gap-4 relative z-10 bg-white">
                     <div>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">File achats</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">
+                            {currentTab === 'orders' ? 'Commandes' : 'Fournisseurs'}
+                        </p>
                         <h3 className="font-black text-slate-900 flex items-center gap-3 tracking-tight text-lg mt-1">
                             <ShoppingCart className="text-blue-600 w-5 h-5"/>
-                            {currentTab === 'dashboard' ? 'Actions à suivre'
-                                : currentTab === 'orders' ? 'Commandes fournisseur'
-                                    : currentTab === 'requests' ? "Demandes d'achat"
-                                        : currentTab === 'suppliers' ? 'Fournisseurs'
-                                            : currentTab === 'disputes' ? 'Litiges fournisseur'
-                                                : 'Besoins nets'}
+                            {currentTab === 'orders' ? 'Commandes fournisseur' : 'Fournisseurs'}
                         </h3>
                     </div>
 
@@ -1178,7 +1177,7 @@ export default function PurchasesDashboard() {
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
                             type="text"
-                            placeholder={currentTab === 'dashboard' ? "Rechercher action achat..." : currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'requests' ? "Rechercher demande achat..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : currentTab === 'disputes' ? "Rechercher litige, fournisseur..." : "Rechercher besoin, article, fournisseur..."}
+                            placeholder={currentTab === 'orders' ? "Rechercher Bon de Commande..." : "Rechercher Fournisseur..."}
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
@@ -1189,64 +1188,14 @@ export default function PurchasesDashboard() {
                             <Plus className="w-5 h-5"/> {canCreatePurchaseOrder ? 'Créer Commande' : 'Créer Demande'}
                         </button>
                     )}
-                    {currentTab === 'requests' && (
-                        <button disabled={!canCreatePurchaseRequest} onClick={() => openCreatePOForSupplier()} className="w-full py-3 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-300 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
-                            <Plus className="w-5 h-5"/> Nouvelle demande
-                        </button>
-                    )}
                     {currentTab === 'suppliers' && (
                         <button onClick={() => setShowSupplierModal(true)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
                             <Plus className="w-5 h-5"/> Nv. Fournisseur
                         </button>
                     )}
-                    {currentTab === 'disputes' && (
-                        <button onClick={() => openDisputeModal({})} className="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
-                            <AlertTriangle className="w-5 h-5"/> Nouveau litige
-                        </button>
-                    )}
-                    {currentTab === 'ai' && (
-                        <button onClick={() => refetchAiRecommendations()} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
-                            <BrainCircuit className="w-5 h-5"/> Recalculer besoins nets
-                        </button>
-                    )}
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                    {currentTab === 'dashboard' && (
-                        <>
-                            {(purchaseDashboard.actions || [])
-                                .filter(action => {
-                                    const term = searchTerm.toLowerCase();
-                                    return !term
-                                        || String(action.reference || '').toLowerCase().includes(term)
-                                        || String(action.supplier || '').toLowerCase().includes(term)
-                                        || String(action.label || '').toLowerCase().includes(term);
-                                })
-                                .slice(0, 12)
-                                .map(action => (
-                                    <button
-                                        key={`${action.type}-${action.reference}-${action.purchase_order_id || action.purchase_request_id || action.dispute_id}`}
-                                        onClick={() => {
-                                            if (action.purchase_order_id) openPODetails(action.purchase_order_id);
-                                            if (action.type === 'REQUEST') setCurrentTab('requests');
-                                        }}
-                                        className="w-full text-left p-4 rounded-xl border-2 bg-white border-slate-100 hover:border-slate-300 shadow-sm"
-                                    >
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{action.type}</p>
-                                                <h4 className="font-black text-slate-900">{action.label}</h4>
-                                                <p className="text-xs font-bold text-slate-500">{action.supplier || 'Achat'} · {action.reference}</p>
-                                            </div>
-                                            {action.late_days > 0 && <span className="text-[10px] font-black text-red-700 bg-red-100 px-2 py-1 rounded-lg">{action.late_days}j</span>}
-                                        </div>
-                                    </button>
-                                ))}
-                            {(purchaseDashboard.actions || []).length === 0 && (
-                                <div className="text-center py-10 text-slate-400 font-bold">Aucune action achat urgente.</div>
-                            )}
-                        </>
-                    )}
                     {currentTab === 'orders' && (
                         <>
                             {filteredPurchases.map(po => (
@@ -1279,51 +1228,6 @@ export default function PurchasesDashboard() {
                             )}
                         </>
                     )}
-                    {currentTab === 'requests' && (
-                        <>
-                            {purchaseRequests
-                                .filter(req => {
-                                    const term = searchTerm.toLowerCase();
-                                    return !term
-                                        || String(req.reference || '').toLowerCase().includes(term)
-                                        || String(req.supplier || '').toLowerCase().includes(term)
-                                        || String(req.requested_by || '').toLowerCase().includes(term);
-                                })
-                                .map(req => (
-                                    <div
-                                        key={req.id}
-                                        className="p-4 rounded-xl border-2 bg-white border-slate-100 shadow-sm"
-                                    >
-                                        <div className="flex justify-between items-start mb-2">
-                                            <span className="font-black text-slate-900">{req.reference}</span>
-                                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-md ${
-                                                req.status === 'PENDING_APPROVAL' ? 'bg-amber-100 text-amber-700'
-                                                    : req.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-700'
-                                                        : req.status === 'CONVERTED' ? 'bg-blue-100 text-blue-700'
-                                                            : req.status === 'REJECTED' ? 'bg-red-100 text-red-700'
-                                                                : 'bg-slate-100 text-slate-600'
-                                            }`}>{req.status}</span>
-                                        </div>
-                                        <div className="flex justify-between items-center text-sm">
-                                            <span className="font-bold text-slate-600">{req.supplier}</span>
-                                            <span className="font-black text-slate-800">{Number(req.total_amount || 0).toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</span>
-                                        </div>
-                                        <div className="text-xs text-slate-400 mt-2 font-medium flex items-center gap-1">
-                                            <FileText className="w-3 h-3"/> {req.lines_count} ligne(s) · demandé par {req.requested_by || 'Système'}
-                                        </div>
-                                        {(req.contract_alerts || []).some(alert => ['WARNING', 'BLOCKING'].includes(alert.severity)) && (
-                                            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800 flex items-center gap-2">
-                                                <AlertTriangle className="w-3.5 h-3.5" />
-                                                Conditions fournisseur à vérifier
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                            {purchaseRequests.length === 0 && (
-                                <div className="text-center py-10 text-slate-400 font-bold">Aucune demande d'achat.</div>
-                            )}
-                        </>
-                    )}
                     {currentTab === 'suppliers' && (
                         <>
                             {suppliers.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase())).map(sup => (
@@ -1345,120 +1249,9 @@ export default function PurchasesDashboard() {
                             )}
                         </>
                     )}
-                    {currentTab === 'disputes' && (
-                        <>
-                            {supplierDisputes
-                                .filter(dispute => {
-                                    const term = searchTerm.toLowerCase();
-                                    return !term
-                                        || String(dispute.reference || '').toLowerCase().includes(term)
-                                        || String(dispute.supplier || '').toLowerCase().includes(term)
-                                        || String(dispute.title || '').toLowerCase().includes(term)
-                                        || String(dispute.category || '').toLowerCase().includes(term);
-                                })
-                                .map(dispute => (
-                                    <button
-                                        key={dispute.id}
-                                        onClick={() => openSupplierDisputeDetail(dispute)}
-                                        className={`w-full text-left p-4 rounded-xl border-2 shadow-sm transition-all ${
-                                            dispute.status === 'RESOLVED'
-                                                ? 'bg-emerald-50 border-emerald-100 hover:border-emerald-300'
-                                                : isSupplierDisputeOverdue(dispute)
-                                                    ? 'bg-red-50 border-red-200 hover:border-red-400'
-                                                    : 'bg-white border-slate-100 hover:border-red-200'
-                                        }`}
-                                    >
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{dispute.reference}</p>
-                                                <h4 className="font-black text-slate-900 leading-tight mt-1">{dispute.title}</h4>
-                                                <p className="text-xs font-bold text-slate-500 mt-1">{dispute.supplier}</p>
-                                            </div>
-                                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
-                                                dispute.status === 'RESOLVED' ? 'bg-emerald-100 text-emerald-700'
-                                                    : dispute.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-700'
-                                                        : 'bg-red-100 text-red-700'
-                                            }`}>
-                                                {disputeStatusLabel(dispute.status)}
-                                            </span>
-                                        </div>
-                                        <div className="mt-3 flex flex-wrap gap-1">
-                                            <span className="text-[9px] font-black uppercase tracking-widest bg-slate-100 text-slate-600 px-2 py-1 rounded-md">{disputeCategoryLabel(dispute.category)}</span>
-                                            <span className="text-[9px] font-black uppercase tracking-widest bg-orange-100 text-orange-700 px-2 py-1 rounded-md">{disputeSeverityLabel(dispute.severity)}</span>
-                                            {dispute.blocks_receipt && <span className="text-[9px] font-black uppercase tracking-widest bg-red-100 text-red-700 px-2 py-1 rounded-md">réception</span>}
-                                            {dispute.blocks_payment && <span className="text-[9px] font-black uppercase tracking-widest bg-rose-100 text-rose-700 px-2 py-1 rounded-md">paiement</span>}
-                                        </div>
-                                        {isSupplierDisputeOverdue(dispute) && (
-                                            <p className="mt-2 text-[10px] font-black text-red-600 uppercase tracking-widest">Échéance dépassée</p>
-                                        )}
-                                    </button>
-                                ))}
-                            {supplierDisputes.length === 0 && (
-                                <div className="text-center py-10 text-slate-400 font-bold">Aucun litige fournisseur.</div>
-                            )}
-                        </>
-                    )}
-                    {currentTab === 'ai' && (
-                        <div className="space-y-4">
-                            {loadingAi ? (
-                                <div className="text-center py-10 text-indigo-400 font-bold flex flex-col items-center">
-                                    <BrainCircuit className="w-8 h-8 animate-pulse mb-2" />
-                                    Calcul des besoins...
-                                </div>
-                            ) : (
-                                <>
-                                    {filteredPurchaseNeeds.map((rec) => (
-                                        <div key={`${rec.variant_id}-${rec.reference}`} className={`p-4 rounded-xl border shadow-sm relative overflow-hidden ${priorityTone(rec.priority).card}`}>
-                                            <div className={`absolute top-0 left-0 w-1 h-full ${priorityTone(rec.priority).rail}`}></div>
-                                            <h4 className="font-black text-slate-800 text-sm flex items-start justify-between">
-                                                <span>{rec.product_name}</span>
-                                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-black ${priorityTone(rec.priority).badge}`}>{priorityLabel(rec.priority)}</span>
-                                            </h4>
-                                            <p className="text-[10px] font-mono text-slate-500 mb-2">{rec.reference}</p>
-                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">{rec.supplier}</p>
-
-                                            <div className="flex justify-between items-center mb-2 bg-white rounded-lg p-2 border border-indigo-50">
-                                                <div className="text-center">
-                                                    <div className="text-[10px] font-bold text-slate-400 uppercase">Exploitable</div>
-                                                    <div className="font-black text-red-500">{rec.current_stock}</div>
-                                                </div>
-                                                {rec.unclear_stock_quantity > 0 && (
-                                                    <div className="text-center">
-                                                        <div className="text-[10px] font-bold text-amber-500 uppercase">À clarifier</div>
-                                                        <div className="font-black text-amber-600">{rec.unclear_stock_quantity}</div>
-                                                    </div>
-                                                )}
-                                                <div className="text-center">
-                                                    <div className="text-[10px] font-bold text-slate-400 uppercase">À commander</div>
-                                                    <div className="font-black text-indigo-600">+{rec.suggested_quantity}</div>
-                                                </div>
-                                            </div>
-
-                                            <p className="text-xs text-slate-600 font-medium leading-tight">
-                                                {rec.reason}
-                                            </p>
-                                            {!rec.can_order && (
-                                                <p className="mt-2 text-[10px] font-black text-red-600 uppercase tracking-widest">{rec.blocked_reason}</p>
-                                            )}
-
-                                            <button
-                                                onClick={() => preparePOFromNeeds([rec], rec.supplier)}
-                                                disabled={!rec.can_order}
-                                                className="mt-3 w-full py-2 bg-white border border-indigo-200 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400 text-indigo-700 text-xs font-black rounded-lg transition-colors"
-                                            >
-                                                Préparer commande
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {filteredPurchaseNeeds.length === 0 && (
-                                        <div className="text-center py-10 text-slate-400 font-bold">Aucun besoin d'achat à traiter.</div>
-                                    )}
-                                </>
-                            )}
-                        </div>
-                    )}
                 </div>
             </div>
+            )}
 
             {/* MAIN AREA : PO DETAILS */}
             <div className="flex-1 flex flex-col bg-slate-50 relative overflow-y-auto">
