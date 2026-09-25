@@ -3971,47 +3971,67 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
     const criticalNeeds = needs.filter(need => need.priority === 'CRITICAL');
     const urgentNeeds = needs.filter(need => need.priority === 'URGENT');
     const firstOrderableGroup = groups.find(group => group.orderable_count > 0);
+    const priorityWeight = { CRITICAL: 0, URGENT: 1, TO_PLAN: 2, NORMAL: 3 };
+    const sortedNeeds = [...needs].sort((a, b) => {
+        const priorityGap = (priorityWeight[a.priority] ?? 9) - (priorityWeight[b.priority] ?? 9);
+        if (priorityGap !== 0) return priorityGap;
+        if (a.can_order !== b.can_order) return a.can_order ? -1 : 1;
+        return Number(b.suggested_quantity || 0) - Number(a.suggested_quantity || 0);
+    });
+    const orderableNeeds = needs.filter(need => need.can_order);
+    const firstNeed = sortedNeeds[0];
+    const primaryActionLabel = canCreatePurchaseOrder ? 'Créer bon fournisseur' : 'Créer demande';
+    const lineActionLabel = canCreatePurchaseOrder ? 'Commander' : 'Demander';
+    const needsByPriority = [
+        { label: 'Critiques', value: summary.critical_count ?? criticalNeeds.length, tone: 'bg-red-50 border-red-100 text-red-700' },
+        { label: 'Urgents', value: summary.urgent_count ?? urgentNeeds.length, tone: 'bg-orange-50 border-orange-100 text-orange-700' },
+        { label: 'Commandables', value: orderableNeeds.length, tone: 'bg-emerald-50 border-emerald-100 text-emerald-700' },
+        { label: 'À qualifier', value: summary.blocked_count ?? blockedNeeds.length, tone: 'bg-amber-50 border-amber-100 text-amber-700' },
+    ];
 
     return (
         <div className="p-8 w-full">
             <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
-                <div className="px-8 py-6 border-b border-slate-100 bg-slate-900 text-white flex justify-between items-start relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-56 h-56 bg-indigo-500/20 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+                <div className="px-8 py-6 border-b border-slate-100 bg-slate-900 text-white flex flex-col 2xl:flex-row 2xl:items-start 2xl:justify-between gap-6 relative overflow-hidden">
                     <div className="relative z-10">
                         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-300/20 text-indigo-200 text-[10px] font-black uppercase tracking-widest mb-3">
-                            <BrainCircuit className="w-3.5 h-3.5" /> Intelligence achats
+                            <BrainCircuit className="w-3.5 h-3.5" /> Besoins nets achats
                         </div>
-                        <h2 className="text-3xl font-black tracking-tight">À commander</h2>
+                        <h2 className="text-3xl font-black tracking-tight">Décider quoi acheter maintenant</h2>
                         <p className="text-sm font-medium text-slate-300 mt-1">
-                            Besoins nets regroupés par fournisseur avant création des bons de commande.
+                            Priorité article, stock exploitable, fournisseur et action de commande dans le même écran.
                         </p>
                     </div>
-                    <button onClick={() => refetch()} className="relative z-10 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-black flex items-center gap-2">
-                        <BrainCircuit className="w-4 h-4" /> Recalculer
-                    </button>
+                    <div className="relative z-10 flex flex-wrap items-center gap-3">
+                        {firstOrderableGroup && (
+                            <button
+                                onClick={() => preparePOFromNeeds(firstOrderableGroup.needs.filter(need => need.can_order), firstOrderableGroup.supplier)}
+                                className="px-5 py-4 rounded-2xl bg-white text-slate-950 font-black shadow-lg hover:bg-indigo-50 flex items-center gap-2"
+                            >
+                                <Plus className="w-5 h-5" /> {primaryActionLabel} prioritaire
+                            </button>
+                        )}
+                        <button onClick={() => refetch()} className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-black flex items-center gap-2">
+                            <BrainCircuit className="w-4 h-4" /> Recalculer
+                        </button>
+                    </div>
                 </div>
 
                 <div className="p-8 space-y-8">
-                    <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-2 xl:grid-cols-6 gap-4">
                         <div className="rounded-2xl bg-slate-900 text-white p-5 shadow-lg">
                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Besoins</p>
                             <p className="text-3xl font-black">{summary.needs_count ?? needs.length}</p>
                         </div>
-                        <div className="rounded-2xl bg-red-50 border border-red-100 p-5">
-                            <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">Critiques</p>
-                            <p className="text-3xl font-black text-red-700">{summary.critical_count ?? criticalNeeds.length}</p>
-                        </div>
-                        <div className="rounded-2xl bg-orange-50 border border-orange-100 p-5">
-                            <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Urgents</p>
-                            <p className="text-3xl font-black text-orange-700">{summary.urgent_count ?? urgentNeeds.length}</p>
-                        </div>
+                        {needsByPriority.map(card => (
+                            <div key={card.label} className={`rounded-2xl border p-5 ${card.tone}`}>
+                                <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{card.label}</p>
+                                <p className="text-3xl font-black">{card.value}</p>
+                            </div>
+                        ))}
                         <div className="rounded-2xl bg-indigo-50 border border-indigo-100 p-5">
                             <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">Fournisseurs</p>
                             <p className="text-3xl font-black text-indigo-700">{summary.suppliers_count ?? groups.length}</p>
-                        </div>
-                        <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5">
-                            <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Bloqués</p>
-                            <p className="text-3xl font-black text-amber-700">{summary.blocked_count ?? blockedNeeds.length}</p>
                         </div>
                     </div>
 
@@ -4026,8 +4046,51 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
                             Aucun achat prioritaire détecté.
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 2xl:grid-cols-[1fr_360px] gap-6">
+                        <div className="grid grid-cols-1 2xl:grid-cols-[1fr_380px] gap-6">
                             <div className="space-y-5">
+                                <div className="rounded-3xl border border-slate-200 bg-slate-50 overflow-hidden">
+                                    <div className="px-5 py-4 border-b border-slate-200 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
+                                        <div>
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">File priorisée</p>
+                                            <h3 className="text-xl font-black text-slate-950">À traiter dans cet ordre</h3>
+                                        </div>
+                                        <p className="text-xs font-black text-slate-400">{sortedNeeds.length} ligne(s) calculée(s)</p>
+                                    </div>
+                                    <div className="divide-y divide-slate-200">
+                                        {sortedNeeds.slice(0, 6).map((need, index) => (
+                                            <div key={`queue-${need.variant_id}-${need.reference}`} className="px-5 py-4 grid grid-cols-1 xl:grid-cols-[44px_1fr_150px_150px] gap-4 items-center bg-white">
+                                                <div className="h-10 w-10 rounded-full bg-slate-900 text-white flex items-center justify-center font-black">{index + 1}</div>
+                                                <div className="min-w-0">
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <span className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest ${priorityTone(need.priority).badge}`}>
+                                                            {priorityLabel(need.priority)}
+                                                        </span>
+                                                        <span className="text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest bg-slate-100 text-slate-500">{need.supplier}</span>
+                                                        {!need.can_order && (
+                                                            <span className="text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest bg-red-50 text-red-600">
+                                                                {need.blocked_reason}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <h4 className="font-black text-slate-950 mt-2 truncate">{need.product_name}</h4>
+                                                    <p className="text-xs font-bold text-slate-500">{need.reference} · {need.reason}</p>
+                                                </div>
+                                                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Besoin net</p>
+                                                    <p className="text-xl font-black text-indigo-700">+{Number(need.suggested_quantity || 0).toLocaleString('fr-FR')}</p>
+                                                </div>
+                                                <button
+                                                    onClick={() => preparePOFromNeeds([need], need.supplier)}
+                                                    disabled={!need.can_order}
+                                                    className="px-4 py-3 rounded-xl bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black hover:bg-slate-800 flex items-center justify-center gap-2"
+                                                >
+                                                    {lineActionLabel} <ArrowRight className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
                                 {groups.map(group => {
                                     const orderableGroupNeeds = group.needs.filter(need => need.can_order);
                                     return (
@@ -4049,12 +4112,12 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
                                                     disabled={orderableGroupNeeds.length === 0}
                                                     className="px-4 py-3 rounded-xl bg-blue-600 disabled:bg-slate-300 text-white font-black hover:bg-blue-500 flex items-center gap-2"
                                                 >
-                                                    <Plus className="w-4 h-4" /> {canCreatePurchaseOrder ? 'Créer bon fournisseur' : 'Créer demande'}
+                                                    <Plus className="w-4 h-4" /> {primaryActionLabel}
                                                 </button>
                                             </div>
                                             <div className="divide-y divide-slate-100">
                                                 {group.needs.map(need => (
-                                                    <div key={`${need.variant_id}-${need.reference}`} className="px-5 py-4 grid grid-cols-[1fr_120px_120px_150px] gap-4 items-center">
+                                                    <div key={`${need.variant_id}-${need.reference}`} className="px-5 py-4 grid grid-cols-1 xl:grid-cols-[1fr_120px_120px_150px] gap-4 items-center">
                                                         <div>
                                                             <div className="flex flex-wrap items-center gap-2 mb-1">
                                                                 <span className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest ${priorityTone(need.priority).badge}`}>
@@ -4077,23 +4140,23 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
                                                         </div>
                                                         <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-center">
                                                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Exploitable</p>
-                                                            <p className="text-xl font-black text-slate-900">{need.current_stock.toLocaleString('fr-FR')}</p>
+                                                            <p className="text-xl font-black text-slate-900">{Number(need.current_stock || 0).toLocaleString('fr-FR')}</p>
                                                             {need.unclear_stock_quantity > 0 && (
                                                                 <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-amber-600">
-                                                                    {need.unclear_stock_quantity.toLocaleString('fr-FR')} à clarifier
+                                                                    {Number(need.unclear_stock_quantity || 0).toLocaleString('fr-FR')} à clarifier
                                                                 </p>
                                                             )}
                                                         </div>
                                                         <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3 text-center">
                                                             <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Suggéré</p>
-                                                            <p className="text-xl font-black text-indigo-700">+{need.suggested_quantity.toLocaleString('fr-FR')}</p>
+                                                            <p className="text-xl font-black text-indigo-700">+{Number(need.suggested_quantity || 0).toLocaleString('fr-FR')}</p>
                                                         </div>
                                                         <button
                                                             onClick={() => preparePOFromNeeds([need], need.supplier)}
                                                             disabled={!need.can_order}
                                                             className="px-4 py-3 rounded-xl bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black hover:bg-slate-800 flex items-center justify-center gap-2"
                                                         >
-                                                            {canCreatePurchaseOrder ? 'Commander' : 'Demander'} <ArrowRight className="w-4 h-4" />
+                                                            {lineActionLabel} <ArrowRight className="w-4 h-4" />
                                                         </button>
                                                     </div>
                                                 ))}
@@ -4104,6 +4167,29 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
                             </div>
 
                             <aside className="space-y-4">
+                                {firstNeed && (
+                                    <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-5 shadow-sm">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500">Prochaine décision</p>
+                                        <h4 className="font-black text-slate-950 text-lg mt-2">{firstNeed.product_name}</h4>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">{firstNeed.reference}</p>
+                                        <div className="mt-4 grid grid-cols-2 gap-2">
+                                            <div className="rounded-xl bg-white border border-indigo-100 p-3">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fournisseur</p>
+                                                <p className="font-black text-slate-900 mt-1 truncate">{firstNeed.supplier}</p>
+                                            </div>
+                                            <div className="rounded-xl bg-white border border-indigo-100 p-3">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">À acheter</p>
+                                                <p className="font-black text-indigo-700 mt-1">+{Number(firstNeed.suggested_quantity || 0).toLocaleString('fr-FR')}</p>
+                                            </div>
+                                        </div>
+                                        <p className="text-sm font-bold text-indigo-900 mt-4">{firstNeed.reason}</p>
+                                        {!firstNeed.can_order && (
+                                            <p className="mt-3 rounded-xl bg-red-50 border border-red-100 p-3 text-xs font-black text-red-700">
+                                                À qualifier avant commande : {firstNeed.blocked_reason}
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
                                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                                     <h4 className="font-black text-slate-900 flex items-center gap-2 mb-4">
                                         <Layers className="w-5 h-5 text-indigo-500" /> Règle de calcul
