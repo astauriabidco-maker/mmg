@@ -507,7 +507,7 @@ export default function PurchasesDashboard() {
                 };
             }
         },
-        enabled: currentTab === 'ai'
+        enabled: currentTab === 'ai' || currentTab === 'dashboard'
     });
 
     const availableVariants = variantsData;
@@ -1168,7 +1168,7 @@ export default function PurchasesDashboard() {
                             className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'ai' ? 'bg-white shadow text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
                             title="Besoins d'achat nets"
                         >
-                            À commander
+                            Besoins
                         </button>
                     </div>
 
@@ -1176,7 +1176,7 @@ export default function PurchasesDashboard() {
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
                             type="text"
-                            placeholder={currentTab === 'dashboard' ? "Rechercher action achat..." : currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'requests' ? "Rechercher demande achat..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : currentTab === 'disputes' ? "Rechercher litige, fournisseur..." : "Rechercher une recommandation..."}
+                            placeholder={currentTab === 'dashboard' ? "Rechercher action achat..." : currentTab === 'orders' ? "Rechercher Bon de Commande..." : currentTab === 'requests' ? "Rechercher demande achat..." : currentTab === 'suppliers' ? "Rechercher Fournisseur..." : currentTab === 'disputes' ? "Rechercher litige, fournisseur..." : "Rechercher besoin, article, fournisseur..."}
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
@@ -1204,7 +1204,7 @@ export default function PurchasesDashboard() {
                     )}
                     {currentTab === 'ai' && (
                         <button onClick={() => refetchAiRecommendations()} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black shadow-md flex justify-center items-center gap-2 transition-all hover:-translate-y-0.5">
-                            <BrainCircuit className="w-5 h-5"/> Recalculer besoins
+                            <BrainCircuit className="w-5 h-5"/> Recalculer besoins nets
                         </button>
                     )}
                 </div>
@@ -1471,6 +1471,7 @@ export default function PurchasesDashboard() {
                         openSupplierDisputeDetail={openSupplierDisputeDetail}
                         handleRemindSupplier={handleRemindSupplier}
                         disputes={supplierDisputes}
+                        purchaseNeedsSummary={purchaseNeedsSummary}
                     />
                 ) : currentTab === 'requests' ? (
                         <PurchaseRequestsView
@@ -3286,7 +3287,7 @@ const SupplierDisputeDetailModal = ({ dispute, purchaseOrder, invoice, onClose, 
     );
 };
 
-const PurchaseDashboardOverview = ({ dashboard, supplierOperations = {}, setCurrentTab, setSelectedSupplierId, openPODetails, openSupplierInvoiceDetail, openSupplierDisputeDetail, handleRemindSupplier, disputes = [] }) => {
+const PurchaseDashboardOverview = ({ dashboard, supplierOperations = {}, setCurrentTab, setSelectedSupplierId, openPODetails, openSupplierInvoiceDetail, openSupplierDisputeDetail, handleRemindSupplier, disputes = [], purchaseNeedsSummary = {} }) => {
     const summary = dashboard?.summary || {};
     const supplierSummary = supplierOperations?.summary || {};
     const supplierRisks = supplierOperations?.top_risks || [];
@@ -3302,43 +3303,116 @@ const PurchaseDashboardOverview = ({ dashboard, supplierOperations = {}, setCurr
         }
         setCurrentTab('suppliers');
     };
-    const cards = [
-        { label: 'Commandes ouvertes', value: summary.open_orders || 0, tone: 'bg-blue-50 border-blue-100 text-blue-700', tab: 'orders' },
-        { label: 'À réceptionner', value: summary.to_receive || 0, tone: 'bg-emerald-50 border-emerald-100 text-emerald-700', tab: 'orders' },
+    const netNeedsCount = purchaseNeedsSummary?.needs_count ?? 0;
+    const blockedNeedsCount = purchaseNeedsSummary?.blocked_count ?? 0;
+    const workflowCards = [
+        {
+            step: '1',
+            title: 'Décider les besoins',
+            detail: 'Stock, seuils, réservations et couverture fournisseur.',
+            value: netNeedsCount,
+            valueLabel: 'besoin(s) net(s)',
+            tab: 'ai',
+            tone: 'bg-indigo-50 border-indigo-100 text-indigo-700',
+        },
+        {
+            step: '2',
+            title: 'Valider les demandes',
+            detail: 'Contrôler budget, fournisseur et conditions avant engagement.',
+            value: summary.pending_requests || 0,
+            valueLabel: 'à valider',
+            tab: 'requests',
+            tone: 'bg-amber-50 border-amber-100 text-amber-700',
+        },
+        {
+            step: '3',
+            title: 'Commander',
+            detail: 'Suivre les bons ouverts, retards et conditions fournisseur.',
+            value: summary.open_orders || 0,
+            valueLabel: 'bon(s) ouvert(s)',
+            tab: 'orders',
+            tone: 'bg-blue-50 border-blue-100 text-blue-700',
+        },
+        {
+            step: '4',
+            title: 'Réceptionner',
+            detail: 'Entrer le stock, rapprocher facture et bloquer les écarts.',
+            value: summary.to_receive || 0,
+            valueLabel: 'à réceptionner',
+            tab: 'orders',
+            tone: 'bg-emerald-50 border-emerald-100 text-emerald-700',
+        },
+        {
+            step: '5',
+            title: 'Traiter les blocages',
+            detail: 'Fournisseurs, litiges, besoins non commandables et paiements.',
+            value: (summary.open_disputes || 0) + blockedNeedsCount + (summary.supplier_invoices_blocked || 0),
+            valueLabel: 'blocage(s)',
+            tab: summary.open_disputes ? 'disputes' : blockedNeedsCount ? 'ai' : 'suppliers',
+            tone: 'bg-rose-50 border-rose-100 text-rose-700',
+        },
+    ];
+    const controlCards = [
         { label: 'Retards fournisseur', value: summary.late_orders || 0, tone: 'bg-red-50 border-red-100 text-red-700', tab: 'orders' },
         { label: 'Factures à rapprocher', value: summary.to_invoice || 0, tone: 'bg-orange-50 border-orange-100 text-orange-700', tab: 'orders' },
         { label: 'Factures à payer', value: summary.supplier_invoices_to_pay || 0, tone: 'bg-indigo-50 border-indigo-100 text-indigo-700', tab: 'orders' },
-        { label: 'Paiements bloqués', value: summary.supplier_invoices_blocked || 0, tone: 'bg-rose-50 border-rose-100 text-rose-700', tab: 'suppliers' },
-        { label: 'Demandes à valider', value: summary.pending_requests || 0, tone: 'bg-amber-50 border-amber-100 text-amber-700', tab: 'requests' },
         { label: 'Hors conditions', value: summary.out_of_condition_orders || 0, tone: 'bg-yellow-50 border-yellow-100 text-yellow-700', tab: 'orders' },
-        { label: 'Litiges ouverts', value: summary.open_disputes || 0, tone: 'bg-rose-50 border-rose-100 text-rose-700', tab: 'disputes' },
     ];
 
     return (
         <div className="p-8 w-full space-y-6">
             <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
-                <div className="px-8 py-7 bg-slate-900 text-white flex items-start justify-between gap-6">
+                <div className="px-8 py-7 bg-slate-900 text-white flex flex-col 2xl:flex-row 2xl:items-start 2xl:justify-between gap-6">
                     <div>
                         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-300/20 text-blue-200 text-[10px] font-black uppercase tracking-widest mb-3">
-                            <ShoppingCart className="w-3.5 h-3.5" /> Pilotage achats
+                            <ShoppingCart className="w-3.5 h-3.5" /> Parcours achats & appro
                         </div>
-                        <h2 className="text-3xl font-black tracking-tight">Achats à piloter maintenant</h2>
-                        <p className="text-sm font-bold text-slate-300 mt-1">Retards, réceptions, factures fournisseur et litiges au même endroit.</p>
+                        <h2 className="text-3xl font-black tracking-tight">Transformer les besoins stock en commandes fiables</h2>
+                        <p className="text-sm font-bold text-slate-300 mt-1">Décider quoi acheter, valider, commander, réceptionner, puis contrôler les écarts fournisseur.</p>
                     </div>
-                    <div className="text-right">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Engagé HT</p>
-                        <p className="text-3xl font-black text-emerald-300">{formatMoney(summary.amount_committed)}</p>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-2">À payer fournisseur</p>
-                        <p className="text-xl font-black text-orange-200">{formatMoney(summary.amount_to_pay)}</p>
+                    <div className="grid grid-cols-2 gap-3 min-w-[320px]">
+                        <button onClick={() => setCurrentTab('ai')} className="rounded-2xl bg-white text-slate-950 px-5 py-4 text-left shadow-lg hover:bg-blue-50">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Action départ</p>
+                            <p className="font-black mt-1 flex items-center gap-2">Voir besoins nets <ArrowRight className="w-4 h-4" /></p>
+                        </button>
+                        <button onClick={() => setCurrentTab('orders')} className="rounded-2xl bg-white/10 border border-white/10 px-5 py-4 text-left hover:bg-white/15">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Engagé HT</p>
+                            <p className="font-black text-emerald-200 mt-1">{formatMoney(summary.amount_committed)}</p>
+                        </button>
                     </div>
                 </div>
 
                 <div className="p-8">
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {cards.map(card => (
+                    <div className="rounded-3xl border border-blue-100 bg-blue-50/40 p-5">
+                        <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-3 mb-5">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">Lecture métier</p>
+                                <h3 className="text-2xl font-black text-slate-950 mt-1">Le bon ordre d'exécution</h3>
+                                <p className="text-sm font-bold text-slate-600 mt-1">On part du besoin net, puis on engage uniquement ce qui est qualifié et réceptionnable.</p>
+                            </div>
+                            <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">Stock → besoin → demande → commande → réception → contrôle</p>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-5 gap-3">
+                            {workflowCards.map(card => (
+                                <button key={card.step} onClick={() => setCurrentTab(card.tab)} className={`text-left rounded-2xl border p-5 ${card.tone} hover:-translate-y-0.5 transition-transform`}>
+                                    <div className="flex items-start justify-between gap-3">
+                                        <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-sm text-sm font-black">{card.step}</span>
+                                        <ArrowRight className="w-4 h-4 opacity-60" />
+                                    </div>
+                                    <h4 className="font-black text-slate-950 text-lg mt-4">{card.title}</h4>
+                                    <p className="text-xs font-bold text-slate-600 mt-1 min-h-[42px]">{card.detail}</p>
+                                    <p className="text-3xl font-black mt-4">{card.value}</p>
+                                    <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{card.valueLabel}</p>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="mt-6 grid grid-cols-2 xl:grid-cols-4 gap-4">
+                        {controlCards.map(card => (
                             <button key={card.label} onClick={() => setCurrentTab(card.tab)} className={`text-left rounded-2xl border p-5 ${card.tone} hover:-translate-y-0.5 transition-transform`}>
                                 <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{card.label}</p>
-                                <p className="text-4xl font-black mt-2">{card.value}</p>
+                                <p className="text-3xl font-black mt-2">{card.value}</p>
                             </button>
                         ))}
                     </div>
