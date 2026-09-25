@@ -211,6 +211,22 @@ ENTITIES: dict[str, Entity] = {
         source_models=("Product", "ProductVariant", "StockQuant", "StockLocation"),
         aliases=("profil", "accessoire", "matière"),
     ),
+    "stock_location": Entity(
+        id="stock_location",
+        label="Emplacement physique stock",
+        module="STOCK",
+        definition="Zone, rack, casier ou point atelier où le stock réel peut être rangé, compté ou consommé.",
+        source_models=("StockLocation",),
+        aliases=("zone", "rack", "casier", "emplacement"),
+    ),
+    "stock_quant": Entity(
+        id="stock_quant",
+        label="Quantité physique localisée",
+        module="STOCK",
+        definition="Quantité réelle d'une variante sur un emplacement physique précis.",
+        source_models=("StockQuant",),
+        aliases=("stock réel", "quantité disponible"),
+    ),
     "stock_reservation": Entity(
         id="stock_reservation",
         label="Réservation stock atelier",
@@ -243,6 +259,39 @@ ENTITIES: dict[str, Entity] = {
         definition="Consommation effective du stock après lancement fabrication et remise matière à l'atelier.",
         source_models=("StockMove",),
         aliases=("consommation matière", "débit réel"),
+    ),
+    "inventory_session": Entity(
+        id="inventory_session",
+        label="Campagne d'inventaire",
+        module="STOCK",
+        definition="Contrôle physique d'une zone ou d'un périmètre stock, avant justification et validation des écarts.",
+        source_models=("InventorySession",),
+        aliases=("inventaire physique", "campagne de comptage", "comptage stock"),
+    ),
+    "inventory_count_line": Entity(
+        id="inventory_count_line",
+        label="Ligne de comptage inventaire",
+        module="STOCK",
+        definition="Mesure physique d'une référence sur un emplacement, comparée au stock attendu et justifiée en cas d'écart.",
+        source_models=("InventoryCountLine",),
+        aliases=("ligne inventaire", "écart inventaire", "recompte"),
+    ),
+    "inventory_intelligence": Entity(
+        id="inventory_intelligence",
+        label="Score d'intelligence inventaire",
+        module="STOCK",
+        definition="Priorisation métier calculée depuis zones, écarts, valeur, mouvements, réservations et impact atelier/achat.",
+        source_models=(
+            "StockLocation",
+            "StockQuant",
+            "StockMove",
+            "StockReservation",
+            "InventorySession",
+            "InventoryCountLine",
+            "PurchaseOrderLine",
+            "PurchaseRequestLine",
+        ),
+        aliases=("score inventaire", "priorité inventaire", "contrôle intelligent"),
     ),
 }
 
@@ -295,14 +344,30 @@ RELATIONS: tuple[Relation, ...] = (
     Relation("signed_order", "authorizes", "industrial_dossier", required=True),
     Relation("industrial_dossier", "requires", "fabrication_sheet", required=True),
     Relation("industrial_dossier", "requires", "cutting_sheet", required=True),
+    Relation("stock_quant", "locates", "stock_item", required=True),
+    Relation("stock_quant", "is_stored_in", "stock_location", required=True),
+    Relation("stock_item", "is_available_through", "stock_quant"),
+    Relation("stock_location", "contains", "stock_quant"),
     Relation("cutting_sheet", "reserves", "stock_reservation"),
     Relation("stock_reservation", "reserves", "stock_item"),
+    Relation("stock_reservation", "anchors_to", "stock_location"),
     Relation("stock_reservation", "is_prepared_by", "workshop_preparation"),
+    Relation("inventory_session", "controls", "stock_location", required=True),
+    Relation("inventory_session", "contains", "inventory_count_line", required=True),
+    Relation("inventory_count_line", "measures", "stock_item", required=True),
+    Relation("inventory_count_line", "counts_at", "stock_location", required=True),
+    Relation("inventory_count_line", "may_adjust", "stock_quant"),
+    Relation("inventory_intelligence", "prioritizes", "inventory_session"),
+    Relation("inventory_intelligence", "scores", "stock_location"),
+    Relation("inventory_intelligence", "scores", "stock_item"),
+    Relation("inventory_intelligence", "uses_signal_from", "stock_reservation"),
+    Relation("inventory_intelligence", "uses_signal_from", "real_workshop_debit"),
     Relation("signed_order", "authorizes", "production_order"),
     Relation("production_order", "uses", "fabrication_sheet"),
     Relation("production_order", "consumes_via", "real_workshop_debit"),
     Relation("real_workshop_debit", "must_trace_to", "cutting_sheet", required=True),
     Relation("real_workshop_debit", "consumes", "stock_item"),
+    Relation("real_workshop_debit", "moves_from", "stock_location"),
 )
 
 
@@ -407,6 +472,30 @@ WORKFLOW_GATES: tuple[WorkflowGate, ...] = (
         required_entities=("stock_reservation", "workshop_preparation", "production_order"),
         rule="Le débit réel consomme le stock seulement après réservation active, préparation remise et fabrication lancée.",
     ),
+    WorkflowGate(
+        id="inventory_requires_clear_location",
+        label="Inventaire physique sur emplacement exploitable",
+        from_entity="stock_location",
+        to_entity="inventory_session",
+        required_entities=("stock_location",),
+        rule="Une campagne d'inventaire doit cibler un emplacement interne actif et suffisamment précis pour isoler le comptage.",
+    ),
+    WorkflowGate(
+        id="inventory_adjustment_requires_validated_count",
+        label="Ajustement stock après comptage validé",
+        from_entity="inventory_count_line",
+        to_entity="stock_quant",
+        required_entities=("inventory_session", "inventory_count_line", "stock_location", "stock_item"),
+        rule="Un ajustement de stock ne peut être créé qu'après validation d'une campagne, avec écart compté et motif justifié.",
+    ),
+    WorkflowGate(
+        id="inventory_intelligence_requires_live_stock_data",
+        label="Score inventaire alimenté par données réelles",
+        from_entity="stock_quant",
+        to_entity="inventory_intelligence",
+        required_entities=("stock_quant", "stock_location", "stock_item"),
+        rule="Le score inventaire doit croiser stock localisé, qualité de zone, écarts, mouvements, réservations et impact achat/atelier.",
+    ),
 )
 
 
@@ -425,6 +514,17 @@ PIPELINE: tuple[str, ...] = (
     "workshop_preparation",
     "production_order",
     "real_workshop_debit",
+)
+
+
+STOCK_CONTROL_PATH: tuple[str, ...] = (
+    "stock_location",
+    "stock_quant",
+    "stock_item",
+    "inventory_intelligence",
+    "inventory_session",
+    "inventory_count_line",
+    "stock_quant",
 )
 
 
@@ -480,6 +580,27 @@ ENTITY_STATUSES: dict[str, tuple[EntityStatus, ...]] = {
         EntityStatus("stock_reservation", "ACTIVE", "Active"),
         EntityStatus("stock_reservation", "CONSUMED", "Consommée", final=True),
         EntityStatus("stock_reservation", "CANCELLED", "Annulée", final=True),
+    ),
+    "inventory_session": (
+        EntityStatus("inventory_session", "scheduled", "Planifiée"),
+        EntityStatus("inventory_session", "draft", "Brouillon"),
+        EntityStatus("inventory_session", "counting", "Comptage"),
+        EntityStatus("inventory_session", "pending_approval", "Approbation"),
+        EntityStatus("inventory_session", "validated", "Validée", final=True),
+        EntityStatus("inventory_session", "cancelled", "Annulée", final=True),
+    ),
+    "inventory_count_line": (
+        EntityStatus("inventory_count_line", "pending", "À compter"),
+        EntityStatus("inventory_count_line", "ok", "Conforme"),
+        EntityStatus("inventory_count_line", "variance", "Écart"),
+        EntityStatus("inventory_count_line", "recount", "À recompter"),
+        EntityStatus("inventory_count_line", "validated", "Validée", final=True),
+    ),
+    "inventory_intelligence": (
+        EntityStatus("inventory_intelligence", "low", "Stable"),
+        EntityStatus("inventory_intelligence", "medium", "À surveiller"),
+        EntityStatus("inventory_intelligence", "high", "Prioritaire"),
+        EntityStatus("inventory_intelligence", "critical", "Critique"),
     ),
     "production_order": (
         EntityStatus("production_order", "PLANNED", "Planifié"),
@@ -557,6 +678,48 @@ BUSINESS_EVENTS: tuple[BusinessEvent, ...] = (
         "stock_item",
         "Sortie effective des quantités matière du stock.",
     ),
+    BusinessEvent(
+        "inventory_scored",
+        "Priorité inventaire calculée",
+        "inventory_intelligence",
+        "inventory_session",
+        "Analyse des zones et références à compter en priorité depuis les données stock, atelier et achat.",
+    ),
+    BusinessEvent(
+        "inventory_scheduled",
+        "Inventaire planifié",
+        "stock_location",
+        "inventory_session",
+        "Création d'une campagne de comptage sur une zone physique exploitable.",
+    ),
+    BusinessEvent(
+        "inventory_counted",
+        "Ligne inventaire comptée",
+        "inventory_session",
+        "inventory_count_line",
+        "Saisie d'une quantité réelle pour une référence et un emplacement donnés.",
+    ),
+    BusinessEvent(
+        "inventory_variance_detected",
+        "Écart inventaire détecté",
+        "inventory_count_line",
+        "stock_item",
+        "Détection d'un écart entre stock attendu et stock compté.",
+    ),
+    BusinessEvent(
+        "inventory_validated",
+        "Inventaire validé",
+        "inventory_session",
+        "stock_quant",
+        "Validation finale de la campagne et préparation des ajustements stock tracés.",
+    ),
+    BusinessEvent(
+        "stock_adjusted",
+        "Stock ajusté après inventaire",
+        "inventory_count_line",
+        "stock_quant",
+        "Création d'un mouvement d'ajustement stock à partir d'une ligne inventaire validée.",
+    ),
 )
 
 
@@ -574,6 +737,11 @@ STEP_RBAC: tuple[StepPermission, ...] = (
     StepPermission("workshop_preparation", "write", "stock.transfer", "Préparer, remettre ou retourner le bon atelier."),
     StepPermission("production_order", "launch", "SALES_EDIT", "Transmettre la commande préparée à l'atelier ; l'autorisation reste contrôlée par les rôles de lancement."),
     StepPermission("real_workshop_debit", "consume", "workshop.consume_stock", "Débiter réellement la matière."),
+    StepPermission("stock_location", "manage", "stock.locations.manage", "Créer, clarifier ou archiver les emplacements physiques."),
+    StepPermission("inventory_session", "count", "inventory.count", "Compter les références d'une campagne d'inventaire."),
+    StepPermission("inventory_session", "validate", "inventory.validate", "Créer, démarrer, valider ou annuler une campagne d'inventaire."),
+    StepPermission("inventory_session", "approve_value", "inventory.approve_value", "Approuver un écart d'inventaire valorisé avant ajustement."),
+    StepPermission("inventory_intelligence", "read", "inventory.count", "Consulter les priorités inventaire calculées depuis les données stock."),
 )
 
 
@@ -648,6 +816,7 @@ def ontology_as_dict() -> dict[str, object]:
     return {
         "modules": list(MMG_MODULES),
         "pipeline": list(PIPELINE),
+        "stock_control_path": list(STOCK_CONTROL_PATH),
         "entities": {key: entity.__dict__ for key, entity in ENTITIES.items()},
         "relations": [relation.__dict__ for relation in RELATIONS],
         "model_bindings": MODEL_BINDINGS,

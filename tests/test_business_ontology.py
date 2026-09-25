@@ -3,6 +3,7 @@ from backend.domain.ontology import (
     EXTERNAL_DOCUMENT_MAPPINGS,
     PIPELINE,
     RELATIONS,
+    STOCK_CONTROL_PATH,
     WORKFLOW_GATES,
     document_type_can_feed_stock,
     ontology_as_dict,
@@ -34,6 +35,14 @@ def test_business_ontology_declares_end_to_end_industrial_path():
     )
     assert ENTITIES[PIPELINE[0]].label == "Client"
     assert ENTITIES[PIPELINE[-1]].label == "Débit atelier réel"
+
+
+def test_business_ontology_declares_inventory_control_path():
+    assert STOCK_CONTROL_PATH[0] == "stock_location"
+    assert STOCK_CONTROL_PATH[-1] == "stock_quant"
+    assert "inventory_intelligence" in STOCK_CONTROL_PATH
+    assert ENTITIES["inventory_intelligence"].module == "STOCK"
+    assert "réservations" in ENTITIES["inventory_intelligence"].definition.lower()
 
 
 def test_proges_and_orgadata_documents_are_mapped_to_canonical_entities():
@@ -70,6 +79,18 @@ def test_certifying_rules_lock_stock_and_production_order():
         "workshop_preparation",
         "production_order",
     )
+    assert gates["inventory_requires_clear_location"].required_entities == ("stock_location",)
+    assert gates["inventory_adjustment_requires_validated_count"].required_entities == (
+        "inventory_session",
+        "inventory_count_line",
+        "stock_location",
+        "stock_item",
+    )
+    assert gates["inventory_intelligence_requires_live_stock_data"].required_entities == (
+        "stock_quant",
+        "stock_location",
+        "stock_item",
+    )
     assert document_type_can_feed_stock("CUTTING") is True
     assert document_type_can_feed_stock("FABRICATION") is False
 
@@ -93,4 +114,15 @@ def test_modules_can_be_queried_for_ui_or_ai_context():
         "production_order",
         "real_workshop_debit",
     }.issubset(atelier_codes)
+    stock_codes = {
+        key for key, entity in payload["entities"].items() if entity["module"] == "STOCK"
+    }
+    assert {
+        "stock_location",
+        "stock_quant",
+        "stock_item",
+        "inventory_session",
+        "inventory_count_line",
+        "inventory_intelligence",
+    }.issubset(stock_codes)
     assert len(EXTERNAL_DOCUMENT_MAPPINGS) == 8

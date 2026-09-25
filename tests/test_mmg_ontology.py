@@ -8,6 +8,7 @@ from backend.domain.ontology import (
     PIPELINE,
     RELATIONS,
     STEP_RBAC,
+    STOCK_CONTROL_PATH,
     WORKFLOW_GATES,
     document_type_can_feed_stock,
     ontology_as_dict,
@@ -41,6 +42,31 @@ def test_pipeline_links_crm_to_real_workshop_debit():
         ("production_order", "real_workshop_debit"),
     }
     assert expected_pairs.issubset(relation_pairs)
+
+
+def test_inventory_ontology_declares_stock_control_path():
+    assert STOCK_CONTROL_PATH == (
+        "stock_location",
+        "stock_quant",
+        "stock_item",
+        "inventory_intelligence",
+        "inventory_session",
+        "inventory_count_line",
+        "stock_quant",
+    )
+
+    relation_pairs = {(relation.source, relation.target) for relation in RELATIONS}
+    assert {
+        ("stock_quant", "stock_item"),
+        ("stock_quant", "stock_location"),
+        ("inventory_session", "stock_location"),
+        ("inventory_session", "inventory_count_line"),
+        ("inventory_count_line", "stock_item"),
+        ("inventory_count_line", "stock_location"),
+        ("inventory_intelligence", "inventory_session"),
+        ("inventory_intelligence", "stock_location"),
+        ("inventory_intelligence", "stock_item"),
+    }.issubset(relation_pairs)
 
 
 def test_proges_orgadata_documents_resolve_to_distinct_canonical_objects():
@@ -111,6 +137,7 @@ def test_ontology_serializes_for_api_or_rag_usage():
     assert payload["entities"]["cutting_sheet"]["module"] == "DEBIT"
     assert "Fiche fabrication" in ENTITIES["fabrication_sheet"].label
     assert payload["workflow_gates"]
+    assert payload["stock_control_path"] == list(STOCK_CONTROL_PATH)
     assert payload["entity_statuses"]["crm_opportunity"]
     assert payload["business_events"]
     assert payload["step_rbac"]
@@ -123,6 +150,9 @@ def test_ontology_declares_sqlalchemy_model_bindings():
     assert "TechnicalDossierVersion" in MODEL_BINDINGS["cutting_sheet"]
     assert "StockReservation" in MODEL_BINDINGS["stock_reservation"]
     assert "StockMove" in MODEL_BINDINGS["real_workshop_debit"]
+    assert "InventorySession" in MODEL_BINDINGS["inventory_session"]
+    assert "InventoryCountLine" in MODEL_BINDINGS["inventory_count_line"]
+    assert "StockQuant" in MODEL_BINDINGS["inventory_intelligence"]
 
 
 def test_ontology_declares_detailed_statuses_by_entity():
@@ -132,11 +162,16 @@ def test_ontology_declares_detailed_statuses_by_entity():
     reservation_status_codes = {
         status.code for status in ENTITY_STATUSES["stock_reservation"]
     }
+    inventory_status_codes = {
+        status.code for status in ENTITY_STATUSES["inventory_session"]
+    }
 
     assert "proposition_a_valider" in opportunity_status_codes
     assert "gagne" in opportunity_status_codes
     assert "ACTIVE" in reservation_status_codes
     assert "CONSUMED" in reservation_status_codes
+    assert "counting" in inventory_status_codes
+    assert "validated" in inventory_status_codes
     assert any(status.final for status in ENTITY_STATUSES["commercial_quote"])
 
 
@@ -150,6 +185,10 @@ def test_ontology_declares_business_events():
         "stock_reserved",
         "production_launched",
         "stock_consumed",
+        "inventory_scored",
+        "inventory_counted",
+        "inventory_variance_detected",
+        "stock_adjusted",
     }.issubset(event_codes)
 
 
@@ -164,3 +203,7 @@ def test_ontology_declares_step_rbac_rules():
     assert permissions_by_entity_action[("workshop_preparation", "write")] == "stock.transfer"
     assert permissions_by_entity_action[("production_order", "launch")] == "SALES_EDIT"
     assert permissions_by_entity_action[("real_workshop_debit", "consume")] == "workshop.consume_stock"
+    assert permissions_by_entity_action[("stock_location", "manage")] == "stock.locations.manage"
+    assert permissions_by_entity_action[("inventory_session", "count")] == "inventory.count"
+    assert permissions_by_entity_action[("inventory_session", "validate")] == "inventory.validate"
+    assert permissions_by_entity_action[("inventory_session", "approve_value")] == "inventory.approve_value"

@@ -73,6 +73,10 @@ def test_mmg_ontology_api_is_enriched_by_live_business_data(isolated_client):
             ("workshop.reserve_stock", "Stock - Atelier", "Réserver le stock pour un débit atelier"),
             ("workshop.consume_stock", "Stock - Atelier", "Transformer une réservation atelier en débit réel"),
             ("stock.transfer", "Stock - Actions", "Transférer du stock entre emplacements"),
+            ("stock.locations.manage", "Stock - Référentiel", "Gérer les emplacements physiques"),
+            ("inventory.count", "Inventaire", "Compter les campagnes d'inventaire"),
+            ("inventory.validate", "Inventaire", "Valider les campagnes d'inventaire"),
+            ("inventory.approve_value", "Inventaire", "Approuver les écarts valorisés"),
         ]
         for code, module, description in required_permissions:
             if not db.query(models.Permission).filter_by(code=code).first():
@@ -159,7 +163,54 @@ def test_mmg_ontology_api_is_enriched_by_live_business_data(isolated_client):
             technical_dossier_version_id=cutting.id,
             status="reserved",
         )
-        db.add(reservation)
+        location = models.StockLocation(name="Rack Ontologie A1", usage="internal", is_active=True)
+        product = models.Product(
+            name="Profil ontologie",
+            reference_base="ONTO-PROFIL",
+            category="PROFIL",
+            unit="pce",
+            material_type="ALU",
+            supplier="ONTO",
+            catalog_status="ACTIVE",
+        )
+        db.add_all([reservation, location, product])
+        db.flush()
+
+        variant = models.ProductVariant(
+            product_id=product.id,
+            reference="ONTO-PROFIL-BLANC",
+            cost_price=12,
+            quantity_in_stock=5,
+            min_threshold=10,
+        )
+        db.add(variant)
+        db.flush()
+
+        inventory_session = models.InventorySession(
+            reference="INV-ONTO-001",
+            name="Inventaire ontologie",
+            status="validated",
+            location_id=location.id,
+            created_by="ontology-data-viewer",
+            validated_by="ontology-data-viewer",
+            validated_at=utcnow(),
+        )
+        db.add(inventory_session)
+        db.flush()
+
+        inventory_line = models.InventoryCountLine(
+            session_id=inventory_session.id,
+            variant_id=variant.id,
+            location_id=location.id,
+            expected_quantity=5,
+            counted_quantity=3,
+            variance_quantity=-2,
+            status="validated",
+            reason="Écart test ontologie",
+            unit_cost_snapshot=12,
+            variance_value=-24,
+        )
+        db.add(inventory_line)
         db.commit()
 
     response = client.get("/v2/mmg/ontology", headers=headers)
@@ -171,6 +222,8 @@ def test_mmg_ontology_api_is_enriched_by_live_business_data(isolated_client):
     assert profile["entities"]["measure_mission"]["status_counts"]["VALIDATED"] == 1
     assert profile["entities"]["cutting_sheet"]["record_count"] == 1
     assert profile["entities"]["stock_reservation"]["status_counts"]["reserved"] == 1
+    assert profile["entities"]["inventory_session"]["status_counts"]["validated"] == 1
+    assert profile["entities"]["inventory_count_line"]["status_counts"]["validated"] == 1
     assert profile["external_documents"]["by_source_system"]["ORGADATA"] == 1
     assert profile["external_documents"]["by_document_type"]["CUTTING"] == 1
     assert profile["external_documents"]["observed_mappings"][0]["canonical_entity"] == "cutting_sheet"
