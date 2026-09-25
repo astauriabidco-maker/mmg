@@ -2250,6 +2250,50 @@ export default function StockDashboard({ surface = 'management' }) {
         available: summary.available + Number(row.availableQuantity || 0),
         valuation: summary.valuation + Number(row.valuation || 0),
     }), { physicalStock: 0, reserved: 0, available: 0, valuation: 0 });
+    const activeStockLocation = activeLocationId === 'global' ? null : locations.find(location => location.id === activeLocationId);
+    const activeStockLocationIds = activeStockLocation ? getLocationDescendantIds(activeStockLocation.id) : null;
+    const stockRealRows = quants
+        .filter(quant => Number(quant.quantity || 0) !== 0)
+        .map(quant => {
+            const { product, variant } = getVariantContext(quant.variant_id);
+            const quantLocation = locations.find(item => item.id === quant.location_id);
+            const reservedQuantity = quant.reserved_quantity != null
+                ? Number(quant.reserved_quantity)
+                : Number(variant?.reserved_quantity || 0);
+            const availableQuantity = quant.available_quantity != null
+                ? Number(quant.available_quantity)
+                : Math.max(Number(quant.quantity || 0) - reservedQuantity, 0);
+            return {
+                ...quant,
+                product,
+                variant,
+                location: quantLocation,
+                locationName: quantLocation ? getFullLocationName(quantLocation) : 'Emplacement inconnu',
+                locationQuality: quantLocation ? getLocationQuality(quantLocation) : null,
+                reservedQuantity,
+                availableQuantity,
+                valuation: Number(quant.quantity || 0) * Number(variant?.cost_price || 0),
+            };
+        })
+        .filter(row => row.location?.usage === 'internal')
+        .filter(row => !activeStockLocationIds || activeStockLocationIds.includes(row.location_id))
+        .filter(row => {
+            if (!searchTerm) return true;
+            const term = searchTerm.toLowerCase();
+            return String(row.product?.name || '').toLowerCase().includes(term)
+                || String(row.product?.reference_base || '').toLowerCase().includes(term)
+                || String(row.variant?.reference || '').toLowerCase().includes(term)
+                || String(row.locationName || '').toLowerCase().includes(term)
+                || String(row.product?.supplier || '').toLowerCase().includes(term);
+        })
+        .sort((a, b) => `${a.locationName} ${a.product?.name || ''}`.localeCompare(`${b.locationName} ${b.product?.name || ''}`));
+    const stockRealSummary = stockRealRows.reduce((summary, row) => ({
+        physical: summary.physical + Number(row.quantity || 0),
+        reserved: summary.reserved + Number(row.reservedQuantity || 0),
+        available: summary.available + Number(row.availableQuantity || 0),
+        valuation: summary.valuation + Number(row.valuation || 0),
+        unclear: summary.unclear + (row.locationQuality && !row.locationQuality.exploitable ? 1 : 0),
+    }), { physical: 0, reserved: 0, available: 0, valuation: 0, unclear: 0 });
     const locationTemplates = [
         { label: 'Magasin', name: 'Magasin principal', usage: 'internal', hint: 'Zone racine pour réception et stockage courant.' },
         { label: 'Zone', name: 'Zone ALU', usage: 'internal', hint: 'Famille matière ou zone physique de rangement.' },
@@ -2660,7 +2704,9 @@ export default function StockDashboard({ surface = 'management' }) {
                             <div
                                 onClick={() => {
                                     setActiveLocationId('global');
-                                    setInventoryFocus('catalog');
+                                    setInventoryFocus('stock');
+                                    setShowDraftOnly(false);
+                                    setSearchTerm('');
                                 }}
                                 className={`flex items-center gap-3 rounded-xl border p-3 cursor-pointer transition-all ${activeLocationId === 'global' ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
                             >
@@ -4386,7 +4432,180 @@ export default function StockDashboard({ surface = 'management' }) {
                         />
                     )}
 
-                    {groupedData.length === 0 && (
+                    {currentMenu === 'stock' && (
+                        <div className="space-y-4">
+                            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">Stock réel exploitable</p>
+                                        <h3 className="mt-1 text-2xl font-black text-slate-950">
+                                            {activeStockLocation ? getFullLocationName(activeStockLocation) : 'Vue globale par emplacement'}
+                                        </h3>
+                                        <p className="mt-1 max-w-3xl text-sm font-bold text-slate-500">
+                                            Lecture terrain : chaque ligne correspond à une quantité physique dans une zone réelle. La fiche article reste disponible, mais le contrôle part d’abord de l’emplacement.
+                                        </p>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {stockPermissions.receive && (
+                                            <button type="button" onClick={openReceptionModal} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white hover:bg-emerald-500">
+                                                <Truck className="h-4 w-4" />
+                                                Entrée stock
+                                            </button>
+                                        )}
+                                        {stockPermissions.adjust && (
+                                            <button type="button" onClick={openCustomerIssueModal} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white hover:bg-slate-800">
+                                                <ArrowRight className="h-4 w-4" />
+                                                Sortie stock
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-5">
+                                    {[
+                                        ['Lignes physiques', stockRealRows.length, 'référence + zone', 'slate'],
+                                        ['Physique', formatQty(stockRealSummary.physical), 'quantité comptée', 'blue'],
+                                        ['Disponible', formatQty(stockRealSummary.available), 'après réservations', 'emerald'],
+                                        ['Réservé', formatQty(stockRealSummary.reserved), 'atelier / client', 'amber'],
+                                        ['Zones à clarifier', stockRealSummary.unclear, 'rangement fragile', stockRealSummary.unclear ? 'red' : 'slate'],
+                                    ].map(([label, value, helper, tone]) => (
+                                        <div key={label} className={`rounded-2xl border p-4 ${
+                                            tone === 'emerald' ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                                                : tone === 'amber' ? 'border-amber-100 bg-amber-50 text-amber-700'
+                                                    : tone === 'red' ? 'border-red-100 bg-red-50 text-red-700'
+                                                        : tone === 'blue' ? 'border-blue-100 bg-blue-50 text-blue-700'
+                                                            : 'border-slate-200 bg-white text-slate-700'
+                                        }`}>
+                                            <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{label}</p>
+                                            <p className="mt-1 text-2xl font-black text-slate-950">{value}</p>
+                                            <p className="mt-1 text-[11px] font-black uppercase tracking-wide opacity-70">{helper}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {stockRealRows.length === 0 ? (
+                                <div className="flex h-64 flex-col items-center justify-center rounded-3xl border-2 border-dashed border-slate-200 bg-white">
+                                    <Box className="mb-4 h-12 w-12 text-slate-300" />
+                                    <p className="text-center font-bold text-slate-400">
+                                        Aucun stock physique trouvé avec le filtre actuel.<br />
+                                        <span className="text-sm font-medium italic">Changez d’emplacement ou réinitialisez la recherche.</span>
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                                    <div className="hidden grid-cols-[1.2fr_1.4fr_110px_110px_110px_130px] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400 xl:grid">
+                                        <span>Emplacement</span>
+                                        <span>Article / variante</span>
+                                        <span className="text-right">Physique</span>
+                                        <span className="text-right">Réservé</span>
+                                        <span className="text-right">Disponible</span>
+                                        <span className="text-right">Action</span>
+                                    </div>
+                                    <div className="divide-y divide-slate-100">
+                                        {stockRealRows.map(row => {
+                                            const isEditing = editingQuant?.variantId === row.variant?.id && editingQuant?.locId === row.location_id;
+                                            const locationIsClean = row.locationQuality?.exploitable !== false;
+                                            return (
+                                                <div key={`${row.variant_id}-${row.location_id}`} className="grid grid-cols-1 gap-3 px-5 py-4 transition-colors hover:bg-slate-50 xl:grid-cols-[1.2fr_1.4fr_110px_110px_110px_130px] xl:items-center">
+                                                    <div className="min-w-0">
+                                                        <button
+                                                            type="button"
+                                                            onClick={(event) => row.location && openLocationDetail(event, row.location, { returnMenu: 'stock' })}
+                                                            className="truncate text-left text-sm font-black text-slate-900 hover:text-blue-700"
+                                                        >
+                                                            {row.locationName}
+                                                        </button>
+                                                        <div className="mt-1 flex flex-wrap gap-1.5">
+                                                            <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-wide ${
+                                                                locationIsClean
+                                                                    ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                                                                    : 'border-amber-100 bg-amber-50 text-amber-700'
+                                                            }`}>
+                                                                {locationIsClean ? 'Zone claire' : 'À clarifier'}
+                                                            </span>
+                                                            <span className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-500">
+                                                                {locationUsageLabels[row.location?.usage] || row.location?.usage || 'Zone'}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <button
+                                                            type="button"
+                                                            onClick={(event) => row.product && openProductDetail(event, row.product, { returnMenu: 'stock' })}
+                                                            className="truncate text-left text-base font-black text-slate-950 hover:text-blue-700"
+                                                        >
+                                                            {row.product?.name || 'Produit inconnu'}
+                                                        </button>
+                                                        <p className="mt-0.5 truncate text-xs font-mono font-bold text-slate-400">
+                                                            {row.variant?.reference || `Variante #${row.variant_id}`} · {row.product?.supplier || 'Fournisseur non renseigné'}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 xl:hidden">Physique</p>
+                                                        {isEditing ? (
+                                                            <input
+                                                                autoFocus
+                                                                type="number"
+                                                                value={quantInputValue}
+                                                                onChange={(event) => setQuantInputValue(event.target.value)}
+                                                                onKeyDown={handleQuantInputKeyDown}
+                                                                onBlur={submitQuantEdit}
+                                                                className="w-24 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-right text-lg font-black text-blue-700 outline-none focus:ring-2 focus:ring-blue-500/30"
+                                                            />
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => stockPermissions.adjust && row.variant && startEditingQuant(row.variant.id, row.location_id, row.quantity)}
+                                                                disabled={!stockPermissions.adjust || !row.variant}
+                                                                className={`rounded-xl px-3 py-2 text-lg font-black ${
+                                                                    stockPermissions.adjust && row.variant
+                                                                        ? 'text-slate-950 hover:bg-blue-50 hover:text-blue-700'
+                                                                        : 'cursor-not-allowed text-slate-500'
+                                                                }`}
+                                                                title={stockPermissions.adjust ? 'Modifier la quantité physique sur cet emplacement' : 'Modification non autorisée'}
+                                                            >
+                                                                {formatQty(row.quantity)}
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 xl:hidden">Réservé</p>
+                                                        <p className={`text-lg font-black ${row.reservedQuantity > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{formatQty(row.reservedQuantity)}</p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 xl:hidden">Disponible</p>
+                                                        <p className={`text-lg font-black ${row.availableQuantity > 0 ? 'text-emerald-600' : 'text-red-500'}`}>{formatQty(row.availableQuantity)}</p>
+                                                    </div>
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => row.variant && handlePrintBarcode(row.variant.id)}
+                                                            className="rounded-xl border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                                                            title="Imprimer l'étiquette"
+                                                            disabled={!row.variant}
+                                                        >
+                                                            <Hash className="h-4 w-4" />
+                                                        </button>
+                                                        {stockPermissions.transfer && row.variant && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => openTransferModal(row.variant, row.location_id)}
+                                                                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-slate-800"
+                                                            >
+                                                                Transférer <ArrowRight className="h-3.5 w-3.5" />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {currentMenu !== 'stock' && groupedData.length === 0 && (
                         <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-200 rounded-3xl m-6">
                             <Box className="w-12 h-12 text-slate-300 mb-4" />
                             <p className="text-center text-slate-400 font-bold">
@@ -4395,7 +4614,7 @@ export default function StockDashboard({ surface = 'management' }) {
                         </div>
                     )}
 
-                    {effectiveViewMode === 'list' && groupedData.length > 0 && (
+                    {currentMenu !== 'stock' && effectiveViewMode === 'list' && groupedData.length > 0 && (
                         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-50/80 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-10">
@@ -4683,7 +4902,7 @@ export default function StockDashboard({ surface = 'management' }) {
                         </div>
                     )}
 
-                    {effectiveViewMode === 'kanban' && groupedData.length > 0 && (
+                    {currentMenu !== 'stock' && effectiveViewMode === 'kanban' && groupedData.length > 0 && (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
                             {groupedData.map(({ product, variants }) => {
                                 const totalStock = variants.reduce((acc, v) => acc + (v.stockToDisplay || 0), 0);
