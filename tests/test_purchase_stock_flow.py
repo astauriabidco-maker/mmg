@@ -56,15 +56,24 @@ def _seed_purchase_need_variant(
     supplier: str = "Fournisseur test",
     catalog_status: str = "ACTIVE",
     supplier_status: str = "ACTIVE",
+    supplier_lead_time_days: int | None = None,
     physical_quantity: float = 0,
     min_threshold: float = 5,
+    location_name: str | None = None,
+    conditioning: str | None = None,
+    units_per_package: float | None = None,
 ):
     supplier_record = db.query(models.Supplier).filter_by(name=supplier).first()
     if not supplier_record:
-        supplier_record = models.Supplier(name=supplier, supplier_status=supplier_status)
+        supplier_record = models.Supplier(
+            name=supplier,
+            supplier_status=supplier_status,
+            lead_time_days=supplier_lead_time_days,
+        )
         db.add(supplier_record)
     else:
         supplier_record.supplier_status = supplier_status
+        supplier_record.lead_time_days = supplier_lead_time_days
 
     product = models.Product(
         reference_base=reference,
@@ -83,8 +92,10 @@ def _seed_purchase_need_variant(
         supplier_reference=reference,
         quantity_in_stock=physical_quantity,
         min_threshold=min_threshold,
+        conditioning=conditioning,
+        units_per_package=units_per_package,
     )
-    location = models.StockLocation(name=f"WH/{reference}", usage="internal", is_active=True)
+    location = models.StockLocation(name=location_name or f"Rack {reference}", usage="internal", is_active=True)
     db.add_all([variant, location])
     db.flush()
     db.add(models.StockQuant(variant_id=variant.id, location_id=location.id, quantity=physical_quantity))
@@ -1024,6 +1035,83 @@ def test_purchase_need_recommendations_expose_supplier_group_priority_and_net_ne
     assert group["critical_count"] == 1
     assert group["urgent_count"] == 1
     assert group["is_orderable"] is True
+
+
+def test_purchase_need_uses_exploitable_stock_and_blocks_unclear_location(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "purchase-unclear-stock-tester")
+
+    with TestingSessionLocal() as db:
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="NEED-UNCLEAR-ZONE",
+            supplier="CORTIZO",
+            physical_quantity=4,
+            min_threshold=5,
+            location_name="Zone",
+        )
+
+    response = client.get("/v2/purchases/needs", headers=headers)
+
+    assert response.status_code == 200, response.text
+    [need] = [item for item in response.json()["needs"] if item["variant_id"] == variant_id]
+    assert need["physical_quantity"] == 4.0
+    assert need["exploitable_physical_quantity"] == 0.0
+    assert need["unclear_stock_quantity"] == 4.0
+    assert need["available_quantity"] == 0.0
+    assert need["is_orderable"] is False
+    assert need["recommended_action"] == "Clarifier emplacement stock"
+    assert "UNCLEAR_STOCK_LOCATION" in need["origins"]
+
+
+def test_purchase_need_anticipates_long_supplier_lead_time(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "purchase-long-lead-tester")
+
+    with TestingSessionLocal() as db:
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="NEED-LONG-LEAD",
+            supplier="CORTIZO",
+            supplier_lead_time_days=21,
+            physical_quantity=7,
+            min_threshold=5,
+        )
+
+    response = client.get("/v2/purchases/needs", headers=headers)
+
+    assert response.status_code == 200, response.text
+    [need] = [item for item in response.json()["needs"] if item["variant_id"] == variant_id]
+    assert need["supplier_lead_time_days"] == 21
+    assert need["procurement_target_quantity"] == 12.5
+    assert need["net_need_quantity"] == 5.5
+    assert need["priority"] == "TO_PLAN"
+    assert "LONG_SUPPLIER_LEAD_TIME" in need["origins"]
+
+
+def test_purchase_need_rounds_suggestion_to_variant_conditioning(purchase_test_client):
+    client, TestingSessionLocal = purchase_test_client
+    headers = _auth_headers(TestingSessionLocal, "purchase-conditioning-tester")
+
+    with TestingSessionLocal() as db:
+        variant_id = _seed_purchase_need_variant(
+            db,
+            reference="NEED-PACKAGE",
+            supplier="CORTIZO",
+            physical_quantity=0,
+            min_threshold=5,
+            conditioning="Carton",
+            units_per_package=6,
+        )
+
+    response = client.get("/v2/purchases/needs", headers=headers)
+
+    assert response.status_code == 200, response.text
+    [need] = [item for item in response.json()["needs"] if item["variant_id"] == variant_id]
+    assert need["net_need_quantity"] == 10.0
+    assert need["suggested_quantity"] == 12.0
+    assert need["conditioning"] == "Carton"
+    assert need["units_per_package"] == 6.0
 
 
 def test_purchase_order_direct_creation_requires_order_permission(purchase_test_client):

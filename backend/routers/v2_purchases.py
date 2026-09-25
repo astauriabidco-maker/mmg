@@ -6,6 +6,7 @@ from io import BytesIO
 from pydantic import BaseModel
 from typing import List, Optional
 import json
+import math
 import uuid
 import os
 from reportlab.lib import colors
@@ -967,6 +968,26 @@ def _need_priority(
         return "URGENT"
     return "TO_PLAN"
 
+def _procurement_target_quantity(min_threshold: float, supplier_lead_time_days: Optional[int] = None) -> float:
+    if min_threshold <= 0:
+        return 1.0
+
+    # MMG rule: the configured threshold remains the security stock baseline.
+    # Long supplier lead times increase the target so achats sees the need earlier.
+    coverage_factor = 2.0
+    if supplier_lead_time_days and supplier_lead_time_days >= 30:
+        coverage_factor = 3.0
+    elif supplier_lead_time_days and supplier_lead_time_days >= 14:
+        coverage_factor = 2.5
+    return min_threshold * coverage_factor
+
+def _near_threshold_multiplier(supplier_lead_time_days: Optional[int] = None) -> float:
+    if supplier_lead_time_days and supplier_lead_time_days >= 30:
+        return 1.75
+    if supplier_lead_time_days and supplier_lead_time_days >= 14:
+        return 1.5
+    return 1.25
+
 def _need_origins(
     available_quantity: float,
     reserved_quantity: float,
@@ -1034,11 +1055,15 @@ def _recommend_purchase_quantity(
     min_threshold: float,
     incoming_purchase_quantity: float,
     open_request_quantity: float = 0.0,
+    supplier_lead_time_days: Optional[int] = None,
+    units_per_package: Optional[float] = None,
 ) -> float:
-    if min_threshold <= 0:
-        return max(1.0 - available_quantity - incoming_purchase_quantity - open_request_quantity, 0.0)
-    target_quantity = min_threshold * 2
-    return max(target_quantity - available_quantity - incoming_purchase_quantity - open_request_quantity, 0.0)
+    target_quantity = _procurement_target_quantity(min_threshold, supplier_lead_time_days)
+    suggested_quantity = max(target_quantity - available_quantity - incoming_purchase_quantity - open_request_quantity, 0.0)
+    package_size = float(units_per_package or 0)
+    if suggested_quantity > 0 and package_size > 1:
+        suggested_quantity = math.ceil(suggested_quantity / package_size) * package_size
+    return suggested_quantity
 
 @router.get("/ai-recommendations")
 def get_ai_recommendations(db: Session = Depends(get_db)):
@@ -1102,8 +1127,8 @@ def get_procurement_needs(
         supplier = suppliers.get(supplier_name.upper()) if supplier_name else None
         supplier_lead_time_days = supplier.lead_time_days if supplier else None
 
-        is_near_threshold = min_threshold > 0 and available_quantity <= min_threshold * 1.25
-        target_quantity = min_threshold * 2 if min_threshold > 0 else 1.0
+        target_quantity = _procurement_target_quantity(min_threshold, supplier_lead_time_days)
+        is_near_threshold = min_threshold > 0 and available_quantity <= min_threshold * _near_threshold_multiplier(supplier_lead_time_days)
         gross_need_quantity = max(target_quantity - available_quantity, 0.0)
         gross_need_after_unclear_stock = max(target_quantity - total_available_quantity, 0.0)
         requires_location_clarification = unclear_stock_quantity > 0 and gross_need_quantity > gross_need_after_unclear_stock
@@ -1122,6 +1147,7 @@ def get_procurement_needs(
             and supplier is not None
             and not is_supplier_blocked
             and net_need_quantity > 0
+            and not requires_location_clarification
         )
         priority = _need_priority(
             available_quantity,
@@ -1134,6 +1160,8 @@ def get_procurement_needs(
             min_threshold,
             incoming_purchase_quantity,
             open_request_quantity,
+            supplier_lead_time_days,
+            variant.units_per_package,
         )
 
         if not supplier_name:
@@ -1142,7 +1170,7 @@ def get_procurement_needs(
             blocked_reason = "Fournisseur absent du référentiel fournisseurs."
         elif is_supplier_blocked:
             blocked_reason = "Fournisseur bloqué."
-        elif requires_location_clarification and net_need_quantity <= 0:
+        elif requires_location_clarification:
             blocked_reason = "Stock potentiellement disponible dans une zone à clarifier."
         else:
             blocked_reason = None
@@ -1168,6 +1196,9 @@ def get_procurement_needs(
             "reserved_quantity": reserved_quantity,
             "available_quantity": available_quantity,
             "min_threshold": min_threshold,
+            "procurement_target_quantity": target_quantity,
+            "conditioning": variant.conditioning,
+            "units_per_package": variant.units_per_package,
             "incoming_purchase_quantity": incoming_purchase_quantity,
             "open_purchase_request_quantity": open_request_quantity,
             "gross_need_quantity": gross_need_quantity,
