@@ -777,6 +777,258 @@ def _serialize_inventory_session(
     return response
 
 
+def _priority_from_score(score: float) -> str:
+    if score >= 75:
+        return "critical"
+    if score >= 55:
+        return "high"
+    if score >= 30:
+        return "medium"
+    return "low"
+
+
+def _inventory_intelligence_reason_labels(reasons: List[str], *, limit: int = 4) -> List[str]:
+    return list(dict.fromkeys(reason for reason in reasons if reason))[:limit]
+
+
+def _active_reservation_quantities_by_variant(db: Session) -> dict[int, float]:
+    rows = (
+        db.query(
+            models.StockReservationLine.variant_id,
+            func.coalesce(func.sum(models.StockReservationLine.reserved_quantity), 0),
+        )
+        .join(models.StockReservation, models.StockReservationLine.reservation_id == models.StockReservation.id)
+        .filter(
+            models.StockReservation.status == "reserved",
+            models.StockReservationLine.status.in_(["reserved", "shortage"]),
+            models.StockReservationLine.variant_id.isnot(None),
+        )
+        .group_by(models.StockReservationLine.variant_id)
+        .all()
+    )
+    return {int(variant_id): float(quantity or 0) for variant_id, quantity in rows}
+
+
+def _recent_movement_counts(db: Session, since: datetime) -> tuple[dict[int, int], dict[int, int]]:
+    variant_counts: dict[int, int] = {}
+    location_counts: dict[int, int] = {}
+    rows = (
+        db.query(models.StockMove)
+        .filter(models.StockMove.date >= since, models.StockMove.state == "done")
+        .all()
+    )
+    for move in rows:
+        if move.variant_id:
+            variant_counts[move.variant_id] = variant_counts.get(move.variant_id, 0) + 1
+        for location_id in (move.location_id, move.location_dest_id):
+            if location_id:
+                location_counts[location_id] = location_counts.get(location_id, 0) + 1
+    return variant_counts, location_counts
+
+
+def _inventory_line_signals(db: Session) -> tuple[dict[int, dict], dict[int, dict]]:
+    variant_signals: dict[int, dict] = {}
+    location_signals: dict[int, dict] = {}
+    rows = (
+        db.query(models.InventoryCountLine)
+        .join(models.InventorySession, models.InventoryCountLine.session_id == models.InventorySession.id)
+        .filter(models.InventorySession.status.in_(["counting", "pending_approval", "validated"]))
+        .all()
+    )
+    for line in rows:
+        variance_quantity = float(line.variance_quantity or 0)
+        variance_value = abs(_line_variance_value(line))
+        is_variance = abs(variance_quantity) > 0.000001 or line.status in {"variance", "recount"}
+        for key, signals in (
+            (line.variant_id, variant_signals),
+            (line.location_id, location_signals),
+        ):
+            if not key:
+                continue
+            bucket = signals.setdefault(
+                int(key),
+                {"counted_lines": 0, "variance_lines": 0, "absolute_variance_value": 0.0},
+            )
+            bucket["counted_lines"] += 1
+            if is_variance:
+                bucket["variance_lines"] += 1
+                bucket["absolute_variance_value"] += variance_value
+    return variant_signals, location_signals
+
+
+def _variant_inventory_intelligence(
+    db: Session,
+    *,
+    variant: models.ProductVariant,
+    stock_quantity: float,
+    stock_value: float,
+    reserved_quantity: float,
+    recent_movements: int,
+    line_signals: dict,
+    unclear_location_count: int,
+) -> dict:
+    threshold = float(variant.min_threshold or 0)
+    available_quantity = stock_quantity - reserved_quantity
+    supplier = variant.product.supplier if variant.product else None
+    variance_lines = int(line_signals.get("variance_lines", 0))
+    counted_lines = int(line_signals.get("counted_lines", 0))
+    variance_rate = variance_lines / max(counted_lines, 1)
+    absolute_variance_value = float(line_signals.get("absolute_variance_value", 0))
+
+    reasons: List[str] = []
+    score = 0.0
+    if threshold > 0 and available_quantity <= 0:
+        score += 28
+        reasons.append("stock disponible nul après réservations")
+    elif threshold > 0 and available_quantity < threshold:
+        score += 22
+        reasons.append("stock disponible sous seuil")
+    elif threshold > 0 and available_quantity < threshold * 1.5:
+        score += 12
+        reasons.append("stock proche du seuil")
+    if reserved_quantity > 0:
+        score += min(15, 6 + reserved_quantity)
+        reasons.append("réservations atelier ouvertes")
+    if variance_rate >= 0.5:
+        score += 24
+        reasons.append("écarts fréquents au comptage")
+    elif variance_rate > 0:
+        score += 12
+        reasons.append("historique d'écart inventaire")
+    if absolute_variance_value >= 500:
+        score += 14
+        reasons.append("écarts valorisés importants")
+    elif absolute_variance_value >= 100:
+        score += 8
+        reasons.append("écarts valorisés à surveiller")
+    if stock_value >= 1000:
+        score += 10
+        reasons.append("valeur stock élevée")
+    elif stock_value >= 250:
+        score += 5
+        reasons.append("valeur stock significative")
+    if recent_movements >= 10:
+        score += 10
+        reasons.append("mouvements récents nombreux")
+    elif recent_movements > 0:
+        score += 4
+        reasons.append("mouvements récents")
+    if unclear_location_count:
+        score += min(12, 6 + unclear_location_count)
+        reasons.append("emplacement à clarifier")
+    if not supplier:
+        score += 5
+        reasons.append("fournisseur catalogue absent")
+
+    score = min(round(score), 100)
+    return {
+        "variant_id": variant.id,
+        "reference": variant.reference,
+        "product_name": variant.product.name if variant.product else None,
+        "supplier": supplier,
+        "stock_quantity": stock_quantity,
+        "reserved_quantity": reserved_quantity,
+        "available_quantity": available_quantity,
+        "min_threshold": threshold,
+        "stock_value": round(stock_value, 2),
+        "recent_movements_30d": recent_movements,
+        "variance_lines": variance_lines,
+        "counted_lines": counted_lines,
+        "variance_rate": round(variance_rate, 3),
+        "unclear_location_count": unclear_location_count,
+        "score": score,
+        "priority": _priority_from_score(score),
+        "reasons": _inventory_intelligence_reason_labels(reasons),
+        "recommended_action": (
+            "compter_ou_recompter" if variance_rate > 0 or unclear_location_count
+            else "securiser_achat" if threshold > 0 and available_quantity < threshold
+            else "surveiller"
+        ),
+    }
+
+
+def _zone_inventory_intelligence(
+    db: Session,
+    *,
+    location: models.StockLocation,
+    stock_quantity: float,
+    stock_value: float,
+    variant_count: int,
+    reserved_quantity: float,
+    recent_movements: int,
+    line_signals: dict,
+    has_open_session: bool,
+) -> dict:
+    issues = _location_quality_issues(db, location, allow_structured_parent=True)
+    variance_lines = int(line_signals.get("variance_lines", 0))
+    counted_lines = int(line_signals.get("counted_lines", 0))
+    variance_rate = variance_lines / max(counted_lines, 1)
+    absolute_variance_value = float(line_signals.get("absolute_variance_value", 0))
+    reasons: List[str] = []
+    score = 0.0
+
+    if issues:
+        score += 24
+        reasons.append("zone non totalement exploitable")
+    if variance_rate >= 0.5:
+        score += 24
+        reasons.append("écarts fréquents dans la zone")
+    elif variance_rate > 0:
+        score += 12
+        reasons.append("écarts déjà observés dans la zone")
+    if absolute_variance_value >= 500:
+        score += 14
+        reasons.append("impact valorisé des écarts")
+    if stock_value >= 1000:
+        score += 12
+        reasons.append("valeur stock élevée")
+    elif stock_value >= 250:
+        score += 6
+        reasons.append("valeur stock significative")
+    if reserved_quantity > 0:
+        score += min(12, 5 + reserved_quantity)
+        reasons.append("réservations ouvertes sur la zone")
+    if recent_movements >= 10:
+        score += 10
+        reasons.append("activité récente élevée")
+    elif recent_movements > 0:
+        score += 4
+        reasons.append("activité récente")
+    if variant_count > 25:
+        score += 6
+        reasons.append("zone dense")
+    if has_open_session:
+        score += 8
+        reasons.append("campagne ouverte à terminer")
+
+    score = min(round(score), 100)
+    return {
+        "location_id": location.id,
+        "name": location.name,
+        "full_name": _location_full_name(db, location),
+        "role": _location_role(db, location),
+        "quality_issues": issues,
+        "stock_quantity": stock_quantity,
+        "variant_count": variant_count,
+        "stock_value": round(stock_value, 2),
+        "reserved_quantity": reserved_quantity,
+        "recent_movements_30d": recent_movements,
+        "variance_lines": variance_lines,
+        "counted_lines": counted_lines,
+        "variance_rate": round(variance_rate, 3),
+        "has_open_session": has_open_session,
+        "score": score,
+        "priority": _priority_from_score(score),
+        "reasons": _inventory_intelligence_reason_labels(reasons),
+        "recommended_action": (
+            "terminer_campagne" if has_open_session
+            else "clarifier_zone" if issues
+            else "compter_zone" if score >= 30
+            else "surveiller"
+        ),
+    }
+
+
 def _serialize_count_line(
     session: models.InventorySession,
     line: models.InventoryCountLine,
@@ -861,6 +1113,188 @@ def _filtered_inventory_sessions_query(
             models.InventorySession.created_by.ilike(pattern),
         ))
     return query
+
+
+@router.get("/inventory-intelligence")
+def get_inventory_intelligence(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if not (_has_permission(db, current_user, "inventory.count") or _has_permission(db, current_user, "inventory.validate")):
+        raise HTTPException(status_code=403, detail="Permission inventaire requise.")
+
+    since = utcnow() - timedelta(days=30)
+    reservation_by_variant = _active_reservation_quantities_by_variant(db)
+    recent_moves_by_variant, recent_moves_by_location = _recent_movement_counts(db, since)
+    inventory_signals_by_variant, inventory_signals_by_location = _inventory_line_signals(db)
+
+    locations = (
+        db.query(models.StockLocation)
+        .filter(models.StockLocation.usage == "internal", models.StockLocation.is_active == True)
+        .all()
+    )
+    locations_by_id = {location.id: location for location in locations}
+    open_session_location_ids = {
+        row.location_id
+        for row in (
+            db.query(models.InventorySession.location_id)
+            .filter(
+                models.InventorySession.location_id.isnot(None),
+                models.InventorySession.status.in_(["scheduled", "draft", "counting", "pending_approval"]),
+                models.InventorySession.archived_at == None,
+            )
+            .all()
+        )
+    }
+
+    variant_stock: dict[int, dict] = {}
+    location_stock: dict[int, dict] = {}
+    quants = (
+        db.query(models.StockQuant)
+        .join(models.StockLocation, models.StockQuant.location_id == models.StockLocation.id)
+        .options(
+            joinedload(models.StockQuant.variant).joinedload(models.ProductVariant.product),
+            joinedload(models.StockQuant.location),
+        )
+        .filter(
+            models.StockLocation.usage == "internal",
+            models.StockLocation.is_active == True,
+        )
+        .all()
+    )
+    for quant in quants:
+        quantity = float(quant.quantity or 0)
+        if abs(quantity) <= 0.000001:
+            continue
+        variant = quant.variant
+        location = quant.location
+        if not variant or not location:
+            continue
+        cost_price = float(variant.cost_price or 0)
+        stock_value = quantity * cost_price
+        location_issues = _location_quality_issues(db, location, allow_structured_parent=True)
+
+        variant_bucket = variant_stock.setdefault(
+            variant.id,
+            {
+                "variant": variant,
+                "stock_quantity": 0.0,
+                "stock_value": 0.0,
+                "locations": set(),
+                "unclear_location_count": 0,
+            },
+        )
+        variant_bucket["stock_quantity"] += quantity
+        variant_bucket["stock_value"] += stock_value
+        variant_bucket["locations"].add(location.id)
+        if location_issues:
+            variant_bucket["unclear_location_count"] += 1
+
+        location_bucket = location_stock.setdefault(
+            location.id,
+            {
+                "location": location,
+                "stock_quantity": 0.0,
+                "stock_value": 0.0,
+                "variants": set(),
+                "reserved_quantity": 0.0,
+            },
+        )
+        location_bucket["stock_quantity"] += quantity
+        location_bucket["stock_value"] += stock_value
+        location_bucket["variants"].add(variant.id)
+
+    variant_priorities = []
+    for variant_id, bucket in variant_stock.items():
+        variant_priorities.append(
+            _variant_inventory_intelligence(
+                db,
+                variant=bucket["variant"],
+                stock_quantity=bucket["stock_quantity"],
+                stock_value=bucket["stock_value"],
+                reserved_quantity=reservation_by_variant.get(variant_id, 0.0),
+                recent_movements=recent_moves_by_variant.get(variant_id, 0),
+                line_signals=inventory_signals_by_variant.get(variant_id, {}),
+                unclear_location_count=bucket["unclear_location_count"],
+            )
+        )
+
+    for location_bucket in location_stock.values():
+        location_bucket["reserved_quantity"] = sum(
+            reservation_by_variant.get(variant_id, 0.0)
+            for variant_id in location_bucket["variants"]
+        )
+
+    zone_priorities = []
+    for location_id, bucket in location_stock.items():
+        zone_priorities.append(
+            _zone_inventory_intelligence(
+                db,
+                location=bucket["location"],
+                stock_quantity=bucket["stock_quantity"],
+                stock_value=bucket["stock_value"],
+                variant_count=len(bucket["variants"]),
+                reserved_quantity=bucket["reserved_quantity"],
+                recent_movements=recent_moves_by_location.get(location_id, 0),
+                line_signals=inventory_signals_by_location.get(location_id, {}),
+                has_open_session=location_id in open_session_location_ids,
+            )
+        )
+
+    for location in locations_by_id.values():
+        if location.id in location_stock:
+            continue
+        issues = _location_quality_issues(db, location, allow_structured_parent=True)
+        if issues or location.id in open_session_location_ids:
+            zone_priorities.append(
+                _zone_inventory_intelligence(
+                    db,
+                    location=location,
+                    stock_quantity=0.0,
+                    stock_value=0.0,
+                    variant_count=0,
+                    reserved_quantity=0.0,
+                    recent_movements=recent_moves_by_location.get(location.id, 0),
+                    line_signals=inventory_signals_by_location.get(location.id, {}),
+                    has_open_session=location.id in open_session_location_ids,
+                )
+            )
+
+    variant_priorities.sort(key=lambda item: (item["score"], item["stock_value"]), reverse=True)
+    zone_priorities.sort(key=lambda item: (item["score"], item["stock_value"]), reverse=True)
+
+    global_score = max(
+        [0]
+        + [item["score"] for item in variant_priorities[:5]]
+        + [item["score"] for item in zone_priorities[:5]]
+    )
+
+    return {
+        "generated_at": utcnow().isoformat(),
+        "scope": "stock_inventory_ontology",
+        "score": global_score,
+        "priority": _priority_from_score(global_score),
+        "summary": {
+            "zones_analyzed": len(zone_priorities),
+            "items_analyzed": len(variant_priorities),
+            "high_priority_zones": sum(1 for item in zone_priorities if item["score"] >= 55),
+            "high_priority_items": sum(1 for item in variant_priorities if item["score"] >= 55),
+            "unclear_zones": sum(1 for item in zone_priorities if item["quality_issues"]),
+            "open_inventory_sessions": len(open_session_location_ids),
+            "recent_movement_window_days": 30,
+        },
+        "ontology_signals": [
+            "fiabilité zone",
+            "criticité article",
+            "fréquence d'écart",
+            "valeur stock",
+            "mouvements récents",
+            "réservations ouvertes",
+            "impact achat/atelier",
+        ],
+        "zones": zone_priorities[:8],
+        "items": variant_priorities[:8],
+    }
 
 
 @router.get("/inventory-sessions", response_model=List[schemas.InventorySessionResponse])

@@ -214,6 +214,16 @@ def ontology_with_data_profile(db: Session) -> dict[str, Any]:
                 models.StockMove,
                 status_column=models.StockMove.state,
             ),
+            "inventory_session": _entity_profile(
+                db,
+                models.InventorySession,
+                status_column=models.InventorySession.status,
+            ),
+            "inventory_count_line": _entity_profile(
+                db,
+                models.InventoryCountLine,
+                status_column=models.InventoryCountLine.status,
+            ),
         },
         "external_documents": _external_document_profile(db),
         "rbac": _rbac_profile(db),

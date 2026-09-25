@@ -8507,6 +8507,14 @@ function PhysicalInventoryView({
             return res.data;
         },
     });
+    const { data: inventoryIntelligence = { score: 0, priority: 'low', summary: {}, zones: [], items: [] } } = useQuery({
+        queryKey: ['inventory-intelligence'],
+        queryFn: async () => {
+            const res = await api.get('/v2/stock/inventory-intelligence');
+            return res.data;
+        },
+        enabled: canCount || canValidate,
+    });
     const sessions = sessionPage.items || [];
     const getFullLocationName = (loc) => {
         if (!loc.parent_id) return loc.name;
@@ -8681,6 +8689,7 @@ function PhysicalInventoryView({
             queryClient.invalidateQueries({ queryKey: ['quants'] }),
             queryClient.invalidateQueries({ queryKey: ['products'] }),
             queryClient.invalidateQueries({ queryKey: ['transactions'] }),
+            queryClient.invalidateQueries({ queryKey: ['inventory-intelligence'] }),
         ]);
     };
 
@@ -9028,6 +9037,20 @@ function PhysicalInventoryView({
         none: 'bg-emerald-50 text-emerald-700 border-emerald-100',
         pending: 'bg-slate-50 text-slate-500 border-slate-200',
     };
+    const intelligencePriorityLabel = {
+        critical: 'Critique',
+        high: 'Élevé',
+        medium: 'À surveiller',
+        low: 'Stable',
+    };
+    const intelligenceToneClass = {
+        critical: 'border-red-200 bg-red-50 text-red-700',
+        high: 'border-orange-200 bg-orange-50 text-orange-700',
+        medium: 'border-amber-200 bg-amber-50 text-amber-700',
+        low: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    };
+    const topIntelligenceZones = (inventoryIntelligence.zones || []).slice(0, 3);
+    const topIntelligenceItems = (inventoryIntelligence.items || []).slice(0, 3);
 
     return (
         <div className="w-full space-y-6">
@@ -9310,6 +9333,99 @@ function PhysicalInventoryView({
                     </aside>
 
                     <main className="p-6 space-y-5">
+                        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-5">
+                                <div className="space-y-3">
+                                    <div>
+                                        <p className="text-[10px] uppercase font-black tracking-widest text-blue-600">Intelligence inventaire</p>
+                                        <h4 className="text-lg font-black text-slate-950">Priorité calculée depuis l’ontologie stock</h4>
+                                        <p className="mt-1 text-xs font-bold text-slate-500">
+                                            Zones, écarts, valeur, mouvements, réservations et impact atelier/achat sont croisés pour guider le prochain comptage.
+                                        </p>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {(inventoryIntelligence.ontology_signals || []).slice(0, 7).map(signal => (
+                                            <span key={signal} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                                {signal}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className={`min-w-[180px] rounded-2xl border px-4 py-3 ${intelligenceToneClass[inventoryIntelligence.priority] || intelligenceToneClass.low}`}>
+                                    <p className="text-[10px] uppercase font-black tracking-widest opacity-80">Score inventaire</p>
+                                    <p className="mt-1 text-3xl font-black">{Number(inventoryIntelligence.score || 0)}/100</p>
+                                    <p className="text-xs font-black uppercase opacity-80">{intelligencePriorityLabel[inventoryIntelligence.priority] || 'Stable'}</p>
+                                </div>
+                            </div>
+                            <div className="mt-5 grid grid-cols-2 lg:grid-cols-5 gap-3">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                    <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">Zones</p>
+                                    <p className="mt-1 text-xl font-black text-slate-950">{inventoryIntelligence.summary?.zones_analyzed || 0}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                    <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">Articles</p>
+                                    <p className="mt-1 text-xl font-black text-slate-950">{inventoryIntelligence.summary?.items_analyzed || 0}</p>
+                                </div>
+                                <div className="rounded-2xl border border-orange-100 bg-orange-50 px-4 py-3">
+                                    <p className="text-[10px] uppercase font-black tracking-widest text-orange-500">Priorités</p>
+                                    <p className="mt-1 text-xl font-black text-orange-700">
+                                        {(inventoryIntelligence.summary?.high_priority_zones || 0) + (inventoryIntelligence.summary?.high_priority_items || 0)}
+                                    </p>
+                                </div>
+                                <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3">
+                                    <p className="text-[10px] uppercase font-black tracking-widest text-amber-500">Zones floues</p>
+                                    <p className="mt-1 text-xl font-black text-amber-700">{inventoryIntelligence.summary?.unclear_zones || 0}</p>
+                                </div>
+                                <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
+                                    <p className="text-[10px] uppercase font-black tracking-widest text-blue-500">Campagnes</p>
+                                    <p className="mt-1 text-xl font-black text-blue-700">{inventoryIntelligence.summary?.open_inventory_sessions || 0}</p>
+                                </div>
+                            </div>
+                            <div className="mt-5 grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                <div className="rounded-2xl border border-slate-200 overflow-hidden">
+                                    <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+                                        <MapPin className="h-4 w-4 text-blue-600" />
+                                        <p className="text-sm font-black text-slate-950">Zones à compter / clarifier</p>
+                                    </div>
+                                    <div className="divide-y divide-slate-100">
+                                        {topIntelligenceZones.length > 0 ? topIntelligenceZones.map(zone => (
+                                            <div key={zone.location_id} className="px-4 py-3 flex items-start justify-between gap-4">
+                                                <div>
+                                                    <p className="text-sm font-black text-slate-900">{zone.full_name || zone.name}</p>
+                                                    <p className="mt-1 text-xs font-bold text-slate-500">{zone.reasons?.join(' · ') || zone.role}</p>
+                                                </div>
+                                                <span className={`shrink-0 rounded-xl border px-3 py-1 text-xs font-black ${intelligenceToneClass[zone.priority] || intelligenceToneClass.low}`}>
+                                                    {zone.score}/100
+                                                </span>
+                                            </div>
+                                        )) : (
+                                            <div className="px-4 py-5 text-sm font-bold text-slate-400">Aucune zone prioritaire détectée.</div>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 overflow-hidden">
+                                    <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+                                        <Package className="h-4 w-4 text-blue-600" />
+                                        <p className="text-sm font-black text-slate-950">Articles à fiabiliser</p>
+                                    </div>
+                                    <div className="divide-y divide-slate-100">
+                                        {topIntelligenceItems.length > 0 ? topIntelligenceItems.map(item => (
+                                            <div key={item.variant_id} className="px-4 py-3 flex items-start justify-between gap-4">
+                                                <div>
+                                                    <p className="text-sm font-black text-slate-900">{item.reference}</p>
+                                                    <p className="mt-1 text-xs font-bold text-slate-500">{item.reasons?.join(' · ') || item.product_name}</p>
+                                                </div>
+                                                <span className={`shrink-0 rounded-xl border px-3 py-1 text-xs font-black ${intelligenceToneClass[item.priority] || intelligenceToneClass.low}`}>
+                                                    {item.score}/100
+                                                </span>
+                                            </div>
+                                        )) : (
+                                            <div className="px-4 py-5 text-sm font-bold text-slate-400">Aucun article prioritaire détecté.</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
                         {!selectedSession ? (
                             <div className="h-full min-h-[420px] flex flex-col items-center justify-center text-center border-2 border-dashed border-slate-200 rounded-3xl">
                                 <ClipboardCheck className="w-12 h-12 text-slate-300 mb-3" />
