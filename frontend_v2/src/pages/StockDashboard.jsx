@@ -6,7 +6,7 @@ import { downloadFileWithFeedback } from '../services/pdf';
 import {
     Package, MapPin, Search, Plus, Trash2, Layers,
     ArrowRight, Box, Hash, ChevronRight, ChevronDown,
-    Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download, TrendingUp, ClipboardCheck, AlertTriangle, ArrowLeft
+    Check, X, FileEdit, Truck, RefreshCw, FolderOpen, MoreVertical, Edit3, FileText, Image, LayoutGrid, List, Download, TrendingUp, ClipboardCheck, AlertTriangle, ArrowLeft, Archive
 } from 'lucide-react';
 import ChatterWidget from '../components/ChatterWidget';
 import StockValuationView from '../components/StockValuationView';
