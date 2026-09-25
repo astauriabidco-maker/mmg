@@ -1154,7 +1154,7 @@ export default function PurchasesDashboard() {
         && Boolean(conversionRequest?.supplier)
         && conversionLines.length > 0
         && conversionLines.every(line => Number(line.quantity || 0) > 0);
-    const showContextRail = ['orders', 'suppliers'].includes(currentTab);
+    const showContextRail = false;
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
@@ -1311,10 +1311,56 @@ export default function PurchasesDashboard() {
                             onResolveDispute={handleResolveDispute}
                         />
                     ) : (
-                        <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-                            <Building2 className="w-24 h-24 text-slate-200 mb-6" />
-                            <h2 className="text-2xl font-black text-slate-500">Aucun fournisseur sélectionné</h2>
-                            <p className="font-medium mt-2">Sélectionnez un fournisseur à gauche pour voir sa fiche et son historique.</p>
+                        <div className="p-8 w-full">
+                            <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
+                                <div className="px-8 py-6 border-b border-slate-100 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">Référentiel fournisseurs</p>
+                                        <h2 className="text-3xl font-black text-slate-950 flex items-center gap-3 mt-1">
+                                            <Truck className="w-7 h-7 text-emerald-600" /> Fournisseurs
+                                        </h2>
+                                        <p className="text-sm font-bold text-slate-500 mt-1">Sélectionner un fournisseur pour ouvrir sa fiche, ses commandes et ses litiges.</p>
+                                    </div>
+                                    <button onClick={() => setShowSupplierModal(true)} className="px-5 py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black shadow-lg flex items-center justify-center gap-2">
+                                        <Plus className="w-5 h-5"/> Nouveau fournisseur
+                                    </button>
+                                </div>
+                                <div className="p-8 space-y-5">
+                                    <div className="relative max-w-2xl">
+                                        <Search className="w-5 h-5 text-slate-400 absolute left-4 top-4" />
+                                        <input
+                                            type="text"
+                                            placeholder="Rechercher fournisseur, contact, email..."
+                                            value={searchTerm}
+                                            onChange={e => setSearchTerm(e.target.value)}
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                                        {suppliers.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase())).map(sup => (
+                                            <button
+                                                key={sup.id}
+                                                onClick={() => setSelectedSupplierId(sup.id)}
+                                                className="text-left p-5 rounded-2xl border border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/40 shadow-sm transition-all"
+                                            >
+                                                <h4 className="font-black text-slate-900 text-xl flex items-center gap-2">
+                                                    <Truck className="w-5 h-5 text-emerald-500"/> {sup.name}
+                                                </h4>
+                                                <div className="mt-4 space-y-2">
+                                                    {sup.contact_name && <p className="text-sm font-bold text-slate-500 flex items-center gap-2"><Users className="w-4 h-4"/> {sup.contact_name}</p>}
+                                                    {sup.phone && <p className="text-sm font-bold text-slate-500 flex items-center gap-2"><Phone className="w-4 h-4"/> {sup.phone}</p>}
+                                                    {sup.email && <p className="text-sm font-bold text-slate-500 flex items-center gap-2"><Mail className="w-4 h-4"/> {sup.email}</p>}
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {suppliers.length === 0 && (
+                                        <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 py-20 text-center text-slate-400 font-black">
+                                            Aucun fournisseur trouvé.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     )
                 ) : selectedPO ? (
@@ -1583,11 +1629,83 @@ export default function PurchasesDashboard() {
                         </div>
                     </div>
                 ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-                        <ShoppingCart className="w-24 h-24 text-slate-200 mb-6" />
-                        <h2 className="text-2xl font-black text-slate-500">Aucune commande sélectionnée</h2>
-                        <p className="font-medium mt-2">Sélectionnez un bon de commande à gauche pour voir les détails.</p>
-                    </div>
+                    currentTab === 'orders' ? (
+                        <div className="p-8 w-full">
+                            <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
+                                <div className="px-8 py-6 border-b border-slate-100 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">Commandes fournisseurs</p>
+                                        <h2 className="text-3xl font-black text-slate-950 flex items-center gap-3 mt-1">
+                                            <ShoppingCart className="w-7 h-7 text-blue-600" /> Commandes fournisseur
+                                        </h2>
+                                        <p className="text-sm font-bold text-slate-500 mt-1">Suivre les bons, réceptions, factures rapprochées et litiges fournisseur.</p>
+                                    </div>
+                                    <button onClick={() => openCreatePOForSupplier()} className="px-5 py-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black shadow-lg flex items-center justify-center gap-2">
+                                        <Plus className="w-5 h-5"/> {canCreatePurchaseOrder ? 'Créer commande' : 'Créer demande'}
+                                    </button>
+                                </div>
+                                <div className="p-8 space-y-5">
+                                    <div className="relative max-w-2xl">
+                                        <Search className="w-5 h-5 text-slate-400 absolute left-4 top-4" />
+                                        <input
+                                            type="text"
+                                            placeholder="Rechercher bon de commande, fournisseur..."
+                                            value={searchTerm}
+                                            onChange={e => setSearchTerm(e.target.value)}
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-4">
+                                        {filteredPurchases.map(po => (
+                                            <button
+                                                key={po.id}
+                                                onClick={() => openPODetails(po.id)}
+                                                className="text-left p-5 rounded-2xl border border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40 shadow-sm transition-all"
+                                            >
+                                                <div className="flex justify-between items-start gap-3">
+                                                    <div>
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Bon fournisseur</p>
+                                                        <h4 className="font-black text-slate-950 text-xl mt-1">{po.reference}</h4>
+                                                    </div>
+                                                    <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-md ${getStatusColor(po.status)}`}>{po.status}</span>
+                                                </div>
+                                                <div className="mt-5 grid grid-cols-2 gap-3">
+                                                    <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fournisseur</p>
+                                                        <p className="font-black text-slate-900 mt-1 truncate">{po.supplier}</p>
+                                                    </div>
+                                                    <div className="rounded-xl bg-blue-50 border border-blue-100 p-3">
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-400">Montant</p>
+                                                        <p className="font-black text-blue-700 mt-1">{po.total_amount.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR'})}</p>
+                                                    </div>
+                                                </div>
+                                                <p className="text-xs text-slate-400 mt-4 font-black uppercase tracking-widest flex items-center gap-1">
+                                                    <FileText className="w-3 h-3"/> {po.lines_count} ligne(s)
+                                                </p>
+                                                {(po.contract_alerts || []).some(alert => ['WARNING', 'BLOCKING'].includes(alert.severity)) && (
+                                                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800 flex items-center gap-2">
+                                                        <AlertTriangle className="w-3.5 h-3.5" />
+                                                        Conditions fournisseur à vérifier
+                                                    </div>
+                                                )}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {filteredPurchases.length === 0 && (
+                                        <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 py-20 text-center text-slate-400 font-black">
+                                            Aucune commande trouvée.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+                            <ShoppingCart className="w-24 h-24 text-slate-200 mb-6" />
+                            <h2 className="text-2xl font-black text-slate-500">Aucune commande sélectionnée</h2>
+                            <p className="font-medium mt-2">Sélectionnez un bon de commande pour voir les détails.</p>
+                        </div>
+                    )
                 )}
             </div>
 
