@@ -18,13 +18,21 @@ const getStatusColor = (status) => {
 const UNKNOWN_SUPPLIER = 'Fournisseur à qualifier';
 const PURCHASE_MENU_TO_TAB = {
     dashboard: 'dashboard',
+    needs: 'ai',
     orders: 'orders',
     requests: 'requests',
     suppliers: 'suppliers',
     disputes: 'disputes',
     ai: 'ai',
 };
-const TAB_TO_PURCHASE_MENU = Object.fromEntries(Object.entries(PURCHASE_MENU_TO_TAB).map(([menu, tab]) => [tab, menu]));
+const TAB_TO_PURCHASE_MENU = {
+    dashboard: 'dashboard',
+    ai: 'needs',
+    orders: 'orders',
+    requests: 'requests',
+    suppliers: 'suppliers',
+    disputes: 'disputes',
+};
 
 const disputeStatusLabel = (status) => ({
     OPEN: 'Ouvert',

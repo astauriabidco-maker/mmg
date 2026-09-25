@@ -14,7 +14,8 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
     const routeLocation = useLocation();
     const routeParams = new URLSearchParams(routeLocation.search);
     const activeStockMenu = routeParams.get('stockMenu') || 'management-home';
-    const activePurchaseMenu = routeParams.get('purchaseMenu') || 'dashboard';
+    const rawPurchaseMenu = routeParams.get('purchaseMenu') || 'dashboard';
+    const activePurchaseMenu = rawPurchaseMenu === 'ai' ? 'needs' : rawPurchaseMenu;
     const [expandedMenus, setExpandedMenus] = useState({});
     const canAccess = (item) => {
         if (!canAccessManagerView(user, item.id)) return false;
@@ -102,8 +103,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                     type: 'internal',
                     permission: 'PURCHASES_VIEW',
                     subItems: [
-                        { id: 'dashboard', label: 'Pilotage', icon: LayoutDashboard },
-                        { id: 'ai', label: 'Besoins', icon: BrainCircuit },
+                        { id: 'needs', label: 'Besoins', icon: BrainCircuit },
                         { id: 'requests', label: 'Demandes', icon: FileText, anyPermission: ['PURCHASES_VIEW', 'purchases.request', 'purchases.approve'] },
                         { id: 'orders', label: 'Commandes', icon: ShoppingCart },
                         { id: 'suppliers', label: 'Fournisseurs', icon: Truck },
@@ -169,7 +169,9 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                             return activeView === (subItem.view || subItem.id);
                                         });
                                         const isSelected = activeView === item.id || isSubViewSelected || item.matchViews?.includes(activeView);
-                                        const isExpanded = Boolean(expandedMenus[item.id]);
+                                        const isExpanded = item.id === 'purchases'
+                                            ? expandedMenus[item.id] !== false && isSelected
+                                            : Boolean(expandedMenus[item.id]);
                                         const content = (
                                             <>
                                                 <item.icon className={`w-5 h-5 ${isSelected ? 'text-white' : 'text-slate-500'}`} />
