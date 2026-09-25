@@ -245,10 +245,31 @@ const normalizePurchaseNeeds = (payload, variants, suppliers) => {
         return {
             ...need,
             variant_id: need.variant_id || variant?.id,
+            product_id: need.product_id || variant?.product_id,
             reference,
             product_name: need.product_name || variant?.product_name || 'Article stock',
+            product_reference_base: need.product_reference_base || variant?.product_reference_base || reference.split(':').pop() || reference,
+            product_category: need.product_category ?? variant?.product_category ?? null,
+            product_material_type: need.product_material_type || variant?.product_material_type || 'AUTRE',
+            product_unit: need.product_unit || variant?.product_unit || 'u',
+            product_type: need.product_type || variant?.product_type || 'stockable',
+            product_available_in_pos: Boolean(need.product_available_in_pos ?? variant?.product_available_in_pos ?? false),
+            product_image_url: need.product_image_url ?? variant?.product_image_url ?? null,
+            product_technical_doc_url: need.product_technical_doc_url ?? variant?.product_technical_doc_url ?? null,
+            product_compatible_series: need.product_compatible_series ?? variant?.product_compatible_series ?? null,
+            catalog_status: need.catalog_status || variant?.catalog_status || 'ACTIVE',
             supplier,
             supplier_status: supplierRecord?.supplier_status || null,
+            variant_reference: need.variant_reference || variant?.reference || reference,
+            variant_supplier_reference: need.variant_supplier_reference ?? variant?.supplier_reference ?? null,
+            variant_color: need.variant_color ?? variant?.color ?? null,
+            variant_finish: need.variant_finish ?? variant?.finish ?? null,
+            variant_length_per_unit: need.variant_length_per_unit ?? variant?.length_per_unit ?? null,
+            variant_conditioning: need.variant_conditioning ?? variant?.conditioning ?? null,
+            variant_units_per_package: need.variant_units_per_package ?? variant?.units_per_package ?? null,
+            variant_quantity_in_stock: Number(need.variant_quantity_in_stock ?? variant?.quantity_in_stock ?? 0),
+            variant_image_url: need.variant_image_url ?? variant?.image_url ?? null,
+            variant_location: need.variant_location ?? variant?.location ?? null,
             current_stock: Number(need.current_stock ?? need.available_stock ?? need.available_quantity ?? variant?.quantity_in_stock ?? 0),
             physical_quantity: Number(need.physical_quantity ?? 0),
             exploitable_physical_quantity: Number(need.exploitable_physical_quantity ?? need.physical_quantity ?? 0),
@@ -416,6 +437,17 @@ export default function PurchasesDashboard() {
         notes: '',
     };
     const [newSupplier, setNewSupplier] = useState(emptySupplierForm);
+    const [showNeedQualificationModal, setShowNeedQualificationModal] = useState(false);
+    const [needQualificationSaving, setNeedQualificationSaving] = useState(false);
+    const [needQualification, setNeedQualification] = useState(null);
+    const [needQualificationForm, setNeedQualificationForm] = useState({
+        mode: 'link',
+        supplierName: '',
+        unitPrice: '',
+        supplierReference: '',
+        minThreshold: '',
+        notes: '',
+    });
 
     // Create form
     const emptyPOForm = { supplier: '', expected_date: '', notes: '', global_discount_percent: 0, lines: [] };
@@ -496,7 +528,21 @@ export default function PurchasesDashboard() {
             const flatVariants = [];
             stockRes.data.forEach(p => {
                 p.variants.forEach(v => {
-                    flatVariants.push({ ...v, product_name: p.name, product_supplier: p.supplier, catalog_status: p.catalog_status });
+                    flatVariants.push({
+                        ...v,
+                        product_name: p.name,
+                        product_supplier: p.supplier,
+                        product_reference_base: p.reference_base,
+                        product_category: p.category,
+                        product_material_type: p.material_type,
+                        product_unit: p.unit,
+                        product_type: p.product_type,
+                        product_available_in_pos: p.available_in_pos,
+                        product_image_url: p.image_url,
+                        product_technical_doc_url: p.technical_doc_url,
+                        product_compatible_series: p.compatible_series,
+                        catalog_status: p.catalog_status,
+                    });
                 });
             });
             return flatVariants;
@@ -611,6 +657,116 @@ export default function PurchasesDashboard() {
         blocked_count: purchaseNeeds.filter(need => !need.can_order).length,
         suppliers_count: groupNeedsBySupplier(purchaseNeeds).length,
         ...(Array.isArray(aiRecommendations) ? {} : aiRecommendations.summary || {}),
+    };
+    const suppliersByName = new Map(suppliers.map(s => [String(s.name || '').trim().toUpperCase(), s]));
+
+    const openNeedQualification = (need) => {
+        const parsedSupplier = String(need.reference || '').includes(':') ? String(need.reference).split(':')[0] : '';
+        const proposedSupplier = [need.supplier, need.product_supplier, parsedSupplier]
+            .find(value => value && value !== UNKNOWN_SUPPLIER && String(value).toUpperCase() !== 'AUTRE') || '';
+        const supplierRecord = suppliersByName.get(String(proposedSupplier).trim().toUpperCase());
+        setNeedQualification(need);
+        setNeedQualificationForm({
+            mode: supplierRecord ? 'link' : 'create',
+            supplierName: supplierRecord?.name || proposedSupplier,
+            unitPrice: Number(need.unit_price || 0) > 0 ? String(need.unit_price) : '',
+            supplierReference: need.variant_supplier_reference || String(need.reference || '').split(':').pop() || '',
+            minThreshold: Number(need.min_threshold || 0) > 0 ? String(need.min_threshold) : '',
+            notes: '',
+        });
+        setShowNeedQualificationModal(true);
+    };
+
+    const buildProductQualificationPayload = (need, supplierName) => ({
+        reference_base: need.product_reference_base || String(need.reference || '').split(':').pop() || need.product_name || 'ARTICLE',
+        name: need.product_name || 'Article stock',
+        category: need.product_category || null,
+        material_type: need.product_material_type || need.product_category || 'AUTRE',
+        unit: need.product_unit || 'u',
+        supplier: supplierName,
+        product_type: need.product_type || 'stockable',
+        available_in_pos: Boolean(need.product_available_in_pos),
+        image_url: need.product_image_url || null,
+        technical_doc_url: need.product_technical_doc_url || null,
+        compatible_series: need.product_compatible_series || null,
+        catalog_status: need.catalog_status || 'ACTIVE',
+    });
+
+    const buildVariantQualificationPayload = (need) => ({
+        reference: need.variant_reference || need.reference || '',
+        color: need.variant_color || null,
+        finish: need.variant_finish || null,
+        length_per_unit: need.variant_length_per_unit === '' ? null : need.variant_length_per_unit,
+        conditioning: need.variant_conditioning || null,
+        units_per_package: need.variant_units_per_package === '' ? null : need.variant_units_per_package,
+        supplier_reference: needQualificationForm.supplierReference.trim() || need.variant_supplier_reference || null,
+        cost_price: needQualificationForm.unitPrice === '' ? (Number(need.unit_price || 0) > 0 ? Number(need.unit_price) : null) : Number(needQualificationForm.unitPrice),
+        quantity_in_stock: Number(need.variant_quantity_in_stock ?? need.current_stock ?? 0),
+        min_threshold: needQualificationForm.minThreshold === '' ? Number(need.min_threshold || 0) : Number(needQualificationForm.minThreshold),
+        image_url: need.variant_image_url || null,
+        location: need.variant_location || null,
+    });
+
+    const activateProductForPurchasing = async (need) => {
+        const status = String(need.catalog_status || 'ACTIVE').toUpperCase();
+        if (status === 'DRAFT') {
+            await api.post(`/v2/stock/products/${need.product_id}/status`, {
+                status: 'TO_QUALIFY',
+                reason: 'Qualification fournisseur/prix depuis besoins achats.',
+            });
+            await api.post(`/v2/stock/products/${need.product_id}/status`, {
+                status: 'ACTIVE',
+                reason: 'Besoin achat qualifié et prêt à commander.',
+            });
+        } else if (status === 'TO_QUALIFY') {
+            await api.post(`/v2/stock/products/${need.product_id}/status`, {
+                status: 'ACTIVE',
+                reason: 'Besoin achat qualifié et prêt à commander.',
+            });
+        }
+    };
+
+    const handleQualifyPurchaseNeed = async () => {
+        const need = needQualification;
+        const supplierName = needQualificationForm.supplierName.trim();
+        if (!need?.product_id || !need?.variant_id) {
+            alert("Impossible de qualifier : fiche produit ou variante introuvable.");
+            return;
+        }
+        if (!supplierName) {
+            alert("Renseignez un fournisseur pour rendre le besoin commandable.");
+            return;
+        }
+        const existingSupplier = suppliersByName.get(supplierName.toUpperCase());
+        setNeedQualificationSaving(true);
+        try {
+            if (needQualificationForm.mode === 'create' && !existingSupplier) {
+                const supplierCategory = ['ALUMINIUM', 'PVC', 'QUINCAILLERIE', 'VITRAGE', 'TRANSPORT', 'SOUS_TRAITANCE', 'AUTRE'].includes(String(need.product_category || '').toUpperCase())
+                    ? String(need.product_category).toUpperCase()
+                    : 'AUTRE';
+                await api.post('/v2/suppliers/', {
+                    ...emptySupplierForm,
+                    name: supplierName,
+                    supplier_status: 'ACTIVE',
+                    supplier_category: supplierCategory,
+                    notes: needQualificationForm.notes.trim() || `Créé depuis qualification besoin achat ${need.reference}.`,
+                });
+            }
+            await api.put(`/v2/stock/products/${need.product_id}`, buildProductQualificationPayload(need, supplierName));
+            await api.put(`/v2/stock/variants/${need.variant_id}`, buildVariantQualificationPayload(need));
+            await activateProductForPurchasing(need);
+            queryClient.invalidateQueries(['suppliers', 'v2']);
+            queryClient.invalidateQueries(['variants']);
+            queryClient.invalidateQueries(['purchase-needs']);
+            await refetchAiRecommendations();
+            setShowNeedQualificationModal(false);
+            setNeedQualification(null);
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || "Erreur lors de la qualification du besoin achat.");
+        } finally {
+            setNeedQualificationSaving(false);
+        }
     };
 
     const preparePOFromNeeds = (needs, supplierName = '') => {
@@ -1294,6 +1450,7 @@ export default function PurchasesDashboard() {
                         loading={loadingAi}
                         refetch={refetchAiRecommendations}
                         preparePOFromNeeds={preparePOFromNeeds}
+                        openNeedQualification={openNeedQualification}
                         canCreatePurchaseOrder={canCreatePurchaseOrder}
                     />
                 ) : currentTab === 'suppliers' ? (
@@ -2550,6 +2707,134 @@ export default function PurchasesDashboard() {
                             <button onClick={handleCreateDispute} disabled={!disputeForm.supplier || !disputeForm.title.trim()} className="px-8 py-4 bg-red-600 disabled:bg-slate-300 hover:bg-red-500 text-white rounded-xl font-black shadow-lg flex justify-center items-center gap-2 text-lg">
                                 Ouvrir le litige
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* NEED QUALIFICATION MODAL */}
+            {showNeedQualificationModal && needQualification && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-3xl w-full border border-slate-100 overflow-hidden">
+                        <div className="px-8 py-6 border-b border-slate-100 flex items-start justify-between gap-5">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-amber-500">Qualification achat</p>
+                                <h3 className="font-black text-2xl text-slate-950 mt-1">Rendre le besoin commandable</h3>
+                                <p className="text-sm font-bold text-slate-500 mt-1">{needQualification.product_name} · {needQualification.reference}</p>
+                            </div>
+                            <button onClick={()=>setShowNeedQualificationModal(false)} className="text-slate-400 hover:bg-slate-100 p-2 rounded-full"><X className="w-5 h-5"/></button>
+                        </div>
+
+                        <div className="px-8 py-6 space-y-5">
+                            <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4">
+                                <p className="text-xs font-black uppercase tracking-widest text-amber-600">Blocage actuel</p>
+                                <p className="text-sm font-bold text-amber-900 mt-1">{needQualification.blocked_reason || 'Fournisseur, prix ou fiche catalogue à compléter avant commande.'}</p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <label className={`rounded-2xl border p-4 cursor-pointer ${needQualificationForm.mode === 'link' ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-white'}`}>
+                                    <input
+                                        type="radio"
+                                        name="need-qualification-mode"
+                                        value="link"
+                                        checked={needQualificationForm.mode === 'link'}
+                                        onChange={()=>setNeedQualificationForm({...needQualificationForm, mode: 'link'})}
+                                        className="sr-only"
+                                    />
+                                    <p className="font-black text-slate-950">Lier fournisseur existant</p>
+                                    <p className="text-xs font-bold text-slate-500 mt-1">À privilégier si le fournisseur existe déjà dans le référentiel.</p>
+                                </label>
+                                <label className={`rounded-2xl border p-4 cursor-pointer ${needQualificationForm.mode === 'create' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'}`}>
+                                    <input
+                                        type="radio"
+                                        name="need-qualification-mode"
+                                        value="create"
+                                        checked={needQualificationForm.mode === 'create'}
+                                        onChange={()=>setNeedQualificationForm({...needQualificationForm, mode: 'create'})}
+                                        className="sr-only"
+                                    />
+                                    <p className="font-black text-slate-950">Créer si absent</p>
+                                    <p className="text-xs font-bold text-slate-500 mt-1">Crée une fiche fournisseur minimale puis rattache l'article.</p>
+                                </label>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Fournisseur</label>
+                                    <input
+                                        list="need-qualification-suppliers"
+                                        value={needQualificationForm.supplierName}
+                                        onChange={e=>setNeedQualificationForm({...needQualificationForm, supplierName: e.target.value})}
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                                        placeholder="Ex: CORTIZO"
+                                    />
+                                    <datalist id="need-qualification-suppliers">
+                                        {suppliers.map(supplier => <option key={`need-supplier-${supplier.id}`} value={supplier.name} />)}
+                                    </datalist>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Référence fournisseur</label>
+                                    <input
+                                        value={needQualificationForm.supplierReference}
+                                        onChange={e=>setNeedQualificationForm({...needQualificationForm, supplierReference: e.target.value})}
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                                        placeholder="Référence catalogue fournisseur"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Prix achat unitaire</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={needQualificationForm.unitPrice}
+                                        onChange={e=>setNeedQualificationForm({...needQualificationForm, unitPrice: e.target.value})}
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                                        placeholder="0,00"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">Seuil mini</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={needQualificationForm.minThreshold}
+                                        onChange={e=>setNeedQualificationForm({...needQualificationForm, minThreshold: e.target.value})}
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                                        placeholder="Seuil de réappro"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-3">
+                                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Besoin net</p>
+                                    <p className="text-xl font-black text-slate-950">+{Number(needQualification.suggested_quantity || 0).toLocaleString('fr-FR')}</p>
+                                </div>
+                                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Stock exploitable</p>
+                                    <p className="text-xl font-black text-slate-950">{Number(needQualification.current_stock || 0).toLocaleString('fr-FR')}</p>
+                                </div>
+                                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Priorité</p>
+                                    <p className="text-xl font-black text-slate-950">{priorityLabel(needQualification.priority)}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="px-8 py-5 bg-slate-50 border-t border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                            <p className="text-xs font-bold text-slate-500">Après validation, le calcul des besoins est relancé pour rendre la ligne commandable si tout est cohérent.</p>
+                            <div className="flex items-center gap-3">
+                                <button onClick={()=>setShowNeedQualificationModal(false)} className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black hover:bg-white">Annuler</button>
+                                <button
+                                    onClick={handleQualifyPurchaseNeed}
+                                    disabled={needQualificationSaving || !needQualificationForm.supplierName.trim()}
+                                    className="px-6 py-3 rounded-xl bg-indigo-600 disabled:bg-slate-300 text-white font-black hover:bg-indigo-500 flex items-center gap-2"
+                                >
+                                    {needQualificationSaving ? 'Qualification...' : 'Qualifier et recalculer'} <ArrowRight className="w-4 h-4" />
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -3879,7 +4164,7 @@ const PurchaseRequestsView = ({ requests, canApprove, canOrder, onApprove, onRej
     );
 };
 
-const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, preparePOFromNeeds, canCreatePurchaseOrder }) => {
+const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, preparePOFromNeeds, openNeedQualification, canCreatePurchaseOrder }) => {
     const blockedNeeds = needs.filter(need => !need.can_order);
     const criticalNeeds = needs.filter(need => need.priority === 'CRITICAL');
     const urgentNeeds = needs.filter(need => need.priority === 'URGENT');
@@ -3922,7 +4207,9 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
         : nextDecision
             ? `Qualifier avant achat : ${nextDecision.blocked_reason || 'donnée fournisseur incomplète'}.`
             : 'Aucun besoin achat prioritaire.';
-    const renderNeedRow = (need, index, compact = false) => (
+    const renderNeedRow = (need, index, compact = false) => {
+        const handleNeedAction = need.can_order ? () => preparePOFromNeeds([need], need.supplier) : () => openNeedQualification?.(need);
+        return (
         <div key={`${compact ? 'compact' : 'need'}-${need.variant_id}-${need.reference}-${index}`} className="px-5 py-4 bg-white hover:bg-slate-50 transition-colors">
             <div className="grid grid-cols-1 xl:grid-cols-[44px_1fr_160px_140px] gap-4 items-start">
                 <div className="h-10 w-10 rounded-full bg-slate-900 text-white flex items-center justify-center font-black">{index + 1}</div>
@@ -3959,15 +4246,20 @@ const SmartPurchasingView = ({ needs, groups, summary, loading, refetch, prepare
                     <p className="text-[10px] font-bold text-indigo-500 mt-1">seuil + réservations - stock - achats</p>
                 </div>
                 <button
-                    onClick={() => preparePOFromNeeds([need], need.supplier)}
-                    disabled={!need.can_order}
-                    className="px-4 py-3 rounded-xl bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black hover:bg-slate-800 flex items-center justify-center gap-2"
+                    onClick={handleNeedAction}
+                    disabled={!need.can_order && !openNeedQualification}
+                    className={`px-4 py-3 rounded-xl font-black flex items-center justify-center gap-2 ${
+                        need.can_order
+                            ? 'bg-slate-900 text-white hover:bg-slate-800'
+                            : 'bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-200'
+                    } disabled:bg-slate-200 disabled:text-slate-400`}
                 >
                     {need.can_order ? lineActionLabel : 'Qualifier'} <ArrowRight className="w-4 h-4" />
                 </button>
             </div>
         </div>
-    );
+        );
+    };
 
     return (
         <div className="p-8 w-full">
