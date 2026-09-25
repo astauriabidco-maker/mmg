@@ -4,7 +4,7 @@ import {
     LayoutDashboard, Activity, ClipboardList, Settings, LogOut, X, Box, Archive,
     ShoppingCart, Truck, Users, UserCircle, FileText, BarChart3, CalendarDays,
     UserRoundCheck, ArrowRight, AlertTriangle, Package, MapPin, Layers,
-    ClipboardCheck, Download, TrendingUp, ChevronDown, Factory
+    ClipboardCheck, Download, TrendingUp, ChevronDown, Factory, BrainCircuit
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { canAccessManagerView } from '../utils/roleNavigation';
@@ -14,6 +14,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
     const routeLocation = useLocation();
     const routeParams = new URLSearchParams(routeLocation.search);
     const activeStockMenu = routeParams.get('stockMenu') || 'management-home';
+    const activePurchaseMenu = routeParams.get('purchaseMenu') || 'dashboard';
     const [expandedMenus, setExpandedMenus] = useState({});
     const canAccess = (item) => {
         if (!canAccessManagerView(user, item.id)) return false;
@@ -94,7 +95,21 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                         { id: 'valuation', label: 'Valorisation', icon: TrendingUp, anyPermission: ['inventory.approve_value'] },
                     ],
                 },
-                { id: 'purchases', label: 'Achats & Appro', icon: ShoppingCart, type: 'internal', permission: 'PURCHASES_VIEW' },
+                {
+                    id: 'purchases',
+                    label: 'Achats & Appro',
+                    icon: ShoppingCart,
+                    type: 'internal',
+                    permission: 'PURCHASES_VIEW',
+                    subItems: [
+                        { id: 'dashboard', label: 'Pilotage', icon: LayoutDashboard },
+                        { id: 'ai', label: 'Besoins', icon: BrainCircuit },
+                        { id: 'requests', label: 'Demandes', icon: FileText, anyPermission: ['PURCHASES_VIEW', 'purchases.request', 'purchases.approve'] },
+                        { id: 'orders', label: 'Commandes', icon: ShoppingCart },
+                        { id: 'suppliers', label: 'Fournisseurs', icon: Truck },
+                        { id: 'disputes', label: 'Litiges', icon: AlertTriangle },
+                    ],
+                },
                 { id: 'logistics', label: 'Logistique & Expédition', icon: Truck, type: 'internal' },
             ]
         },
@@ -150,6 +165,7 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                         const hasSubItems = item.subItems?.some(canAccessSubItem);
                                         const isSubViewSelected = hasSubItems && item.subItems.some(subItem => {
                                             if (item.id === 'stock') return activeView === 'stock';
+                                            if (item.id === 'purchases') return activeView === 'purchases';
                                             return activeView === (subItem.view || subItem.id);
                                         });
                                         const isSelected = activeView === item.id || isSubViewSelected || item.matchViews?.includes(activeView);
@@ -216,18 +232,26 @@ export default function Sidebar({ activeView, setActiveView, isOpen, setIsOpen }
                                                         <div className="mt-2 ml-4 max-h-[42vh] space-y-1 overflow-y-auto border-l border-slate-700/70 pl-3 pr-1">
                                                             {item.subItems.filter(canAccessSubItem).map((subItem) => {
                                                                 const SubIcon = subItem.icon;
-                                                                const targetView = item.id === 'stock' ? 'stock' : (subItem.view || subItem.id);
+                                                                const targetView = ['stock', 'purchases'].includes(item.id) ? item.id : (subItem.view || subItem.id);
                                                                 const targetSearch = item.id === 'stock'
                                                                     ? `view=stock&stockMenu=${subItem.id}`
-                                                                    : `view=${targetView}`;
+                                                                    : item.id === 'purchases'
+                                                                        ? `view=purchases&purchaseMenu=${subItem.id}`
+                                                                        : `view=${targetView}`;
                                                                 const isSubSelected = item.id === 'stock'
                                                                     ? activeStockMenu === subItem.id
-                                                                    : activeView === targetView;
+                                                                    : item.id === 'purchases'
+                                                                        ? activePurchaseMenu === subItem.id
+                                                                        : activeView === targetView;
                                                                 return (
                                                                     <Link
                                                                         key={subItem.id}
                                                                         to={`/manager?${targetSearch}`}
-                                                                        state={item.id === 'stock' ? { view: 'stock', stockMenu: subItem.id } : { view: targetView }}
+                                                                        state={item.id === 'stock'
+                                                                            ? { view: 'stock', stockMenu: subItem.id }
+                                                                            : item.id === 'purchases'
+                                                                                ? { view: 'purchases', purchaseMenu: subItem.id }
+                                                                                : { view: targetView }}
                                                                         onClick={() => {
                                                                             if (setActiveView) setActiveView(targetView);
                                                                             if (window.innerWidth < 1024 && setIsOpen) setIsOpen(false);

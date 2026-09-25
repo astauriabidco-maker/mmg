@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ShoppingCart, Plus, FileText, Search, ArrowRight, CheckCircle, PackageOpen, X, Truck, Users, Phone, Mail, MapPin, Sparkles, BrainCircuit, Building2, Globe2, AlertTriangle, Layers } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import { downloadFileWithFeedback } from '../services/pdf';
 const getStatusColor = (status) => {
@@ -15,6 +16,15 @@ const getStatusColor = (status) => {
 };
 
 const UNKNOWN_SUPPLIER = 'Fournisseur à qualifier';
+const PURCHASE_MENU_TO_TAB = {
+    dashboard: 'dashboard',
+    orders: 'orders',
+    requests: 'requests',
+    suppliers: 'suppliers',
+    disputes: 'disputes',
+    ai: 'ai',
+};
+const TAB_TO_PURCHASE_MENU = Object.fromEntries(Object.entries(PURCHASE_MENU_TO_TAB).map(([menu, tab]) => [tab, menu]));
 
 const disputeStatusLabel = (status) => ({
     OPEN: 'Ouvert',
@@ -316,7 +326,23 @@ const buildPurchaseConditionAlerts = (supplier, totalAmount, expectedDate, lines
 };
 
 export default function PurchasesDashboard() {
-    const [currentTab, setCurrentTab] = useState('dashboard'); // dashboard, orders, requests, suppliers, disputes, ai
+    const [searchParams, setSearchParams] = useSearchParams();
+    const requestedPurchaseMenu = searchParams.get('purchaseMenu') || 'dashboard';
+    const [currentTab, setCurrentTabState] = useState(PURCHASE_MENU_TO_TAB[requestedPurchaseMenu] || 'dashboard'); // dashboard, orders, requests, suppliers, disputes, ai
+
+    useEffect(() => {
+        const nextTab = PURCHASE_MENU_TO_TAB[requestedPurchaseMenu] || 'dashboard';
+        setCurrentTabState(prev => prev === nextTab ? prev : nextTab);
+    }, [requestedPurchaseMenu]);
+
+    const setCurrentTab = (tab) => {
+        const nextTab = PURCHASE_MENU_TO_TAB[TAB_TO_PURCHASE_MENU[tab]] || tab || 'dashboard';
+        setCurrentTabState(nextTab);
+        const next = new URLSearchParams(searchParams);
+        next.set('view', 'purchases');
+        next.set('purchaseMenu', TAB_TO_PURCHASE_MENU[nextTab] || 'dashboard');
+        setSearchParams(next, { replace: true });
+    };
 
     // Orders state
     const [searchTerm, setSearchTerm] = useState("");
@@ -1124,52 +1150,20 @@ export default function PurchasesDashboard() {
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex overflow-hidden bg-white border-y border-slate-200/80 animate-fade-in relative">
 
-            {/* LEFT SIDEBAR : PO LIST */}
-            <div className="w-[400px] bg-white border-r border-slate-200 flex flex-col items-stretch h-full shadow-xl z-20 relative">
-                <div className="p-6 border-b border-slate-200 flex flex-col gap-4 relative z-10 bg-white">
-                    <h3 className="font-black text-slate-900 flex items-center gap-3 tracking-tight text-xl">
-                        <ShoppingCart className="text-blue-600 w-6 h-6"/> Achats & Appro.
-                    </h3>
-
-                    {/* TABS */}
-                    <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl">
-                        <button
-                            onClick={() => setCurrentTab('dashboard')}
-                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'dashboard' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                            Pilotage
-                        </button>
-                        <button
-                            onClick={() => setCurrentTab('orders')}
-                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'orders' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                            Commandes
-                        </button>
-                        <button
-                            onClick={() => setCurrentTab('requests')}
-                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'requests' ? 'bg-white shadow text-amber-600' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                            Demandes
-                        </button>
-                        <button
-                            onClick={() => setCurrentTab('suppliers')}
-                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'suppliers' ? 'bg-white shadow text-emerald-600' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                            Fournisseurs
-                        </button>
-                        <button
-                            onClick={() => setCurrentTab('disputes')}
-                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'disputes' ? 'bg-white shadow text-red-600' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                            Litiges
-                        </button>
-                        <button
-                            onClick={() => setCurrentTab('ai')}
-                            className={`py-2 text-sm font-bold rounded-lg transition-all ${currentTab === 'ai' ? 'bg-white shadow text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
-                            title="Besoins d'achat nets"
-                        >
-                            Besoins
-                        </button>
+            {/* LEFT RAIL : CONTEXTUAL LIST */}
+            <div className="w-[360px] bg-white border-r border-slate-200 flex flex-col items-stretch h-full shadow-xl z-20 relative">
+                <div className="p-5 border-b border-slate-200 flex flex-col gap-4 relative z-10 bg-white">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">File achats</p>
+                        <h3 className="font-black text-slate-900 flex items-center gap-3 tracking-tight text-lg mt-1">
+                            <ShoppingCart className="text-blue-600 w-5 h-5"/>
+                            {currentTab === 'dashboard' ? 'Actions à suivre'
+                                : currentTab === 'orders' ? 'Commandes fournisseur'
+                                    : currentTab === 'requests' ? "Demandes d'achat"
+                                        : currentTab === 'suppliers' ? 'Fournisseurs'
+                                            : currentTab === 'disputes' ? 'Litiges fournisseur'
+                                                : 'Besoins nets'}
+                        </h3>
                     </div>
 
                     <div className="relative">
