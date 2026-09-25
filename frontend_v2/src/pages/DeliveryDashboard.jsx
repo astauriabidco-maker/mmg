@@ -1,15 +1,61 @@
-import React, { useState, useEffect } from 'react';
-import { Truck, MapPin, Package, Plus, Calendar, User, Search, CheckCircle, FileText } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import {
+    AlertTriangle,
+    ArrowRight,
+    Calendar,
+    CheckCircle,
+    Clock,
+    FileText,
+    MapPin,
+    Package,
+    Plus,
+    RefreshCw,
+    Search,
+    Truck,
+    User,
+} from 'lucide-react';
 import api, { API_BASE_URL } from '../services/api';
 
+const LOGISTICS_VIEWS = [
+    { id: 'ship', label: 'À expédier', icon: Package },
+    { id: 'routes', label: 'Tournées', icon: Truck },
+    { id: 'notes', label: 'Bons de livraison', icon: FileText },
+    { id: 'driver', label: 'Chauffeur', icon: MapPin },
+    { id: 'returns', label: 'Retours & anomalies', icon: AlertTriangle },
+];
+
+const STATUS_META = {
+    READY: { label: 'Prêt quai', className: 'bg-amber-50 text-amber-700 border-amber-100' },
+    ASSIGNED: { label: 'Assigné', className: 'bg-blue-50 text-blue-700 border-blue-100' },
+    IN_TRANSIT: { label: 'En tournée', className: 'bg-indigo-50 text-indigo-700 border-indigo-100' },
+    DELIVERED: { label: 'Livré', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+    RETURNED: { label: 'Retourné', className: 'bg-orange-50 text-orange-700 border-orange-100' },
+    ISSUE: { label: 'Anomalie', className: 'bg-red-50 text-red-700 border-red-100' },
+    CANCELLED: { label: 'Annulé', className: 'bg-slate-100 text-slate-600 border-slate-200' },
+};
+
+const ROUTE_STATUS_META = {
+    PLANNED: { label: 'Planifiée', className: 'bg-slate-100 text-slate-700 border-slate-200' },
+    IN_TRANSIT: { label: 'En tournée', className: 'bg-indigo-50 text-indigo-700 border-indigo-100' },
+    COMPLETED: { label: 'Terminée', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+};
+
+const normalizeText = value => String(value || '').toLowerCase();
+
 export default function DeliveryDashboard() {
+    const [searchParams, setSearchParams] = useSearchParams();
+    const activeView = searchParams.get('logisticsMenu') || 'ship';
     const [routes, setRoutes] = useState([]);
     const [readyNotes, setReadyNotes] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
-
+    const [searchTerm, setSearchTerm] = useState('');
     const [showNewRouteModal, setShowNewRouteModal] = useState(false);
     const [newRouteData, setNewRouteData] = useState({
-        driver_name: "", vehicle: "Camion 1 (Iveco)", planned_date: "", note_ids: []
+        driver_name: '',
+        vehicle: 'Camion 1 (Iveco)',
+        planned_date: '',
+        note_ids: [],
     });
 
     useEffect(() => {
@@ -19,283 +65,346 @@ export default function DeliveryDashboard() {
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const resRoutes = await api.get('/v2/logistics/routes');
-            setRoutes(resRoutes.data);
-            
-            const resNotes = await api.get('/v2/logistics/notes/ready');
-            setReadyNotes(resNotes.data);
+            const [resRoutes, resNotes] = await Promise.all([
+                api.get('/v2/logistics/routes'),
+                api.get('/v2/logistics/notes/ready'),
+            ]);
+            setRoutes(resRoutes.data || []);
+            setReadyNotes(resNotes.data || []);
         } catch (error) {
-            console.error("Error fetching logistics data", error);
+            console.error('Error fetching logistics data', error);
         } finally {
             setIsLoading(false);
         }
     };
 
+    const allNotes = useMemo(() => {
+        const byId = new Map();
+        readyNotes.forEach(note => byId.set(note.id, note));
+        routes.forEach(route => (route.notes || []).forEach(note => byId.set(note.id, { ...note, route })));
+        return Array.from(byId.values()).sort((a, b) => String(a.reference || '').localeCompare(String(b.reference || '')));
+    }, [readyNotes, routes]);
+
+    const filteredNotes = allNotes.filter(note => {
+        const term = normalizeText(searchTerm);
+        return !term
+            || normalizeText(note.reference).includes(term)
+            || normalizeText(note.client_name).includes(term)
+            || normalizeText(note.delivery_address).includes(term)
+            || normalizeText(note.status).includes(term);
+    });
+
+    const issueNotes = allNotes.filter(note => ['ISSUE', 'RETURNED', 'CANCELLED'].includes(note.status));
+    const inTransitRoutes = routes.filter(route => route.status === 'IN_TRANSIT');
+    const plannedRoutes = routes.filter(route => route.status === 'PLANNED');
+    const deliveredNotes = allNotes.filter(note => note.status === 'DELIVERED');
+    const readyCount = readyNotes.length;
+
+    const changeView = (view) => {
+        setSearchParams({ view: 'logistics', logisticsMenu: view });
+    };
+
     const handleCreateRoute = async () => {
-        if(!newRouteData.driver_name || !newRouteData.planned_date) return alert("Veuillez remplir le chauffeur et la date.");
-        
+        if (!newRouteData.driver_name.trim() || !newRouteData.planned_date) {
+            alert('Veuillez remplir le chauffeur et la date.');
+            return;
+        }
         try {
             await api.post('/v2/logistics/routes', newRouteData);
             setShowNewRouteModal(false);
-            setNewRouteData({ driver_name: "", vehicle: "Camion 1 (Iveco)", planned_date: "", note_ids: [] });
+            setNewRouteData({ driver_name: '', vehicle: 'Camion 1 (Iveco)', planned_date: '', note_ids: [] });
             fetchData();
         } catch (error) {
-            alert(error.response?.data?.detail || "Erreur de création de tournée");
+            alert(error.response?.data?.detail || 'Erreur de création de tournée');
         }
     };
 
     const handleStartRoute = async (routeId) => {
-        if(!window.confirm("Démarrer cette tournée ? Le statut passera à 'En Transit'.")) return;
         try {
             await api.post(`/v2/logistics/routes/${routeId}/start`);
             fetchData();
         } catch (error) {
-            console.error(error);
+            alert(error.response?.data?.detail || 'Erreur au démarrage de la tournée.');
         }
     };
 
-    return (
-        <div className="space-y-6 w-full h-[calc(100vh-80px)] overflow-y-auto animate-fade-in p-6 pb-12 bg-white border-y border-slate-200/80">
-            
-            {/* KPI ROW */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-                    <div>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Prêt au Quai</p>
-                        <h2 className="text-3xl font-black text-slate-800">{readyNotes.length} <span className="text-lg font-bold text-slate-500">BLs</span></h2>
-                    </div>
-                    <div className="w-12 h-12 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center">
-                        <Package className="w-6 h-6" />
-                    </div>
-                </div>
+    const statusBadge = (status) => {
+        const meta = STATUS_META[status] || STATUS_META.READY;
+        return <span className={`rounded-lg border px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${meta.className}`}>{meta.label}</span>;
+    };
 
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+    const routeStatusBadge = (status) => {
+        const meta = ROUTE_STATUS_META[status] || ROUTE_STATUS_META.PLANNED;
+        return <span className={`rounded-lg border px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${meta.className}`}>{meta.label}</span>;
+    };
+
+    const renderNoteCard = (note, actionLabel = 'Préparer tournée') => (
+        <div key={note.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <p className="font-mono text-xs font-black text-blue-600">{note.reference}</p>
+                    <h3 className="mt-1 text-lg font-black text-slate-950">{note.client_name}</h3>
+                    <p className="mt-1 flex items-start gap-2 text-sm font-bold text-slate-500">
+                        <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                        {note.delivery_address || 'Adresse non renseignée'}
+                    </p>
+                </div>
+                {statusBadge(note.status)}
+            </div>
+            {note.delivery_notes && (
+                <p className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs font-bold text-slate-600">{note.delivery_notes}</p>
+            )}
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                    {note.route?.reference ? `Tournée ${note.route.reference}` : 'Non assigné'}
+                </p>
+                {note.status === 'DELIVERED' && note.signature_path ? (
+                    <a href={`${API_BASE_URL}/${note.signature_path}`} target="_blank" rel="noreferrer" className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-100">
+                        Voir signature
+                    </a>
+                ) : (
+                    <button onClick={() => setShowNewRouteModal(true)} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white hover:bg-slate-800">
+                        {actionLabel} <ArrowRight className="ml-1 inline h-3.5 w-3.5" />
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+
+    const renderRouteCard = (route) => {
+        const notes = route.notes || [];
+        const delivered = notes.filter(note => note.status === 'DELIVERED').length;
+        const progress = notes.length ? Math.round((delivered / notes.length) * 100) : 0;
+        return (
+            <div key={route.id} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50 px-5 py-4 xl:flex-row xl:items-center xl:justify-between">
                     <div>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Tournées Prévues</p>
-                        <h2 className="text-3xl font-black text-slate-800">{routes.filter(r => r.status === "PLANNED").length}</h2>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-xl font-black text-slate-950">{route.reference}</h3>
+                            {routeStatusBadge(route.status)}
+                        </div>
+                        <p className="mt-2 flex flex-wrap gap-4 text-sm font-bold text-slate-500">
+                            <span className="inline-flex items-center gap-1"><Calendar className="h-4 w-4" /> {new Date(route.planned_date).toLocaleDateString('fr-FR')}</span>
+                            <span className="inline-flex items-center gap-1"><User className="h-4 w-4" /> {route.driver_name}</span>
+                            <span className="inline-flex items-center gap-1"><Truck className="h-4 w-4" /> {route.vehicle}</span>
+                        </p>
                     </div>
-                    <div className="w-12 h-12 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center">
-                        <Calendar className="w-6 h-6" />
+                    <div className="flex flex-wrap items-center gap-3">
+                        <div className="rounded-xl border border-slate-200 bg-white px-4 py-2">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Livré</p>
+                            <p className="text-lg font-black text-slate-950">{delivered}/{notes.length}</p>
+                        </div>
+                        {route.status === 'PLANNED' && (
+                            <button onClick={() => handleStartRoute(route.id)} className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-black text-white hover:bg-indigo-500">
+                                Démarrer
+                            </button>
+                        )}
                     </div>
                 </div>
-                
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-                    <div>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">En Transit</p>
-                        <h2 className="text-3xl font-black text-slate-800">{routes.filter(r => r.status === "IN_TRANSIT").length}</h2>
+                <div className="p-5">
+                    <div className="mb-4 h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full bg-indigo-500" style={{ width: `${progress}%` }} />
                     </div>
-                    <div className="w-12 h-12 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center">
-                        <Truck className="w-6 h-6" />
+                    <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                        {notes.map(note => (
+                            <div key={note.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <p className="truncate font-black text-slate-900">{note.client_name}</p>
+                                        <p className="truncate text-xs font-bold text-slate-500">{note.reference} · {note.delivery_address || 'Adresse non renseignée'}</p>
+                                    </div>
+                                    {note.status === 'DELIVERED' ? <CheckCircle className="h-5 w-5 shrink-0 text-emerald-500" /> : statusBadge(note.status)}
+                                </div>
+                            </div>
+                        ))}
+                        {notes.length === 0 && <p className="text-sm font-bold text-slate-400">Aucun BL assigné.</p>}
                     </div>
                 </div>
             </div>
+        );
+    };
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* COL 1 : Quai d'expédition (Ready Notes) */}
-                <div className="lg:col-span-1 space-y-4">
-                    <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-black text-slate-800 text-lg flex items-center gap-2">
-                            <Package className="w-5 h-5 text-slate-400"/> Quai de Chargement
-                        </h3>
-                    </div>
-                    <div className="bg-slate-200/50 p-4 rounded-2xl border border-slate-200 min-h-[400px]">
-                        {readyNotes.length === 0 && (
-                            <p className="text-center text-slate-400 font-bold mt-10">Aucune marchandise en attente.</p>
-                        )}
-                        {readyNotes.map(note => (
-                            <div key={note.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-3 hover:border-blue-300 transition-colors cursor-pointer group">
-                                <div className="flex justify-between items-start mb-2">
-                                    <span className="font-mono text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">{note.reference}</span>
-                                    <span className="text-[10px] font-black uppercase text-slate-400">PROD TERMINÉE</span>
-                                </div>
-                                <p className="font-black text-slate-800 mb-1">{note.client_name}</p>
-                                <p className="text-xs text-slate-500 flex items-center gap-1">
-                                    <MapPin className="w-3 h-3"/> {note.delivery_address || "Adresse non spécifiée"}
-                                </p>
-                            </div>
-                        ))}
-                    </div>
-                </div>
+    const currentViewMeta = LOGISTICS_VIEWS.find(view => view.id === activeView) || LOGISTICS_VIEWS[0];
+    const CurrentIcon = currentViewMeta.icon;
 
-                {/* COL 2 : Tournées / Dispatch */}
-                <div className="lg:col-span-2 space-y-4">
-                    <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-black text-slate-800 text-lg flex items-center gap-2">
-                            <Truck className="w-5 h-5 text-slate-400"/> Tournées (Routes)
-                        </h3>
-                        <button 
-                            onClick={() => setShowNewRouteModal(true)}
-                            className="bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md hover:bg-blue-600 transition-colors flex items-center gap-2"
-                        >
-                            <Plus className="w-4 h-4"/> Nouvelle Tournée
+    return (
+        <div className="min-h-[calc(100vh-96px)] bg-slate-50">
+            <div className="border-y border-slate-200 bg-white px-6 py-5 xl:px-8">
+                <div className="flex flex-col gap-5 2xl:flex-row 2xl:items-center 2xl:justify-between">
+                    <div>
+                        <div className="flex items-center gap-3">
+                            <CurrentIcon className="h-6 w-6 text-blue-600" />
+                            <h2 className="text-2xl font-black text-slate-950">Logistique & Expédition</h2>
+                        </div>
+                        <p className="mt-1 text-sm font-bold text-slate-500">Transformer les BL prêts en livraisons signées, visibles et contrôlées.</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <button onClick={() => setShowNewRouteModal(true)} className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-black text-white hover:bg-slate-800">
+                            <Plus className="mr-2 inline h-4 w-4" /> Nouvelle tournée
+                        </button>
+                        <button onClick={fetchData} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-600 hover:bg-slate-50">
+                            <RefreshCw className="mr-2 inline h-4 w-4" /> Actualiser
                         </button>
                     </div>
-
-                    <div className="space-y-4">
-                        {routes.length === 0 && !isLoading && (
-                            <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-12 text-center text-slate-400">
-                                <Truck className="w-12 h-12 mx-auto mb-4 opacity-20" />
-                                <p className="font-bold">Aucune tournée planifiée.</p>
-                            </div>
-                        )}
-                        {routes.map(route => (
-                            <div key={route.id} className={`bg-white rounded-2xl border ${route.status === 'IN_TRANSIT' ? 'border-blue-500 ring-4 ring-blue-50' : 'border-slate-200'} shadow-sm overflow-hidden`}>
-                                <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                                    <div>
-                                        <div className="flex items-center gap-3 mb-1">
-                                            <h4 className="font-black text-slate-800 text-lg">{route.reference}</h4>
-                                            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
-                                                route.status === 'PLANNED' ? 'bg-slate-200 text-slate-600' : 
-                                                route.status === 'IN_TRANSIT' ? 'bg-blue-500 text-white' : 'bg-emerald-500 text-white'
-                                            }`}>
-                                                {route.status === 'PLANNED' ? 'Planifiée' : route.status === 'IN_TRANSIT' ? 'En Route' : 'Terminée'}
-                                            </span>
-                                        </div>
-                                        <p className="text-sm font-bold text-slate-500 flex items-center gap-4">
-                                            <span className="flex items-center gap-1"><Calendar className="w-4 h-4"/> {new Date(route.planned_date).toLocaleDateString()}</span>
-                                            <span className="flex items-center gap-1"><User className="w-4 h-4"/> {route.driver_name}</span>
-                                            <span className="flex items-center gap-1"><Truck className="w-4 h-4"/> {route.vehicle}</span>
-                                        </p>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <button className="p-2 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors" title="Imprimer le Bordereau">
-                                            <FileText className="w-5 h-5"/>
-                                        </button>
-                                        {route.status === "PLANNED" && (
-                                            <button 
-                                                onClick={() => handleStartRoute(route.id)}
-                                                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm transition-colors"
-                                            >
-                                                Démarrer
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="p-5 bg-white">
-                                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Chargement ({route.notes?.length || 0} BLs)</p>
-                                    <div className="space-y-2">
-                                        {route.notes?.map(note => (
-                                            <div key={note.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                                                <div className="flex items-center gap-3">
-                                                    <span className="font-mono text-xs font-bold text-slate-600">{note.reference}</span>
-                                                    <span className="font-black text-slate-800 text-sm">{note.client_name}</span>
-                                                </div>
-                                                <div className="flex items-center gap-3">
-                                                    <span className="text-xs text-slate-500 truncate max-w-[200px]">{note.delivery_address}</span>
-                                                    {note.status === "DELIVERED" ? (
-                                                        <span className="flex items-center gap-2">
-                                                            {note.signature_path && (
-                                                                <a
-                                                                    href={`${API_BASE_URL}/${note.signature_path}`}
-                                                                    target="_blank"
-                                                                    rel="noreferrer"
-                                                                    className="text-[10px] font-black uppercase text-emerald-600 hover:text-emerald-800 underline"
-                                                                    title="Voir la signature client"
-                                                                >
-                                                                    Signature
-                                                                </a>
-                                                            )}
-                                                            <CheckCircle className="w-5 h-5 text-emerald-500" />
-                                                        </span>
-                                                    ) : (
-                                                        <span className="w-2 h-2 rounded-full bg-slate-300"></span>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
+                </div>
+                <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_auto]">
+                    <div className="relative">
+                        <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                        <input value={searchTerm} onChange={event => setSearchTerm(event.target.value)} placeholder="Rechercher BL, client, adresse..." className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-12 pr-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:flex">
+                        {LOGISTICS_VIEWS.map(view => {
+                            const Icon = view.icon;
+                            const selected = activeView === view.id;
+                            return (
+                                <button key={view.id} onClick={() => changeView(view.id)} className={`rounded-xl border px-4 py-3 text-xs font-black transition-colors ${selected ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}>
+                                    <Icon className="mr-2 inline h-4 w-4" /> {view.label}
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
             </div>
 
-            {/* NEW ROUTE MODAL */}
+            <div className="p-6 xl:p-8">
+                <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-5">
+                    {[
+                        ['Prêts quai', readyCount, 'À assigner', 'amber'],
+                        ['Tournées prévues', plannedRoutes.length, 'Planifiées', 'blue'],
+                        ['En tournée', inTransitRoutes.length, 'À suivre', 'indigo'],
+                        ['Livrés', deliveredNotes.length, 'Signés', 'emerald'],
+                        ['Anomalies/retours', issueNotes.length, 'À traiter', issueNotes.length ? 'red' : 'slate'],
+                    ].map(([label, value, helper, tone]) => (
+                        <div key={label} className={`rounded-2xl border p-4 ${tone === 'red' ? 'border-red-100 bg-red-50 text-red-700' : tone === 'emerald' ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : tone === 'indigo' ? 'border-indigo-100 bg-indigo-50 text-indigo-700' : tone === 'blue' ? 'border-blue-100 bg-blue-50 text-blue-700' : tone === 'amber' ? 'border-amber-100 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-700'}`}>
+                            <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{label}</p>
+                            <p className="mt-2 text-3xl font-black">{value}</p>
+                            <p className="mt-1 text-xs font-bold opacity-80">{helper}</p>
+                        </div>
+                    ))}
+                </div>
+
+                {isLoading ? (
+                    <div className="rounded-3xl border border-slate-200 bg-white py-20 text-center font-black text-slate-400">Chargement logistique...</div>
+                ) : activeView === 'ship' ? (
+                    <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[1fr_360px]">
+                        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">File expédition</p>
+                            <h3 className="mt-1 text-2xl font-black text-slate-950">À charger en tournée</h3>
+                            <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                                {readyNotes.filter(note => filteredNotes.some(item => item.id === note.id)).map(note => renderNoteCard(note))}
+                                {readyNotes.length === 0 && <EmptyState icon={Package} title="Aucun BL prêt au quai" text="Les bons de livraison prêts apparaîtront ici pour constituer une tournée." />}
+                            </div>
+                        </section>
+                        <aside className="space-y-4">
+                            <DecisionPanel readyCount={readyCount} plannedCount={plannedRoutes.length} issueCount={issueNotes.length} />
+                        </aside>
+                    </div>
+                ) : activeView === 'routes' ? (
+                    <div className="space-y-5">{routes.map(renderRouteCard)}{routes.length === 0 && <EmptyState icon={Truck} title="Aucune tournée" text="Créez une tournée depuis les BL prêts." />}</div>
+                ) : activeView === 'notes' ? (
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">{filteredNotes.map(note => renderNoteCard(note, 'Ouvrir'))}</div>
+                ) : activeView === 'driver' ? (
+                    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{routes.filter(route => ['PLANNED', 'IN_TRANSIT'].includes(route.status)).map(renderRouteCard)}</div>
+                ) : (
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">{issueNotes.map(note => renderNoteCard(note, 'Traiter'))}{issueNotes.length === 0 && <EmptyState icon={CheckCircle} title="Aucune anomalie logistique" text="Les retours, annulations et problèmes de livraison seront visibles ici." />}</div>
+                )}
+            </div>
+
             {showNewRouteModal && (
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-[2rem] max-w-xl w-full p-8 shadow-2xl animate-fade-in-up">
-                        <h3 className="text-2xl font-black text-slate-800 mb-6">Planifier une Tournée</h3>
-                        
-                        <div className="space-y-4 mb-8">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Chauffeur / Équipe</label>
-                                    <input 
-                                        type="text" 
-                                        placeholder="Ex: Jean & Marc"
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 outline-none focus:border-blue-500"
-                                        value={newRouteData.driver_name}
-                                        onChange={(e) => setNewRouteData({...newRouteData, driver_name: e.target.value})}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Véhicule</label>
-                                    <select 
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:border-blue-500"
-                                        value={newRouteData.vehicle}
-                                        onChange={(e) => setNewRouteData({...newRouteData, vehicle: e.target.value})}
-                                    >
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+                    <div className="w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+                        <div className="border-b border-slate-100 px-8 py-6">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">Planification tournée</p>
+                            <h3 className="mt-1 text-2xl font-black text-slate-950">Créer une tournée</h3>
+                        </div>
+                        <div className="space-y-5 px-8 py-6">
+                            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                <Field label="Chauffeur / équipe">
+                                    <input value={newRouteData.driver_name} onChange={event => setNewRouteData({ ...newRouteData, driver_name: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-bold outline-none focus:ring-2 focus:ring-blue-500" placeholder="Nom chauffeur" />
+                                </Field>
+                                <Field label="Véhicule">
+                                    <select value={newRouteData.vehicle} onChange={event => setNewRouteData({ ...newRouteData, vehicle: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-bold outline-none focus:ring-2 focus:ring-blue-500">
                                         <option value="Camion 1 (Iveco)">Camion 1 (Iveco)</option>
                                         <option value="Camion 2 (Renault)">Camion 2 (Renault)</option>
                                         <option value="Fourgon (Peugeot)">Fourgon (Peugeot)</option>
                                     </select>
-                                </div>
+                                </Field>
                             </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Date de livraison prévue</label>
-                                <input 
-                                    type="date" 
-                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 outline-none focus:border-blue-500"
-                                    value={newRouteData.planned_date}
-                                    onChange={(e) => setNewRouteData({...newRouteData, planned_date: e.target.value})}
-                                />
-                            </div>
-
-                            <div className="pt-4">
-                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Sélectionner les BLs à charger</label>
-                                <div className="max-h-48 overflow-y-auto space-y-2 border border-slate-200 p-2 rounded-xl bg-slate-50">
+                            <Field label="Date de livraison prévue">
+                                <input type="date" value={newRouteData.planned_date} onChange={event => setNewRouteData({ ...newRouteData, planned_date: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+                            </Field>
+                            <Field label="BL à charger">
+                                <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-2">
                                     {readyNotes.map(note => (
-                                        <label key={note.id} className="flex items-center gap-3 p-3 bg-white rounded-lg border border-slate-100 cursor-pointer hover:border-blue-300">
-                                            <input 
-                                                type="checkbox" 
-                                                className="w-4 h-4 text-blue-600 rounded border-slate-300"
+                                        <label key={note.id} className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-100 bg-white p-3 hover:border-blue-200">
+                                            <input
+                                                type="checkbox"
+                                                className="h-4 w-4 rounded border-slate-300 text-blue-600"
                                                 checked={newRouteData.note_ids.includes(note.id)}
-                                                onChange={(e) => {
-                                                    const ids = e.target.checked 
+                                                onChange={event => {
+                                                    const ids = event.target.checked
                                                         ? [...newRouteData.note_ids, note.id]
                                                         : newRouteData.note_ids.filter(id => id !== note.id);
-                                                    setNewRouteData({...newRouteData, note_ids: ids});
+                                                    setNewRouteData({ ...newRouteData, note_ids: ids });
                                                 }}
                                             />
-                                            <div className="flex-1">
-                                                <span className="font-black text-slate-800">{note.client_name}</span>
-                                                <span className="text-xs text-slate-500 ml-2">({note.reference})</span>
+                                            <div className="min-w-0">
+                                                <p className="truncate font-black text-slate-900">{note.client_name}</p>
+                                                <p className="truncate text-xs font-bold text-slate-500">{note.reference} · {note.delivery_address || 'Adresse non renseignée'}</p>
                                             </div>
                                         </label>
                                     ))}
-                                    {readyNotes.length === 0 && <p className="text-sm text-slate-400 text-center p-4">Aucun BL prêt.</p>}
+                                    {readyNotes.length === 0 && <p className="p-6 text-center text-sm font-bold text-slate-400">Aucun BL prêt.</p>}
                                 </div>
-                            </div>
+                            </Field>
                         </div>
-
-                        <div className="flex gap-4">
-                            <button 
-                                onClick={() => setShowNewRouteModal(false)}
-                                className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl transition-colors"
-                            >
-                                Annuler
-                            </button>
-                            <button 
-                                onClick={handleCreateRoute}
-                                className="flex-1 py-4 bg-slate-900 hover:bg-blue-600 text-white font-bold rounded-xl shadow-lg transition-colors"
-                            >
-                                Créer la Tournée
-                            </button>
+                        <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-8 py-5">
+                            <button onClick={() => setShowNewRouteModal(false)} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-600 hover:bg-slate-50">Annuler</button>
+                            <button onClick={handleCreateRoute} className="rounded-xl bg-blue-600 px-6 py-3 text-sm font-black text-white hover:bg-blue-500">Créer la tournée</button>
                         </div>
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+function Field({ label, children }) {
+    return (
+        <div>
+            <label className="mb-1.5 block text-xs font-black uppercase tracking-widest text-slate-400">{label}</label>
+            {children}
+        </div>
+    );
+}
+
+function EmptyState({ icon: Icon, title, text }) {
+    return (
+        <div className="col-span-full rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 py-16 text-center">
+            <Icon className="mx-auto h-12 w-12 text-slate-300" />
+            <h3 className="mt-4 text-lg font-black text-slate-700">{title}</h3>
+            <p className="mt-1 text-sm font-bold text-slate-400">{text}</p>
+        </div>
+    );
+}
+
+function DecisionPanel({ readyCount, plannedCount, issueCount }) {
+    const decision = issueCount > 0
+        ? 'Traiter les anomalies avant de charger une nouvelle tournée.'
+        : readyCount > 0
+            ? 'Constituer une tournée avec les BL prêts au quai.'
+            : plannedCount > 0
+                ? 'Démarrer ou suivre les tournées planifiées.'
+                : 'Aucune action logistique urgente.';
+    return (
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">Prochaine action</p>
+            <h3 className="mt-2 text-xl font-black text-slate-950">{decision}</h3>
+            <div className="mt-5 space-y-3 text-sm font-bold text-slate-600">
+                <p className="flex gap-2"><Package className="h-5 w-5 text-amber-500" /> Charger uniquement des BL prêts.</p>
+                <p className="flex gap-2"><Truck className="h-5 w-5 text-indigo-500" /> Démarrer la tournée quand le camion est réellement parti.</p>
+                <p className="flex gap-2"><Clock className="h-5 w-5 text-slate-400" /> La preuve de livraison reste côté interface chauffeur.</p>
+            </div>
         </div>
     );
 }
