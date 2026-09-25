@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter, Depends, Body, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -15,6 +15,7 @@ from ..core.config import STANDARDS, ALERT_THRESHOLD_PERCENT
 from ..core import security
 from ..core.time import utcnow
 from ..domain.ontology import ENTITIES
+from .v2_stock import get_inventory_intelligence
 
 router = APIRouter(
     prefix="/v2/analytics",
@@ -244,24 +245,43 @@ INSIGHT_INTENT_PROFILES = {
     },
     "INVENTORY": {
         "type": "barchart",
-        "entities": ("stock_item", "stock_reservation", "workshop_preparation", "real_workshop_debit", "cutting_sheet"),
+        "entities": (
+            "stock_location",
+            "stock_quant",
+            "stock_item",
+            "stock_reservation",
+            "workshop_preparation",
+            "real_workshop_debit",
+            "cutting_sheet",
+            "inventory_session",
+            "inventory_count_line",
+            "inventory_intelligence",
+        ),
         "terms": (
             "stock",
             "inventaire",
+            "comptage",
+            "compter",
+            "recompter",
             "rupture",
             "ruptures",
             "seuil",
             "valorisation",
+            "score",
+            "priorite",
+            "priorites",
             "emplacement",
             "emplacements",
             "zone",
             "zones",
+            "ecart",
+            "ecarts",
             "reservation",
             "reservations",
             "debit atelier",
             "matiere",
         ),
-        "message": "Analyse priorisée par l'ontologie stock et les mouvements réels.",
+        "message": "Analyse priorisée par l'ontologie inventaire et les données stock réelles.",
     },
     "PURCHASES": {
         "type": "barchart",
@@ -481,7 +501,11 @@ def _fallback_insight(query: str) -> dict[str, object]:
     }
 
 @router.post("/ask")
-def ask_insight_engine(query_obj: InsightQuery, db: Session = Depends(get_db)):
+def ask_insight_engine(
+    query_obj: InsightQuery,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
     """
     Insight Engine piloté d'abord par l'ontologie MMG, puis par IA si besoin.
     Le backend injecte ensuite les vraies données de la base.
@@ -578,31 +602,77 @@ def ask_insight_engine(query_obj: InsightQuery, db: Session = Depends(get_db)):
         message = f"{message}\n\n**{total_logs} tâches complétées** cette semaine.\n**Temps total cumulé:** {total_time:.0f} min.\nVoici le temps moyen par station vs objectif (30 min) :"
 
     elif intent == "INVENTORY":
-        # Valorisation par emplacement + alertes rupture
-        quants = db.query(models.StockQuant).filter(models.StockQuant.quantity > 0).all()
-        loc_values = {}
-        low_stock_items = []
-        
-        for q in quants:
-            loc = db.query(models.StockLocation).filter(models.StockLocation.id == q.location_id).first()
-            if loc and loc.usage == "internal":
-                variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == q.variant_id).first()
-                cost = float(variant.cost_price) if variant and variant.cost_price else 0
-                value = q.quantity * cost
-                loc_name = loc.name or "Inconnu"
-                loc_values[loc_name] = loc_values.get(loc_name, 0) + value
-                
-                # Détection rupture
-                if variant and q.quantity <= (variant.min_threshold or 0):
-                    low_stock_items.append(variant.reference)
-        
-        chart_data = [{"name": k, "total": round(v, 2)} for k, v in sorted(loc_values.items(), key=lambda x: x[1], reverse=True)]
+        try:
+            intelligence = get_inventory_intelligence(db=db, current_user=current_user)
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                chart_type = "text"
+                message = (
+                    "Je peux analyser l’inventaire depuis l’ontologie stock, "
+                    "mais votre profil n’a pas la permission `inventory.count` ou `inventory.validate`."
+                )
+                return {
+                    "type": chart_type,
+                    "message": message,
+                    "data": [],
+                    "intent": intent,
+                    "engine": ai_response.get("engine", "unknown"),
+                    "matched_terms": ai_response.get("matched_terms", []),
+                    "matched_entities": ai_response.get("matched_entities", []),
+                }
+            raise
+        zones = intelligence.get("zones", [])
+        items = intelligence.get("items", [])
+        summary = intelligence.get("summary", {})
+
+        chart_data = [
+            {
+                "name": zone.get("name") or zone.get("full_name") or f"Zone #{zone.get('location_id')}",
+                "total": zone.get("score", 0),
+            }
+            for zone in zones[:7]
+        ]
         if not chart_data:
-            chart_data = [{"name": "Aucun stock", "total": 0}]
-        
-        total_val = sum(loc_values.values())
-        low_str = f"\n⚠️ **{len(low_stock_items)} article(s) en rupture/seuil critique** : {', '.join(low_stock_items[:5])}" if low_stock_items else "\n✅ Aucune alerte de rupture."
-        message = f"{message}\n\n**Valorisation totale inventaire:** {total_val:,.2f} €{low_str}"
+            chart_data = [{"name": "Aucune priorité", "total": 0}]
+
+        priority_label = {
+            "critical": "critique",
+            "high": "élevée",
+            "medium": "à surveiller",
+            "low": "stable",
+        }.get(intelligence.get("priority"), "stable")
+        top_zone = zones[0] if zones else None
+        top_item = items[0] if items else None
+
+        message_parts = [
+            message,
+            "",
+            f"**Score inventaire:** {intelligence.get('score', 0)}/100 — priorité **{priority_label}**.",
+            (
+                f"**Périmètre analysé:** {summary.get('zones_analyzed', 0)} zone(s), "
+                f"{summary.get('items_analyzed', 0)} article(s), "
+                f"{summary.get('open_inventory_sessions', 0)} campagne(s) ouverte(s)."
+            ),
+        ]
+        if top_zone:
+            message_parts.append(
+                "**Zone prioritaire:** "
+                f"{top_zone.get('full_name') or top_zone.get('name')} "
+                f"({top_zone.get('score', 0)}/100) — "
+                f"{'; '.join(top_zone.get('reasons') or ['à contrôler'])}."
+            )
+        if top_item:
+            message_parts.append(
+                "**Article à fiabiliser:** "
+                f"{top_item.get('reference')} "
+                f"({top_item.get('score', 0)}/100) — "
+                f"{'; '.join(top_item.get('reasons') or ['à surveiller'])}."
+            )
+        if summary.get("unclear_zones", 0):
+            message_parts.append(
+                f"**Attention:** {summary.get('unclear_zones')} zone(s) restent à clarifier avant comptage fiable."
+            )
+        message = "\n".join(message_parts)
 
     elif intent == "PURCHASES":
         # Commandes d'achat par statut + montant total
