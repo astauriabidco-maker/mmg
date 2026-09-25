@@ -8569,6 +8569,7 @@ function PhysicalInventoryView({
     const [syncError, setSyncError] = useState('');
     const [validationReviewOpen, setValidationReviewOpen] = useState(false);
     const [busy, setBusy] = useState(false);
+    const newSessionFormRef = useRef(null);
     const offlineQueueKey = `mmg.inventory.pending.${currentUsername || 'anonymous'}`;
     const [offlineQueue, setOfflineQueue] = useState(() => {
         try {
@@ -9049,8 +9050,34 @@ function PhysicalInventoryView({
         medium: 'border-amber-200 bg-amber-50 text-amber-700',
         low: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     };
+    const intelligenceActionLabel = {
+        terminer_campagne: 'Terminer campagne',
+        clarifier_zone: 'Clarifier zone',
+        compter_zone: 'Préparer comptage',
+        compter_ou_recompter: 'Recompter',
+        securiser_achat: 'Sécuriser achat',
+        surveiller: 'Surveiller',
+    };
     const topIntelligenceZones = (inventoryIntelligence.zones || []).slice(0, 3);
     const topIntelligenceItems = (inventoryIntelligence.items || []).slice(0, 3);
+    const prepareInventoryFromZone = (zone) => {
+        if (!zone?.location_id || !canValidate) return;
+        setNewSession(prev => ({
+            ...prev,
+            name: `Contrôle ciblé - ${zone.name || zone.full_name || 'zone prioritaire'}`,
+            location_id: String(zone.location_id),
+            notes: [
+                `Priorité inventaire ${zone.score || 0}/100.`,
+                ...(zone.reasons || []),
+            ].join(' '),
+            inventory_type: 'cycle',
+            include_all_variants: false,
+        }));
+        setShowNewSessionAdvanced(true);
+        window.requestAnimationFrame(() => {
+            newSessionFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+    };
 
     return (
         <div className="w-full space-y-6">
@@ -9078,7 +9105,7 @@ function PhysicalInventoryView({
 
                 <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] min-h-[620px]">
                     <aside className="border-r border-slate-100 bg-slate-50/80 p-5 space-y-4">
-                        <form onSubmit={createSession} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3">
+                        <form ref={newSessionFormRef} onSubmit={createSession} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3">
                             <div>
                                 <p className="text-xs font-black uppercase tracking-widest text-blue-600">Compter une zone</p>
                                 <h4 className="mt-1 text-lg font-black text-slate-950">Nouvelle campagne</h4>
@@ -9338,9 +9365,9 @@ function PhysicalInventoryView({
                                 <div className="space-y-3">
                                     <div>
                                         <p className="text-[10px] uppercase font-black tracking-widest text-blue-600">Intelligence inventaire</p>
-                                        <h4 className="text-lg font-black text-slate-950">Priorité calculée depuis l’ontologie stock</h4>
+                                        <h4 className="text-lg font-black text-slate-950">Quoi compter maintenant</h4>
                                         <p className="mt-1 text-xs font-bold text-slate-500">
-                                            Zones, écarts, valeur, mouvements, réservations et impact atelier/achat sont croisés pour guider le prochain comptage.
+                                            L’ontologie transforme les signaux stock en décision opérateur : zone prioritaire, raison, puis campagne ciblée.
                                         </p>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
@@ -9355,6 +9382,16 @@ function PhysicalInventoryView({
                                     <p className="text-[10px] uppercase font-black tracking-widest opacity-80">Score inventaire</p>
                                     <p className="mt-1 text-3xl font-black">{Number(inventoryIntelligence.score || 0)}/100</p>
                                     <p className="text-xs font-black uppercase opacity-80">{intelligencePriorityLabel[inventoryIntelligence.priority] || 'Stable'}</p>
+                                    {topIntelligenceZones[0] && (
+                                        <button
+                                            type="button"
+                                            onClick={() => prepareInventoryFromZone(topIntelligenceZones[0])}
+                                            disabled={!canValidate}
+                                            className="mt-3 w-full rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-800 disabled:bg-slate-300"
+                                        >
+                                            Préparer la zone #1
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                             <div className="mt-5 grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -9389,14 +9426,32 @@ function PhysicalInventoryView({
                                     </div>
                                     <div className="divide-y divide-slate-100">
                                         {topIntelligenceZones.length > 0 ? topIntelligenceZones.map(zone => (
-                                            <div key={zone.location_id} className="px-4 py-3 flex items-start justify-between gap-4">
-                                                <div>
-                                                    <p className="text-sm font-black text-slate-900">{zone.full_name || zone.name}</p>
+                                            <div key={zone.location_id} className="px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                                <div className="min-w-0">
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <p className="text-sm font-black text-slate-900">{zone.full_name || zone.name}</p>
+                                                        <span className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-black uppercase text-slate-500">
+                                                            {intelligenceActionLabel[zone.recommended_action] || 'Action'}
+                                                        </span>
+                                                    </div>
                                                     <p className="mt-1 text-xs font-bold text-slate-500">{zone.reasons?.join(' · ') || zone.role}</p>
+                                                    <p className="mt-1 text-[11px] font-bold text-slate-400">
+                                                        {Number(zone.variant_count || 0).toLocaleString('fr-FR')} référence(s) · {Number(zone.stock_value || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                                                    </p>
                                                 </div>
-                                                <span className={`shrink-0 rounded-xl border px-3 py-1 text-xs font-black ${intelligenceToneClass[zone.priority] || intelligenceToneClass.low}`}>
-                                                    {zone.score}/100
-                                                </span>
+                                                <div className="flex shrink-0 items-center gap-2">
+                                                    <span className={`rounded-xl border px-3 py-1 text-xs font-black ${intelligenceToneClass[zone.priority] || intelligenceToneClass.low}`}>
+                                                        {zone.score}/100
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => prepareInventoryFromZone(zone)}
+                                                        disabled={!canValidate}
+                                                        className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-black text-blue-700 transition hover:bg-blue-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                                    >
+                                                        Préparer
+                                                    </button>
+                                                </div>
                                             </div>
                                         )) : (
                                             <div className="px-4 py-5 text-sm font-bold text-slate-400">Aucune zone prioritaire détectée.</div>
@@ -9412,8 +9467,16 @@ function PhysicalInventoryView({
                                         {topIntelligenceItems.length > 0 ? topIntelligenceItems.map(item => (
                                             <div key={item.variant_id} className="px-4 py-3 flex items-start justify-between gap-4">
                                                 <div>
-                                                    <p className="text-sm font-black text-slate-900">{item.reference}</p>
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <p className="text-sm font-black text-slate-900">{item.reference}</p>
+                                                        <span className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-black uppercase text-slate-500">
+                                                            {intelligenceActionLabel[item.recommended_action] || 'Action'}
+                                                        </span>
+                                                    </div>
                                                     <p className="mt-1 text-xs font-bold text-slate-500">{item.reasons?.join(' · ') || item.product_name}</p>
+                                                    <p className="mt-1 text-[11px] font-bold text-slate-400">
+                                                        Disponible {Number(item.available_quantity || 0).toLocaleString('fr-FR')} · réservé {Number(item.reserved_quantity || 0).toLocaleString('fr-FR')}
+                                                    </p>
                                                 </div>
                                                 <span className={`shrink-0 rounded-xl border px-3 py-1 text-xs font-black ${intelligenceToneClass[item.priority] || intelligenceToneClass.low}`}>
                                                     {item.score}/100
