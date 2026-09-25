@@ -2301,6 +2301,40 @@ export default function StockDashboard({ surface = 'management' }) {
         { label: 'Casier', name: 'Casier A1', usage: 'internal', hint: 'Position finale où l’opérateur prend la pièce.' },
         { label: 'Atelier', name: 'Zone préparation atelier', usage: 'production', hint: 'Zone de remise interne avant débit réel.' },
     ];
+    const locationControlRows = physicalLocations
+        .map(location => {
+            const descendantIds = getLocationDescendantIds(location.id);
+            const stockRows = quants.filter(quant => descendantIds.includes(quant.location_id) && Number(quant.quantity || 0) !== 0);
+            const quality = getLocationQuality(location);
+            const childrenCount = locations.filter(child => child.parent_id === location.id).length;
+            const physicalQuantity = stockRows.reduce((sum, quant) => sum + Number(quant.quantity || 0), 0);
+            const reservedQuantity = stockRows.reduce((sum, quant) => sum + Number(quant.reserved_quantity || 0), 0);
+            const score = quality.exploitable ? 100 : Math.max(20, 80 - (quality.issues || []).length * 20 - (childrenCount === 0 ? 10 : 0));
+            const priority = quality.exploitable
+                ? (stockRows.length > 0 ? 'active' : 'ready')
+                : (stockRows.length > 0 ? 'fix_with_stock' : 'fix_empty');
+            return {
+                location,
+                quality,
+                childrenCount,
+                stockLineCount: stockRows.length,
+                physicalQuantity,
+                reservedQuantity,
+                availableQuantity: Math.max(physicalQuantity - reservedQuantity, 0),
+                score,
+                priority,
+            };
+        })
+        .sort((a, b) => {
+            const priorityWeight = { fix_with_stock: 0, fix_empty: 1, active: 2, ready: 3 };
+            return (priorityWeight[a.priority] ?? 9) - (priorityWeight[b.priority] ?? 9)
+                || a.score - b.score
+                || getFullLocationName(a.location).localeCompare(getFullLocationName(b.location), 'fr', { sensitivity: 'base' });
+        });
+    const locationPlanScore = physicalLocations.length
+        ? Math.round((exploitableInternalLocations.length / physicalLocations.length) * 100)
+        : 0;
+    const criticalLocationRows = locationControlRows.filter(row => !row.quality.exploitable).slice(0, 6);
     const openLocationTemplateForm = (template) => {
         setLocationForm({ name: template.name, usage: template.usage, parent_id: '' });
         setShowLocationManagerModal(true);
@@ -4048,128 +4082,75 @@ export default function StockDashboard({ surface = 'management' }) {
                 ) : currentMenu === 'locations' ? (
                     <div className="flex-1 overflow-y-auto w-full relative bg-slate-50">
                         <div className="w-full p-6 space-y-6">
-                            <div className="border border-slate-200 bg-white overflow-hidden shadow-sm">
-                                <div className="px-6 py-5 bg-slate-900 text-white flex flex-wrap items-start justify-between gap-4">
+                            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                                <div className="px-6 py-5 bg-white border-b border-slate-100 flex flex-wrap items-start justify-between gap-4">
                                     <div>
-                                        <p className="text-[10px] uppercase font-black tracking-widest text-blue-200 mb-2">Plan de rangement stock</p>
-                                        <h2 className="text-2xl font-black flex items-center gap-3">
-                                            <MapPin className="w-6 h-6 text-blue-300" />
+                                        <p className="text-[10px] uppercase font-black tracking-[0.24em] text-blue-600 mb-2">Plan de rangement stock</p>
+                                        <h2 className="text-2xl font-black text-slate-950 flex items-center gap-3">
+                                            <MapPin className="w-6 h-6 text-blue-600" />
                                             Zones & emplacements
                                         </h2>
-                                        <p className="text-sm font-bold text-slate-300 mt-1 max-w-3xl">
-                                            Organisez le rangement comme l’atelier travaille : magasin, zone, rack, casier, puis fiche article rattachée.
+                                        <p className="text-sm font-bold text-slate-500 mt-1 max-w-3xl">
+                                            Rendre chaque pièce retrouvable : zone claire, stock rattaché, comptage possible et fiche accessible.
                                         </p>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
-                                        {canManageLocations ? (
+                                        {canManageLocations && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setAddingSubLocTo('root')}
+                                                className="px-4 py-3 rounded-xl bg-slate-950 hover:bg-slate-800 text-white text-sm font-black inline-flex items-center gap-2"
+                                            >
+                                                <Plus className="w-4 h-4" />
+                                                Créer une zone
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => setCurrentMenu('physical-inventory')}
+                                            className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 text-sm font-black inline-flex items-center gap-2"
+                                        >
+                                            <ClipboardCheck className="w-4 h-4" />
+                                            Compter
+                                        </button>
+                                        {canManageLocations && (
                                             <button
                                                 type="button"
                                                 onClick={() => setShowLocationManagerModal(true)}
-                                                className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white text-sm font-black inline-flex items-center gap-2"
+                                                className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 text-sm font-black inline-flex items-center gap-2"
                                             >
                                                 <Edit3 className="w-4 h-4" />
                                                 Gestion avancée
                                             </button>
-                                        ) : (
-                                            <span className="px-4 py-3 rounded-xl bg-white/10 border border-white/15 text-sm font-black text-slate-200">
-                                                Lecture seule
-                                            </span>
                                         )}
                                     </div>
                                 </div>
 
-                                <div className="border-b border-slate-100 bg-white px-6 py-5">
-                                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
-                                        <div>
-                                            <p className="text-[10px] uppercase tracking-[0.24em] font-black text-blue-600">Prochaine action</p>
-                                            <h3 className="mt-1 text-xl font-black text-slate-950">
-                                                {physicalLocations.length === 0
-                                                    ? 'Créer le premier emplacement physique'
-                                                    : unclearInternalLocations.length > 0
-                                                        ? `Clarifier ${unclearInternalLocations.length} emplacement(s) avant inventaire`
-                                                        : 'Le plan atelier est prêt pour les comptages'}
-                                            </h3>
-                                            <p className="mt-1 max-w-3xl text-sm font-bold text-slate-500">
-                                                {physicalLocations.length === 0
-                                                    ? 'Commencez par un magasin ou une zone racine. Les réceptions et inventaires auront ensuite un lieu réel.'
-                                                    : unclearInternalLocations.length > 0
-                                                        ? 'Les zones parent ou noms vagues restent visibles, mais il vaut mieux les transformer en rack/casier exploitable avant de compter.'
-                                                        : 'Les opérateurs peuvent ranger, retrouver et compter le stock sur des emplacements suffisamment précis.'}
-                                            </p>
-                                        </div>
-                                        <div className="flex flex-wrap gap-2">
-                                            {canManageLocations && unclearInternalLocations.length > 0 && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setShowLocationManagerModal(true)}
-                                                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-blue-500"
-                                                >
-                                                    <Edit3 className="h-4 w-4" />
-                                                    Corriger le plan
-                                                </button>
-                                            )}
-                                            {physicalLocations.length > 0 && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setCurrentMenu('physical-inventory')}
-                                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
-                                                >
-                                                    <ClipboardCheck className="h-4 w-4" />
-                                                    Compter une zone
-                                                </button>
-                                            )}
-                                        </div>
+                                <div className="grid grid-cols-1 gap-3 p-6 border-b border-slate-100 md:grid-cols-2 xl:grid-cols-5">
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 text-white">
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-300">Score plan</p>
+                                        <p className="text-3xl font-black mt-2">{locationPlanScore}%</p>
+                                        <p className="text-xs font-bold text-slate-300 mt-1">Part exploitable pour stock et inventaire.</p>
                                     </div>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-6 border-b border-slate-100">
                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Plan atelier</p>
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Zones physiques</p>
                                         <p className="text-3xl font-black text-slate-950 mt-2">{physicalLocations.length}</p>
-                                        <p className="text-xs font-bold text-slate-500 mt-1">Zones physiques où l’on peut ranger ou prendre une pièce.</p>
+                                        <p className="text-xs font-bold text-slate-500 mt-1">Lieux où ranger ou prendre une pièce.</p>
                                     </div>
-                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Avec stock</p>
-                                        <p className="text-3xl font-black text-slate-950 mt-2">{internalLocationsWithStock.length}</p>
-                                        <p className="text-xs font-bold text-slate-500 mt-1">{locationStockCoverage}% du plan contient du stock réel.</p>
+                                    <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-blue-600">Avec stock</p>
+                                        <p className="text-3xl font-black text-blue-700 mt-2">{internalLocationsWithStock.length}</p>
+                                        <p className="text-xs font-bold text-blue-700 mt-1">{locationStockCoverage}% du plan contient du stock réel.</p>
                                     </div>
                                     <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-                                        <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Exploitables atelier</p>
+                                        <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Exploitables</p>
                                         <p className="text-3xl font-black text-emerald-800 mt-2">{exploitableInternalLocations.length}</p>
-                                        <p className="text-xs font-bold text-emerald-700 mt-1">Racks, casiers ou zones atelier assez précis.</p>
+                                        <p className="text-xs font-bold text-emerald-700 mt-1">Racks, casiers ou zones atelier précises.</p>
                                     </div>
                                     <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
                                         <p className="text-[10px] uppercase tracking-widest font-black text-amber-700">À clarifier</p>
                                         <p className="text-3xl font-black text-amber-800 mt-2">{unclearInternalLocations.length}</p>
-                                        <p className="text-xs font-bold text-amber-700 mt-1">Noms vagues, zones parent seules ou emplacements incomplets.</p>
-                                    </div>
-                                </div>
-
-                                <div className="px-6 py-4 border-b border-slate-100 bg-slate-50">
-                                    <div className="flex flex-wrap items-center justify-between gap-4">
-                                        <div>
-                                            <p className="text-[10px] uppercase tracking-[0.24em] font-black text-blue-600">Création assistée</p>
-                                            <h3 className="mt-1 text-base font-black text-slate-950">Modèles rapides</h3>
-                                        </div>
-                                        {!canManageLocations && (
-                                            <span className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-500">
-                                                Lecture seule
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                                        {locationTemplates.map(template => (
-                                            <button
-                                                key={template.label}
-                                                type="button"
-                                                disabled={!canManageLocations}
-                                                onClick={() => openLocationTemplateForm(template)}
-                                                className="min-w-[180px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-left shadow-sm hover:border-blue-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                            >
-                                                <p className="text-[10px] uppercase tracking-widest font-black text-blue-500">Modèle</p>
-                                                <p className="mt-0.5 font-black text-slate-950">{template.label}</p>
-                                            </button>
-                                        ))}
+                                        <p className="text-xs font-bold text-amber-700 mt-1">Lieux trop vagues ou incomplets.</p>
                                     </div>
                                 </div>
 
@@ -4187,105 +4168,215 @@ export default function StockDashboard({ surface = 'management' }) {
                                                     if (event.key === 'Enter') handleAddSubLocation(event, 'root');
                                                 }}
                                                 className="w-full text-sm p-3 bg-white border border-blue-200 rounded-xl text-slate-900 font-bold placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-500/30 transition-all"
-                                                placeholder="Ex: Entrepôt principal, Rack ALU, Zone vitrage... Entrée pour créer"
+                                                placeholder="Ex: Stock atelier ALU, Zone vitrage, Rack quincaillerie... Entrée pour créer"
                                             />
                                         </div>
                                     </div>
                                 )}
 
-                                <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6 p-6">
-                                    <div className="space-y-4">
-                                        <div>
-                                            <p className="text-xs uppercase tracking-widest font-black text-slate-400">Plan atelier</p>
-                                            <h3 className="text-xl font-black text-slate-900">Où ranger / où prendre ?</h3>
-                                            <p className="text-sm font-bold text-slate-500 mt-1">
-                                                Cliquez sur une fiche pour voir le stock présent, réceptionner dans la zone ou transférer vers un autre emplacement.
-                                            </p>
-                                        </div>
-                                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
-                                            {internalRootLocations.map(location => (
-                                                canManageLocations ? renderManagedLocationTree(location) : renderLocationTree(location)
-                                            ))}
-                                            {internalRootLocations.length === 0 && (
-                                                <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center">
-                                                    <MapPin className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                                                    <p className="font-black text-slate-600">Aucun emplacement physique configuré.</p>
-                                                    <p className="text-sm font-bold text-slate-400 mt-1">
-                                                        Créez au moins un entrepôt ou une zone interne avant de recevoir du stock réel.
+                                <div className="grid grid-cols-1 gap-6 p-6 xl:grid-cols-[1fr_380px]">
+                                    <div className="space-y-6">
+                                        <section className="rounded-2xl border border-emerald-100 bg-emerald-50 overflow-hidden">
+                                            <div className="p-5 border-b border-emerald-100 bg-gradient-to-r from-emerald-50 to-blue-50 flex flex-wrap items-center justify-between gap-4">
+                                                <div>
+                                                    <p className="text-[10px] uppercase tracking-[0.24em] font-black text-emerald-700">Prochaine action</p>
+                                                    <h3 className="text-xl font-black text-slate-950 mt-1">
+                                                        {physicalLocations.length === 0
+                                                            ? 'Créer le premier plan de rangement'
+                                                            : criticalLocationRows.length > 0
+                                                                ? `Corriger ${criticalLocationRows.length} zone(s) prioritaire(s)`
+                                                                : 'Le plan est exploitable pour stock et inventaire'}
+                                                    </h3>
+                                                    <p className="text-sm font-bold text-slate-600 mt-1 max-w-3xl">
+                                                        {physicalLocations.length === 0
+                                                            ? 'Commencez par les lieux réellement utilisés par l’atelier avant de recevoir ou compter.'
+                                                            : criticalLocationRows.length > 0
+                                                                ? 'Priorité aux zones qui contiennent du stock ou bloquent une lecture fiable du stock réel.'
+                                                                : 'Les réceptions, transferts et comptages peuvent s’appuyer sur des emplacements clairs.'}
                                                     </p>
                                                 </div>
-                                            )}
-                                        </div>
+                                                <div className="rounded-2xl border border-emerald-200 bg-white px-5 py-3">
+                                                    <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Fiabilité</p>
+                                                    <p className="text-2xl font-black text-emerald-800">{locationPlanScore}%</p>
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 gap-3 p-5 lg:grid-cols-4">
+                                                {[
+                                                    { step: 1, label: 'Créer', hint: 'Magasin, zone ou atelier réel.' },
+                                                    { step: 2, label: 'Préciser', hint: 'Rack, casier ou position exploitable.' },
+                                                    { step: 3, label: 'Rattacher', hint: 'Stock, fiches et réceptions.' },
+                                                    { step: 4, label: 'Compter', hint: 'Inventaire sur zone claire.' },
+                                                ].map(item => (
+                                                    <div key={item.step} className="rounded-xl border border-white bg-white/80 p-4">
+                                                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-xs font-black text-emerald-800">{item.step}</span>
+                                                        <p className="mt-3 font-black text-slate-950">{item.label}</p>
+                                                        <p className="mt-1 text-xs font-bold text-slate-500">{item.hint}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </section>
+
+                                        <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                            <div className="p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-[10px] uppercase tracking-[0.24em] font-black text-blue-600">Plan opérationnel</p>
+                                                    <h3 className="text-xl font-black text-slate-950">Zones à piloter</h3>
+                                                    <p className="text-sm font-bold text-slate-500 mt-1">Chaque ligne indique si la zone est prête, contient du stock et quelles actions lancer.</p>
+                                                </div>
+                                                <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-black text-slate-600">
+                                                    {locationControlRows.length} zone(s)
+                                                </span>
+                                            </div>
+                                            <div className="divide-y divide-slate-100">
+                                                {locationControlRows.map(row => {
+                                                    const statusMeta = row.quality.exploitable
+                                                        ? { label: row.stockLineCount > 0 ? 'Exploitable avec stock' : 'Prête', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' }
+                                                        : { label: row.stockLineCount > 0 ? 'À corriger avant mouvement' : 'À préciser', className: 'bg-amber-50 text-amber-700 border-amber-100' };
+                                                    return (
+                                                        <div key={row.location.id} className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(0,1.4fr)_120px_120px_220px] lg:items-center">
+                                                            <button
+                                                                type="button"
+                                                                onClick={(event) => openLocationDetail(event, row.location)}
+                                                                className="text-left min-w-0"
+                                                            >
+                                                                <p className="font-black text-slate-950 truncate">{getFullLocationName(row.location)}</p>
+                                                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                                                    <span className={`rounded-lg border px-2 py-1 text-[10px] uppercase tracking-wide font-black ${statusMeta.className}`}>
+                                                                        {statusMeta.label}
+                                                                    </span>
+                                                                    <span className="rounded-lg border border-slate-100 bg-slate-50 px-2 py-1 text-[10px] uppercase tracking-wide font-black text-slate-500">
+                                                                        {row.quality.role}
+                                                                    </span>
+                                                                    {(row.quality.issues || []).slice(0, 2).map(issue => (
+                                                                        <span key={issue} className="rounded-lg border border-red-100 bg-red-50 px-2 py-1 text-[10px] uppercase tracking-wide font-black text-red-600">
+                                                                            {issue}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            </button>
+                                                            <div>
+                                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Stock</p>
+                                                                <p className="mt-1 text-lg font-black text-slate-950">{row.stockLineCount}</p>
+                                                                <p className="text-xs font-bold text-slate-400">{row.physicalQuantity} unité(s)</p>
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Disponible</p>
+                                                                <p className="mt-1 text-lg font-black text-blue-700">{row.availableQuantity}</p>
+                                                                <p className="text-xs font-bold text-slate-400">{row.childrenCount} sous-zone(s)</p>
+                                                            </div>
+                                                            <div className="flex flex-wrap gap-2 lg:justify-end">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(event) => openLocationDetail(event, row.location)}
+                                                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                                                                >
+                                                                    Fiche
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setActiveLocationId(row.location.id);
+                                                                        setInventoryFocus('stock');
+                                                                        setShowDraftOnly(false);
+                                                                        setSearchTerm('');
+                                                                        setCurrentMenu('stock');
+                                                                    }}
+                                                                    className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white hover:bg-slate-800"
+                                                                >
+                                                                    Stock
+                                                                </button>
+                                                                {canManageLocations && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => openSubLocationForm(row.location)}
+                                                                        className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 hover:bg-blue-100"
+                                                                    >
+                                                                        Sous-zone
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {locationControlRows.length === 0 && (
+                                                    <div className="p-10 text-center">
+                                                        <MapPin className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                                                        <p className="font-black text-slate-600">Aucun emplacement physique configuré.</p>
+                                                        <p className="text-sm font-bold text-slate-400 mt-1">Créez un premier magasin ou rack avant réception, transfert ou inventaire.</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </section>
                                     </div>
 
-                                    <div className="space-y-4">
+                                    <aside className="space-y-4">
                                         <div className="rounded-2xl border border-amber-100 bg-amber-50 p-5">
                                             <div className="flex items-start justify-between gap-3">
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-widest font-black text-amber-700">Zones à qualifier</p>
-                                                    <h3 className="font-black text-amber-950 mt-1">{unclearInternalLocations.length} emplacement(s) à clarifier</h3>
+                                                    <p className="text-xs uppercase tracking-widest font-black text-amber-700">File de correction</p>
+                                                    <h3 className="font-black text-amber-950 mt-1">{unclearInternalLocations.length} zone(s) à clarifier</h3>
                                                     <p className="mt-1 text-sm font-bold text-amber-800">
-                                                        À vérifier : nom vague, zone parent sans rack/casier, ou emplacement non exploitable atelier.
+                                                        À traiter avant inventaire ou réappro si le stock est rattaché à un lieu vague.
                                                     </p>
                                                 </div>
                                                 <span className="rounded-xl bg-white px-3 py-2 text-xl font-black text-amber-900">{unclearInternalLocations.length}</span>
                                             </div>
-                                            <div className="mt-4 space-y-2 max-h-52 overflow-y-auto pr-1">
-                                                {unclearInternalLocations.slice(0, 6).map(location => {
-                                                    const quality = getLocationQuality(location);
-                                                    return (
-                                                        <button
-                                                            key={location.id}
-                                                            type="button"
-                                                            onClick={(event) => openLocationDetail(event, location)}
-                                                            className="w-full rounded-xl border border-amber-100 bg-white p-3 text-left hover:bg-amber-100/40"
-                                                        >
-                                                            <p className="font-black text-slate-900">{getFullLocationName(location)}</p>
-                                                            <div className="mt-1 flex flex-wrap gap-1.5">
-                                                                <span className="rounded-md bg-amber-50 px-2 py-1 text-[10px] uppercase tracking-wide font-black text-amber-700">{quality.role}</span>
-                                                                {(quality.issues || []).slice(0, 2).map(issue => (
-                                                                    <span key={issue} className="rounded-md bg-red-50 px-2 py-1 text-[10px] uppercase tracking-wide font-black text-red-700">{issue}</span>
-                                                                ))}
-                                                            </div>
-                                                        </button>
-                                                    );
-                                                })}
-                                                {unclearInternalLocations.length === 0 && (
-                                                    <p className="rounded-xl border border-dashed border-amber-200 bg-white p-4 text-center text-sm font-bold text-amber-700">
-                                                        Tous les emplacements physiques sont exploitables côté atelier.
+                                            <div className="mt-4 space-y-2 max-h-72 overflow-y-auto pr-1">
+                                                {criticalLocationRows.map(row => (
+                                                    <button
+                                                        key={row.location.id}
+                                                        type="button"
+                                                        onClick={(event) => openLocationDetail(event, row.location)}
+                                                        className="w-full rounded-xl border border-amber-100 bg-white p-3 text-left hover:bg-amber-100/40"
+                                                    >
+                                                        <p className="font-black text-slate-900">{getFullLocationName(row.location)}</p>
+                                                        <p className="mt-1 text-xs font-bold text-slate-500">{row.stockLineCount} ligne(s) stock · score {row.score}%</p>
+                                                        <div className="mt-2 flex flex-wrap gap-1.5">
+                                                            {(row.quality.issues || []).slice(0, 3).map(issue => (
+                                                                <span key={issue} className="rounded-md bg-red-50 px-2 py-1 text-[10px] uppercase tracking-wide font-black text-red-700">{issue}</span>
+                                                            ))}
+                                                        </div>
+                                                    </button>
+                                                ))}
+                                                {criticalLocationRows.length === 0 && (
+                                                    <p className="rounded-xl border border-dashed border-emerald-200 bg-white p-4 text-center text-sm font-bold text-emerald-700">
+                                                        Aucun blocage prioritaire sur les emplacements.
                                                     </p>
                                                 )}
                                             </div>
                                         </div>
 
                                         <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                                            <p className="text-xs uppercase tracking-widest font-black text-slate-400">Actions rapides</p>
-                                            <h3 className="font-black text-slate-900 mt-1">Faire vivre les emplacements</h3>
-                                            <div className="mt-4 grid grid-cols-1 gap-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setCurrentMenu('stock')}
-                                                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
-                                                >
-                                                    Voir le stock par emplacement
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setCurrentMenu('physical-inventory')}
-                                                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
-                                                >
-                                                    Compter une zone
-                                                </button>
+                                            <p className="text-xs uppercase tracking-widest font-black text-slate-400">Arborescence</p>
+                                            <h3 className="font-black text-slate-900 mt-1">Plan complet</h3>
+                                            <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-3 space-y-2 max-h-96 overflow-y-auto">
+                                                {internalRootLocations.map(location => (
+                                                    canManageLocations ? renderManagedLocationTree(location) : renderLocationTree(location)
+                                                ))}
+                                                {internalRootLocations.length === 0 && (
+                                                    <p className="rounded-xl border border-dashed border-slate-200 bg-white p-4 text-sm font-bold text-slate-400 text-center">
+                                                        Aucun lieu physique.
+                                                    </p>
+                                                )}
                                             </div>
                                         </div>
 
                                         <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                                            <p className="text-xs uppercase tracking-widest font-black text-slate-400">Règle simple</p>
-                                            <h3 className="font-black text-slate-900 mt-1">Physique vs virtuel</h3>
-                                            <div className="space-y-3 mt-4 text-sm font-bold text-slate-600">
-                                                <p><span className="text-slate-950">Stock physique</span> : là où un opérateur peut réellement trouver une pièce.</p>
-                                                <p><span className="text-slate-950">Lieux virtuels</span> : étapes de flux pour fournisseur, client, production ou inventaire.</p>
-                                                <p><span className="text-slate-950">Inventaire</span> : comptez toujours une zone physique clairement identifiée.</p>
+                                            <p className="text-xs uppercase tracking-widest font-black text-slate-400">Modèles</p>
+                                            <h3 className="font-black text-slate-900 mt-1">Créer vite</h3>
+                                            <div className="mt-4 grid grid-cols-1 gap-2">
+                                                {locationTemplates.map(template => (
+                                                    <button
+                                                        key={template.label}
+                                                        type="button"
+                                                        disabled={!canManageLocations}
+                                                        onClick={() => openLocationTemplateForm(template)}
+                                                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-left hover:border-blue-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                    >
+                                                        <p className="font-black text-slate-950">{template.label}</p>
+                                                        <p className="text-xs font-bold text-slate-500 mt-0.5">{template.hint}</p>
+                                                    </button>
+                                                ))}
                                             </div>
                                         </div>
 
@@ -4305,7 +4396,7 @@ export default function StockDashboard({ surface = 'management' }) {
                                                     </button>
                                                 )}
                                             </div>
-                                            <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                                            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                                                 {virtualLocations.map(location => (
                                                     <div key={location.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                                                         <p className="font-black text-slate-900">{getFullLocationName(location)}</p>
@@ -4321,7 +4412,7 @@ export default function StockDashboard({ surface = 'management' }) {
                                                 )}
                                             </div>
                                         </div>
-                                    </div>
+                                    </aside>
                                 </div>
                             </div>
                         </div>
