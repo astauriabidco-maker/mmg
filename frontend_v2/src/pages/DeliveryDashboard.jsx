@@ -48,6 +48,7 @@ export default function DeliveryDashboard() {
     const activeView = searchParams.get('logisticsMenu') || 'ship';
     const [routes, setRoutes] = useState([]);
     const [readyNotes, setReadyNotes] = useState([]);
+    const [queue, setQueue] = useState({ summary: {}, items: [] });
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [showNewRouteModal, setShowNewRouteModal] = useState(false);
@@ -65,12 +66,14 @@ export default function DeliveryDashboard() {
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const [resRoutes, resNotes] = await Promise.all([
+            const [resRoutes, resNotes, resQueue] = await Promise.all([
                 api.get('/v2/logistics/routes'),
                 api.get('/v2/logistics/notes/ready'),
+                api.get('/v2/logistics/queue'),
             ]);
             setRoutes(resRoutes.data || []);
             setReadyNotes(resNotes.data || []);
+            setQueue(resQueue.data || { summary: {}, items: [] });
         } catch (error) {
             console.error('Error fetching logistics data', error);
         } finally {
@@ -98,7 +101,21 @@ export default function DeliveryDashboard() {
     const inTransitRoutes = routes.filter(route => route.status === 'IN_TRANSIT');
     const plannedRoutes = routes.filter(route => route.status === 'PLANNED');
     const deliveredNotes = allNotes.filter(note => note.status === 'DELIVERED');
-    const readyCount = readyNotes.length;
+    const queueItems = queue.items || [];
+    const queueSummary = queue.summary || {};
+    const readyCount = queueSummary.ready_count ?? readyNotes.length;
+    const issueCount = queueSummary.issue_count ?? issueNotes.length;
+    const deliveredCount = queueSummary.delivered_count ?? deliveredNotes.length;
+    const filteredQueueItems = queueItems.filter(item => {
+        const term = normalizeText(searchTerm);
+        return !term
+            || normalizeText(item.reference).includes(term)
+            || normalizeText(item.client_name).includes(term)
+            || normalizeText(item.delivery_address).includes(term)
+            || normalizeText(item.status).includes(term)
+            || normalizeText(item.next_action).includes(term);
+    });
+    const activeQueueItems = filteredQueueItems.filter(item => item.next_action !== 'CLOSE');
 
     const changeView = (view) => {
         setSearchParams({ view: 'logistics', logisticsMenu: view });
@@ -170,6 +187,76 @@ export default function DeliveryDashboard() {
             </div>
         </div>
     );
+
+    const renderQueueItem = (item) => {
+        const actionLabels = {
+            COMPLETE_DELIVERY_INFO: 'Compléter',
+            ASSIGN_ROUTE: 'Planifier',
+            START_ROUTE: 'Démarrer',
+            COLLECT_SIGNATURE: 'Signature',
+            ARCHIVE_PROOF: 'Preuve',
+            HANDLE_ISSUE: 'Traiter',
+        };
+        const priorityClass = item.priority === 'CRITICAL'
+            ? 'border-red-100 bg-red-50'
+            : item.priority === 'URGENT'
+                ? 'border-amber-100 bg-amber-50'
+                : 'border-slate-200 bg-white';
+        const handleQueueAction = () => {
+            if (item.next_action === 'ASSIGN_ROUTE') {
+                setShowNewRouteModal(true);
+                return;
+            }
+            if (item.next_action === 'HANDLE_ISSUE' || item.next_action === 'COMPLETE_DELIVERY_INFO') {
+                changeView('returns');
+                return;
+            }
+            if (item.next_action === 'COLLECT_SIGNATURE') {
+                changeView('driver');
+                return;
+            }
+            changeView('routes');
+        };
+        return (
+            <div key={item.note_id} className={`rounded-2xl border p-4 shadow-sm ${priorityClass}`}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-mono text-xs font-black text-blue-600">{item.reference}</p>
+                            {statusBadge(item.status)}
+                        </div>
+                        <h3 className="mt-2 text-lg font-black text-slate-950">{item.client_name}</h3>
+                        <p className="mt-1 flex items-start gap-2 text-sm font-bold text-slate-500">
+                            <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                            {item.delivery_address || 'Adresse à compléter'}
+                        </p>
+                    </div>
+                    <div className="rounded-xl border border-white/60 bg-white px-3 py-2 text-right shadow-sm">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Action</p>
+                        <p className="text-sm font-black text-slate-900">{actionLabels[item.next_action] || 'Suivre'}</p>
+                    </div>
+                </div>
+                {(item.blockers?.length > 0 || item.signals?.length > 0) && (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        {(item.blockers || []).map(blocker => (
+                            <span key={blocker} className="rounded-lg border border-red-100 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-red-600">{blocker.replaceAll('_', ' ')}</span>
+                        ))}
+                        {(item.signals || []).slice(0, 3).map(signal => (
+                            <span key={signal} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">{signal.replaceAll('_', ' ')}</span>
+                        ))}
+                    </div>
+                )}
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-white/70 pt-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        {item.route_reference ? `${item.route_reference} · ${item.driver_name || 'Chauffeur à préciser'}` : 'Non assigné'}
+                    </p>
+                    <button onClick={handleQueueAction} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white hover:bg-slate-800">
+                        {actionLabels[item.next_action] || 'Ouvrir'} <ArrowRight className="ml-1 inline h-3.5 w-3.5" />
+                    </button>
+                </div>
+            </div>
+        );
+    };
 
     const renderRouteCard = (route) => {
         const notes = route.notes || [];
@@ -272,8 +359,8 @@ export default function DeliveryDashboard() {
                         ['Prêts quai', readyCount, 'À assigner', 'amber'],
                         ['Tournées prévues', plannedRoutes.length, 'Planifiées', 'blue'],
                         ['En tournée', inTransitRoutes.length, 'À suivre', 'indigo'],
-                        ['Livrés', deliveredNotes.length, 'Signés', 'emerald'],
-                        ['Anomalies/retours', issueNotes.length, 'À traiter', issueNotes.length ? 'red' : 'slate'],
+                        ['Livrés', deliveredCount, 'Signés', 'emerald'],
+                        ['Anomalies/retours', issueCount, 'À traiter', issueCount ? 'red' : 'slate'],
                     ].map(([label, value, helper, tone]) => (
                         <div key={label} className={`rounded-2xl border p-4 ${tone === 'red' ? 'border-red-100 bg-red-50 text-red-700' : tone === 'emerald' ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : tone === 'indigo' ? 'border-indigo-100 bg-indigo-50 text-indigo-700' : tone === 'blue' ? 'border-blue-100 bg-blue-50 text-blue-700' : tone === 'amber' ? 'border-amber-100 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-700'}`}>
                             <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{label}</p>
@@ -289,14 +376,15 @@ export default function DeliveryDashboard() {
                     <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[1fr_360px]">
                         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                             <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">File expédition</p>
-                            <h3 className="mt-1 text-2xl font-black text-slate-950">À charger en tournée</h3>
+                            <h3 className="mt-1 text-2xl font-black text-slate-950">À traiter dans le bon ordre</h3>
+                            <p className="mt-1 text-sm font-bold text-slate-500">Priorité calculée depuis statut BL, tournée, adresse, contact et preuve de livraison.</p>
                             <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                                {readyNotes.filter(note => filteredNotes.some(item => item.id === note.id)).map(note => renderNoteCard(note))}
-                                {readyNotes.length === 0 && <EmptyState icon={Package} title="Aucun BL prêt au quai" text="Les bons de livraison prêts apparaîtront ici pour constituer une tournée." />}
+                                {activeQueueItems.map(renderQueueItem)}
+                                {activeQueueItems.length === 0 && <EmptyState icon={Package} title="Aucune action logistique urgente" text="Les BL prêts, anomalies et tournées en cours apparaîtront ici." />}
                             </div>
                         </section>
                         <aside className="space-y-4">
-                            <DecisionPanel readyCount={readyCount} plannedCount={plannedRoutes.length} issueCount={issueNotes.length} />
+                            <DecisionPanel readyCount={readyCount} plannedCount={plannedRoutes.length} issueCount={issueCount} blockedCount={queueSummary.blocked_count || 0} />
                         </aside>
                     </div>
                 ) : activeView === 'routes' ? (
@@ -388,9 +476,11 @@ function EmptyState({ icon: Icon, title, text }) {
     );
 }
 
-function DecisionPanel({ readyCount, plannedCount, issueCount }) {
+function DecisionPanel({ readyCount, plannedCount, issueCount, blockedCount }) {
     const decision = issueCount > 0
         ? 'Traiter les anomalies avant de charger une nouvelle tournée.'
+        : blockedCount > 0
+            ? 'Compléter les BL bloqués avant planification.'
         : readyCount > 0
             ? 'Constituer une tournée avec les BL prêts au quai.'
             : plannedCount > 0

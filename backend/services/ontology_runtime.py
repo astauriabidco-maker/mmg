@@ -416,6 +416,42 @@ def _purchase_need_profile(db: Session) -> dict[str, Any]:
     }
 
 
+def _logistics_issue_profile(db: Session) -> dict[str, Any]:
+    notes = db.query(models.DeliveryNote).all()
+    status_counts: dict[str, int] = {
+        "MISSING_ADDRESS": 0,
+        "MISSING_CONTACT": 0,
+        "LATE_DELIVERY": 0,
+        "RETURNED": 0,
+        "ISSUE": 0,
+    }
+    issue_notes = 0
+    today = utcnow().date()
+    for note in notes:
+        route = note.route
+        has_issue = False
+        if not (note.delivery_address or "").strip():
+            status_counts["MISSING_ADDRESS"] += 1
+            has_issue = True
+        if not (note.contact_phone or "").strip():
+            status_counts["MISSING_CONTACT"] += 1
+            has_issue = True
+        if route and route.planned_date and route.planned_date.date() < today and note.status not in {"DELIVERED", "RETURNED", "CANCELLED"}:
+            status_counts["LATE_DELIVERY"] += 1
+            has_issue = True
+        if note.status in {"ISSUE", "RETURNED"}:
+            status_counts[note.status] += 1
+            has_issue = True
+        if has_issue:
+            issue_notes += 1
+    return {
+        "record_count": issue_notes,
+        "status_field": "computed_delivery_issue",
+        "status_counts": {key: value for key, value in status_counts.items() if value},
+        "calculation": "Adresse, contact, retard de tournée, retour et statut anomalie des bons de livraison.",
+    }
+
+
 def _external_document_profile(db: Session) -> dict[str, Any]:
     rows = (
         db.query(
@@ -604,6 +640,22 @@ def ontology_with_data_profile(db: Session) -> dict[str, Any]:
                 models.SupplierDispute,
                 status_column=models.SupplierDispute.status,
             ),
+            "delivery_note": _entity_profile(
+                db,
+                models.DeliveryNote,
+                status_column=models.DeliveryNote.status,
+            ),
+            "delivery_route": _entity_profile(
+                db,
+                models.DeliveryRoute,
+                status_column=models.DeliveryRoute.status,
+            ),
+            "proof_of_delivery": _entity_profile(
+                db,
+                models.DeliveryNote,
+                criteria=(models.DeliveryNote.signed_at.isnot(None),),
+            ),
+            "delivery_issue": _logistics_issue_profile(db),
         },
         "external_documents": _external_document_profile(db),
         "rbac": _rbac_profile(db),

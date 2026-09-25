@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import datetime
 import os
@@ -15,6 +15,89 @@ router = APIRouter(
     dependencies=[Depends(security.get_current_user)],
 )
 
+FINAL_NOTE_STATUSES = {"DELIVERED", "RETURNED", "CANCELLED"}
+
+
+def _serialize_queue_item(note: models.DeliveryNote) -> dict:
+    route = note.route
+    status = note.status or "READY"
+    blockers: list[str] = []
+    signals: list[str] = []
+    today = utcnow().date()
+
+    if not (note.delivery_address or "").strip():
+        blockers.append("ADDRESS_MISSING")
+    if not (note.contact_phone or "").strip():
+        signals.append("CONTACT_MISSING")
+    if route:
+        signals.append(f"ROUTE_{route.status or 'UNKNOWN'}")
+        if (
+            route.planned_date
+            and route.planned_date.date() < today
+            and status not in FINAL_NOTE_STATUSES
+        ):
+            blockers.append("LATE_DELIVERY")
+    else:
+        signals.append("NEEDS_ROUTE")
+
+    if status in {"ISSUE", "RETURNED"}:
+        next_action = "HANDLE_ISSUE"
+        priority = "CRITICAL"
+    elif blockers:
+        next_action = "COMPLETE_DELIVERY_INFO"
+        priority = "CRITICAL"
+    elif status == "READY":
+        next_action = "ASSIGN_ROUTE"
+        priority = "URGENT"
+    elif status == "ASSIGNED":
+        next_action = "START_ROUTE"
+        priority = "TO_PLAN"
+    elif status == "IN_TRANSIT":
+        next_action = "COLLECT_SIGNATURE"
+        priority = "URGENT"
+    elif status == "DELIVERED" and not note.signed_at:
+        next_action = "ARCHIVE_PROOF"
+        priority = "TO_PLAN"
+    else:
+        next_action = "CLOSE"
+        priority = "DONE"
+
+    if note.signed_at:
+        signals.append("SIGNED")
+
+    return {
+        "note_id": note.id,
+        "reference": note.reference,
+        "client_name": note.client_name,
+        "delivery_address": note.delivery_address,
+        "contact_phone": note.contact_phone,
+        "status": status,
+        "route_id": route.id if route else None,
+        "route_reference": route.reference if route else None,
+        "route_status": route.status if route else None,
+        "planned_date": route.planned_date.isoformat() if route and route.planned_date else None,
+        "driver_name": route.driver_name if route else None,
+        "sale_order_id": note.sale_order_id,
+        "order_id": note.order_id,
+        "signed_at": note.signed_at.isoformat() if note.signed_at else None,
+        "signature_path": note.signature_path,
+        "next_action": next_action,
+        "priority": priority,
+        "blockers": blockers,
+        "signals": signals,
+    }
+
+
+def _queue_sort_key(item: dict) -> tuple[int, str]:
+    priority_rank = {
+        "CRITICAL": 0,
+        "URGENT": 1,
+        "TO_PLAN": 2,
+        "DONE": 3,
+    }
+    return priority_rank.get(item["priority"], 9), item.get("reference") or ""
+
+
 def generate_route_ref(db: Session):
     year = utcnow().year
     count = db.query(models.DeliveryRoute).filter(models.DeliveryRoute.reference.like(f"ROUTE-{year}-%")).count()
@@ -23,6 +106,36 @@ def generate_route_ref(db: Session):
 @router.get("/routes", response_model=List[schemas.DeliveryRouteResponse])
 def get_routes(db: Session = Depends(get_db)):
     return db.query(models.DeliveryRoute).order_by(models.DeliveryRoute.planned_date.asc()).all()
+
+
+@router.get("/queue")
+def get_logistics_queue(db: Session = Depends(get_db)):
+    notes = (
+        db.query(models.DeliveryNote)
+        .options(joinedload(models.DeliveryNote.route))
+        .order_by(models.DeliveryNote.id.desc())
+        .all()
+    )
+    routes = db.query(models.DeliveryRoute).all()
+    items = sorted((_serialize_queue_item(note) for note in notes), key=_queue_sort_key)
+    summary = {
+        "total_notes": len(items),
+        "ready_count": sum(1 for item in items if item["status"] == "READY"),
+        "assigned_count": sum(1 for item in items if item["status"] == "ASSIGNED"),
+        "in_transit_count": sum(1 for item in items if item["status"] == "IN_TRANSIT"),
+        "delivered_count": sum(1 for item in items if item["status"] == "DELIVERED"),
+        "issue_count": sum(1 for item in items if item["status"] in {"ISSUE", "RETURNED"}),
+        "blocked_count": sum(1 for item in items if item["blockers"]),
+        "needs_route_count": sum(1 for item in items if item["next_action"] == "ASSIGN_ROUTE"),
+        "proof_missing_count": sum(1 for item in items if item["next_action"] == "ARCHIVE_PROOF"),
+        "planned_routes": sum(1 for route in routes if route.status == "PLANNED"),
+        "in_transit_routes": sum(1 for route in routes if route.status == "IN_TRANSIT"),
+        "completed_routes": sum(1 for route in routes if route.status == "COMPLETED"),
+    }
+    return {
+        "summary": summary,
+        "items": items,
+    }
 
 @router.post("/routes", response_model=schemas.DeliveryRouteResponse)
 def create_route(route: schemas.DeliveryRouteCreate, db: Session = Depends(get_db), role: str = Depends(security.get_current_user_role)):

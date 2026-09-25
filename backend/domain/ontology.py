@@ -20,6 +20,7 @@ MMG_MODULES = (
     "FABRICATION",
     "STOCK",
     "ACHATS",
+    "LOGISTIQUE",
     "DEBIT",
 )
 
@@ -358,6 +359,38 @@ ENTITIES: dict[str, Entity] = {
         source_models=("SupplierDispute", "SupplierDisputeEvent", "SupplierDisputeAttachment"),
         aliases=("litige achat", "écart fournisseur", "blocage fournisseur"),
     ),
+    "delivery_note": Entity(
+        id="delivery_note",
+        label="Bon de livraison",
+        module="LOGISTIQUE",
+        definition="Document de sortie client préparé depuis une commande ou un flux de vente, à charger puis livrer.",
+        source_models=("DeliveryNote",),
+        aliases=("BL", "bon client", "expédition"),
+    ),
+    "delivery_route": Entity(
+        id="delivery_route",
+        label="Tournée de livraison",
+        module="LOGISTIQUE",
+        definition="Regroupement opérationnel de bons de livraison affectés à un chauffeur, un véhicule et une date.",
+        source_models=("DeliveryRoute", "DeliveryNote"),
+        aliases=("tournée", "route chauffeur", "chargement"),
+    ),
+    "proof_of_delivery": Entity(
+        id="proof_of_delivery",
+        label="Preuve de livraison",
+        module="LOGISTIQUE",
+        definition="Signature, horodatage ou preuve terrain qui clôture une livraison client.",
+        source_models=("DeliveryNote",),
+        aliases=("signature client", "preuve BL", "POD"),
+    ),
+    "delivery_issue": Entity(
+        id="delivery_issue",
+        label="Anomalie logistique",
+        module="LOGISTIQUE",
+        definition="Blocage, retour, retard ou information manquante empêchant une livraison fluide.",
+        source_models=("DeliveryNote", "DeliveryRoute"),
+        aliases=("retour", "incident livraison", "blocage BL"),
+    ),
 }
 
 
@@ -448,6 +481,13 @@ RELATIONS: tuple[Relation, ...] = (
     Relation("supplier_dispute", "blocks", "purchase_order"),
     Relation("supplier_dispute", "blocks", "supplier_invoice"),
     Relation("supplier_dispute", "concerns", "supplier", required=True),
+    Relation("signed_order", "authorizes", "delivery_note"),
+    Relation("commercial_quote", "may_create", "delivery_note"),
+    Relation("delivery_note", "is_assigned_to", "delivery_route"),
+    Relation("delivery_route", "contains", "delivery_note"),
+    Relation("delivery_note", "is_closed_by", "proof_of_delivery"),
+    Relation("delivery_issue", "blocks", "delivery_note"),
+    Relation("delivery_issue", "blocks", "delivery_route"),
     Relation("signed_order", "authorizes", "production_order"),
     Relation("production_order", "uses", "fabrication_sheet"),
     Relation("production_order", "consumes_via", "real_workshop_debit"),
@@ -614,6 +654,22 @@ WORKFLOW_GATES: tuple[WorkflowGate, ...] = (
         required_entities=("purchase_order", "purchase_receipt"),
         rule="Une facture fournisseur doit être rapprochée des quantités commandées et réceptionnées avant paiement.",
     ),
+    WorkflowGate(
+        id="delivery_requires_actionable_note",
+        label="Expédition depuis BL actionnable",
+        from_entity="delivery_note",
+        to_entity="delivery_route",
+        required_entities=("delivery_note",),
+        rule="Un bon de livraison doit avoir client, adresse exploitable et statut prêt avant affectation à une tournée.",
+    ),
+    WorkflowGate(
+        id="delivery_closure_requires_proof",
+        label="Livraison clôturée avec preuve",
+        from_entity="delivery_route",
+        to_entity="proof_of_delivery",
+        required_entities=("delivery_note", "delivery_route"),
+        rule="Une livraison client doit être clôturée par horodatage ou signature pour sortir de la file logistique.",
+    ),
 )
 
 
@@ -656,6 +712,14 @@ PROCUREMENT_PATH: tuple[str, ...] = (
     "supplier_invoice",
     "supplier_dispute",
     "supplier_payment",
+)
+
+LOGISTICS_PATH: tuple[str, ...] = (
+    "signed_order",
+    "delivery_note",
+    "delivery_route",
+    "proof_of_delivery",
+    "delivery_issue",
 )
 
 
@@ -772,6 +836,26 @@ ENTITY_STATUSES: dict[str, tuple[EntityStatus, ...]] = {
         EntityStatus("supplier_dispute", "IN_PROGRESS", "En traitement"),
         EntityStatus("supplier_dispute", "RESOLVED", "Résolu", final=True),
         EntityStatus("supplier_dispute", "CANCELLED", "Annulé", final=True),
+    ),
+    "delivery_note": (
+        EntityStatus("delivery_note", "READY", "Prêt quai"),
+        EntityStatus("delivery_note", "ASSIGNED", "Assigné tournée"),
+        EntityStatus("delivery_note", "IN_TRANSIT", "En tournée"),
+        EntityStatus("delivery_note", "DELIVERED", "Livré", final=True),
+        EntityStatus("delivery_note", "ISSUE", "Anomalie"),
+        EntityStatus("delivery_note", "RETURNED", "Retourné", final=True),
+        EntityStatus("delivery_note", "CANCELLED", "Annulé", final=True),
+    ),
+    "delivery_route": (
+        EntityStatus("delivery_route", "PLANNED", "Planifiée"),
+        EntityStatus("delivery_route", "IN_TRANSIT", "En tournée"),
+        EntityStatus("delivery_route", "COMPLETED", "Terminée", final=True),
+    ),
+    "delivery_issue": (
+        EntityStatus("delivery_issue", "MISSING_ADDRESS", "Adresse manquante"),
+        EntityStatus("delivery_issue", "MISSING_CONTACT", "Contact manquant"),
+        EntityStatus("delivery_issue", "LATE_DELIVERY", "Livraison en retard"),
+        EntityStatus("delivery_issue", "RETURNED", "Retour client", final=True),
     ),
     "production_order": (
         EntityStatus("production_order", "PLANNED", "Planifié"),
@@ -947,6 +1031,41 @@ BUSINESS_EVENTS: tuple[BusinessEvent, ...] = (
         "supplier_invoice",
         "Décaissement fournisseur traçable après rapprochement et absence de blocage.",
     ),
+    BusinessEvent(
+        "delivery_note_ready",
+        "Bon de livraison prêt",
+        "signed_order",
+        "delivery_note",
+        "Mise en file d'un BL prêt à être affecté à une tournée.",
+    ),
+    BusinessEvent(
+        "delivery_route_planned",
+        "Tournée planifiée",
+        "delivery_note",
+        "delivery_route",
+        "Affectation de bons de livraison à un chauffeur et un véhicule.",
+    ),
+    BusinessEvent(
+        "delivery_started",
+        "Tournée démarrée",
+        "delivery_route",
+        "delivery_note",
+        "Passage des BL assignés en livraison terrain.",
+    ),
+    BusinessEvent(
+        "delivery_signed",
+        "Livraison signée",
+        "delivery_note",
+        "proof_of_delivery",
+        "Clôture de livraison par preuve client horodatée.",
+    ),
+    BusinessEvent(
+        "delivery_issue_opened",
+        "Anomalie logistique ouverte",
+        "delivery_note",
+        "delivery_issue",
+        "Signalement d'une adresse, d'un retard, d'un retour ou d'un blocage livraison.",
+    ),
 )
 
 
@@ -979,6 +1098,10 @@ STEP_RBAC: tuple[StepPermission, ...] = (
     StepPermission("supplier_invoice", "reconcile", "purchases.invoice.manage", "Rapprocher une facture fournisseur avec commande et réception."),
     StepPermission("supplier_payment", "pay", "purchases.payments.manage", "Enregistrer un paiement fournisseur."),
     StepPermission("supplier_dispute", "write", "purchases.order", "Créer ou traiter un litige fournisseur."),
+    StepPermission("delivery_note", "read", "SALES_VIEW", "Consulter la file des bons de livraison."),
+    StepPermission("delivery_route", "plan", "SALES_EDIT", "Planifier et démarrer une tournée de livraison."),
+    StepPermission("proof_of_delivery", "write", "SALES_EDIT", "Clôturer une livraison avec preuve client."),
+    StepPermission("delivery_issue", "write", "SALES_EDIT", "Créer ou traiter une anomalie logistique."),
 )
 
 
@@ -1055,6 +1178,7 @@ def ontology_as_dict() -> dict[str, object]:
         "pipeline": list(PIPELINE),
         "stock_control_path": list(STOCK_CONTROL_PATH),
         "procurement_path": list(PROCUREMENT_PATH),
+        "logistics_path": list(LOGISTICS_PATH),
         "entities": {key: entity.__dict__ for key, entity in ENTITIES.items()},
         "relations": [relation.__dict__ for relation in RELATIONS],
         "model_bindings": MODEL_BINDINGS,
