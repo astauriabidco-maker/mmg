@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from enum import Enum
 from typing import Any
 
 from sqlalchemy import func
@@ -29,7 +30,7 @@ def _group_counts(db: Session, model, column, *criteria) -> dict[str, int]:
         query = query.filter(*criteria)
     rows = query.group_by(column).all()
     return {
-        str(value if value is not None else "UNKNOWN"): int(count or 0)
+        str(value.value if isinstance(value, Enum) else value if value is not None else "UNKNOWN"): int(count or 0)
         for value, count in rows
     }
 
@@ -66,6 +67,46 @@ def _technical_version_profile(
     profile["document_types"] = list(document_types)
     profile["canonical_entity"] = canonical_entity
     return profile
+
+
+def _purchase_need_profile(db: Session) -> dict[str, Any]:
+    rows = (
+        db.query(models.ProductVariant)
+        .join(models.Product, models.Product.id == models.ProductVariant.product_id)
+        .all()
+    )
+    status_counts = {
+        "CRITICAL": 0,
+        "URGENT": 0,
+        "TO_PLAN": 0,
+        "BLOCKED": 0,
+        "COVERED": 0,
+    }
+    record_count = 0
+    for variant in rows:
+        threshold = float(variant.min_threshold or 0)
+        if threshold <= 0:
+            continue
+        available = float(variant.quantity_in_stock or 0)
+        if available >= threshold:
+            status_counts["COVERED"] += 1
+            continue
+        record_count += 1
+        supplier = (variant.product.supplier if variant.product else None) or ""
+        if not supplier.strip():
+            status_counts["BLOCKED"] += 1
+        elif available <= 0:
+            status_counts["CRITICAL"] += 1
+        elif available <= threshold * 0.5:
+            status_counts["URGENT"] += 1
+        else:
+            status_counts["TO_PLAN"] += 1
+    return {
+        "record_count": record_count,
+        "status_field": "computed_need_status",
+        "status_counts": {key: value for key, value in status_counts.items() if value},
+        "calculation": "ProductVariant.min_threshold compared to quantity_in_stock with supplier qualification signal.",
+    }
 
 
 def _external_document_profile(db: Session) -> dict[str, Any]:
@@ -223,6 +264,38 @@ def ontology_with_data_profile(db: Session) -> dict[str, Any]:
                 db,
                 models.InventoryCountLine,
                 status_column=models.InventoryCountLine.status,
+            ),
+            "supplier": _entity_profile(
+                db,
+                models.Supplier,
+                status_column=models.Supplier.supplier_status,
+            ),
+            "purchase_need": _purchase_need_profile(db),
+            "purchase_request": _entity_profile(
+                db,
+                models.PurchaseRequest,
+                status_column=models.PurchaseRequest.status,
+            ),
+            "purchase_order": _entity_profile(
+                db,
+                models.PurchaseOrder,
+                status_column=models.PurchaseOrder.status,
+            ),
+            "purchase_receipt": _entity_profile(
+                db,
+                models.PurchaseOrderLine,
+                criteria=(models.PurchaseOrderLine.quantity_received > 0,),
+            ),
+            "supplier_invoice": _entity_profile(
+                db,
+                models.SupplierInvoice,
+                status_column=models.SupplierInvoice.status,
+            ),
+            "supplier_payment": _entity_profile(db, models.SupplierPayment),
+            "supplier_dispute": _entity_profile(
+                db,
+                models.SupplierDispute,
+                status_column=models.SupplierDispute.status,
             ),
         },
         "external_documents": _external_document_profile(db),

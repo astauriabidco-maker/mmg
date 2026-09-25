@@ -6,6 +6,7 @@ from backend.domain.ontology import (
     EXTERNAL_DOCUMENT_MAPPINGS,
     MODEL_BINDINGS,
     PIPELINE,
+    PROCUREMENT_PATH,
     RELATIONS,
     STEP_RBAC,
     STOCK_CONTROL_PATH,
@@ -66,6 +67,37 @@ def test_inventory_ontology_declares_stock_control_path():
         ("inventory_intelligence", "inventory_session"),
         ("inventory_intelligence", "stock_location"),
         ("inventory_intelligence", "stock_item"),
+    }.issubset(relation_pairs)
+
+
+def test_procurement_ontology_declares_purchase_control_path():
+    assert PROCUREMENT_PATH == (
+        "stock_item",
+        "purchase_need",
+        "supplier",
+        "purchase_request",
+        "purchase_order",
+        "purchase_receipt",
+        "supplier_invoice",
+        "supplier_dispute",
+        "supplier_payment",
+    )
+
+    relation_pairs = {(relation.source, relation.relation, relation.target) for relation in RELATIONS}
+    assert {
+        ("stock_item", "is_supplied_by", "supplier"),
+        ("purchase_need", "is_generated_from", "stock_item"),
+        ("purchase_need", "uses_signal_from", "stock_quant"),
+        ("purchase_need", "uses_signal_from", "purchase_request"),
+        ("purchase_need", "uses_signal_from", "purchase_order"),
+        ("purchase_request", "covers", "purchase_need"),
+        ("purchase_order", "orders_from", "supplier"),
+        ("purchase_order", "contains", "stock_item"),
+        ("purchase_receipt", "receives", "purchase_order"),
+        ("purchase_receipt", "receives_into", "stock_location"),
+        ("supplier_invoice", "reconciles", "purchase_order"),
+        ("supplier_payment", "settles", "supplier_invoice"),
+        ("supplier_dispute", "concerns", "supplier"),
     }.issubset(relation_pairs)
 
 
@@ -142,6 +174,7 @@ def test_ontology_serializes_for_api_or_rag_usage():
     assert payload["business_events"]
     assert payload["step_rbac"]
     assert payload["model_bindings"]["crm_opportunity"] == ("CRMOpportunity",)
+    assert payload["procurement_path"] == list(PROCUREMENT_PATH)
 
 
 def test_ontology_declares_sqlalchemy_model_bindings():
@@ -153,6 +186,12 @@ def test_ontology_declares_sqlalchemy_model_bindings():
     assert "InventorySession" in MODEL_BINDINGS["inventory_session"]
     assert "InventoryCountLine" in MODEL_BINDINGS["inventory_count_line"]
     assert "StockQuant" in MODEL_BINDINGS["inventory_intelligence"]
+    assert MODEL_BINDINGS["supplier"] == ("Supplier",)
+    assert "PurchaseRequestLine" in MODEL_BINDINGS["purchase_request"]
+    assert "PurchaseOrderLine" in MODEL_BINDINGS["purchase_order"]
+    assert "SupplierInvoiceLine" in MODEL_BINDINGS["supplier_invoice"]
+    assert "SupplierPayment" in MODEL_BINDINGS["supplier_payment"]
+    assert "SupplierDispute" in MODEL_BINDINGS["supplier_dispute"]
 
 
 def test_ontology_declares_detailed_statuses_by_entity():
@@ -165,6 +204,12 @@ def test_ontology_declares_detailed_statuses_by_entity():
     inventory_status_codes = {
         status.code for status in ENTITY_STATUSES["inventory_session"]
     }
+    purchase_need_status_codes = {
+        status.code for status in ENTITY_STATUSES["purchase_need"]
+    }
+    purchase_order_status_codes = {
+        status.code for status in ENTITY_STATUSES["purchase_order"]
+    }
 
     assert "proposition_a_valider" in opportunity_status_codes
     assert "gagne" in opportunity_status_codes
@@ -172,6 +217,10 @@ def test_ontology_declares_detailed_statuses_by_entity():
     assert "CONSUMED" in reservation_status_codes
     assert "counting" in inventory_status_codes
     assert "validated" in inventory_status_codes
+    assert "URGENT" in purchase_need_status_codes
+    assert "COVERED" in purchase_need_status_codes
+    assert "PARTIAL" in purchase_order_status_codes
+    assert "RECEIVED" in purchase_order_status_codes
     assert any(status.final for status in ENTITY_STATUSES["commercial_quote"])
 
 
@@ -189,6 +238,12 @@ def test_ontology_declares_business_events():
         "inventory_counted",
         "inventory_variance_detected",
         "stock_adjusted",
+        "purchase_need_detected",
+        "purchase_request_created",
+        "purchase_order_sent",
+        "purchase_received",
+        "supplier_invoice_reconciled",
+        "supplier_payment_recorded",
     }.issubset(event_codes)
 
 
@@ -207,3 +262,10 @@ def test_ontology_declares_step_rbac_rules():
     assert permissions_by_entity_action[("inventory_session", "count")] == "inventory.count"
     assert permissions_by_entity_action[("inventory_session", "validate")] == "inventory.validate"
     assert permissions_by_entity_action[("inventory_session", "approve_value")] == "inventory.approve_value"
+    assert permissions_by_entity_action[("purchase_need", "read")] == "PURCHASES_VIEW"
+    assert permissions_by_entity_action[("purchase_request", "write")] == "purchases.request"
+    assert permissions_by_entity_action[("purchase_request", "approve")] == "purchases.approve"
+    assert permissions_by_entity_action[("purchase_order", "write")] == "purchases.order"
+    assert permissions_by_entity_action[("purchase_receipt", "receive")] == "purchases.receive"
+    assert permissions_by_entity_action[("supplier_invoice", "reconcile")] == "purchases.invoice.manage"
+    assert permissions_by_entity_action[("supplier_payment", "pay")] == "purchases.payments.manage"

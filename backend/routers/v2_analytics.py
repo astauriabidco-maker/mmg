@@ -285,7 +285,17 @@ INSIGHT_INTENT_PROFILES = {
     },
     "PURCHASES": {
         "type": "barchart",
-        "entities": ("stock_item",),
+        "entities": (
+            "stock_item",
+            "supplier",
+            "purchase_need",
+            "purchase_request",
+            "purchase_order",
+            "purchase_receipt",
+            "supplier_invoice",
+            "supplier_payment",
+            "supplier_dispute",
+        ),
         "terms": (
             "achat",
             "achats",

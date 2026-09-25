@@ -2,6 +2,7 @@ from backend.domain.ontology import (
     ENTITIES,
     EXTERNAL_DOCUMENT_MAPPINGS,
     PIPELINE,
+    PROCUREMENT_PATH,
     RELATIONS,
     STOCK_CONTROL_PATH,
     WORKFLOW_GATES,
@@ -43,6 +44,15 @@ def test_business_ontology_declares_inventory_control_path():
     assert "inventory_intelligence" in STOCK_CONTROL_PATH
     assert ENTITIES["inventory_intelligence"].module == "STOCK"
     assert "réservations" in ENTITIES["inventory_intelligence"].definition.lower()
+
+
+def test_business_ontology_declares_procurement_path():
+    assert PROCUREMENT_PATH[0] == "stock_item"
+    assert PROCUREMENT_PATH[-1] == "supplier_payment"
+    assert "purchase_need" in PROCUREMENT_PATH
+    assert "purchase_order" in PROCUREMENT_PATH
+    assert ENTITIES["purchase_need"].module == "ACHATS"
+    assert "stock exploitable" in ENTITIES["purchase_need"].definition.lower()
 
 
 def test_proges_and_orgadata_documents_are_mapped_to_canonical_entities():
@@ -125,4 +135,17 @@ def test_modules_can_be_queried_for_ui_or_ai_context():
         "inventory_count_line",
         "inventory_intelligence",
     }.issubset(stock_codes)
+    purchase_codes = {
+        key for key, entity in payload["entities"].items() if entity["module"] == "ACHATS"
+    }
+    assert {
+        "supplier",
+        "purchase_need",
+        "purchase_request",
+        "purchase_order",
+        "purchase_receipt",
+        "supplier_invoice",
+        "supplier_payment",
+        "supplier_dispute",
+    }.issubset(purchase_codes)
     assert len(EXTERNAL_DOCUMENT_MAPPINGS) == 8

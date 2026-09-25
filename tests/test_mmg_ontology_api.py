@@ -77,6 +77,13 @@ def test_mmg_ontology_api_is_enriched_by_live_business_data(isolated_client):
             ("inventory.count", "Inventaire", "Compter les campagnes d'inventaire"),
             ("inventory.validate", "Inventaire", "Valider les campagnes d'inventaire"),
             ("inventory.approve_value", "Inventaire", "Approuver les écarts valorisés"),
+            ("PURCHASES_VIEW", "Achats", "Consulter les achats"),
+            ("purchases.request", "Achats", "Créer une demande d'achat"),
+            ("purchases.approve", "Achats", "Valider une demande d'achat"),
+            ("purchases.order", "Achats", "Créer une commande fournisseur"),
+            ("purchases.receive", "Achats", "Réceptionner une commande fournisseur"),
+            ("purchases.invoice.manage", "Achats", "Rapprocher les factures fournisseur"),
+            ("purchases.payments.manage", "Achats", "Payer les factures fournisseur"),
         ]
         for code, module, description in required_permissions:
             if not db.query(models.Permission).filter_by(code=code).first():
@@ -164,6 +171,12 @@ def test_mmg_ontology_api_is_enriched_by_live_business_data(isolated_client):
             status="reserved",
         )
         location = models.StockLocation(name="Rack Ontologie A1", usage="internal", is_active=True)
+        supplier = models.Supplier(
+            name="ONTO",
+            supplier_status="ACTIVE",
+            lead_time_days=7,
+            is_active=True,
+        )
         product = models.Product(
             name="Profil ontologie",
             reference_base="ONTO-PROFIL",
@@ -173,7 +186,7 @@ def test_mmg_ontology_api_is_enriched_by_live_business_data(isolated_client):
             supplier="ONTO",
             catalog_status="ACTIVE",
         )
-        db.add_all([reservation, location, product])
+        db.add_all([reservation, location, supplier, product])
         db.flush()
 
         variant = models.ProductVariant(
@@ -210,7 +223,79 @@ def test_mmg_ontology_api_is_enriched_by_live_business_data(isolated_client):
             unit_cost_snapshot=12,
             variance_value=-24,
         )
-        db.add(inventory_line)
+        purchase_request = models.PurchaseRequest(
+            reference="DA-ONTO-001",
+            supplier="ONTO",
+            status=models.PurchaseRequestStatus.PENDING_APPROVAL,
+            total_amount=24,
+            requested_by="ontology-data-viewer",
+        )
+        purchase_order = models.PurchaseOrder(
+            reference="PO-ONTO-001",
+            supplier="ONTO",
+            status=models.PurchaseOrderStatus.PARTIAL,
+            total_amount=24,
+            author="ontology-data-viewer",
+        )
+        db.add_all([inventory_line, purchase_request, purchase_order])
+        db.flush()
+
+        request_line = models.PurchaseRequestLine(
+            request_id=purchase_request.id,
+            variant_id=variant.id,
+            quantity=2,
+            unit_price=12,
+            need_priority="URGENT",
+            need_reason="Stock sous seuil ontologie",
+        )
+        order_line = models.PurchaseOrderLine(
+            order_id=purchase_order.id,
+            variant_id=variant.id,
+            quantity=2,
+            quantity_received=1,
+            unit_price=12,
+        )
+        db.add_all([request_line, order_line])
+        db.flush()
+
+        invoice = models.SupplierInvoice(
+            reference="INVF-ONTO-001",
+            purchase_order_id=purchase_order.id,
+            supplier="ONTO",
+            status="TO_PAY",
+            total_amount=12,
+            author="ontology-data-viewer",
+        )
+        db.add(invoice)
+        db.flush()
+
+        invoice_line = models.SupplierInvoiceLine(
+            invoice_id=invoice.id,
+            purchase_order_line_id=order_line.id,
+            variant_id=variant.id,
+            description="Profil ontologie",
+            quantity=1,
+            unit_price=12,
+            line_total=12,
+        )
+        payment = models.SupplierPayment(
+            supplier_invoice_id=invoice.id,
+            supplier="ONTO",
+            amount=12,
+            reference="PAY-ONTO-001",
+            created_by="ontology-data-viewer",
+        )
+        dispute = models.SupplierDispute(
+            reference="LIT-ONTO-001",
+            supplier="ONTO",
+            purchase_order_id=purchase_order.id,
+            supplier_invoice_id=invoice.id,
+            title="Écart réception ontologie",
+            status="OPEN",
+            blocks_payment=True,
+            created_by="ontology-data-viewer",
+        )
+        db.add_all([invoice_line, payment, dispute])
         db.commit()
 
     response = client.get("/v2/mmg/ontology", headers=headers)
@@ -224,8 +309,18 @@ def test_mmg_ontology_api_is_enriched_by_live_business_data(isolated_client):
     assert profile["entities"]["stock_reservation"]["status_counts"]["reserved"] == 1
     assert profile["entities"]["inventory_session"]["status_counts"]["validated"] == 1
     assert profile["entities"]["inventory_count_line"]["status_counts"]["validated"] == 1
+    assert profile["entities"]["supplier"]["status_counts"]["ACTIVE"] == 1
+    assert profile["entities"]["purchase_need"]["record_count"] >= 1
+    assert profile["entities"]["purchase_need"]["status_counts"]["URGENT"] == 1
+    assert profile["entities"]["purchase_request"]["status_counts"]["PENDING_APPROVAL"] == 1
+    assert profile["entities"]["purchase_order"]["status_counts"]["PARTIAL"] == 1
+    assert profile["entities"]["purchase_receipt"]["record_count"] == 1
+    assert profile["entities"]["supplier_invoice"]["status_counts"]["TO_PAY"] == 1
+    assert profile["entities"]["supplier_payment"]["record_count"] == 1
+    assert profile["entities"]["supplier_dispute"]["status_counts"]["OPEN"] == 1
     assert profile["external_documents"]["by_source_system"]["ORGADATA"] == 1
     assert profile["external_documents"]["by_document_type"]["CUTTING"] == 1
     assert profile["external_documents"]["observed_mappings"][0]["canonical_entity"] == "cutting_sheet"
     assert profile["rbac"]["missing_permissions"] == []
     assert "CHEF_STOCK" in profile["rbac"]["roles_by_permission"]["workshop.reserve_stock"]
+    assert "CHEF_STOCK" in profile["rbac"]["roles_by_permission"]["purchases.order"]
