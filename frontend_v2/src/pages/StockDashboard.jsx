@@ -9002,6 +9002,7 @@ function PhysicalInventoryView({
             queryClient.invalidateQueries({ queryKey: ['transactions'] }),
             queryClient.invalidateQueries({ queryKey: ['inventory-intelligence'] }),
         ]);
+        await queryClient.refetchQueries({ queryKey: ['inventory-intelligence'], type: 'active' });
     };
 
     const createSession = async (event) => {

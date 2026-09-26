@@ -56,6 +56,7 @@ CATALOG_TRANSITIONS = {
     "BLOCKED": {"ACTIVE", "ARCHIVED"},
     "ARCHIVED": {"DRAFT"},
 }
+OPEN_INVENTORY_STATUSES = ("scheduled", "draft", "counting", "pending_approval")
 
 
 def _actor(user: dict) -> str:
@@ -664,7 +665,9 @@ def _open_inventory_session_for_locations(db: Session, location_ids: List[int]) 
         db.query(models.InventorySession)
         .filter(
             models.InventorySession.location_id.in_(location_ids),
-            models.InventorySession.status.in_(["scheduled", "draft", "counting", "pending_approval"]),
+            models.InventorySession.status.in_(OPEN_INVENTORY_STATUSES),
+            models.InventorySession.archived_at == None,
+            models.InventorySession.zone_locked == True,
         )
         .order_by(models.InventorySession.created_at.desc())
         .first()
@@ -1140,8 +1143,9 @@ def get_inventory_intelligence(
             db.query(models.InventorySession.location_id)
             .filter(
                 models.InventorySession.location_id.isnot(None),
-                models.InventorySession.status.in_(["scheduled", "draft", "counting", "pending_approval"]),
+                models.InventorySession.status.in_(OPEN_INVENTORY_STATUSES),
                 models.InventorySession.archived_at == None,
+                models.InventorySession.zone_locked == True,
             )
             .all()
         )
