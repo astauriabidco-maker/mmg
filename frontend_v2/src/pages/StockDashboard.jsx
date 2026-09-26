@@ -8878,6 +8878,7 @@ function PhysicalInventoryView({
     const [evidenceFile, setEvidenceFile] = useState(null);
     const [syncError, setSyncError] = useState('');
     const [validationReviewOpen, setValidationReviewOpen] = useState(false);
+    const [cancelReviewOpen, setCancelReviewOpen] = useState(false);
     const [busy, setBusy] = useState(false);
     const newSessionFormRef = useRef(null);
     const offlineQueueKey = `mmg.inventory.pending.${currentUsername || 'anonymous'}`;
@@ -9293,10 +9294,10 @@ function PhysicalInventoryView({
 
     const cancelSession = async () => {
         if (!selectedSession || busy) return;
-        if (!window.confirm(`Annuler ${selectedSession.reference} ? Aucun mouvement de stock ne sera créé.`)) return;
         setBusy(true);
         try {
             await api.post(`/v2/stock/inventory-sessions/${selectedSession.id}/cancel`);
+            setCancelReviewOpen(false);
             await refreshInventory();
         } catch (error) {
             alert(error.response?.data?.detail || "Annulation impossible.");
@@ -9307,6 +9308,7 @@ function PhysicalInventoryView({
 
     useEffect(() => {
         setValidationReviewOpen(false);
+        setCancelReviewOpen(false);
     }, [selectedSession?.id, selectedSession?.status]);
 
     const statusLabel = {
@@ -9902,7 +9904,7 @@ function PhysicalInventoryView({
                                         )}
                                         {['draft', 'counting'].includes(selectedSession.status) && (
                                             <>
-                                                <button onClick={cancelSession} disabled={!canValidate || busy} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm">
+                                                <button onClick={() => setCancelReviewOpen(true)} disabled={!canValidate || busy} className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 font-black text-sm">
                                                     Annuler
                                                 </button>
                                                 <button onClick={() => setValidationReviewOpen(true)} disabled={!canValidate || busy || !selectedSession.lines?.length || hasRecountLines || hasPendingLines || unjustifiedVarianceLines.length > 0} title={hasPendingLines ? 'Toutes les lignes doivent être comptées avant validation' : unjustifiedVarianceLines.length > 0 ? 'Chaque écart doit avoir un motif avant validation' : undefined} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-black text-sm">
@@ -9961,6 +9963,74 @@ function PhysicalInventoryView({
                                         onClose={() => setValidationReviewOpen(false)}
                                         onConfirm={validateSession}
                                     />
+                                )}
+
+                                {cancelReviewOpen && (
+                                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+                                        <div className="w-full max-w-xl overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-slate-900/10">
+                                            <div className="border-b border-slate-100 bg-rose-50 px-6 py-5">
+                                                <div className="flex items-start justify-between gap-4">
+                                                    <div>
+                                                        <p className="text-[10px] font-black uppercase tracking-[0.28em] text-rose-500">Annulation inventaire</p>
+                                                        <h4 className="mt-2 text-2xl font-black text-slate-950">Annuler cette campagne ?</h4>
+                                                        <p className="mt-1 text-sm font-bold text-slate-600">
+                                                            Aucun mouvement de stock ne sera créé. La zone sera libérée après annulation.
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setCancelReviewOpen(false)}
+                                                        disabled={busy}
+                                                        className="rounded-xl bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-100 disabled:opacity-50"
+                                                        aria-label="Fermer"
+                                                    >
+                                                        <X className="h-5 w-5" />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="space-y-4 px-6 py-5">
+                                                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Campagne sélectionnée</p>
+                                                    <p className="mt-1 text-lg font-black text-slate-950">{selectedSession.name}</p>
+                                                    <p className="mt-1 text-sm font-bold text-slate-500">
+                                                        {selectedSession.reference} · {selectedSession.location?.name || 'Tous emplacements internes'}
+                                                    </p>
+                                                </div>
+                                                <div className="grid grid-cols-3 gap-3">
+                                                    <div className="rounded-2xl border border-slate-100 bg-white p-3">
+                                                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Lignes</p>
+                                                        <p className="text-xl font-black text-slate-950">{totalLines}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl border border-slate-100 bg-white p-3">
+                                                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Comptées</p>
+                                                        <p className="text-xl font-black text-slate-950">{countedLines}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl border border-slate-100 bg-white p-3">
+                                                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Écarts</p>
+                                                        <p className="text-xl font-black text-slate-950">{varianceLines.length}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-col-reverse gap-3 border-t border-slate-100 bg-white px-6 py-5 sm:flex-row sm:justify-end">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCancelReviewOpen(false)}
+                                                    disabled={busy}
+                                                    className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                                                >
+                                                    Garder la campagne
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={cancelSession}
+                                                    disabled={busy}
+                                                    className="rounded-xl bg-rose-600 px-5 py-3 text-sm font-black text-white hover:bg-rose-500 disabled:bg-slate-300"
+                                                >
+                                                    {busy ? 'Annulation...' : 'Confirmer l’annulation'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
                                 )}
 
                                 {['draft', 'counting'].includes(selectedSession.status) && (
