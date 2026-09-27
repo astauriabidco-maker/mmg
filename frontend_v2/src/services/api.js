@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:7000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+const SAME_ORIGIN_API_BASE_URL = '/api';
 
 const api = axios.create({
     baseURL: API_BASE_URL,
@@ -16,7 +17,23 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
     (response) => response,
-    (error) => {
+    async (error) => {
+        const originalRequest = error?.config;
+        const isNetworkError = error?.message === 'Network Error' && !error?.response;
+        const canRetrySameOrigin = (
+            isNetworkError &&
+            originalRequest &&
+            !originalRequest._sameOriginRetry &&
+            originalRequest.baseURL !== SAME_ORIGIN_API_BASE_URL &&
+            typeof window !== 'undefined'
+        );
+
+        if (canRetrySameOrigin) {
+            originalRequest._sameOriginRetry = true;
+            originalRequest.baseURL = SAME_ORIGIN_API_BASE_URL;
+            return api(originalRequest);
+        }
+
         const status = error?.response?.status;
         const url = error?.config?.url || '';
         if (status === 401 && !url.endsWith('/token')) {
