@@ -38,18 +38,18 @@ const asList = (payload) => {
 
 const toOpportunity = (item) => ({
     ...item,
-    title: item.title || item.name || item.label || item.reference || 'Opportunité sans titre',
+    title: item.title || item.name || item.label || item.reference || 'Besoin client sans titre',
     stage: item.stage || item.status || 'QUALIFICATION',
     probability: Number(item.probability ?? item.probability_pct ?? 0),
     amount: Number(item.amount ?? item.estimated_amount ?? item.value ?? 0),
-    nextMilestone: item.next_milestone || item.next_action || item.next_step || 'Prochain jalon à définir',
+    nextMilestone: item.next_milestone || item.next_action || item.next_step || 'Prochaine action à définir',
     nextDate: item.next_milestone_at || item.next_action_at || item.next_action_date || item.expected_close_date,
 });
 
 const toActivity = (item) => ({
     ...item,
     activityType: item.activity_type || item.type || 'FOLLOW_UP',
-    subject: item.subject || item.title || item.label || 'Activité CRM',
+    subject: item.subject || item.title || item.label || 'Action avant-vente',
     status: item.status || (item.completed_at ? 'termine' : 'a_faire'),
     dueAt: item.due_at || item.scheduled_at || item.next_action_at,
     completedAt: item.completed_at || item.done_at,
@@ -219,15 +219,15 @@ export default function CRMClientActionWorkspace({
         }
         : openOpportunities[0]
             ? {
-                eyebrow: 'Prochain jalon commercial',
+                eyebrow: 'Prochaine action commerciale',
                 title: openOpportunities[0].nextMilestone,
                 detail: `${openOpportunities[0].title}${openOpportunities[0].nextDate ? ` · ${formatDate(openOpportunities[0].nextDate)}` : ''}`,
                 tone: 'amber',
             }
             : {
                 eyebrow: 'Prochaine action',
-                title: 'Qualifier une nouvelle opportunité',
-                detail: 'Aucune activité ni opportunité ouverte pour ce client.',
+                title: 'Qualifier un nouveau besoin client',
+                detail: 'Aucune action ni besoin client ouvert pour ce client.',
                 tone: 'slate',
             };
 
@@ -264,7 +264,7 @@ export default function CRMClientActionWorkspace({
         }
         if (openOpportunities.length) {
             score += 15;
-            reasons.push(`${openOpportunities.length} opportunité(s) ouverte(s)`);
+            reasons.push(`${openOpportunities.length} besoin(s) client ouvert(s)`);
         }
         if (sentQuotes.length) {
             score += 15;
@@ -280,7 +280,7 @@ export default function CRMClientActionWorkspace({
         }
         if (dormant) {
             score -= 20;
-            reasons.push('opportunité sans prochaine action');
+            reasons.push('besoin client sans prochaine action');
         }
         if (typeof daysSinceTouch === 'number' && daysSinceTouch > 21) {
             score -= 15;
@@ -309,11 +309,11 @@ export default function CRMClientActionWorkspace({
                         ? { title: 'Finaliser le brouillon', detail: `${draftQuotes[0].reference} · ${formatMoney(saleAmount(draftQuotes[0]))}`, onClick: () => onOpenSale(draftQuotes[0].id) }
                         : openOpportunities.length && !pendingActivities.length
                             ? { title: 'Planifier la prochaine action', detail: openOpportunities[0].title, onClick: () => resetAndOpen('follow-up') }
-                            : { title: 'Créer ou qualifier une opportunité', detail: 'Cadrer le besoin commercial.', onClick: () => resetAndOpen('opportunity') };
+                            : { title: 'Créer ou qualifier un besoin client', detail: 'Cadrer le besoin commercial.', onClick: () => resetAndOpen('opportunity') };
         const summary = [
             `${client.name} est ${temperature.label.toLowerCase()} avec un score de ${score}/100.`,
             sentQuotes.length ? `${sentQuotes.length} devis envoyé(s) à suivre.` : null,
-            openOpportunities.length ? `${openOpportunities.length} opportunité(s) ouverte(s).` : null,
+            openOpportunities.length ? `${openOpportunities.length} besoin(s) client ouvert(s).` : null,
             typeof quoteAgeDays === 'number' ? `Dernier devis mis à jour il y a ${quoteAgeDays} j.` : null,
             typeof daysSinceTouch === 'number' ? `Dernier signal commercial il y a ${daysSinceTouch} j.` : 'Aucun historique commercial récent.',
         ].filter(Boolean).join(' ');
@@ -349,7 +349,7 @@ export default function CRMClientActionWorkspace({
         setIsSubmitting(true);
         try {
             if (actionMode === 'opportunity') {
-                if (!opportunityDraft.title.trim()) throw new Error("Donnez un nom à l'opportunité.");
+                if (!opportunityDraft.title.trim()) throw new Error('Donnez un nom au besoin client.');
                 await api.post('/v2/mmg/opportunities', {
                     client_id: client.id,
                     site_address_id: opportunityDraft.site_address_id ? Number(opportunityDraft.site_address_id) : null,
@@ -383,7 +383,7 @@ export default function CRMClientActionWorkspace({
             setSubmitError(
                 requestError?.response?.data?.detail
                 || requestError.message
-                || "L'action CRM n'a pas pu être enregistrée.",
+                || "L'action avant-vente n'a pas pu être enregistrée.",
             );
         } finally {
             setIsSubmitting(false);
@@ -511,7 +511,7 @@ export default function CRMClientActionWorkspace({
             <header className="border-l-4 border-blue-500 bg-blue-50/70 px-5 py-5">
                 <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
                     <div className="min-w-0">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Fiche client CRM</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Compte client</p>
                         <h3 className="mt-1 truncate text-2xl font-black tracking-tight text-slate-950 lg:text-3xl">{client.name}</h3>
                         <p className="mt-1 text-sm font-bold text-slate-500">{client.contact_name || 'Contact principal à renseigner'}</p>
                         {(client.segment || client.tags?.length) && (
@@ -527,7 +527,7 @@ export default function CRMClientActionWorkspace({
                         </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                        <ActionButton icon={Target} label="Nouvelle opportunité" onClick={() => resetAndOpen('opportunity')} primary />
+                        <ActionButton icon={Target} label="Nouveau besoin client" onClick={() => resetAndOpen('opportunity')} primary />
                         <ActionButton icon={CalendarClock} label="Planifier une relance" onClick={() => resetAndOpen('follow-up')} />
                         <ActionButton icon={PhoneCall} label="Noter un appel" onClick={() => resetAndOpen('call')} />
                         <ActionButton icon={Tags} label="Segmenter" onClick={openSegmentationForm} />
@@ -558,7 +558,7 @@ export default function CRMClientActionWorkspace({
                     <p className="mt-1 text-sm font-semibold opacity-80">{nextAction.detail}</p>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-center">
-                    <MiniMetric label="Opportunités" value={openOpportunities.length} />
+                    <MiniMetric label="Besoins client" value={openOpportunities.length} />
                     <MiniMetric label="À faire" value={pendingActivities.length} />
                     <MiniMetric label="CA signé" value={formatMoney(totals.orderAmount)} />
                 </div>
@@ -566,7 +566,7 @@ export default function CRMClientActionWorkspace({
 
             <section className="grid gap-4 rounded-2xl border border-blue-100 bg-white p-5 shadow-sm xl:grid-cols-[260px_minmax(0,1fr)_320px]">
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Score commercial</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Lecture client</p>
                     <div className="mt-3 flex items-end gap-2">
                         <p className="text-5xl font-black text-slate-950">{commercialIntelligence.score}</p>
                         <p className="pb-2 text-sm font-black text-slate-400">/100</p>
@@ -580,7 +580,7 @@ export default function CRMClientActionWorkspace({
                         <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${temperatureClass(commercialIntelligence.temperature.tone)}`}>
                             Devis {commercialIntelligence.temperature.label}
                         </span>
-                        <span className="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-blue-700">Résumé auto</span>
+                        <span className="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-blue-700">Synthèse</span>
                     </div>
                     <p className="mt-3 text-sm font-bold leading-6 text-slate-700">{commercialIntelligence.summary}</p>
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -795,11 +795,11 @@ export default function CRMClientActionWorkspace({
 
             <section className="border-y border-l-4 border-slate-200 border-l-indigo-500 bg-white">
                 <SectionHeading
-                    eyebrow="Pipeline client"
-                    title="Opportunités ouvertes"
-                    detail="Étape, probabilité, montant et prochain jalon commercial."
+                    eyebrow="Parcours avant-vente"
+                    title="Besoins client ouverts"
+                    detail="Étape, probabilité, montant et prochaine action commerciale."
                     tone="indigo"
-                    action={<button onClick={() => resetAndOpen('opportunity')} className="inline-flex items-center gap-2 text-xs font-black text-blue-700 hover:text-blue-900"><Plus className="h-4 w-4" />Nouvelle opportunité</button>}
+                    action={<button onClick={() => resetAndOpen('opportunity')} className="inline-flex items-center gap-2 text-xs font-black text-blue-700 hover:text-blue-900"><Plus className="h-4 w-4" />Nouveau besoin client</button>}
                 />
                 <AsyncBlock
                     loading={opportunitiesQuery.isLoading}
@@ -807,8 +807,8 @@ export default function CRMClientActionWorkspace({
                     onRetry={() => opportunitiesQuery.refetch()}
                     empty={!openOpportunities.length && !convertedOpportunities.length}
                     emptyIcon={Target}
-                    emptyTitle="Aucune opportunité ouverte"
-                    emptyDetail="Créez une opportunité pour formaliser le besoin, le montant attendu et la prochaine décision."
+                    emptyTitle="Aucun besoin client ouvert"
+                    emptyDetail="Créez un besoin client pour formaliser la demande, le montant attendu et la prochaine décision."
                 >
                     <div className="divide-y divide-slate-100">
                         {openOpportunities.map(opportunity => (
@@ -843,7 +843,7 @@ export default function CRMClientActionWorkspace({
                     <SectionHeading
                         eyebrow="Agenda commercial"
                         title="Activités à faire"
-                        detail="Relances, appels et jalons qui demandent une action."
+                        detail="Relances, appels et décisions qui demandent une action."
                         tone="cyan"
                         action={<button onClick={() => resetAndOpen('follow-up')} className="inline-flex items-center gap-2 text-xs font-black text-blue-700 hover:text-blue-900"><Plus className="h-4 w-4" />Planifier</button>}
                     />
@@ -870,7 +870,7 @@ export default function CRMClientActionWorkspace({
                 </section>
 
                 <section className="border-y border-l-4 border-slate-200 border-l-slate-400 bg-white">
-                    <SectionHeading eyebrow="Mémoire CRM" title="Historique des activités" detail="Appels, notes et actions commerciales terminées." tone="slate" />
+                    <SectionHeading eyebrow="Mémoire client" title="Historique des actions" detail="Appels, notes et actions commerciales terminées." tone="slate" />
                     <AsyncBlock
                         loading={activitiesQuery.isLoading}
                         error={activitiesQuery.error}
@@ -1005,7 +1005,7 @@ export default function CRMClientActionWorkspace({
                     <form onSubmit={saveSegmentation} className="w-full max-w-lg overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
                         <div className="flex items-start justify-between bg-slate-900 px-6 py-5 text-white">
                             <div>
-                                <p className="text-[9px] font-black uppercase tracking-widest text-blue-200">Segmentation CRM</p>
+                                <p className="text-[9px] font-black uppercase tracking-widest text-blue-200">Qualification client</p>
                                 <h3 className="mt-2 text-xl font-black">{client.name}</h3>
                             </div>
                             <button type="button" onClick={() => setShowSegmentationForm(false)} className="rounded-full p-2 text-slate-300 hover:bg-white/10"><X className="h-5 w-5" /></button>
@@ -1094,7 +1094,7 @@ function AsyncBlock({ loading, error, onRetry, empty, emptyIcon, emptyTitle, emp
         return (
             <div className="flex min-h-28 items-center justify-center gap-2 text-sm font-bold text-slate-500">
                 <Loader2 className="h-5 w-5 animate-spin" />
-                Chargement des données CRM...
+                Chargement des données avant-vente...
             </div>
         );
     }
@@ -1102,7 +1102,7 @@ function AsyncBlock({ loading, error, onRetry, empty, emptyIcon, emptyTitle, emp
         return (
             <div className="flex min-h-28 flex-col items-center justify-center px-5 py-6 text-center">
                 <AlertCircle className="h-6 w-6 text-red-500" />
-                <p className="mt-2 text-sm font-black text-red-800">Données CRM indisponibles</p>
+                <p className="mt-2 text-sm font-black text-red-800">Données avant-vente indisponibles</p>
                 <p className="mt-1 max-w-xl text-xs font-semibold text-slate-500">{readableError(error)}</p>
                 <button onClick={onRetry} className="mt-3 inline-flex items-center gap-2 text-xs font-black text-blue-700"><RefreshCw className="h-4 w-4" />Réessayer</button>
             </div>
@@ -1148,7 +1148,7 @@ function OpportunityRow({ opportunity, formatDate, formatMoney, onPlanMeasure, c
             </div>
             <LabeledValue label="Montant" value={formatMoney(opportunity.amount)} />
             <LabeledValue
-                label={converted ? 'Conversion' : 'Prochain jalon'}
+                label={converted ? 'Conversion' : 'Prochaine action'}
                 value={converted
                     ? `${opportunity.sale_reference || opportunity.order_reference || 'Commande créée'}${(opportunity.won_at || opportunity.converted_at) ? ` · ${formatDate(opportunity.won_at || opportunity.converted_at)}` : ''}`
                     : `${opportunity.nextMilestone}${opportunity.nextDate ? ` · ${formatDate(opportunity.nextDate)}` : ''}`}
@@ -1235,24 +1235,24 @@ function ActionDialog({
 }) {
     const isOpportunity = mode === 'opportunity';
     const isCall = mode === 'call';
-    const title = isOpportunity ? 'Nouvelle opportunité' : isCall ? 'Noter un appel' : 'Planifier une relance';
+    const title = isOpportunity ? 'Nouveau besoin client' : isCall ? 'Noter un appel' : 'Planifier une relance';
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
             <div className="w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
                 <div className="flex items-start justify-between bg-slate-900 px-6 py-5 text-white">
                     <div>
-                        <p className="text-[9px] font-black uppercase tracking-widest text-blue-200">CRM · {client.name}</p>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-blue-200">Avant-vente · {client.name}</p>
                         <h3 className="mt-2 text-xl font-black">{title}</h3>
                     </div>
                     <button onClick={onClose} className="rounded-full p-2 text-slate-300 hover:bg-white/10 hover:text-white"><X className="h-5 w-5" /></button>
                 </div>
                 {isOpportunity ? (
                     <div className="grid gap-4 p-6 sm:grid-cols-2">
-                        <Field label="Nom de l'opportunité" wide>
+                        <Field label="Nom du besoin client" wide>
                             <input value={opportunityDraft.title} onChange={event => setOpportunityDraft(current => ({ ...current, title: event.target.value }))} placeholder="Ex. Menuiseries chantier Bonapriso" className={inputClass} />
                         </Field>
-                        <Field label="Entrée dans le pipeline">
+                        <Field label="Entrée dans le parcours">
                             <div className={`${inputClass} flex items-center bg-slate-50 font-black text-slate-700`}>
                                 Nouveau besoin à qualifier
                             </div>
@@ -1266,10 +1266,10 @@ function ActionDialog({
                                 {sites.map(site => <option key={site.id} value={site.id}>{site.reference} · {site.label}</option>)}
                             </select>
                         </Field>
-                        <Field label="Date du prochain jalon">
+                        <Field label="Date de la prochaine action">
                             <input type="date" value={opportunityDraft.next_milestone_at} onChange={event => setOpportunityDraft(current => ({ ...current, next_milestone_at: event.target.value }))} className={inputClass} />
                         </Field>
-                        <Field label="Prochain jalon" wide>
+                        <Field label="Prochaine action" wide>
                             <input value={opportunityDraft.next_milestone} onChange={event => setOpportunityDraft(current => ({ ...current, next_milestone: event.target.value }))} placeholder="Ex. Valider le rendez-vous de métré" className={inputClass} />
                         </Field>
                     </div>
@@ -1283,9 +1283,9 @@ function ActionDialog({
                                 <input type="datetime-local" value={activityDraft.due_at} onChange={event => setActivityDraft(current => ({ ...current, due_at: event.target.value }))} className={inputClass} />
                             </Field>
                         )}
-                        <Field label="Opportunité liée" wide={isCall}>
+                        <Field label="Besoin client lié" wide={isCall}>
                             <select value={activityDraft.opportunity_id} onChange={event => setActivityDraft(current => ({ ...current, opportunity_id: event.target.value }))} className={inputClass}>
-                                <option value="">Aucune opportunité</option>
+                                <option value="">Aucun besoin client</option>
                                 {opportunities.map(opportunity => <option key={opportunity.id} value={opportunity.id}>{opportunity.title}</option>)}
                             </select>
                         </Field>

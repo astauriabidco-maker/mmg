@@ -399,6 +399,7 @@ def test_recipe_fixture_client_cleanup_is_admin_only_and_guarded(isolated_client
                 start_at=utcnow(),
                 client_id=recipe_id,
                 opportunity_id=opportunity.json()["id"],
+                created_by="pytest",
             )
         )
         db.add(

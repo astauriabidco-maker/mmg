@@ -182,6 +182,52 @@ def test_sales_signature_flow_creates_invoice_from_public_portal(client: TestCli
         "Motorisation volet",
     ]
 
+    open_session_response = client.post(
+        "/v2/pos/sessions/open?starting_cash=0",
+        headers=admin_headers,
+    )
+    assert open_session_response.status_code == 200, open_session_response.text
+    session_id = open_session_response.json()["id"]
+
+    pos_payment_response = client.post(
+        f"/v2/pos/invoices/{invoice['id']}/pay",
+        headers=admin_headers,
+        json={"amount": invoice["total"], "method": "CB", "author": "Commerce"},
+    )
+    assert pos_payment_response.status_code == 200, pos_payment_response.text
+
+    paid_invoice_response = client.get("/v2/accounting/invoices", headers=admin_headers)
+    assert paid_invoice_response.status_code == 200, paid_invoice_response.text
+    paid_invoice = next(
+        item for item in paid_invoice_response.json()
+        if item["id"] == invoice["id"]
+    )
+    assert paid_invoice["status"] == "PAID"
+    assert paid_invoice["payments"][0]["amount"] == 4320.0
+    assert paid_invoice["payments"][0]["method"] == "CB"
+
+    report_response = client.get(
+        f"/v2/pos/sessions/{session_id}/report",
+        headers=admin_headers,
+    )
+    assert report_response.status_code == 200, report_response.text
+    report = report_response.json()
+    assert report["ticket_count"] == 0
+    assert report["invoice_payment_total"] == 4320.0
+    assert report["invoice_payment_cb"] == 4320.0
+    assert report["total_collected"] == 4320.0
+    assert report["expected_cash_in_drawer"] == 0
+
+    close_session_response = client.post(
+        f"/v2/pos/sessions/{session_id}/close?closing_cash=0",
+        headers=admin_headers,
+    )
+    assert close_session_response.status_code == 200, close_session_response.text
+    close_payload = close_session_response.json()
+    assert close_payload["expected"] == 0.0
+    assert close_payload["actual"] == 0.0
+    assert close_payload["difference"] == 0.0
+
 
 def test_quote_pdf_contains_client_totals_status_and_conditions(client: TestClient):
     admin_headers = _admin_headers(client)

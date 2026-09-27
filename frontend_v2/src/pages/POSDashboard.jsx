@@ -317,15 +317,31 @@ export default function POSDashboard() {
         }
     };
 
-    const openInvoiceModal = async () => {
+    const openInvoiceModal = async (preferredInvoiceId = null) => {
         try {
             const res = await api.get('/v2/pos/invoices/pending');
-            setPendingInvoices(res.data);
+            const invoices = res.data || [];
+            setPendingInvoices(invoices);
+            if (preferredInvoiceId) {
+                const invoice = invoices.find(inv => Number(inv.id) === Number(preferredInvoiceId));
+                if (invoice) {
+                    setSelectedInvoice(invoice);
+                    setInvoicePaymentAmount(String(invoice.due_amount ?? ''));
+                }
+            }
             setShowInvoicePayment(true);
         } catch(e) {
             console.error(e);
         }
     };
+
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const invoiceId = params.get('invoiceId') || params.get('payInvoiceId');
+        if (invoiceId) {
+            openInvoiceModal(invoiceId);
+        }
+    }, []);
 
     const handleInvoicePayment = async (e) => {
         e.preventDefault();

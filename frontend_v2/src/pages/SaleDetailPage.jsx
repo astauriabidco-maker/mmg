@@ -211,32 +211,9 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
         });
     };
 
-    const getInvoicePaidAmount = (invoice) => (
-        (invoice?.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
-    );
-
-    const getInvoiceRemainder = (invoice) => (
-        Math.max(0, Number(invoice?.total || 0) - getInvoicePaidAmount(invoice))
-    );
-
     const recordPayment = (invoice) => {
         if (!invoice) return;
-        const remainder = getInvoiceRemainder(invoice);
-        const rawAmount = window.prompt(`Montant encaissé pour ${invoice.reference}`, remainder.toFixed(2));
-        if (rawAmount === null) return;
-        const amount = Number(String(rawAmount).replace(',', '.'));
-        if (!amount || amount <= 0) {
-            alert("Montant invalide.");
-            return;
-        }
-        const method = window.prompt("Mode de paiement", "VIREMENT") || "VIREMENT";
-        runAction('recordPayment', async () => {
-            await api.post(`/v2/accounting/invoices/${invoice.id}/pay`, {
-                amount,
-                method,
-                reference: `Encaissement ${sale.reference}`,
-            });
-        });
+        navigate(`/pos?invoiceId=${invoice.id}`);
     };
 
     if (!saleId) {
@@ -257,7 +234,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     const canCreateDepositInvoice = !isFreeSale && trace.isSigned && !trace.hasDepositInvoice;
     const canReturn = trace.isDelivered;
     const canCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote;
-    const unpaidFinalInvoice = trace.finalInvoices.find(invoice => String(invoice.status || '').toUpperCase() !== 'PAID');
+    const unpaidBillableInvoice = trace.billableInvoices.find(invoice => String(invoice.status || '').toUpperCase() !== 'PAID');
     const latestEmailDelivery = saleChatter.find(message => (
         message.is_system_log
         && (
@@ -271,7 +248,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
         createDepositInvoice: canCreateDepositInvoice ? { label: "Créer acompte", onClick: createDepositInvoice } : null,
         deliverFreeSale: canDeliver ? { label: "Sortie client / BL", onClick: deliverFreeSale } : null,
         createFinalInvoice: canCreateFinalInvoice ? { label: "Créer facture finale", onClick: createFinalInvoice } : null,
-        recordPayment: unpaidFinalInvoice ? { label: "Encaisser", onClick: () => recordPayment(unpaidFinalInvoice) } : null,
+        recordPayment: unpaidBillableInvoice ? { label: "Encaisser caisse", onClick: () => recordPayment(unpaidBillableInvoice) } : null,
     };
     return (
         <div className={pageShellClass}>

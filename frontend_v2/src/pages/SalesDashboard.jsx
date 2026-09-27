@@ -333,41 +333,10 @@ export default function SalesDashboard() {
         }
     };
 
-    const getInvoicePaidAmount = (invoice) => (
-        (invoice?.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
-    );
-
-    const getInvoiceRemainder = (invoice) => (
-        Math.max(0, Number(invoice?.total || 0) - getInvoicePaidAmount(invoice))
-    );
-
-    const recordPayment = async (invoice, sale = selectedSale) => {
-        if (!sale || !invoice) return;
-        const remainder = getInvoiceRemainder(invoice);
-        const rawAmount = window.prompt(`Montant encaissé pour ${invoice.reference}`, remainder.toFixed(2));
-        if (rawAmount === null) return;
-        const amount = Number(String(rawAmount).replace(',', '.'));
-        if (!amount || amount <= 0) {
-            alert("Montant invalide.");
-            return;
-        }
-        const method = window.prompt("Mode de paiement", "VIREMENT") || "VIREMENT";
+    const recordPayment = async (invoice) => {
+        if (!invoice) return;
         setIsRecordingPayment(true);
-        try {
-            await api.post(`/v2/accounting/invoices/${invoice.id}/pay`, {
-                amount,
-                method,
-                reference: `Encaissement ${sale.reference}`,
-            });
-            await queryClient.invalidateQueries(['sales']);
-            await openSaleDetails(sale.id);
-            alert("Paiement enregistré.");
-        } catch (err) {
-            console.error(err);
-            alert(err.response?.data?.detail || "Erreur lors de l'encaissement.");
-        } finally {
-            setIsRecordingPayment(false);
-        }
+        navigate(`/pos?invoiceId=${invoice.id}`);
     };
 
     const handleDragStart = (e, id) => {
@@ -948,12 +917,12 @@ export default function SalesDashboard() {
         const canDeliverFreeSale = isFreeSale && sale.status === 'VALIDATED' && reservationSummary.count > 0;
         const canCreateFinalInvoice = trace.isDelivered && !trace.isInvoiced && !trace.isReturned;
         const canCreateDepositInvoice = !isFreeSale && trace.isSigned && !trace.hasDepositInvoice;
-        const unpaidFinalInvoice = trace.finalInvoices?.find(invoice => String(invoice.status || '').toUpperCase() !== 'PAID');
+        const unpaidBillableInvoice = trace.billableInvoices?.find(invoice => String(invoice.status || '').toUpperCase() !== 'PAID');
         const timelineActions = {
             createDepositInvoice: canCreateDepositInvoice ? { label: "Créer acompte", onClick: () => createDepositInvoice(sale) } : null,
             deliverFreeSale: canDeliverFreeSale ? { label: "Sortie client / BL", onClick: () => deliverFreeSale(sale) } : null,
             createFinalInvoice: canCreateFinalInvoice ? { label: "Créer facture finale", onClick: () => createFinalInvoice(sale) } : null,
-            recordPayment: unpaidFinalInvoice ? { label: "Encaisser", onClick: () => recordPayment(unpaidFinalInvoice, sale) } : null,
+            recordPayment: unpaidBillableInvoice ? { label: "Encaisser caisse", onClick: () => recordPayment(unpaidBillableInvoice) } : null,
         };
         const timelineBusyAction = isCreatingDepositInvoice
             ? 'createDepositInvoice'

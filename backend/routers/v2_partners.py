@@ -455,7 +455,9 @@ def _is_recipe_fixture_client(client: models.Client) -> bool:
         for marker in (
             "recette doublon",
             "recette crm",
-            "fixture",
+            "fixture crm",
+            "client fixture",
+            "recette fixture",
             "test a supprimer",
             "a supprimer",
         )

@@ -291,6 +291,13 @@ def test_pos_invoice_payment_is_in_session_report(client: TestClient):
     assert report["total_collected"] == 60.0
     assert report["expected_cash_in_drawer"] == 0
 
+    close_response = client.post(f"/v2/pos/sessions/{session_id}/close?closing_cash=0", headers=headers)
+    assert close_response.status_code == 200, close_response.text
+    close_payload = close_response.json()
+    assert close_payload["expected"] == 0.0
+    assert close_payload["actual"] == 0.0
+    assert close_payload["difference"] == 0.0
+
 
 def test_pos_checkout_seals_invoice_and_counts_cb_sales(client: TestClient):
     headers = _auth_headers(client)
@@ -372,6 +379,13 @@ def test_pos_checkout_seals_invoice_and_counts_cb_sales(client: TestClient):
     report = report_response.json()
     assert report["total_cb_collected"] == 12.0
     assert report["total_cash_collected"] == 0
+
+    close_response = client.post(f"/v2/pos/sessions/{session_id}/close?closing_cash=20", headers=headers)
+    assert close_response.status_code == 200, close_response.text
+    close_payload = close_response.json()
+    assert close_payload["expected"] == 20.0
+    assert close_payload["actual"] == 20.0
+    assert close_payload["difference"] == 0.0
 
     with session_local() as db:
         invoice = db.query(models.Invoice).filter_by(client_name="Client Comptoir (POS)").one()

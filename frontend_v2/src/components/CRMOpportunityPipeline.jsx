@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
     ArrowRight,
@@ -125,6 +125,7 @@ export default function CRMOpportunityPipeline({
     onOpenClient,
     onOpenOrder,
     onPlanMeasure,
+    startCreateSignal = 0,
 }) {
     const [searchTerm, setSearchTerm] = useState('');
     const [showCreate, setShowCreate] = useState(false);
@@ -134,6 +135,7 @@ export default function CRMOpportunityPipeline({
     const [lossTarget, setLossTarget] = useState(null);
     const [lossReason, setLossReason] = useState('');
     const [qualificationTarget, setQualificationTarget] = useState(null);
+    const handledCreateSignalRef = useRef(startCreateSignal);
 
     const opportunitiesQuery = useQuery({
         queryKey: ['crm-opportunities', 'pipeline'],
@@ -297,14 +299,22 @@ export default function CRMOpportunityPipeline({
         });
     };
 
+    useEffect(() => {
+        if (!startCreateSignal || handledCreateSignalRef.current === startCreateSignal) return;
+        handledCreateSignalRef.current = startCreateSignal;
+        setDraft(EMPTY_DRAFT);
+        setError('');
+        setShowCreate(true);
+    }, [startCreateSignal]);
+
     if (opportunitiesQuery.isLoading || missionsQuery.isLoading) {
-        return <PipelineMessage title="Chargement du pipeline…" detail="Lecture des opportunités CRM." />;
+        return <PipelineMessage title="Chargement du parcours avant-vente…" detail="Lecture des besoins client." />;
     }
 
     if (opportunitiesQuery.isError || missionsQuery.isError) {
         return (
             <PipelineMessage
-                title="Le pipeline CRM est indisponible"
+                title="Le parcours avant-vente est indisponible"
                 detail={readableError(opportunitiesQuery.error || missionsQuery.error)}
                 action={<button onClick={() => Promise.all([opportunitiesQuery.refetch(), missionsQuery.refetch()])} className="text-sm font-black text-blue-700">Réessayer</button>}
             />
@@ -315,8 +325,8 @@ export default function CRMOpportunityPipeline({
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-slate-50/50">
             <div className="border-b border-slate-200 bg-white px-5 py-4 lg:px-7">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    <PipelineMetric label="Opportunités ouvertes" value={openItems.length} />
-                    <PipelineMetric label="Pipeline pondéré" value={formatMoney(weightedPipeline)} tone="blue" />
+                    <PipelineMetric label="Besoins client ouverts" value={openItems.length} />
+                    <PipelineMetric label="Montant pondéré" value={formatMoney(weightedPipeline)} tone="blue" />
                     <PipelineMetric label="Sans prochaine action" value={withoutAction} tone={withoutAction ? 'amber' : 'slate'} />
                     <PipelineMetric label="Transférées en commande" value={wonItems.length} tone="emerald" />
                 </div>
@@ -339,7 +349,7 @@ export default function CRMOpportunityPipeline({
                         className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-black text-white hover:bg-blue-500"
                     >
                         <Plus className="h-4 w-4" />
-                        Nouvelle opportunité
+                        Nouveau besoin client
                     </button>
                 </div>
                 {error && (
@@ -470,7 +480,7 @@ function PipelineColumn({
                 ))}
                 {!column.items.length && (
                     <div className="flex h-32 items-center justify-center border border-dashed border-slate-200 bg-white px-6 text-center">
-                        <p className="text-xs font-bold text-slate-400">Aucune opportunité à cette étape.</p>
+                        <p className="text-xs font-bold text-slate-400">Aucun besoin client à cette étape.</p>
                     </div>
                 )}
             </div>
@@ -774,7 +784,7 @@ function QualificationDialog({
                             />
                         </Field>
                         <p className="mt-2 text-xs font-semibold text-slate-500">
-                            Ce compte rendu sera conservé dans la timeline CRM.
+                            Ce compte rendu sera conservé dans l'historique avant-vente.
                         </p>
                     </section>
 
@@ -818,9 +828,9 @@ function OpportunityDialog({
             <form onSubmit={onSubmit} className="max-h-[92vh] w-full max-w-3xl overflow-y-auto bg-white shadow-2xl">
                 <header className="flex items-start justify-between gap-4 bg-slate-900 px-6 py-5 text-white">
                     <div>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-300">CRM avant-vente</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-300">Avant-vente</p>
                         <h2 className="mt-1 text-2xl font-black">Enregistrer une nouvelle demande</h2>
-                        <p className="mt-1 text-sm font-semibold text-slate-300">Le besoin reste dans le CRM jusqu'à la signature client.</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-300">Le besoin reste en avant-vente jusqu'à la signature client.</p>
                     </div>
                     <button type="button" onClick={onClose} title="Fermer" className="p-2 text-slate-300 hover:text-white">
                         <X className="h-5 w-5" />
@@ -897,7 +907,7 @@ function LossDialog({
                 <header className="flex items-start justify-between gap-4 bg-slate-900 px-6 py-5 text-white">
                     <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-red-300">Clôture commerciale</p>
-                        <h2 className="mt-1 text-xl font-black">Classer l'opportunité comme perdue</h2>
+                        <h2 className="mt-1 text-xl font-black">Classer le besoin client comme perdu</h2>
                         <p className="mt-1 text-sm font-semibold text-slate-300">{opportunity.reference} · {opportunity.client_name}</p>
                     </div>
                     <button type="button" onClick={onClose} title="Fermer" className="p-2 text-slate-300 hover:text-white">

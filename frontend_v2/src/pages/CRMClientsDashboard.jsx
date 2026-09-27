@@ -21,7 +21,7 @@ const isActivePresalesStatus = (status) => ['DRAFT', 'SENT'].includes(status);
 const CRM_FILTER_STORAGE_KEY = 'mmg.crm.clientFilters.v1';
 const COMMERCIAL_STATUS_OPTIONS = [
     { value: '', label: 'Tous statuts' },
-    { value: 'active_opportunity', label: 'Opportunité active' },
+    { value: 'active_opportunity', label: 'Besoin client actif' },
     { value: 'to_follow_up', label: 'À relancer' },
     { value: 'missing_next_action', label: 'Sans prochaine action' },
     { value: 'quote_sent', label: 'Devis envoyé' },
@@ -29,7 +29,7 @@ const COMMERCIAL_STATUS_OPTIONS = [
     { value: 'quiet', label: 'Calme' },
 ];
 const COMMERCIAL_STATUS_LABELS = {
-    active_opportunity: 'Opportunité',
+    active_opportunity: 'Besoin client',
     to_follow_up: 'À relancer',
     missing_next_action: 'Sans action',
     quote_sent: 'Devis envoyé',
@@ -55,6 +55,7 @@ export default function CRMClientsDashboard() {
     const [commercialStatusFilter, setCommercialStatusFilter] = useState('');
     const [selectedClientId, setSelectedClientId] = useState(null);
     const [showProposalStarter, setShowProposalStarter] = useState(false);
+    const [pipelineCreateRequest, setPipelineCreateRequest] = useState(0);
     const [showClientModal, setShowClientModal] = useState(false);
     const [showMeasureStarter, setShowMeasureStarter] = useState(false);
     const [showSiteModal, setShowSiteModal] = useState(false);
@@ -183,6 +184,11 @@ export default function CRMClientsDashboard() {
     const createQuoteForClient = () => {
         if (!selectedClient) return;
         setShowProposalStarter(true);
+    };
+
+    const createOpportunityFromHome = () => {
+        setCrmView('pipeline');
+        setPipelineCreateRequest(Date.now());
     };
 
     const openSale = (saleId) => {
@@ -649,7 +655,7 @@ export default function CRMClientsDashboard() {
             key: 'missing-action',
             label: 'Sans prochaine action',
             value: commerceOverview.withoutActionClients,
-            detail: 'À reprendre pour éviter les opportunités dormantes.',
+            detail: 'À reprendre pour éviter les besoins client dormants.',
             tone: 'amber',
             view: 'cockpit',
         },
@@ -702,7 +708,7 @@ export default function CRMClientsDashboard() {
                     reference: client.phone || client.email || 'Coordonnées à compléter',
                     detail: needsFollowUp
                         ? `${signal.overdue_actions || signal.pending_reminders || 1} relance(s) ou action(s) en retard`
-                        : `${signal.open_opportunities || 1} opportunité(s) sans prochaine action`,
+                        : `${signal.open_opportunities || 1} besoin(s) client sans prochaine action`,
                     date: null,
                     actionLabel: needsFollowUp ? 'Traiter relance' : 'Planifier action',
                     onOpen: () => {
@@ -799,8 +805,8 @@ export default function CRMClientsDashboard() {
 
     const navItems = [
         { key: 'home', label: 'Parcours vendeur', group: 'Accueil', icon: ArrowRight },
-        { key: 'cockpit', label: 'Pilotage commercial', group: 'Décider', icon: BellRing },
-        { key: 'pipeline', label: 'Pipeline', group: 'Suivre', icon: ClipboardList },
+        { key: 'cockpit', label: 'À traiter', group: 'Décider', icon: BellRing },
+        { key: 'pipeline', label: 'Demandes', group: 'Suivre', icon: ClipboardList },
         { key: 'clients', label: 'Clients & contacts', group: 'Gérer', icon: Users },
         { key: 'measures', label: 'Métrés / BE', group: 'Préparer', icon: Wrench },
     ];
@@ -828,11 +834,18 @@ export default function CRMClientsDashboard() {
                             Nouveau client
                         </button>
                         <button
-                            onClick={createQuoteForClient}
-                            disabled={!selectedClient}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
+                            onClick={createOpportunityFromHome}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500"
                         >
                             <Plus className="h-4 w-4" />
+                            Nouveau besoin client
+                        </button>
+                        <button
+                            onClick={createQuoteForClient}
+                            disabled={!selectedClient}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-black text-blue-700 hover:bg-blue-50 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                        >
+                            <FileText className="h-4 w-4" />
                             Préparer un devis
                         </button>
                         <button
@@ -876,7 +889,7 @@ export default function CRMClientsDashboard() {
                                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-600">Parcours vendeur</p>
                                 <h3 className="mt-3 text-3xl font-black tracking-tight text-slate-950">À traiter maintenant</h3>
                                 <p className="mt-2 max-w-2xl text-sm font-bold leading-6 text-slate-600">
-                                    Le commercial part des relances et devis ouverts. Les vues de gestion restent disponibles, mais ne prennent plus toute la place.
+                                    Le bureau part des relances et devis ouverts. Les vues de gestion restent disponibles, mais la prochaine action reste le point d'entrée.
                                 </p>
                                 <div className="mt-5 grid gap-3 md:grid-cols-4">
                                     <JourneyStep number="1" title="Qualifier" detail="Client, besoin, budget, chantier." />
@@ -901,11 +914,11 @@ export default function CRMClientsDashboard() {
                         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                             <div className="flex items-center justify-between gap-4">
                                 <div>
-                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">File commerciale</p>
-                                    <h3 className="mt-1 text-2xl font-black text-slate-950">Prochaines priorités visibles</h3>
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">File avant-vente</p>
+                                    <h3 className="mt-1 text-2xl font-black text-slate-950">À traiter aujourd'hui</h3>
                                 </div>
                                 <button onClick={() => setCrmView('cockpit')} className="hidden rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white hover:bg-slate-800 md:inline-flex">
-                                    Ouvrir le pilotage
+                                    Ouvrir la file
                                 </button>
                             </div>
                             <div className="mt-5 grid gap-3 md:grid-cols-2">
@@ -948,8 +961,8 @@ export default function CRMClientsDashboard() {
                     </section>
 
                     <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                        <WorkspaceCard icon={BellRing} eyebrow="Décider" title="Pilotage commercial" detail="KPIs, relances, portefeuille et attention commerciale." onOpen={() => setCrmView('cockpit')} />
-                        <WorkspaceCard icon={ClipboardList} eyebrow="Suivre" title="Pipeline avant-vente" detail="Opportunités, devis envoyés, signatures et pertes." onOpen={() => setCrmView('pipeline')} />
+                        <WorkspaceCard icon={BellRing} eyebrow="Décider" title="À traiter" detail="Relances, devis ouverts et décisions attendues." onOpen={() => setCrmView('cockpit')} />
+                        <WorkspaceCard icon={ClipboardList} eyebrow="Suivre" title="Demandes avant-vente" detail="Besoins client, devis envoyés, signatures et pertes." onOpen={() => setCrmView('pipeline')} />
                         <WorkspaceCard icon={Users} eyebrow="Gérer" title="Clients & contacts" detail="Fiches, contacts multiples, imports, exports, doublons." onOpen={() => setCrmView('clients')} />
                         <WorkspaceCard icon={Wrench} eyebrow="Préparer" title="Métrés / BE" detail="Prise de cotes, contrôle BE et liaison au devis." onOpen={() => setCrmView('measures')} />
                     </section>
@@ -974,6 +987,7 @@ export default function CRMClientsDashboard() {
                         setCrmView('clients');
                     }}
                     onOpenOrder={saleOrderId => openSale(saleOrderId)}
+                    startCreateSignal={pipelineCreateRequest}
                     onPlanMeasure={(opportunity, source = 'SITE_VISIT', missionId = null) => {
                         if (missionId) {
                             navigate(`/measure-missions/${missionId}`);
@@ -1300,7 +1314,7 @@ export default function CRMClientsDashboard() {
                                         <div>
                                             <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500">Cockpit client</p>
                                             <h3 className="mt-1 text-2xl font-black text-slate-900">À comprendre en 5 secondes</h3>
-                                            <p className="mt-1 text-sm font-bold text-slate-500">Identité, action suivante, opportunités et historique commercial.</p>
+                                            <p className="mt-1 text-sm font-bold text-slate-500">Identité, action suivante, besoins client et historique commercial.</p>
                                         </div>
                                         <div className="flex flex-wrap gap-2">
                                             <button
@@ -1470,8 +1484,8 @@ export default function CRMClientsDashboard() {
 
                                 <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                                     <div className="px-5 py-4 bg-blue-50 border-b border-blue-100">
-                                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Opportunités ouvertes</p>
-                                        <p className="text-sm font-bold text-blue-950">Propositions non signées et prises de côte en cours.</p>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Besoins client ouverts</p>
+                                        <p className="text-sm font-bold text-blue-950">Propositions non signées et prises de cote en cours.</p>
                                     </div>
                                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 p-5 border-b border-slate-100">
                                         <PipelineStep label="Brouillons" count={presalesQuotes.filter(sale => sale.status === 'DRAFT').length} amount={formatMoney(presalesQuotes.filter(sale => sale.status === 'DRAFT').reduce((sum, sale) => sum + saleAmount(sale), 0))} tone="slate" />
@@ -1482,7 +1496,7 @@ export default function CRMClientsDashboard() {
                                         {[...presalesQuotes, ...clientDossiers].length === 0 && (
                                             <div className="p-10 text-center">
                                                 <FileText className="w-12 h-12 mx-auto text-blue-200 mb-3" />
-                                                <p className="text-sm font-black text-slate-600">Aucune opportunité ouverte pour ce client.</p>
+                                                <p className="text-sm font-black text-slate-600">Aucun besoin client ouvert pour ce client.</p>
                                                 <div className="mt-4 flex justify-center gap-2">
                                                     <button onClick={createQuoteForClient} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-black text-white hover:bg-blue-500">
                                                         <Plus className="w-4 h-4" />
@@ -1690,7 +1704,7 @@ export default function CRMClientsDashboard() {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-6">
                     <div className="w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
                         <div className="bg-gradient-to-br from-slate-950 to-blue-950 px-6 py-5 text-white">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">Création guidée · CRM</p>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-blue-200">Création guidée · Avant-vente</p>
                             <h3 className="mt-2 text-2xl font-black">Créer une fiche client exploitable</h3>
                             <p className="mt-1 text-sm font-bold text-slate-300">Identité → contact → qualification. La fiche s’ouvrira directement après création.</p>
                         </div>
@@ -1805,7 +1819,7 @@ export default function CRMClientsDashboard() {
                             </div>
                         </div>
                         <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-                            <p className="text-xs font-bold text-slate-500">Après création : ouverture automatique de la fiche pour ajouter opportunité, devis ou métré.</p>
+                            <p className="text-xs font-bold text-slate-500">Après création : ouverture automatique de la fiche pour ajouter besoin client, devis ou métré.</p>
                             <div className="flex items-center justify-end gap-3">
                             <button
                                 onClick={() => {
@@ -1834,7 +1848,7 @@ export default function CRMClientsDashboard() {
                     <div className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
                         <div className="flex items-start justify-between bg-slate-900 px-6 py-5 text-white">
                             <div>
-                                <p className="text-[10px] font-black uppercase tracking-widest text-amber-300">Qualité des données CRM</p>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-amber-300">Qualité des données client</p>
                                 <h3 className="mt-2 text-2xl font-black">Doublons clients détectés</h3>
                                 <p className="mt-1 text-sm font-semibold text-slate-300">La fiche la plus ancienne est proposée comme cible. Tout l’historique est réaffecté avant suppression.</p>
                             </div>
@@ -2054,7 +2068,7 @@ function CRMQuoteComposer({ client, onClose, onCreated }) {
                             <ModalStepBadge number="1" title="Choisir" detail="Article ou prestation" dark active={Boolean(quote.lines.length)} />
                             <ModalStepBadge number="2" title="Chiffrer" detail="Quantité et prix" dark active={Boolean(validQuoteLines.length)} />
                             <ModalStepBadge number="3" title="Contrôler" detail="Validité et TVA" dark active />
-                            <ModalStepBadge number="4" title="Créer" detail="Brouillon CRM" dark active={Boolean(validQuoteLines.length)} />
+                            <ModalStepBadge number="4" title="Créer" detail="Brouillon avant-vente" dark active={Boolean(validQuoteLines.length)} />
                         </div>
                     </div>
                     <button onClick={onClose} className="rounded-full p-2 text-slate-300 hover:bg-white/10 hover:text-white">
@@ -2214,7 +2228,7 @@ function CRMQuoteComposer({ client, onClose, onCreated }) {
                 </div>
 
                 <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-6 py-4">
-                    <p className="text-sm font-bold text-slate-500">{validQuoteLines.length} ligne(s) valide(s) · création en brouillon CRM, sans réservation stock.</p>
+                    <p className="text-sm font-bold text-slate-500">{validQuoteLines.length} ligne(s) valide(s) · création en brouillon avant-vente, sans réservation stock.</p>
                     <div className="flex items-center gap-3">
                         <button onClick={onClose} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-600 hover:bg-slate-100">Annuler</button>
                         <button onClick={createQuote} disabled={isCreating} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500 disabled:bg-slate-300">
