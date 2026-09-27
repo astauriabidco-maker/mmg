@@ -8802,6 +8802,7 @@ function PhysicalInventoryView({
     const [sessionStatusFilter, setSessionStatusFilter] = useState('');
     const [includeArchived, setIncludeArchived] = useState(false);
     const [sessionOffset, setSessionOffset] = useState(0);
+    const [inventoryRefreshNonce, setInventoryRefreshNonce] = useState(0);
     const sessionLimit = 25;
     const { data: sessionPage = { items: initialSessions, total: initialSessions.length } } = useQuery({
         queryKey: ['inventory-sessions-page', sessionOffset, sessionSearch, sessionStatusFilter, includeArchived],
@@ -8817,10 +8818,17 @@ function PhysicalInventoryView({
             return res.data;
         },
     });
+    const fetchInventoryIntelligence = async (nonce = inventoryRefreshNonce) => {
+        const params = nonce ? { _: nonce } : undefined;
+        const res = await api.get('/v2/stock/inventory-intelligence', { params });
+        return res.data;
+    };
     const { data: inventoryIntelligence = { score: 0, priority: 'low', summary: {}, zones: [], items: [] } } = useQuery({
-        queryKey: ['inventory-intelligence'],
+        queryKey: ['inventory-intelligence', inventoryRefreshNonce],
         queryFn: async () => {
-            const res = await api.get('/v2/stock/inventory-intelligence');
+            const res = await api.get('/v2/stock/inventory-intelligence', {
+                params: inventoryRefreshNonce ? { _: inventoryRefreshNonce } : undefined,
+            });
             return res.data;
         },
         enabled: canCount || canValidate,
@@ -8995,6 +9003,7 @@ function PhysicalInventoryView({
     };
 
     const refreshInventory = async () => {
+        const nextInventoryNonce = Date.now();
         await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['inventory-sessions'] }),
             queryClient.invalidateQueries({ queryKey: ['inventory-sessions-page'] }),
@@ -9003,7 +9012,19 @@ function PhysicalInventoryView({
             queryClient.invalidateQueries({ queryKey: ['transactions'] }),
             queryClient.invalidateQueries({ queryKey: ['inventory-intelligence'] }),
         ]);
-        await queryClient.refetchQueries({ queryKey: ['inventory-intelligence'], type: 'active' });
+        await Promise.all([
+            queryClient.refetchQueries({ queryKey: ['inventory-sessions'], type: 'active' }),
+            queryClient.refetchQueries({ queryKey: ['inventory-sessions-page'], type: 'active' }),
+            queryClient.refetchQueries({ queryKey: ['quants'], type: 'active' }),
+            queryClient.refetchQueries({ queryKey: ['products'], type: 'active' }),
+            queryClient.refetchQueries({ queryKey: ['transactions'], type: 'active' }),
+        ]);
+        await queryClient.fetchQuery({
+            queryKey: ['inventory-intelligence', nextInventoryNonce],
+            queryFn: () => fetchInventoryIntelligence(nextInventoryNonce),
+            staleTime: 0,
+        });
+        setInventoryRefreshNonce(nextInventoryNonce);
     };
 
     const createSession = async (event) => {
