@@ -708,7 +708,7 @@ export default function CRMClientsDashboard() {
                     reference: client.phone || client.email || 'Coordonnées à compléter',
                     detail: needsFollowUp
                         ? `${signal.overdue_actions || signal.pending_reminders || 1} relance(s) ou action(s) en retard`
-                        : `${signal.open_opportunities || 1} besoin(s) client sans prochaine action`,
+                        : `${signal.open_opportunities || 1} demande(s) client sans prochaine action`,
                     date: null,
                     actionLabel: needsFollowUp ? 'Traiter relance' : 'Planifier action',
                     onOpen: () => {
@@ -805,8 +805,8 @@ export default function CRMClientsDashboard() {
 
     const navItems = [
         { key: 'home', label: 'Parcours vendeur', group: 'Accueil', icon: ArrowRight },
-        { key: 'cockpit', label: 'À traiter', group: 'Décider', icon: BellRing },
-        { key: 'pipeline', label: 'Demandes', group: 'Suivre', icon: ClipboardList },
+        { key: 'cockpit', label: 'Priorités', group: 'Décider', icon: BellRing },
+        { key: 'pipeline', label: 'Demandes / devis', group: 'Suivre', icon: ClipboardList },
         { key: 'clients', label: 'Clients & contacts', group: 'Gérer', icon: Users },
         { key: 'measures', label: 'Métrés / BE', group: 'Préparer', icon: Wrench },
     ];
@@ -962,7 +962,7 @@ export default function CRMClientsDashboard() {
 
                     <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         <WorkspaceCard icon={BellRing} eyebrow="Décider" title="À traiter" detail="Relances, devis ouverts et décisions attendues." onOpen={() => setCrmView('cockpit')} />
-                        <WorkspaceCard icon={ClipboardList} eyebrow="Suivre" title="Demandes avant-vente" detail="Besoins client, devis envoyés, signatures et pertes." onOpen={() => setCrmView('pipeline')} />
+                        <WorkspaceCard icon={ClipboardList} eyebrow="Suivre" title="Demandes / devis" detail="Besoins client, devis envoyés, signatures et pertes." onOpen={() => setCrmView('pipeline')} />
                         <WorkspaceCard icon={Users} eyebrow="Gérer" title="Clients & contacts" detail="Fiches, contacts multiples, imports, exports, doublons." onOpen={() => setCrmView('clients')} />
                         <WorkspaceCard icon={Wrench} eyebrow="Préparer" title="Métrés / BE" detail="Prise de cotes, contrôle BE et liaison au devis." onOpen={() => setCrmView('measures')} />
                     </section>
@@ -1129,7 +1129,7 @@ export default function CRMClientsDashboard() {
 	                                <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/70 p-3 text-[10px] font-bold text-blue-950">
 	                                    <div className="flex items-start justify-between gap-2">
 	                                        <div>
-	                                            <p className="font-black uppercase tracking-wide text-blue-700">Contrôle import CRM</p>
+	                                            <p className="font-black uppercase tracking-wide text-blue-700">Contrôle import clients</p>
 	                                            <p className="mt-1">
 	                                                {importPreview.created} création(s) · {importPreview.updated} mise(s) à jour · {importPreview.skipped} doublon(s) · {importPreview.rejected || 0} rejet(s)
 	                                            </p>
