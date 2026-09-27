@@ -20,6 +20,15 @@ router = APIRouter(
 
 CARD_PAYMENT_METHODS = {"CB", "CARD"}
 
+
+def _session_invoice_payments(db: Session, session: models.POSSession) -> list[models.Payment]:
+    session_marker = f"Payé en Caisse ({session.reference})"
+    return (
+        db.query(models.Payment)
+        .filter(models.Payment.reference == session_marker)
+        .all()
+    )
+
 @router.get("/sessions/active", response_model=schemas.POSSessionSchema)
 def get_active_session(db: Session = Depends(get_db)):
     session = db.query(models.POSSession).filter(models.POSSession.status == "OPEN").order_by(models.POSSession.id.desc()).first()
@@ -264,6 +273,11 @@ def get_session_report(session_id: int, db: Session = Depends(get_db)):
     total_sales = sum(o.amount_total for o in orders)
     total_cash = sum(o.amount_total for o in orders if o.payment_method == "CASH")
     total_cb = sum(o.amount_total for o in orders if o.payment_method in CARD_PAYMENT_METHODS)
+
+    invoice_payments = _session_invoice_payments(db, session)
+    invoice_payment_total = sum(float(p.amount or 0) for p in invoice_payments)
+    invoice_payment_cash = sum(float(p.amount or 0) for p in invoice_payments if p.method == "CASH")
+    invoice_payment_cb = sum(float(p.amount or 0) for p in invoice_payments if p.method in CARD_PAYMENT_METHODS)
     
     movements = db.query(models.POSCashMovement).filter(models.POSCashMovement.session_id == session.id).all()
     cash_in = sum(m.amount for m in movements if m.movement_type == "IN")
@@ -285,8 +299,13 @@ def get_session_report(session_id: int, db: Session = Depends(get_db)):
         "opened_at": session.opened_at,
         "starting_cash": session.starting_cash,
         "total_sales": total_sales,
-        "total_cash_collected": total_cash,
-        "total_cb_collected": total_cb,
+        "ticket_sales_total": total_sales,
+        "invoice_payment_total": invoice_payment_total,
+        "invoice_payment_cash": invoice_payment_cash,
+        "invoice_payment_cb": invoice_payment_cb,
+        "total_collected": total_sales + invoice_payment_total,
+        "total_cash_collected": total_cash + invoice_payment_cash,
+        "total_cb_collected": total_cb + invoice_payment_cb,
         "cash_in": cash_in,
         "cash_out": cash_out,
         "expected_cash_in_drawer": expected_cash,

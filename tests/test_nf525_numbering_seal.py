@@ -265,6 +265,33 @@ def test_payment_cannot_exceed_remaining_due(client: TestClient):
     assert "solde restant" in response.text
 
 
+def test_pos_invoice_payment_is_in_session_report(client: TestClient):
+    headers = _auth_headers(client)
+    invoice = _create_invoice(client, headers, unit_price=100.0)  # total = 120.0 TTC
+
+    open_response = client.post("/v2/pos/sessions/open?starting_cash=0", headers=headers)
+    assert open_response.status_code == 200, open_response.text
+    session_id = open_response.json()["id"]
+
+    payment_response = client.post(
+        f"/v2/pos/invoices/{invoice['id']}/pay",
+        headers=headers,
+        json={"amount": 60.0, "method": "CB", "author": "Manager"},
+    )
+    assert payment_response.status_code == 200, payment_response.text
+
+    report_response = client.get(f"/v2/pos/sessions/{session_id}/report", headers=headers)
+    assert report_response.status_code == 200, report_response.text
+    report = report_response.json()
+    assert report["ticket_count"] == 0
+    assert report["total_sales"] == 0
+    assert report["invoice_payment_total"] == 60.0
+    assert report["invoice_payment_cb"] == 60.0
+    assert report["total_cb_collected"] == 60.0
+    assert report["total_collected"] == 60.0
+    assert report["expected_cash_in_drawer"] == 0
+
+
 def test_pos_checkout_seals_invoice_and_counts_cb_sales(client: TestClient):
     headers = _auth_headers(client)
     session_local = client.testing_session_local
