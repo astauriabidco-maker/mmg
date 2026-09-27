@@ -21,6 +21,10 @@ router = APIRouter(
 CARD_PAYMENT_METHODS = {"CB", "CARD"}
 
 
+def _money(value) -> float:
+    return float(value or 0)
+
+
 def _resolve_pos_source_location_id(db: Session, variant_id: int, quantity: float) -> int:
     requested_quantity = float(quantity or 0)
     candidates = (
@@ -277,26 +281,26 @@ def close_session(session_id: int, closing_cash: float, db: Session = Depends(ge
         models.POSOrder.session_id == session.id,
         models.POSOrder.payment_method == "CASH"
     ).all()
-    total_cash_sales = sum(o.amount_total for o in cash_orders)
+    total_cash_sales = sum(_money(o.amount_total) for o in cash_orders)
     
     # Calculate movements
     movements = db.query(models.POSCashMovement).filter(models.POSCashMovement.session_id == session.id).all()
-    cash_in = sum(m.amount for m in movements if m.movement_type == "IN")
-    cash_out = sum(m.amount for m in movements if m.movement_type == "OUT")
+    cash_in = sum(_money(m.amount) for m in movements if m.movement_type == "IN")
+    cash_out = sum(_money(m.amount) for m in movements if m.movement_type == "OUT")
     
-    expected_cash = session.starting_cash + total_cash_sales + cash_in - cash_out
+    expected_cash = _money(session.starting_cash) + total_cash_sales + cash_in - cash_out
     
     session.status = "CLOSED"
     session.closed_at = utcnow()
     session.closing_cash = closing_cash
     db.commit()
     
-    difference = closing_cash - float(expected_cash)
+    difference = _money(closing_cash) - expected_cash
     
     return {
         "message": "Caisse fermée avec succès", 
-        "expected": float(expected_cash), 
-        "actual": closing_cash,
+        "expected": expected_cash,
+        "actual": _money(closing_cash),
         "difference": difference
     }
 
@@ -307,20 +311,20 @@ def get_session_report(session_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Session non trouvée.")
         
     orders = db.query(models.POSOrder).filter(models.POSOrder.session_id == session.id).all()
-    total_sales = sum(o.amount_total for o in orders)
-    total_cash = sum(o.amount_total for o in orders if o.payment_method == "CASH")
-    total_cb = sum(o.amount_total for o in orders if o.payment_method in CARD_PAYMENT_METHODS)
+    total_sales = sum(_money(o.amount_total) for o in orders)
+    total_cash = sum(_money(o.amount_total) for o in orders if o.payment_method == "CASH")
+    total_cb = sum(_money(o.amount_total) for o in orders if o.payment_method in CARD_PAYMENT_METHODS)
 
     invoice_payments = _session_invoice_payments(db, session)
-    invoice_payment_total = sum(float(p.amount or 0) for p in invoice_payments)
-    invoice_payment_cash = sum(float(p.amount or 0) for p in invoice_payments if p.method == "CASH")
-    invoice_payment_cb = sum(float(p.amount or 0) for p in invoice_payments if p.method in CARD_PAYMENT_METHODS)
+    invoice_payment_total = sum(_money(p.amount) for p in invoice_payments)
+    invoice_payment_cash = sum(_money(p.amount) for p in invoice_payments if p.method == "CASH")
+    invoice_payment_cb = sum(_money(p.amount) for p in invoice_payments if p.method in CARD_PAYMENT_METHODS)
     
     movements = db.query(models.POSCashMovement).filter(models.POSCashMovement.session_id == session.id).all()
-    cash_in = sum(m.amount for m in movements if m.movement_type == "IN")
-    cash_out = sum(m.amount for m in movements if m.movement_type == "OUT")
+    cash_in = sum(_money(m.amount) for m in movements if m.movement_type == "IN")
+    cash_out = sum(_money(m.amount) for m in movements if m.movement_type == "OUT")
     
-    expected_cash = session.starting_cash + total_cash + cash_in - cash_out
+    expected_cash = _money(session.starting_cash) + total_cash + cash_in - cash_out
     
     # Best-selling products logic
     product_sales = {}
@@ -334,7 +338,7 @@ def get_session_report(session_id: int, db: Session = Depends(get_db)):
         "session_reference": session.reference,
         "status": session.status,
         "opened_at": session.opened_at,
-        "starting_cash": session.starting_cash,
+        "starting_cash": _money(session.starting_cash),
         "total_sales": total_sales,
         "ticket_sales_total": total_sales,
         "invoice_payment_total": invoice_payment_total,
