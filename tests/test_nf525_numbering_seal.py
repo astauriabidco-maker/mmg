@@ -237,6 +237,124 @@ def test_status_change_does_not_change_seal(client: TestClient):
     assert paid["qr_code_hash"] == _expected_seal(paid, previous_seal="")
 
 
+def test_partial_payment_is_not_counted_twice(client: TestClient):
+    headers = _auth_headers(client)
+    invoice = _create_invoice(client, headers, unit_price=100.0)  # total = 120.0 TTC
+
+    response = client.post(
+        f"/v2/accounting/invoices/{invoice['id']}/pay",
+        headers=headers,
+        json={"amount": 60.0, "method": "CB"},
+    )
+    assert response.status_code == 200, response.text
+    partial = response.json()
+
+    assert partial["status"] == "PARTIAL"
+
+
+def test_payment_cannot_exceed_remaining_due(client: TestClient):
+    headers = _auth_headers(client)
+    invoice = _create_invoice(client, headers, unit_price=100.0)  # total = 120.0 TTC
+
+    response = client.post(
+        f"/v2/accounting/invoices/{invoice['id']}/pay",
+        headers=headers,
+        json={"amount": 121.0, "method": "CB"},
+    )
+    assert response.status_code == 400
+    assert "solde restant" in response.text
+
+
+def test_pos_checkout_seals_invoice_and_counts_cb_sales(client: TestClient):
+    headers = _auth_headers(client)
+    session_local = client.testing_session_local
+
+    with session_local() as db:
+        product = models.Product(
+            reference_base="POS-TEST",
+            name="Article POS test",
+            material_type="ALU",
+            unit="pce",
+            available_in_pos=True,
+            catalog_status="ACTIVE",
+        )
+        db.add(product)
+        db.flush()
+        variant = models.ProductVariant(
+            product_id=product.id,
+            reference="POS-TEST-STD",
+            color="Std",
+            cost_price=12.0,
+            quantity_in_stock=5.0,
+        )
+        db.add(variant)
+        db.flush()
+        location = models.StockLocation(name="WH/Stock", usage="internal", is_active=True)
+        db.add(location)
+        db.flush()
+        db.add(models.StockQuant(variant_id=variant.id, location_id=location.id, quantity=5.0))
+        db.commit()
+        variant_id = variant.id
+
+    open_response = client.post("/v2/pos/sessions/open?starting_cash=20", headers=headers)
+    assert open_response.status_code == 200, open_response.text
+    session_id = open_response.json()["id"]
+
+    checkout_response = client.post(
+        "/v2/pos/checkout",
+        headers=headers,
+        json={
+            "payment_method": "CB",
+            "amount_paid": 12.0,
+            "tax_rate": 20.0,
+            "items": [
+                {
+                    "variant_id": variant_id,
+                    "product_name": "Article POS test (Std)",
+                    "quantity": 1,
+                    "price": 12.0,
+                }
+            ],
+        },
+    )
+    assert checkout_response.status_code == 200, checkout_response.text
+    assert checkout_response.json()["payment_method"] == "CB"
+
+    underpaid_response = client.post(
+        "/v2/pos/checkout",
+        headers=headers,
+        json={
+            "payment_method": "CB",
+            "amount_paid": 1.0,
+            "tax_rate": 20.0,
+            "items": [
+                {
+                    "variant_id": variant_id,
+                    "product_name": "Article POS test (Std)",
+                    "quantity": 1,
+                    "price": 12.0,
+                }
+            ],
+        },
+    )
+    assert underpaid_response.status_code == 400
+    assert "ne couvre pas" in underpaid_response.text
+
+    report_response = client.get(f"/v2/pos/sessions/{session_id}/report", headers=headers)
+    assert report_response.status_code == 200, report_response.text
+    report = report_response.json()
+    assert report["total_cb_collected"] == 12.0
+    assert report["total_cash_collected"] == 0
+
+    with session_local() as db:
+        invoice = db.query(models.Invoice).filter_by(client_name="Client Comptoir (POS)").one()
+        assert invoice.status == "PAID"
+        assert invoice.qr_code_hash
+        payment = db.query(models.Payment).filter_by(invoice_id=invoice.id).one()
+        assert payment.amount == 12.0
+        assert payment.method == "CB"
+
+
 def test_seal_excludes_status_from_payload(client: TestClient):
     """Deux pièces identiques hors status produisent le même HMAC."""
     headers = _auth_headers(client)

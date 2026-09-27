@@ -18,6 +18,8 @@ router = APIRouter(
     responses={404: {"description": "Non trouvé"}}
 )
 
+CARD_PAYMENT_METHODS = {"CB", "CARD"}
+
 @router.get("/sessions/active", response_model=schemas.POSSessionSchema)
 def get_active_session(db: Session = Depends(get_db)):
     session = db.query(models.POSSession).filter(models.POSSession.status == "OPEN").order_by(models.POSSession.id.desc()).first()
@@ -52,6 +54,14 @@ def pay_invoice_pos(invoice_id: int, req: schemas.POSInvoicePaymentReq, db: Sess
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(404, "Facture non trouvée")
+
+    if req.amount <= 0:
+        raise HTTPException(status_code=400, detail="Le montant du paiement doit être positif.")
+
+    paid_before = sum(float(p.amount or 0) for p in invoice.payments)
+    remaining_amount = max(0.0, float(invoice.total or 0) - paid_before)
+    if req.amount > remaining_amount:
+        raise HTTPException(status_code=400, detail="Le paiement dépasse le solde restant dû.")
         
     pmt = models.Payment(
         invoice_id=invoice.id,
@@ -72,7 +82,7 @@ def pay_invoice_pos(invoice_id: int, req: schemas.POSInvoicePaymentReq, db: Sess
         db.add(mv)
         
     db.flush()
-    paid_amount = sum(float(p.amount or 0) for p in invoice.payments)
+    paid_amount = paid_before + req.amount
     if paid_amount >= float(invoice.total or 0):
         invoice.status = "PAID"
     else:
@@ -253,7 +263,7 @@ def get_session_report(session_id: int, db: Session = Depends(get_db)):
     orders = db.query(models.POSOrder).filter(models.POSOrder.session_id == session.id).all()
     total_sales = sum(o.amount_total for o in orders)
     total_cash = sum(o.amount_total for o in orders if o.payment_method == "CASH")
-    total_cb = sum(o.amount_total for o in orders if o.payment_method == "CARD")
+    total_cb = sum(o.amount_total for o in orders if o.payment_method in CARD_PAYMENT_METHODS)
     
     movements = db.query(models.POSCashMovement).filter(models.POSCashMovement.session_id == session.id).all()
     cash_in = sum(m.amount for m in movements if m.movement_type == "IN")
@@ -292,9 +302,15 @@ def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db))
         
     if not req.items:
         raise HTTPException(status_code=400, detail="Panier vide")
+
+    if req.amount_paid < 0:
+        raise HTTPException(status_code=400, detail="Montant encaissé invalide.")
         
     # Calculate sum
     amount_total = sum(item.quantity * item.price for item in req.items)
+    if req.amount_paid < amount_total:
+        raise HTTPException(status_code=400, detail="Le montant encaissé ne couvre pas le total du ticket.")
+
     # Return 
     amount_return = max(0.0, req.amount_paid - amount_total)
     
@@ -398,7 +414,7 @@ def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db))
         )
         db.add(db_inv_line)
         
-    new_invoice.qr_code_hash = compute_qr_seal(new_invoice)
+    new_invoice.qr_code_hash = compute_qr_seal(db, new_invoice)
         
     db.commit()
     db.refresh(order)

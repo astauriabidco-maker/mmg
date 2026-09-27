@@ -183,6 +183,14 @@ def add_payment(
     if invoice.status == "PAID":
         raise HTTPException(400, "Cette facture est déjà intégralement payée.")
 
+    if payment.amount <= 0:
+        raise HTTPException(400, "Le montant du paiement doit être positif.")
+
+    paid_before = sum(float(p.amount or 0) for p in invoice.payments)
+    remaining_amount = max(0.0, float(invoice.total or 0) - paid_before)
+    if payment.amount > remaining_amount:
+        raise HTTPException(400, "Le paiement dépasse le solde restant dû.")
+
     new_payment = models.Payment(
         invoice_id=invoice.id,
         amount=payment.amount,
@@ -192,8 +200,10 @@ def add_payment(
     db.add(new_payment)
     db.flush()
 
-    # Calculate new status
-    total_paid = sum(float(p.amount or 0) for p in invoice.payments) + payment.amount
+    # Calculate new status from the pre-payment balance plus the current
+    # payment. Relying on invoice.payments after flush is ORM-state dependent:
+    # it may or may not already contain the new payment.
+    total_paid = paid_before + payment.amount
     if total_paid >= float(invoice.total or 0):
         invoice.status = "PAID"
     else:
