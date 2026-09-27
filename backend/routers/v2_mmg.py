@@ -570,15 +570,18 @@ MISSION_TRANSITIONS = {
         models.MeasureMissionStatus.TO_SCHEDULE.value,
         models.MeasureMissionStatus.SCHEDULED.value,
         models.MeasureMissionStatus.IN_CAPTURE.value,
+        models.MeasureMissionStatus.TO_REVIEW.value,
         models.MeasureMissionStatus.CANCELLED.value,
     },
     models.MeasureMissionStatus.TO_SCHEDULE.value: {
         models.MeasureMissionStatus.SCHEDULED.value,
+        models.MeasureMissionStatus.TO_REVIEW.value,
         models.MeasureMissionStatus.CANCELLED.value,
     },
     models.MeasureMissionStatus.SCHEDULED.value: {
         models.MeasureMissionStatus.IN_CAPTURE.value,
         models.MeasureMissionStatus.ON_SITE.value,
+        models.MeasureMissionStatus.TO_REVIEW.value,
         models.MeasureMissionStatus.CANCELLED.value,
     },
     models.MeasureMissionStatus.IN_CAPTURE.value: {

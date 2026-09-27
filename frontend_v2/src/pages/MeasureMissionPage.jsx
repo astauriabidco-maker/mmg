@@ -278,6 +278,13 @@ export default function MeasureMissionPage() {
     ) || [];
     const openingCount = mission?.openings?.length || 0;
     const completedCount = mission?.openings?.filter(item => ['COMPLETE', 'TO_REVIEW', 'VALIDATED'].includes(item.status)).length || 0;
+    const allOpeningsCompleted = openingCount > 0 && completedCount === openingCount;
+    const canSendMeasureToReview = allOpeningsCompleted
+        && ['DRAFT', 'TO_SCHEDULE', 'SCHEDULED', 'IN_CAPTURE', 'ON_SITE', 'CORRECTION_REQUIRED'].includes(mission?.status);
+    const quoteLinkedToOpportunity = Boolean(mission?.opportunity_id);
+    const quoteReadyFromMeasure = mission?.status === 'VALIDATED'
+        && mission?.verification_status === 'READY_FOR_FABRICATION'
+        && mission?.technical_dossier?.quoting_status === 'VALIDATED';
 
     const selectedClient = useMemo(
         () => clients.find(client => String(client.id) === String(planForm.client_id)),
@@ -1134,11 +1141,11 @@ export default function MeasureMissionPage() {
                                         </button>
                                     )}
                                     {mission.status === 'SCHEDULED' && <button onClick={() => changeStatus('IN_CAPTURE')} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-black text-white">Démarrer le relevé</button>}
-                                    {['IN_CAPTURE', 'ON_SITE', 'CORRECTION_REQUIRED'].includes(mission.status) && <button onClick={() => changeStatus('TO_REVIEW')} className="rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-black text-white">Envoyer au contrôle BE</button>}
+                                    {canSendMeasureToReview && <button onClick={() => changeStatus('TO_REVIEW')} className="rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-black text-white">Relevé terminé → contrôle BE</button>}
                                     {mission.status === 'TO_REVIEW' && canReview && (
                                         <>
                                             <button onClick={() => changeStatus('CORRECTION_REQUIRED')} className="rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm font-black text-red-700">Demander correction</button>
-                                            <button onClick={() => changeStatus('VALIDATED')} className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-black text-white">Valider le métré</button>
+                                            <button onClick={() => changeStatus('VALIDATED')} className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-black text-white">Valider le relevé</button>
                                         </>
                                     )}
                                     {mission.status === 'VALIDATED' && mission.verification_status === 'CLIENT_APPROVAL_REQUIRED' && (
@@ -1147,11 +1154,16 @@ export default function MeasureMissionPage() {
                                     {mission.status === 'VALIDATED' && mission.verification_status === 'SITE_VERIFICATION_REQUIRED' && canReview && (
                                         <button onClick={() => confirmVerification('SITE_VERIFIED')} className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-black text-white">Confirmer vérification chantier MMG</button>
                                     )}
-                                    {mission.status === 'VALIDATED' && mission.verification_status === 'READY_FOR_FABRICATION' && mission.technical_dossier?.quoting_status === 'VALIDATED' && (
+                                    {quoteReadyFromMeasure && (
                                         <button onClick={generateQuote} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-black text-white disabled:opacity-50">
                                             <FilePlus2 className="h-4 w-4" />
-                                            Créer la proposition depuis le chiffrage
+                                            {quoteLinkedToOpportunity ? 'Préparer devis lié à la demande' : 'Préparer devis depuis relevé'}
                                         </button>
+                                    )}
+                                    {mission.status === 'VALIDATED' && mission.verification_status === 'READY_FOR_FABRICATION' && !quoteReadyFromMeasure && (
+                                        <span className="inline-flex items-center rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-black text-amber-800">
+                                            Chiffrage BE requis avant devis lié
+                                        </span>
                                     )}
                                     {mission.status === 'QUOTED' && mission.sale_order_id && (
                                         <button onClick={() => navigate(`/sales/${mission.sale_order_id}`)} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-black text-white">

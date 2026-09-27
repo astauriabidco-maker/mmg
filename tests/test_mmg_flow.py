@@ -440,6 +440,109 @@ def test_measure_mission_multi_openings_and_be_review(client):
     assert all(opening["status"] == "VALIDATED" for opening in validated.json()["openings"])
 
 
+def test_completed_measure_opening_advances_linked_opportunity_to_review(client):
+    headers = _login(client)
+    crm_client = client.post(
+        "/v2/partners/clients",
+        json={
+            "name": "Client Relevé Opportunité",
+            "email": "releve-opportunite@example.fr",
+            "phone": "0600001199",
+            "address": "14 rue du Parcours",
+            "country": "FR",
+            "customer_type": "B2C",
+            "is_active": True,
+        },
+        headers=headers,
+    ).json()
+    opportunity = client.post(
+        "/v2/mmg/opportunities",
+        json={
+            "client_id": crm_client["id"],
+            "owner_user_id": 1,
+            "title": "Parcours métré puis devis lié",
+            "need_type": "fourniture_pose",
+            "stage": "nouveau",
+            "probability": 40,
+        },
+        headers=headers,
+    )
+    assert opportunity.status_code == 201, opportunity.text
+    opportunity = opportunity.json()
+    mission = client.post(
+        "/v2/mmg/missions",
+        json={
+            "client_id": crm_client["id"],
+            "opportunity_id": opportunity["id"],
+            "site": {
+                "address_line1": "14 rue du Parcours",
+                "postal_code": "69003",
+                "city": "Lyon",
+                "country": "FR",
+            },
+            "purpose": "Relevé pour devis lié",
+            "status": "TO_SCHEDULE",
+        },
+        headers=headers,
+    )
+    assert mission.status_code == 200, mission.text
+    mission = mission.json()
+
+    opening = client.post(
+        f"/v2/mmg/missions/{mission['id']}/openings",
+        json={
+            "label": "F01 - fenêtre séjour",
+            "room": "Séjour",
+            "product_type": "WINDOW",
+            "width_mm": 1200,
+            "height_mm": 1400,
+            "material": "ALU",
+            "opening_type": "Battant",
+            "sash_count": 2,
+            "status": "COMPLETE",
+        },
+        headers=headers,
+    )
+    assert opening.status_code == 200, opening.text
+
+    pending_review = client.get(
+        f"/v2/mmg/missions/{mission['id']}",
+        headers=headers,
+    )
+    assert pending_review.status_code == 200, pending_review.text
+    assert pending_review.json()["status"] == "TO_SCHEDULE"
+
+    mission_detail = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "TO_REVIEW"},
+        headers=headers,
+    )
+    assert mission_detail.status_code == 200, mission_detail.text
+    assert mission_detail.json()["status"] == "TO_REVIEW"
+    assert mission_detail.json()["openings"][0]["status"] == "TO_REVIEW"
+
+    linked_opportunity = client.get(
+        f"/v2/mmg/opportunities/{opportunity['id']}",
+        headers=headers,
+    )
+    assert linked_opportunity.status_code == 200, linked_opportunity.text
+    assert linked_opportunity.json()["stage"] == "metre_en_cours"
+
+    validated = client.patch(
+        f"/v2/mmg/missions/{mission['id']}/status",
+        json={"status": "VALIDATED"},
+        headers=headers,
+    )
+    assert validated.status_code == 200, validated.text
+
+    linked_opportunity = client.get(
+        f"/v2/mmg/opportunities/{opportunity['id']}",
+        headers=headers,
+    )
+    assert linked_opportunity.status_code == 200, linked_opportunity.text
+    assert linked_opportunity.json()["stage"] == "proposition_a_preparer"
+
+
 def test_validated_measure_mission_generates_idempotent_multi_opening_quote(client):
     headers = _login(client)
     crm_client = client.post(
