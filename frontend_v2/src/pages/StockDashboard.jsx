@@ -136,7 +136,11 @@ export default function StockDashboard({ surface = 'management' }) {
     const { data: supplierDirectory = [] } = useQuery({ queryKey: ['suppliers', 'catalog'], queryFn: async () => { const res = await api.get('/v2/suppliers/'); return res.data; }});
     const { data: products = [], isLoading: loadingProducts } = useQuery({ queryKey: ['products'], queryFn: async () => { const res = await api.get('/v2/stock/products'); return res.data; }});
     const { data: locations = [], isLoading: loadingLocations } = useQuery({ queryKey: ['locations'], queryFn: async () => { const res = await api.get('/v2/stock/locations'); return res.data; }});
-    const { data: quants = [], isLoading: loadingQuants } = useQuery({ queryKey: ['quants'], queryFn: async () => { const res = await api.get('/v2/stock/quants'); return res.data; }});
+    const { data: quants = [], isLoading: loadingQuants, isFetching: fetchingQuants, refetch: refetchQuants } = useQuery({
+        queryKey: ['quants'],
+        queryFn: async () => { const res = await api.get('/v2/stock/quants'); return res.data; },
+        placeholderData: (previousData) => previousData || [],
+    });
     const { data: transactions = [], isLoading: loadingTransactions } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const res = await api.get('/v2/stock/transactions'); return res.data; }});
     const { data: reservations = [] } = useQuery({ queryKey: ['workshop-reservations'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-debits/reservations?status=reserved'); return res.data; }});
     const { data: workshopPreparations = [] } = useQuery({ queryKey: ['workshop-preparations'], queryFn: async () => { const res = await api.get('/v2/stock/workshop-preparations'); return res.data; }});
@@ -285,6 +289,11 @@ export default function StockDashboard({ surface = 'management' }) {
         params.set('stockMenu', currentMenu);
         navigate(`/manager?${params.toString()}`, { replace: true });
     }, [currentMenu, isDashboardSurface, location.pathname, location.search, navigate]);
+
+    useEffect(() => {
+        if (currentMenu !== 'stock') return;
+        refetchQuants();
+    }, [currentMenu, refetchQuants]);
 
     // Inline edit states
     const [addingSubLocTo, setAddingSubLocTo] = useState(null);
@@ -2294,6 +2303,9 @@ export default function StockDashboard({ surface = 'management' }) {
         valuation: summary.valuation + Number(row.valuation || 0),
         unclear: summary.unclear + (row.locationQuality && !row.locationQuality.exploitable ? 1 : 0),
     }), { physical: 0, reserved: 0, available: 0, valuation: 0, unclear: 0 });
+    const stockRealHydrating = currentMenu === 'stock'
+        && stockRealRows.length === 0
+        && (loadingProducts || loadingLocations || loadingQuants || fetchingQuants);
     const locationTemplates = [
         { label: 'Magasin', name: 'Magasin principal', usage: 'internal', hint: 'Zone racine pour réception et stockage courant.' },
         { label: 'Zone', name: 'Zone ALU', usage: 'internal', hint: 'Famille matière ou zone physique de rangement.' },
@@ -4446,7 +4458,9 @@ export default function StockDashboard({ surface = 'management' }) {
                     <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{inventoryTitle}</p>
                         <h2 className="text-xl font-black text-slate-900 tracking-tight">
-                            {groupedData.length.toLocaleString('fr-FR')} fiche(s) affichée(s)
+                            {stockRealHydrating
+                                ? 'Chargement du stock réel…'
+                                : `${groupedData.length.toLocaleString('fr-FR')} fiche(s) affichée(s)`}
                         </h2>
                     </div>
 
@@ -4574,7 +4588,17 @@ export default function StockDashboard({ surface = 'management' }) {
                                 </div>
                             </div>
 
-                            {stockRealRows.length === 0 ? (
+                            {stockRealHydrating ? (
+                                <div className="flex h-64 flex-col items-center justify-center rounded-3xl border-2 border-dashed border-blue-100 bg-blue-50/40">
+                                    <RefreshCw className="mb-4 h-10 w-10 animate-spin text-blue-500" />
+                                    <p className="text-center font-black text-slate-700">
+                                        Chargement du stock réel
+                                    </p>
+                                    <p className="mt-1 text-center text-sm font-bold text-slate-500">
+                                        Les quantités physiques, réservations et emplacements sont en cours de synchronisation.
+                                    </p>
+                                </div>
+                            ) : stockRealRows.length === 0 ? (
                                 <div className="flex h-64 flex-col items-center justify-center rounded-3xl border-2 border-dashed border-slate-200 bg-white">
                                     <Box className="mb-4 h-12 w-12 text-slate-300" />
                                     <p className="text-center font-bold text-slate-400">
