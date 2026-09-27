@@ -21,6 +21,43 @@ router = APIRouter(
 CARD_PAYMENT_METHODS = {"CB", "CARD"}
 
 
+def _resolve_pos_source_location_id(db: Session, variant_id: int, quantity: float) -> int:
+    requested_quantity = float(quantity or 0)
+    candidates = (
+        db.query(models.StockQuant)
+        .join(models.StockLocation, models.StockQuant.location_id == models.StockLocation.id)
+        .filter(
+            models.StockQuant.variant_id == variant_id,
+            models.StockLocation.usage == "internal",
+            models.StockLocation.is_active == True,
+            models.StockQuant.quantity >= requested_quantity,
+        )
+        .all()
+    )
+    if candidates:
+        candidates.sort(
+            key=lambda quant: (
+                quant.location.name != "WH/Stock",
+                -float(quant.quantity or 0),
+                quant.location_id,
+            )
+        )
+        return candidates[0].location_id
+
+    total_internal = (
+        db.query(models.StockQuant)
+        .join(models.StockLocation, models.StockQuant.location_id == models.StockLocation.id)
+        .filter(
+            models.StockQuant.variant_id == variant_id,
+            models.StockLocation.usage == "internal",
+            models.StockLocation.is_active == True,
+        )
+        .all()
+    )
+    available = sum(float(quant.quantity or 0) for quant in total_internal)
+    raise ValueError(f"Stock POS insuffisant: {available:g} disponible < {requested_quantity:g} demandé.")
+
+
 def _session_invoice_payments(db: Session, session: models.POSSession) -> list[models.Payment]:
     session_marker = f"Payé en Caisse ({session.reference})"
     return (
@@ -350,9 +387,6 @@ def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db))
     db.add(order)
     db.flush()
     
-    global_location = db.query(models.StockLocation).filter(models.StockLocation.id == 1).first() # Default location 1
-    if not global_location:
-        global_location = InventoryService.get_or_create_location(db, "WH/Stock", "internal")
     customer_location = InventoryService.get_or_create_location(db, "Partner/Customer", "customer")
     
     for item in req.items:
@@ -366,10 +400,11 @@ def pos_checkout(req: schemas.POSCheckoutRequest, db: Session = Depends(get_db))
         db.add(ol)
         
         try:
+            source_location_id = _resolve_pos_source_location_id(db, item.variant_id, item.quantity)
             InventoryService.move_stock(
                 db,
                 variant_id=item.variant_id,
-                source_location_id=global_location.id,
+                source_location_id=source_location_id,
                 dest_location_id=customer_location.id,
                 quantity=item.quantity,
                 reference=f"POS Out - {ref}",

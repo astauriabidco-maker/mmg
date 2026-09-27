@@ -382,6 +382,70 @@ def test_pos_checkout_seals_invoice_and_counts_cb_sales(client: TestClient):
         assert payment.method == "CB"
 
 
+def test_pos_checkout_uses_available_internal_stock_location(client: TestClient):
+    headers = _auth_headers(client)
+    session_local = client.testing_session_local
+
+    with session_local() as db:
+        product = models.Product(
+            reference_base="POS-ZONE",
+            name="Article POS zone",
+            material_type="ALU",
+            unit="pce",
+            available_in_pos=True,
+            catalog_status="ACTIVE",
+        )
+        db.add(product)
+        db.flush()
+        variant = models.ProductVariant(
+            product_id=product.id,
+            reference="POS-ZONE-STD",
+            color="Std",
+            cost_price=1.0,
+            quantity_in_stock=1.0,
+        )
+        db.add(variant)
+        db.flush()
+        stock_root = models.StockLocation(name="STOCK ATELIER ALU", usage="internal", is_active=True)
+        db.add(stock_root)
+        db.flush()
+        zone = models.StockLocation(name="A1-1", usage="internal", is_active=True, parent_id=stock_root.id)
+        db.add(zone)
+        db.flush()
+        db.add(models.StockQuant(variant_id=variant.id, location_id=zone.id, quantity=1.0))
+        db.commit()
+        variant_id = variant.id
+        zone_id = zone.id
+
+    open_response = client.post("/v2/pos/sessions/open?starting_cash=0", headers=headers)
+    assert open_response.status_code == 200, open_response.text
+
+    checkout_response = client.post(
+        "/v2/pos/checkout",
+        headers=headers,
+        json={
+            "payment_method": "CB",
+            "amount_paid": 1.0,
+            "tax_rate": 20.0,
+            "items": [
+                {
+                    "variant_id": variant_id,
+                    "product_name": "Article POS zone (Std)",
+                    "quantity": 1,
+                    "price": 1.0,
+                }
+            ],
+        },
+    )
+    assert checkout_response.status_code == 200, checkout_response.text
+
+    with session_local() as db:
+        source_quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=zone_id).one()
+        assert source_quant.quantity == 0
+        move = db.query(models.StockMove).filter_by(variant_id=variant_id, document_type="pos_order").one()
+        assert move.location_id == zone_id
+
+
 def test_seal_excludes_status_from_payload(client: TestClient):
     """Deux pièces identiques hors status produisent le même HMAC."""
     headers = _auth_headers(client)
