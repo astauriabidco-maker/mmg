@@ -16,8 +16,8 @@ import api from '../services/api';
 const STAGES = {
     nouveau: { label: 'Nouveau besoin', probability: 10 },
     qualifie: { label: 'Besoin qualifié', probability: 30 },
-    metre_a_planifier: { label: 'Métré à planifier', probability: 40 },
-    metre_en_cours: { label: 'Métré en cours', probability: 50 },
+    metre_a_planifier: { label: 'Relevé à planifier', probability: 40 },
+    metre_en_cours: { label: 'Relevé / BE en cours', probability: 50 },
     proposition_a_preparer: { label: 'Proposition à préparer', probability: 60 },
     proposition_a_valider: { label: 'Proposition à valider', probability: 65 },
     proposition_envoyee: { label: 'Proposition envoyée', probability: 70 },
@@ -37,7 +37,7 @@ const COLUMNS = [
     {
         key: 'qualified',
         label: 'Étude & chiffrage',
-        detail: 'Mission, BE et logiciel métier',
+        detail: 'Bureau, site, BE et logiciel métier',
         stages: ['qualifie', 'metre_a_planifier', 'metre_en_cours', 'proposition_a_preparer'],
         tone: 'emerald',
     },
@@ -86,6 +86,37 @@ const ORIGIN_OPTIONS = [
     ['RECOMMANDATION', 'Recommandation'],
     ['APPEL_OFFRES', "Appel d'offres"],
     ['AUTRE', 'Autre'],
+];
+
+const STUDY_ROUTE_OPTIONS = [
+    {
+        value: 'CLIENT_DOCUMENTS',
+        title: 'Client au bureau',
+        subtitle: 'Plans, photos ou cotes apportés par le client.',
+        detail: 'Créer un dossier de cotes à contrôler par le BE avant devis.',
+        icon: ClipboardList,
+    },
+    {
+        value: 'SITE_VISIT',
+        title: 'Métré sur site',
+        subtitle: 'MMG se déplace pour relever les ouvrages.',
+        detail: 'Planifier une mission, affecter un métreur, puis valider le relevé.',
+        icon: CalendarClock,
+    },
+    {
+        value: 'AGENCY_ASSISTED',
+        title: 'Saisie accompagnée',
+        subtitle: 'Le bureau saisit les éléments avec le client.',
+        detail: 'Préparer un dossier technique léger puis contrôle BE.',
+        icon: UserRound,
+    },
+    {
+        value: 'DIRECT_QUOTE',
+        title: 'Devis direct',
+        subtitle: 'Besoin simple sans fabrication sur mesure posée.',
+        detail: 'Composer la proposition depuis la fiche client.',
+        icon: Target,
+    },
 ];
 
 const EMPTY_DRAFT = {
@@ -659,6 +690,17 @@ function QualificationDialog({
         },
     });
     const update = (field, value) => setForm(current => ({ ...current, [field]: value }));
+    const updateProjectScope = value => setForm(current => ({
+        ...current,
+        project_scope: value,
+        study_route: value === 'SUPPLY_AND_INSTALL' && current.study_route === 'DIRECT_QUOTE'
+            ? 'SITE_VISIT'
+            : current.study_route,
+    }));
+    const selectStudyRoute = value => {
+        if (value === 'DIRECT_QUOTE' && requiresSite) return;
+        update('study_route', value);
+    };
     const submit = event => {
         event.preventDefault();
         onSubmit({
@@ -715,7 +757,7 @@ function QualificationDialog({
                             </select>
                         </Field>
                         <Field label="Périmètre commercial">
-                            <select value={form.project_scope} onChange={event => update('project_scope', event.target.value)} className={inputClass}>
+                            <select value={form.project_scope} onChange={event => updateProjectScope(event.target.value)} className={inputClass}>
                                 <option value="SUPPLY_AND_INSTALL">Fourniture avec pose</option>
                                 <option value="SUPPLY_ONLY">Fourniture seule</option>
                             </select>
@@ -744,22 +786,44 @@ function QualificationDialog({
 
                     <section className="space-y-4 border border-emerald-200 bg-emerald-50 p-5">
                         <div>
-                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">2. Parcours d’étude</p>
-                            <p className="mt-1 text-sm font-semibold text-emerald-950">La mission et ses contrôles seront créés automatiquement.</p>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">2. Comment traiter ce besoin ?</p>
+                            <p className="mt-1 text-sm font-semibold text-emerald-950">Choisissez le parcours que le bureau doit suivre.</p>
                         </div>
-                        <Field label="Origine des cotes / étude">
-                            <select value={form.study_route} onChange={event => update('study_route', event.target.value)} className={inputClass}>
-                                <option value="SITE_VISIT">Métré MMG sur chantier</option>
-                                <option value="CLIENT_DOCUMENTS">Plans et cotes fournis par le client</option>
-                                <option value="AGENCY_ASSISTED">Saisie accompagnée en agence</option>
-                                <option value="DIRECT_QUOTE" disabled={requiresSite}>Proposition directe sans fabrication sur mesure</option>
-                            </select>
-                        </Field>
-                        <div className="border-l-4 border-emerald-500 bg-white px-4 py-3 text-xs font-bold leading-5 text-emerald-950">
-                            {form.study_route === 'SITE_VISIT' && 'Une mission à planifier sera créée avec adresse chantier obligatoire.'}
-                            {form.study_route === 'CLIENT_DOCUMENTS' && 'Les documents client et les ouvrages devront être contrôlés par le BE.'}
-                            {form.study_route === 'AGENCY_ASSISTED' && 'Les cotes seront saisies avec le client puis contrôlées par le BE.'}
-                            {form.study_route === 'DIRECT_QUOTE' && 'Aucune mission technique : la proposition sera composée depuis la fiche client.'}
+                        <div className="grid gap-3">
+                            {STUDY_ROUTE_OPTIONS.map(option => {
+                                const selected = form.study_route === option.value;
+                                const disabled = option.value === 'DIRECT_QUOTE' && requiresSite;
+                                const Icon = option.icon;
+                                return (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        disabled={disabled}
+                                        onClick={() => selectStudyRoute(option.value)}
+                                        className={`flex min-h-24 items-start gap-3 border px-4 py-3 text-left transition ${
+                                            selected
+                                                ? 'border-emerald-500 bg-white shadow-sm'
+                                                : 'border-emerald-100 bg-white/70 hover:border-emerald-300 hover:bg-white'
+                                        } ${disabled ? 'cursor-not-allowed opacity-45' : ''}`}
+                                    >
+                                        <span className={`mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${
+                                            selected ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-500'
+                                        }`}>
+                                            <Icon className="h-4 w-4" />
+                                        </span>
+                                        <span className="min-w-0 flex-1">
+                                            <span className="flex items-center gap-2">
+                                                <span className="text-sm font-black text-slate-950">{option.title}</span>
+                                                {selected && <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
+                                            </span>
+                                            <span className="mt-1 block text-xs font-bold text-slate-600">{option.subtitle}</span>
+                                            <span className="mt-1 block text-[11px] font-semibold leading-4 text-slate-500">
+                                                {disabled ? 'Indisponible avec une fourniture posée.' : option.detail}
+                                            </span>
+                                        </span>
+                                    </button>
+                                );
+                            })}
                         </div>
                         <div className="grid gap-4 sm:grid-cols-2">
                             <Field label="Budget estimé HT">
