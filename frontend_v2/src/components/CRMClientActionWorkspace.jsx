@@ -25,9 +25,9 @@ import {
     X,
 } from 'lucide-react';
 import api from '../services/api';
+import { isConvertedOpportunity, isOpenOpportunity } from '../utils/crmOpportunityStatus';
 
 const OPEN_ACTIVITY_STATUSES = new Set(['A_FAIRE', 'TODO', 'TO_DO', 'PLANNED', 'OPEN', 'PENDING']);
-const CLOSED_OPPORTUNITY_STATUSES = new Set(['GAGNE', 'PERDU', 'WON', 'LOST', 'CANCELLED', 'CLOSED']);
 
 const asList = (payload) => {
     if (Array.isArray(payload)) return payload;
@@ -57,14 +57,6 @@ const toActivity = (item) => ({
 });
 
 const isOpenActivity = (activity) => OPEN_ACTIVITY_STATUSES.has(String(activity.status || '').toUpperCase());
-const isConvertedOpportunity = (opportunity) => (
-    Boolean(opportunity.won_at || opportunity.converted_at || opportunity.converted || opportunity.is_converted || opportunity.sale_order_id || opportunity.sale_id || opportunity.order_id)
-    || ['GAGNE', 'WON'].includes(String(opportunity.stage || '').toUpperCase())
-);
-const isOpenOpportunity = (opportunity) => (
-    !isConvertedOpportunity(opportunity)
-    && !CLOSED_OPPORTUNITY_STATUSES.has(String(opportunity.stage || '').toUpperCase())
-);
 
 const CONTACT_PRIORITY_OPTIONS = [
     [1, 'Priorité 1 · décision rapide'],
@@ -818,6 +810,7 @@ export default function CRMClientActionWorkspace({
                                 formatDate={formatDate}
                                 formatMoney={formatMoney}
                                 onPlanMeasure={() => onPlanMeasureForOpportunity(opportunity)}
+                                onOpenSale={() => onOpenSale(opportunity.sale_order_id)}
                             />
                         ))}
                         {convertedOpportunities.length > 0 && (
@@ -1131,7 +1124,7 @@ function MiniMetric({ label, value }) {
     );
 }
 
-function OpportunityRow({ opportunity, formatDate, formatMoney, onPlanMeasure, converted }) {
+function OpportunityRow({ opportunity, formatDate, formatMoney, onPlanMeasure, onOpenSale, converted }) {
     return (
         <div className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1.4fr)_140px_110px_130px_minmax(160px,1fr)_auto] md:items-center">
             <div className="min-w-0">
@@ -1160,11 +1153,11 @@ function OpportunityRow({ opportunity, formatDate, formatMoney, onPlanMeasure, c
                 </span>
             ) : (
                 <button
-                    onClick={onPlanMeasure}
+                    onClick={opportunity.sale_order_id ? onOpenSale : onPlanMeasure}
                     className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-black text-emerald-800 hover:bg-emerald-100"
                 >
-                    <ClipboardList className="h-4 w-4" />
-                    Planifier un métré
+                    {opportunity.sale_order_id ? <FileText className="h-4 w-4" /> : <ClipboardList className="h-4 w-4" />}
+                    {opportunity.sale_order_id ? 'Ouvrir le devis' : 'Planifier un métré'}
                 </button>
             )}
         </div>
@@ -1363,7 +1356,7 @@ function opportunityLabel(stage) {
         QUOTATION: 'Chiffrage',
         NEGOTIATION: 'Négociation',
     };
-    return labels[String(stage || '').toUpperCase()] || stage;
+    return labels[stage] || labels[String(stage || '').toUpperCase()] || stage;
 }
 
 function isOverdue(value) {
