@@ -254,7 +254,7 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
                 "available_quantity": 7.0,
                 "location": {
                     "id": target_location_id,
-                    "name": "WH/Test Achats",
+                    "name": "Rack Achats",
                     "usage": "internal",
                     "parent_id": None,
                     "is_active": True,
@@ -268,9 +268,11 @@ def test_purchase_order_receipt_creates_stock_move_and_quant():
         assert len(transactions) == 1
         assert transactions[0]["reference"] == f"IN/{details['reference']}/{details['lines'][0]['id']}"
         assert transactions[0]["quantity_change"] == 7.0
-        assert transactions[0]["transaction_type"] == "Fournisseurs \u2794 WH/Test Achats"
+        assert transactions[0]["transaction_type"] == "Fournisseurs \u2794 Rack Achats"
         assert transactions[0]["author"] == "purchase-tester"
-        assert transactions[0]["notes"] == f"R\u00e9ception fournisseur depuis {details['reference']}"
+        assert transactions[0]["notes"] == (
+            f"R\u00e9ception fournisseur depuis {details['reference']} \u00b7 Rang\u00e9 dans Rack Achats"
+        )
         assert transactions[0]["source_screen"] == "purchases.receipt"
         assert transactions[0]["document_type"] == "purchase_order"
         assert transactions[0]["document_reference"] == details["reference"]
@@ -780,7 +782,7 @@ def test_purchase_dashboard_pdf_and_supplier_reminder(purchase_test_client, monk
     assert details["supplier_reminders"][0]["message"] == "Merci de confirmer la date de livraison."
 
     with TestingSessionLocal() as db:
-        stock_location = db.query(models.StockLocation).filter(models.StockLocation.name == "WH/ACH-DASH-001").first()
+        stock_location = db.query(models.StockLocation).filter(models.StockLocation.name == "Rack ACH-DASH-001").first()
         assert stock_location is not None
         stock_location_id = stock_location.id
 

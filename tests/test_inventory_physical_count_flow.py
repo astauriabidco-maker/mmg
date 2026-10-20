@@ -61,7 +61,7 @@ def test_physical_inventory_validation_creates_adjustment_move():
         location_response = client.post(
             "/v2/stock/locations",
             headers=headers,
-            json={"name": "WH/Inventaire Test", "usage": "internal"},
+            json={"name": "WH/Rack inventaire Test", "usage": "internal"},
         )
         assert location_response.status_code == 200, location_response.text
         location_id = location_response.json()["id"]
@@ -69,10 +69,10 @@ def test_physical_inventory_validation_creates_adjustment_move():
         rename_response = client.put(
             f"/v2/stock/locations/{location_id}",
             headers=headers,
-            json={"name": "WH/Inventaire Test Renommé"},
+            json={"name": "WH/Rack inventaire Test Renommé"},
         )
         assert rename_response.status_code == 200, rename_response.text
-        assert rename_response.json()["name"] == "WH/Inventaire Test Renommé"
+        assert rename_response.json()["name"] == "WH/Rack inventaire Test Renommé"
 
         initial_move = client.post(
             "/v2/stock/transaction",
@@ -181,7 +181,7 @@ def test_physical_inventory_session_locks_zone_until_cancelled():
         location_response = client.post(
             "/v2/stock/locations",
             headers=headers,
-            json={"name": "WH/Inventaire Conflit", "usage": "internal"},
+            json={"name": "WH/Rack inventaire Conflit", "usage": "internal"},
         )
         assert location_response.status_code == 200, location_response.text
         location_id = location_response.json()["id"]
@@ -254,7 +254,7 @@ def test_manual_inventory_adjustment_requires_reason_and_exports_audit():
         location_response = client.post(
             "/v2/stock/locations",
             headers=headers,
-            json={"name": "WH/Audit", "usage": "internal"},
+            json={"name": "WH/Rack audit", "usage": "internal"},
         )
         assert location_response.status_code == 200, location_response.text
         location_id = location_response.json()["id"]
@@ -338,7 +338,7 @@ def test_physical_inventory_recount_blocks_validation_and_export_report():
         location_response = client.post(
             "/v2/stock/locations",
             headers=headers,
-            json={"name": "WH/Inventaire Recompte", "usage": "internal"},
+            json={"name": "WH/Rack inventaire Recompte", "usage": "internal"},
         )
         assert location_response.status_code == 200, location_response.text
         location_id = location_response.json()["id"]

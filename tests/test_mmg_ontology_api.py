@@ -199,6 +199,9 @@ def test_mmg_ontology_api_is_enriched_by_live_business_data(isolated_client):
         db.add(variant)
         db.flush()
 
+        # Le besoin live utilise les quants physiques, pas le cache de la variante.
+        db.add(models.StockQuant(variant_id=variant.id, location_id=location.id, quantity=5))
+
         inventory_session = models.InventorySession(
             reference="INV-ONTO-001",
             name="Inventaire ontologie",
@@ -310,8 +313,13 @@ def test_mmg_ontology_api_is_enriched_by_live_business_data(isolated_client):
     assert profile["entities"]["inventory_session"]["status_counts"]["validated"] == 1
     assert profile["entities"]["inventory_count_line"]["status_counts"]["validated"] == 1
     assert profile["entities"]["supplier"]["status_counts"]["ACTIVE"] == 1
-    assert profile["entities"]["purchase_need"]["record_count"] >= 1
-    assert profile["entities"]["purchase_need"]["status_counts"]["URGENT"] == 1
+    purchase_need = profile["entities"]["purchase_need"]
+    assert purchase_need["record_count"] == 1
+    assert purchase_need["status_counts"] == {"URGENT": 1}
+    assert purchase_need["net_need_quantity_total"] == 12.0  # Cible 20 - stock 5 - commande 1 - demande 2.
+    assert purchase_need["orderable_count"] == 1
+    assert purchase_need["blocked_count"] == 0
+    assert purchase_need["signal_counts"] == {"OPEN_PURCHASE_ORDER": 1, "OPEN_PURCHASE_REQUEST": 1}
     assert profile["entities"]["purchase_request"]["status_counts"]["PENDING_APPROVAL"] == 1
     assert profile["entities"]["purchase_order"]["status_counts"]["PARTIAL"] == 1
     assert profile["entities"]["purchase_receipt"]["record_count"] == 1

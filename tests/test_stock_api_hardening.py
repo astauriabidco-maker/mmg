@@ -109,10 +109,10 @@ def _seed_product_variant(db, reference: str = "HARD-001") -> int:
 
 
 def _seed_location_tree(db):
-    """Entrepôt parent > rack enfant, plus un second entrepôt hors zone."""
+    """Entrepôt parent > rack enfant, plus un rack final hors zone."""
     parent = models.StockLocation(name="TEST/Entrepôt parent", usage="internal", is_active=True)
     child = models.StockLocation(name="TEST/Rack enfant", usage="internal", is_active=True)
-    other = models.StockLocation(name="TEST/Autre entrepôt", usage="internal", is_active=True)
+    other = models.StockLocation(name="TEST/Rack hors zone", usage="internal", is_active=True)
     db.add_all([parent, child, other])
     db.flush()
     child.parent_id = parent.id
@@ -217,6 +217,13 @@ def test_zone_lock_on_parent_blocks_move_on_child_location(stock_client):
         variant_id = _seed_product_variant(db)
         parent_id, child_id, other_id = _seed_location_tree(db)
 
+    initial_move = client.post(
+        "/v2/stock/transaction",
+        headers=admin,
+        json={"variant_id": variant_id, "location_dest_id": child_id, "quantity": 5},
+    )
+    assert initial_move.status_code == 200, initial_move.text
+
     # Campagne gelée sur l'entrepôt PARENT.
     session_response = client.post(
         "/v2/stock/inventory-sessions",
@@ -226,6 +233,11 @@ def test_zone_lock_on_parent_blocks_move_on_child_location(stock_client):
     assert session_response.status_code == 200, session_response.text
     session_id = session_response.json()["id"]
     assert session_response.json()["zone_locked"] is True
+    lines = session_response.json()["lines"]
+    assert len(lines) == 1
+    assert lines[0]["variant_id"] == variant_id
+    assert lines[0]["location_id"] == child_id
+    assert lines[0]["expected_quantity"] == 5.0
 
     # Réception sur l'emplacement ENFANT → bloquée (423).
     child_move = client.post(
@@ -235,14 +247,20 @@ def test_zone_lock_on_parent_blocks_move_on_child_location(stock_client):
     )
     assert child_move.status_code == 423
     assert "Zone gelée" in child_move.json()["detail"]
+    with TestingSessionLocal() as db:
+        quant = db.query(models.StockQuant).filter_by(variant_id=variant_id, location_id=child_id).one()
+        assert quant.quantity == 5.0
 
-    # Réception sur le parent lui-même → toujours bloquée (comportement existant).
+    # La qualité de destination est contrôlée avant le gel : le parent
+    # structure les campagnes, mais ne reçoit pas de stock directement.
     parent_move = client.post(
         "/v2/stock/transaction",
         headers=admin,
         json={"variant_id": variant_id, "location_dest_id": parent_id, "quantity": 3},
     )
-    assert parent_move.status_code == 423
+    assert parent_move.status_code == 400, parent_move.text
+    assert "Emplacement non exploitable" in parent_move.json()["detail"]
+    assert "rack, casier ou zone atelier à préciser" in parent_move.json()["detail"]
 
     # Réception sur un entrepôt hors zone → autorisée.
     other_move = client.post(
@@ -274,7 +292,7 @@ def test_transactions_expose_location_ids_and_names(stock_client):
 
     with TestingSessionLocal() as db:
         variant_id = _seed_product_variant(db, reference="HARD-TX")
-        parent_id, child_id, _other_id = _seed_location_tree(db)
+        parent_id, child_id, other_id = _seed_location_tree(db)
 
     move = client.post(
         "/v2/stock/transaction",
@@ -293,14 +311,14 @@ def test_transactions_expose_location_ids_and_names(stock_client):
     assert row["location_from_name"] is None
     assert row["location_to_name"] == "TEST/Rack enfant"
 
-    # Transfert interne enfant → parent : les deux côtés sont renseignés.
+    # Transfert entre deux racks finaux : les deux côtés sont renseignés.
     transfer = client.post(
         "/v2/stock/transaction",
         headers=admin,
         json={
             "variant_id": variant_id,
             "location_id": child_id,
-            "location_dest_id": parent_id,
+            "location_dest_id": other_id,
             "quantity": 2,
         },
     )
@@ -308,9 +326,9 @@ def test_transactions_expose_location_ids_and_names(stock_client):
     transactions = client.get("/v2/stock/transactions", headers=admin)
     row = transactions.json()[0]
     assert row["location_id"] == child_id
-    assert row["location_dest_id"] == parent_id
+    assert row["location_dest_id"] == other_id
     assert row["location_from_name"] == "TEST/Rack enfant"
-    assert row["location_to_name"] == "TEST/Entrepôt parent"
+    assert row["location_to_name"] == "TEST/Rack hors zone"
 
 
 # ---------------------------------------------------------------------------

@@ -117,7 +117,7 @@ def test_inventory_session_requires_explicit_internal_location():
 def test_open_inventory_session_blocks_location_archive():
     client, TestingSessionLocal, engine, headers = _client_with_db()
     try:
-        location_id = _create_location(client, headers, "WH/Archive bloquée")
+        location_id = _create_location(client, headers, "WH/Rack archive bloquée")
         session = _create_session(client, headers, name="Campagne archive bloquée", location_id=location_id)
 
         blocked = client.delete(f"/v2/stock/locations/{location_id}", headers=headers)
@@ -148,6 +148,17 @@ def test_inventory_session_blocks_overlapping_parent_child_zones():
         )
         assert child_session.status_code == 409
         assert session["reference"] in child_session.json()["detail"]
+
+        cancelled = client.post(f"/v2/stock/inventory-sessions/{session['id']}/cancel", headers=headers)
+        assert cancelled.status_code == 200, cancelled.text
+        child_session = _create_session(client, headers, name="Campagne enfant", location_id=child_id)
+        parent_session = client.post(
+            "/v2/stock/inventory-sessions",
+            headers=headers,
+            json={"name": "Campagne parent concurrente", "location_id": parent_id},
+        )
+        assert parent_session.status_code == 409, parent_session.text
+        assert child_session["reference"] in parent_session.json()["detail"]
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         models.Base.metadata.drop_all(bind=engine)
@@ -161,10 +172,11 @@ def test_prefill_lines_from_zone_quants_including_children():
         variant_c = _create_product(client, headers, "PREFILL-C", [{"reference": "PREFILL-C-001", "quantity_in_stock": 0}])[0]
 
         parent_id = _create_location(client, headers, "WH/Zone Parent")
+        rack_id = _create_location(client, headers, "WH/Zone Parent/Rack 2", parent_id=parent_id)
         child_id = _create_location(client, headers, "WH/Zone Parent/Rack 1", parent_id=parent_id)
-        outside_id = _create_location(client, headers, "WH/Hors Zone")
+        outside_id = _create_location(client, headers, "WH/Rack hors zone")
 
-        _add_stock(client, headers, variant_a["id"], parent_id, 10)
+        _add_stock(client, headers, variant_a["id"], rack_id, 10)
         _add_stock(client, headers, variant_b["id"], child_id, 5)
         _add_stock(client, headers, variant_c["id"], outside_id, 3)
 
@@ -173,7 +185,7 @@ def test_prefill_lines_from_zone_quants_including_children():
         lines = session["lines"]
         assert len(lines) == 2
         by_variant = {line["variant_id"]: line for line in lines}
-        assert by_variant[variant_a["id"]]["location_id"] == parent_id
+        assert by_variant[variant_a["id"]]["location_id"] == rack_id
         assert by_variant[variant_a["id"]]["expected_quantity"] == 10.0
         assert by_variant[variant_a["id"]]["status"] == "pending"
         assert by_variant[variant_a["id"]]["counted_quantity"] is None
@@ -197,7 +209,7 @@ def test_prefill_lines_from_zone_quants_including_children():
         assert "autre emplacement" in out_of_zone.json()["detail"]
 
         # Comptage des deux lignes (l'emplacement enfant est accepté).
-        line_a = _count_line(client, headers, session_id, variant_a["id"], parent_id, 7, reason="Casse constatée")
+        line_a = _count_line(client, headers, session_id, variant_a["id"], rack_id, 7, reason="Casse constatée")
         assert line_a["expected_quantity"] == 10.0
         assert line_a["variance_quantity"] == -3.0
         assert line_a["status"] == "variance"
@@ -209,7 +221,7 @@ def test_prefill_lines_from_zone_quants_including_children():
         assert validated.json()["status"] == "validated"
 
         with TestingSessionLocal() as db:
-            quant_a = db.query(models.StockQuant).filter_by(variant_id=variant_a["id"], location_id=parent_id).one()
+            quant_a = db.query(models.StockQuant).filter_by(variant_id=variant_a["id"], location_id=rack_id).one()
             quant_c = db.query(models.StockQuant).filter_by(variant_id=variant_c["id"], location_id=outside_id).one()
         assert quant_a.quantity == 7.0
         assert quant_c.quantity == 3.0
@@ -223,12 +235,17 @@ def test_include_all_variants_adds_zero_expected_lines():
     try:
         variant_x = _create_product(client, headers, "ALLVAR-X", [{"reference": "ALLVAR-X-001", "quantity_in_stock": 0}])[0]
         variant_y = _create_product(client, headers, "ALLVAR-Y", [{"reference": "ALLVAR-Y-001", "quantity_in_stock": 0}])[0]
-        location_id = _create_location(client, headers, "WH/AllVariants")
+        location_id = _create_location(client, headers, "WH/Rack AllVariants")
         _add_stock(client, headers, variant_x["id"], location_id, 4)
 
         # Par défaut : seules les variantes avec stock dans la zone sont pré-remplies.
         default_session = _create_session(client, headers, name="Sans option", location_id=location_id)
         assert [line["variant_id"] for line in default_session["lines"]] == [variant_x["id"]]
+
+        cancelled = client.post(f"/v2/stock/inventory-sessions/{default_session['id']}/cancel", headers=headers)
+        assert cancelled.status_code == 200, cancelled.text
+        assert cancelled.json()["status"] == "cancelled"
+        assert cancelled.json()["zone_locked"] is False
 
         # Avec l'option : la variante sans stock apparaît avec un espéré de 0.
         session = _create_session(
@@ -258,7 +275,7 @@ def test_blind_counting_masks_expected_until_validation():
     client, TestingSessionLocal, engine, headers = _client_with_db()
     try:
         variant = _create_product(client, headers, "BLIND-PROD", [{"reference": "BLIND-PROD-001", "quantity_in_stock": 0}])[0]
-        location_id = _create_location(client, headers, "WH/Aveugle")
+        location_id = _create_location(client, headers, "WH/Rack aveugle")
         _add_stock(client, headers, variant["id"], location_id, 10)
 
         session = _create_session(
@@ -305,7 +322,7 @@ def test_double_validation_returns_409():
     client, TestingSessionLocal, engine, headers = _client_with_db()
     try:
         variant = _create_product(client, headers, "DOUBLE-PROD", [{"reference": "DOUBLE-PROD-001", "quantity_in_stock": 0}])[0]
-        location_id = _create_location(client, headers, "WH/Double Validation")
+        location_id = _create_location(client, headers, "WH/Rack double validation")
         _add_stock(client, headers, variant["id"], location_id, 3)
 
         session = _create_session(client, headers, name="Double validation", location_id=location_id)
@@ -327,7 +344,7 @@ def test_double_validation_returns_409():
 def test_zone_locked_defaults_true_server_side():
     client, TestingSessionLocal, engine, headers = _client_with_db()
     try:
-        location_id = _create_location(client, headers, "WH/Gel Défaut")
+        location_id = _create_location(client, headers, "WH/Rack gel défaut")
 
         # Sans mention de zone_locked : le gel est imposé côté serveur.
         default_session = _create_session(client, headers, name="Gel par défaut", location_id=location_id)
@@ -335,7 +352,7 @@ def test_zone_locked_defaults_true_server_side():
 
         # Le client ne peut plus désactiver le gel : l'inventaire se fait sur
         # une zone physique sécurisée jusqu'à clôture.
-        second_location_id = _create_location(client, headers, "WH/Gel Forcé")
+        second_location_id = _create_location(client, headers, "WH/Rack gel forcé")
         forced_lock_session = _create_session(
             client, headers, name="Gel forcé", location_id=second_location_id, zone_locked=False
         )

@@ -68,12 +68,12 @@ def _seed_inventory_data(session_factory):
             quantity_in_stock=13,
         )
         counted_location = models.StockLocation(
-            name="WH/Inventaire complet",
+            name="WH/Rack inventaire complet",
             usage="internal",
             is_active=True,
         )
         outside_location = models.StockLocation(
-            name="WH/Hors campagne",
+            name="WH/Rack hors campagne",
             usage="internal",
             is_active=True,
         )
