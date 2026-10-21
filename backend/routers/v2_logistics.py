@@ -8,6 +8,7 @@ from ..database import get_db
 from .. import models, schemas
 from ..core import security, uploads
 from ..core.time import utcnow
+from ..services.delivery_details import populate_delivery_details
 
 router = APIRouter(
     prefix="/v2/logistics",
@@ -142,6 +143,16 @@ def create_route(route: schemas.DeliveryRouteCreate, db: Session = Depends(get_d
     if role not in ["ADMIN", "MANAGER"]:
         raise HTTPException(status_code=403, detail="Non autorisé")
 
+    if not route.driver_name.strip() or not route.vehicle.strip() or not route.note_ids:
+        raise HTTPException(400, "Chauffeur, véhicule, date et au moins un BL sont requis.")
+    notes = db.query(models.DeliveryNote).filter(models.DeliveryNote.id.in_(route.note_ids)).with_for_update().all()
+    if len(notes) != len(set(route.note_ids)):
+        raise HTTPException(404, "Un BL sélectionné est introuvable.")
+    if any(note.status != "READY" or note.route_id for note in notes):
+        raise HTTPException(409, "Un BL sélectionné est déjà affecté ou n'est plus prêt.")
+    if any(not (note.delivery_address or "").strip() for note in notes):
+        raise HTTPException(400, "Complétez l'adresse de livraison de chaque BL avant de planifier.")
+
     new_route = models.DeliveryRoute(
         reference=generate_route_ref(db),
         driver_name=route.driver_name,
@@ -154,7 +165,6 @@ def create_route(route: schemas.DeliveryRouteCreate, db: Session = Depends(get_d
 
     # Assign notes
     if route.note_ids:
-        notes = db.query(models.DeliveryNote).filter(models.DeliveryNote.id.in_(route.note_ids)).all()
         for note in notes:
             note.route_id = new_route.id
             note.status = "ASSIGNED"
@@ -167,6 +177,25 @@ def create_route(route: schemas.DeliveryRouteCreate, db: Session = Depends(get_d
 def get_ready_notes(db: Session = Depends(get_db)):
     return db.query(models.DeliveryNote).filter(models.DeliveryNote.status == "READY").all()
 
+
+@router.patch("/notes/{note_id}", response_model=schemas.DeliveryNoteResponse)
+def update_note(note_id: int, payload: schemas.DeliveryNoteUpdate, db: Session = Depends(get_db), role: str = Depends(security.get_current_user_role)):
+    if role not in {"ADMIN", "MANAGER"}:
+        raise HTTPException(403, "Non autorisé")
+    note = db.get(models.DeliveryNote, note_id)
+    if not note:
+        raise HTTPException(404, "BL non trouvé")
+    if note.status not in {"READY", "ASSIGNED"}:
+        raise HTTPException(409, "Les coordonnées ne sont plus modifiables après le départ.")
+    if payload.restore_from_source:
+        populate_delivery_details(db, note)
+    for field in ("delivery_address", "contact_phone"):
+        if field in payload.model_fields_set:
+            setattr(note, field, (getattr(payload, field) or "").strip() or None)
+    db.commit()
+    db.refresh(note)
+    return note
+
 @router.post("/notes/{note_id}/deliver", response_model=schemas.DeliveryNoteResponse)
 def mark_delivered(note_id: int, payload: Optional[schemas.DeliveryConfirmRequest] = None, db: Session = Depends(get_db)):
     # Confirmation de livraison depuis l'app chauffeur (signature client)
@@ -174,6 +203,7 @@ def mark_delivered(note_id: int, payload: Optional[schemas.DeliveryConfirmReques
     if not note:
         raise HTTPException(404, "BL non trouvé")
         
+    populate_delivery_details(db, note)
     note.status = "DELIVERED"
     note.signed_at = utcnow()
     
@@ -196,6 +226,20 @@ def mark_delivered(note_id: int, payload: Optional[schemas.DeliveryConfirmReques
             all_delivered = all(n.status == "DELIVERED" for n in route.notes)
             if all_delivered:
                 route.status = "COMPLETED"
+
+    if note.sale_order_id:
+        db.flush()
+        orders = db.query(models.Order).filter(models.Order.sale_order_id == note.sale_order_id).all()
+        delivered_order_ids = {
+            row.order_id for row in db.query(models.DeliveryNote).filter(
+                models.DeliveryNote.sale_order_id == note.sale_order_id,
+                models.DeliveryNote.status == "DELIVERED",
+            ).all()
+        }
+        if orders and all(order.id in delivered_order_ids for order in orders):
+            sale = db.get(models.SaleOrder, note.sale_order_id)
+            if sale and sale.status != "CANCELLED":
+                sale.status = "DELIVERED"
                 
     db.commit()
     db.refresh(note)

@@ -18,6 +18,7 @@ import {
     User,
 } from 'lucide-react';
 import api, { API_BASE_URL } from '../services/api';
+import { logisticsError, routePayload } from '../utils/logistics';
 
 const LOGISTICS_VIEWS = {
     ship: { label: 'À expédier', eyebrow: 'File opérationnelle', icon: Package },
@@ -62,6 +63,11 @@ export default function DeliveryDashboard() {
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [showNewRouteModal, setShowNewRouteModal] = useState(false);
+    const [routeError, setRouteError] = useState('');
+    const [savingRoute, setSavingRoute] = useState(false);
+    const [editingNote, setEditingNote] = useState(null);
+    const [noteError, setNoteError] = useState('');
+    const [savingNote, setSavingNote] = useState(false);
     const [newRouteData, setNewRouteData] = useState({
         driver_name: '',
         vehicle: 'Camion 1 (Iveco)',
@@ -137,18 +143,42 @@ export default function DeliveryDashboard() {
     const changeView = view => setSearchParams({ view: 'logistics', logisticsMenu: view });
 
     const handleCreateRoute = async () => {
-        if (!newRouteData.driver_name.trim() || !newRouteData.planned_date) {
-            alert('Veuillez remplir le chauffeur et la date.');
-            return;
-        }
+        if (savingRoute) return;
+        setRouteError('');
         try {
-            await api.post('/v2/logistics/routes', newRouteData);
+            const payload = routePayload(newRouteData);
+            setSavingRoute(true);
+            await api.post('/v2/logistics/routes', payload);
             setShowNewRouteModal(false);
             setNewRouteData({ driver_name: '', vehicle: 'Camion 1 (Iveco)', planned_date: '', note_ids: [] });
             fetchData();
         } catch (error) {
-            alert(error.response?.data?.detail || 'Erreur de création de tournée');
+            setRouteError(logisticsError(error));
+        } finally {
+            setSavingRoute(false);
         }
+    };
+
+    const saveNote = async (restore = false) => {
+        setNoteError('');
+        setSavingNote(true);
+        try {
+            const response = await api.patch(`/v2/logistics/notes/${editingNote.id}`, restore
+                ? { restore_from_source: true }
+                : { delivery_address: editingNote.delivery_address, contact_phone: editingNote.contact_phone });
+            if (restore) setEditingNote(response.data);
+            else setEditingNote(null);
+            await fetchData();
+        } catch (error) {
+            setNoteError(logisticsError(error));
+        } finally {
+            setSavingNote(false);
+        }
+    };
+
+    const editNote = note => {
+        setNoteError('');
+        setEditingNote({ ...note, id: note.note_id || note.id });
     };
 
     const handleStartRoute = async routeId => {
@@ -193,7 +223,11 @@ export default function DeliveryDashboard() {
                 setShowNewRouteModal(true);
                 return;
             }
-            if (item.next_action === 'HANDLE_ISSUE' || item.next_action === 'COMPLETE_DELIVERY_INFO') {
+            if (item.next_action === 'COMPLETE_DELIVERY_INFO') {
+                editNote(item);
+                return;
+            }
+            if (item.next_action === 'HANDLE_ISSUE') {
                 changeView('returns');
                 return;
             }
@@ -262,6 +296,9 @@ export default function DeliveryDashboard() {
                 <p className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs font-bold text-slate-600">{note.delivery_notes}</p>
             )}
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+                {['READY', 'ASSIGNED'].includes(note.status) && (
+                    <button onClick={() => editNote(note)} className="text-sm font-bold text-blue-600">Coordonnées de livraison</button>
+                )}
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
                     {note.route?.reference ? `Tournée ${note.route.reference}` : 'Non assigné'}
                 </p>
@@ -306,6 +343,7 @@ export default function DeliveryDashboard() {
                                 Démarrer
                             </button>
                         )}
+                        {route.status === 'IN_TRANSIT' && <a href="/driver" className="rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white">Ouvrir la livraison chauffeur</a>}
                     </div>
                 </div>
                 <div className="p-5">
@@ -465,9 +503,28 @@ export default function DeliveryDashboard() {
                 </div>
             </div>
 
+            {editingNote && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+                    <section role="dialog" aria-label="Coordonnées de livraison" className="w-full max-w-xl space-y-4 rounded-lg bg-white p-6">
+                        <h3 className="text-xl font-bold">{editingNote.reference} · Coordonnées de livraison</h3>
+                        <label className="block text-sm font-bold">Adresse de livraison
+                            <textarea aria-label="Adresse de livraison" value={editingNote.delivery_address || ''} onChange={event => setEditingNote({ ...editingNote, delivery_address: event.target.value })} className="mt-2 w-full rounded-lg border p-3" />
+                        </label>
+                        <label className="block text-sm font-bold">Téléphone de contact
+                            <input aria-label="Téléphone de contact" value={editingNote.contact_phone || ''} onChange={event => setEditingNote({ ...editingNote, contact_phone: event.target.value })} className="mt-2 w-full rounded-lg border p-3" />
+                        </label>
+                        {noteError && <p role="alert" className="text-sm text-red-700">{noteError}</p>}
+                        <button disabled={savingNote} onClick={() => saveNote(true)} className="text-sm font-bold text-blue-600">Reprendre les coordonnées du dossier</button>
+                        <div className="flex justify-end gap-3">
+                            <button disabled={savingNote} onClick={() => setEditingNote(null)} className="rounded-lg border px-4 py-2">Annuler</button>
+                            <button disabled={savingNote} onClick={() => saveNote()} className="rounded-lg bg-blue-600 px-4 py-2 text-white">Enregistrer</button>
+                        </div>
+                    </section>
+                </div>
+            )}
             {showNewRouteModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
-                    <div className="w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+                    <div role="dialog" aria-label="Créer une tournée" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-white shadow-2xl">
                         <div className="border-b border-slate-100 px-8 py-6">
                             <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">Planification tournée</p>
                             <h3 className="mt-1 text-2xl font-black text-slate-950">Créer une tournée</h3>
@@ -486,7 +543,7 @@ export default function DeliveryDashboard() {
                                 </Field>
                             </div>
                             <Field label="Date de livraison prévue">
-                                <input type="date" value={newRouteData.planned_date} onChange={event => setNewRouteData({ ...newRouteData, planned_date: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+                                <input aria-label="Date de livraison prévue" type="date" value={newRouteData.planned_date} onChange={event => setNewRouteData(prev => ({ ...prev, planned_date: event.target.value }))} className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-bold outline-none focus:ring-2 focus:ring-blue-500" />
                             </Field>
                             <Field label="BL à charger">
                                 <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-2">
@@ -513,9 +570,10 @@ export default function DeliveryDashboard() {
                                 </div>
                             </Field>
                         </div>
+                        {routeError && <p role="alert" className="px-8 py-3 text-sm font-bold text-red-700">{routeError}</p>}
                         <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-8 py-5">
                             <button onClick={() => setShowNewRouteModal(false)} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-600 hover:bg-slate-50">Annuler</button>
-                            <button onClick={handleCreateRoute} className="rounded-xl bg-blue-600 px-6 py-3 text-sm font-black text-white hover:bg-blue-500">Créer la tournée</button>
+                            <button disabled={savingRoute} onClick={handleCreateRoute} className="rounded-xl bg-blue-600 px-6 py-3 text-sm font-black text-white hover:bg-blue-500 disabled:opacity-50">{savingRoute ? 'Création...' : 'Créer la tournée'}</button>
                         </div>
                     </div>
                 </div>

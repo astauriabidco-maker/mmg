@@ -1980,6 +1980,11 @@ class DeliveryNoteBase(BaseModel):
 class DeliveryNoteCreate(DeliveryNoteBase):
     pass
 
+class DeliveryNoteUpdate(BaseModel):
+    delivery_address: Optional[str] = None
+    contact_phone: Optional[str] = None
+    restore_from_source: bool = False
+
 class DeliveryConfirmRequest(BaseModel):
     """Confirmation de livraison : signature client en base64 (data URL acceptée)."""
     signature_image: Optional[str] = None

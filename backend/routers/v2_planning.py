@@ -392,9 +392,11 @@ async def stop_task(planning_id: int, db: Session = Depends(get_db), current_use
                 reference=ref,
                 order_id=task.order_id,
                 client_name=order.client_name,
-                delivery_address="", # Will be filled by dispatcher or from sale order
+                sale_order_id=order.sale_order_id,
                 status="READY"
             )
+            from ..services.delivery_details import populate_delivery_details
+            populate_delivery_details(db, note)
             db.add(note)
     # ---------------------------
 
