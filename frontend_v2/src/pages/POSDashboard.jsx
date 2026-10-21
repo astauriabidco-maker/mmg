@@ -51,6 +51,7 @@ export default function POSDashboard() {
     const [editingItem, setEditingItem] = useState(null);
     const [editPrice, setEditPrice] = useState('');
     const [editStock, setEditStock] = useState('');
+    const [checkoutError, setCheckoutError] = useState('');
 
     const [showMovement, setShowMovement] = useState(false);
     const [movementType, setMovementType] = useState('OUT');
@@ -254,6 +255,7 @@ export default function POSDashboard() {
 
     const handleCheckout = async (e) => {
         e.preventDefault();
+        setCheckoutError('');
         const payload = {
             items: cart.map(i => ({ variant_id: i.variant_id, quantity: i.quantity, price: i.price, product_name: i.product_name })),
             payment_method: paymentMethod,
@@ -278,10 +280,12 @@ export default function POSDashboard() {
             setShowCheckout(false);
             setAmountPaid('');
             setShowReceipt(true);
+            await fetchItems();
             // Optionally auto-lock after checkout
             // setIsLocked(true);
         } catch (e) {
-            alert("Erreur lors de l'encaissement.");
+            const detail = e.response?.data?.detail;
+            setCheckoutError(typeof detail === 'string' ? detail : "Erreur lors de l'encaissement.");
             console.error(e);
         }
     };
@@ -291,7 +295,7 @@ export default function POSDashboard() {
         if(!editingItem) return;
         try {
             await api.put(`/v2/pos/items/${editingItem.variant_id}?price=${editPrice}&stock=${editStock}`);
-            setItems(prev => prev.map(i => i.variant_id === editingItem.variant_id ? { ...i, price: parseFloat(editPrice), stock: parseFloat(editStock) } : i));
+            await fetchItems();
             setEditingItem(null);
         } catch(err) {
             alert("Erreur lors de la mise à jour");
@@ -728,6 +732,7 @@ export default function POSDashboard() {
                                 </div>
                             )}
 
+                            {checkoutError && <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{checkoutError}</p>}
                             <button type="submit" className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-black text-lg flex justify-center items-center gap-2 shadow-lg">
                                 Ваlider et Vendre
                             </button>

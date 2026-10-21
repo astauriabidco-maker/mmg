@@ -181,9 +181,15 @@ def update_pos_item(variant_id: int, price: float = None, stock: float = None, r
         if target < 0:
             raise HTTPException(status_code=400, detail="Le stock cible ne peut pas être négatif.")
 
-        global_location = db.query(models.StockLocation).filter(models.StockLocation.id == 1).first() # Default location 1
+        global_location = db.query(models.StockLocation).filter(
+            models.StockLocation.id == 1,
+            models.StockLocation.usage == "internal",
+            models.StockLocation.is_active == True,
+        ).first()
         if not global_location:
             global_location = InventoryService.get_or_create_location(db, "WH/Stock", "internal")
+        if global_location.usage != "internal" or not global_location.is_active:
+            raise HTTPException(400, "L'emplacement POS doit être un emplacement interne actif.")
         inventory_location = InventoryService.get_or_create_location(db, "Virtual/Inventory", "inventory")
 
         internal_quants = (
