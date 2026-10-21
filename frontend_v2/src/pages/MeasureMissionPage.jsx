@@ -757,6 +757,23 @@ export default function MeasureMissionPage() {
         }
     };
 
+    const updateTechnicalStockSource = async locationId => {
+        if (!locationId) return;
+        setSaving(true);
+        setError('');
+        try {
+            const response = await api.patch(
+                `/v2/mmg/missions/${missionId}/technical-dossier/stock-source`,
+                { location_id: Number(locationId) },
+            );
+            updateTechnicalDossier(response.data);
+        } catch (requestError) {
+            setError(apiError(requestError));
+        } finally {
+            setSaving(false);
+        }
+    };
+
     const reviewTechnicalGate = async (gate, action) => {
         const needsNote = action === 'REQUEST_CORRECTION';
         const note = technicalReviewNote.trim();
@@ -1429,6 +1446,21 @@ export default function MeasureMissionPage() {
                                                     ))}
                                                 </div>
 
+                                                <div className="mt-4">
+                                                    <label htmlFor="technical-stock-source" className="mb-2 block text-xs font-bold text-slate-700">Emplacement source du stock</label>
+                                                    <select
+                                                        id="technical-stock-source"
+                                                        value={technicalGovernance.stock_source?.location_id || ''}
+                                                        onChange={event => updateTechnicalStockSource(event.target.value)}
+                                                        disabled={saving || !canReviewStock || technicalGovernance.stock_source?.locked}
+                                                        className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 disabled:bg-slate-50"
+                                                    >
+                                                        <option value="" disabled>Choisir un emplacement source</option>
+                                                        {(technicalGovernance.stock_source?.options || []).map(location => (
+                                                            <option key={location.id} value={location.id}>{location.label}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
                                                 <div className="mt-4 flex flex-wrap gap-2">
                                                     {mission.technical_dossier.production_status === 'VALIDATED' && ['TO_REVIEW', 'CORRECTION_REQUIRED'].includes(mission.technical_dossier.stock_status) && canReviewStock && (
                                                         <>

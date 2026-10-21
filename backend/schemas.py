@@ -1146,6 +1146,7 @@ class TechnicalDossierResponse(BaseModel):
     external_project_reference: Optional[str] = None
     stock_status: TechnicalDossierStatus = TechnicalDossierStatus.LOCKED
     stock_review_note: Optional[str] = None
+    stock_source_location_id: Optional[int] = None
     stock_validated_at: Optional[datetime] = None
     stock_validated_by: Optional[str] = None
     launch_status: TechnicalDossierStatus = TechnicalDossierStatus.LOCKED
@@ -1189,6 +1190,10 @@ class TechnicalGateReviewRequest(BaseModel):
     gate: TechnicalGate
     action: TechnicalDossierReviewAction
     note: Optional[str] = None
+
+
+class TechnicalStockSourceRequest(BaseModel):
+    location_id: int = Field(gt=0)
 
 
 class TechnicalRevisionReviewRequest(BaseModel):

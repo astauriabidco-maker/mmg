@@ -2080,6 +2080,7 @@ class TechnicalDossier(Base):
     external_project_reference = Column(String, nullable=True, index=True)
     stock_status = Column(String, default="LOCKED", nullable=False, index=True)
     stock_review_note = Column(Text, nullable=True)
+    stock_source_location_id = Column(Integer, ForeignKey("stock_locations.id"), nullable=True)
     stock_validated_at = Column(DateTime, nullable=True)
     stock_validated_by = Column(String, nullable=True)
     launch_status = Column(String, default="LOCKED", nullable=False, index=True)

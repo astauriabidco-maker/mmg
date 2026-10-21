@@ -412,8 +412,9 @@ def available_quantity_at_location(db: Session, variant_id: int, location_id: in
     return physical, reserved, max(physical - reserved, 0.0)
 
 
-def preview_records(db: Session, records: Iterable[DebitRecord], source_location: str = "WH/Stock") -> list[StockMatch]:
-    source = db.query(models.StockLocation).filter_by(name=source_location, usage="internal").first()
+def preview_records(db: Session, records: Iterable[DebitRecord], source_location: str = "WH/Stock", *, source_location_id: int | None = None) -> list[StockMatch]:
+    query = db.query(models.StockLocation).filter_by(usage="internal", is_active=True)
+    source = query.filter_by(id=source_location_id).first() if source_location_id is not None else query.filter_by(name=source_location).first()
     matches: list[StockMatch] = []
     for record in consolidate_records(list(records)):
         variant = find_variant(db, record)
@@ -498,8 +499,14 @@ def create_reservation(
     allow_missing: bool = False,
     allow_shortage: bool = False,
     technical_cutting_version_id: int | None = None,
+    source_location_id: int | None = None,
 ) -> models.StockReservation:
-    source = get_or_create_location(db, source_location, "internal")
+    if source_location_id is not None:
+        source = db.query(models.StockLocation).filter_by(id=source_location_id, usage="internal", is_active=True).first()
+        if not source:
+            raise ValueError("Emplacement source interne actif introuvable.")
+    else:
+        source = get_or_create_location(db, source_location, "internal")
     consolidated = consolidate_records(records)
     if not consolidated:
         raise ValueError("Aucune ligne atelier exploitable dans les fichiers fournis.")
@@ -510,7 +517,7 @@ def create_reservation(
         production_order_id=production_order_id,
         technical_cutting_version_id=technical_cutting_version_id,
     )
-    matches = preview_records(db, consolidated, source_location)
+    matches = preview_records(db, consolidated, source_location, source_location_id=source.id)
     missing = [match for match in matches if match.status == "not_found"]
     shortages = [match for match in matches if match.status == "shortage"]
     if missing and not allow_missing:

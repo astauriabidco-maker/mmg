@@ -1514,6 +1514,56 @@ def test_technical_cutting_creates_one_traced_reservation_without_reupload():
         _cleanup_test_client(engine)
 
 
+def test_technical_stock_source_is_persisted_and_reservation_uses_exact_location():
+    engine, sessions, client = _make_test_client()
+    try:
+        with sessions() as db:
+            sale_id = _seed_stock_and_sale(db, "VALIDATED", "DEV-SOURCE", workflow_type="FABRICATION_FROM_MEASURE")
+            mission_id, dossier_id, cutting_id = _attach_validated_technical_dossier(db, sale_id)
+            root = models.StockLocation(name="ATELIER", usage="internal", is_active=True)
+            db.add(root)
+            db.flush()
+            empty = models.StockLocation(name="A1-1", usage="internal", is_active=True)
+            source = models.StockLocation(name="A1-1", parent_id=root.id, usage="internal", is_active=True)
+            external = models.StockLocation(name="FOURNISSEUR", usage="supplier", is_active=True)
+            inactive = models.StockLocation(name="INACTIF", usage="internal", is_active=False)
+            db.add_all([empty, source, external, inactive])
+            db.flush()
+            quant = db.query(models.StockQuant).one()
+            quant.location_id = source.id
+            source_id, empty_id = source.id, empty.id
+            invalid_ids = [external.id, inactive.id, 99999]
+            db.commit()
+        headers = _auth_headers(sessions, "source-manager")
+        url = f"/v2/mmg/missions/{mission_id}/technical-dossier"
+        denied = client.patch(f"{url}/stock-source", headers=_auth_headers(sessions, "source-sales", "SALES"), json={"location_id": source_id})
+        assert denied.status_code == 403
+        for location_id in invalid_ids:
+            assert client.patch(f"{url}/stock-source", headers=headers, json={"location_id": location_id}).status_code == 422
+        selected = client.patch(f"{url}/stock-source", headers=headers, json={"location_id": empty_id})
+        assert selected.status_code == 200, selected.text
+        assert selected.json()["stock_status"] == "TO_REVIEW"
+        assert selected.json()["launch_status"] == "LOCKED"
+        gate = {"gate": "STOCK", "action": "VALIDATE"}
+        assert client.patch(f"{url}/gate-review", headers=headers, json=gate).status_code == 409
+        selected = client.patch(f"{url}/stock-source", headers=headers, json={"location_id": source_id})
+        assert selected.json()["stock_source_location_id"] == source_id
+        governance = client.get(f"{url}/governance", headers=headers).json()
+        assert governance["stock_source"]["label"] == "ATELIER > A1-1"
+        assert governance["stock"]["ready"] is True
+        assert client.patch(f"{url}/gate-review", headers=headers, json=gate).status_code == 200
+        reserved = client.post(f"{url}/reservation", headers=headers)
+        assert reserved.status_code == 200, reserved.text
+        assert reserved.json()["stock_source"]["locked"] is True
+        assert client.patch(f"{url}/stock-source", headers=headers, json={"location_id": empty_id}).status_code == 409
+        assert client.post(f"{url}/reservation", headers=headers).json()["execution"]["reservation"]["id"] == reserved.json()["execution"]["reservation"]["id"]
+        with sessions() as db:
+            assert db.query(models.StockReservation).one().location_id == source_id
+            assert db.query(models.TechnicalDossier).filter_by(id=dossier_id).one().stock_source_location_id == source_id
+    finally:
+        _cleanup_test_client(engine)
+
+
 def test_cancelled_technical_reservation_can_be_reactivated_without_duplicate():
     engine, TestingSessionLocal, client = _make_test_client()
     try:

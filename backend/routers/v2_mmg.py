@@ -391,6 +391,42 @@ def _consumed_reservation_matches_cutting(
     )
 
 
+def _technical_stock_source(db: Session, dossier: models.TechnicalDossier):
+    query = db.query(models.StockLocation).filter_by(usage="internal", is_active=True)
+    if dossier.stock_source_location_id is not None:
+        return query.filter_by(id=dossier.stock_source_location_id).first()
+    # Preserve the historical source for dossiers created before explicit selection.
+    return query.filter_by(name="WH/Stock").first()
+
+
+def _technical_source_options(db: Session, dossier: models.TechnicalDossier) -> dict:
+    locations = db.query(models.StockLocation).all()
+    by_id = {location.id: location for location in locations}
+
+    def path(location):
+        parts, seen = [], set()
+        while location and location.id not in seen:
+            seen.add(location.id)
+            parts.append(location.name)
+            location = by_id.get(location.parent_id)
+        return " > ".join(reversed(parts))
+
+    source = _technical_stock_source(db, dossier)
+    anchored = db.query(models.StockReservation.id).join(
+        models.TechnicalDossierVersion,
+        models.TechnicalDossierVersion.id == models.StockReservation.technical_dossier_version_id,
+    ).filter(models.TechnicalDossierVersion.dossier_id == dossier.id).first()
+    return {
+        "location_id": source.id if source else None,
+        "label": path(source) if source else None,
+        "locked": bool(anchored or dossier.launched_at),
+        "options": sorted([
+            {"id": location.id, "label": path(location)}
+            for location in locations if location.usage == "internal" and location.is_active
+        ], key=lambda option: option["label"]),
+    }
+
+
 def _technical_stock_snapshot(
     db: Session,
     dossier: models.TechnicalDossier,
@@ -412,6 +448,7 @@ def _technical_stock_snapshot(
         db,
         _records_from_technical_version(cutting),
         "WH/Stock",
+        source_location_id=dossier.stock_source_location_id,
     )
     return {
         "ready": bool(matches) and all(match.status == "ok" for match in matches),
@@ -498,6 +535,7 @@ def _technical_governance_payload(
         "external_project_reference": dossier.external_project_reference,
         "document_matrix": build_document_matrix(dossier.versions),
         "stock": _technical_stock_snapshot(db, dossier),
+        "stock_source": _technical_source_options(db, dossier),
         "execution": execution,
         "gates": {
             "be": dossier.production_status,
@@ -2964,6 +3002,7 @@ def reserve_measure_technical_cutting(
             source_label=source_label,
             created_by=current_user.get("sub", "Système"),
             source_location="WH/Stock",
+            source_location_id=dossier.stock_source_location_id,
             order_reference=mission.sale_order.reference,
             sale_order_id=mission.sale_order_id,
             notes=trace_note,
@@ -2996,6 +3035,47 @@ def reserve_measure_technical_cutting(
 
 
 @router.patch(
+    "/missions/{mission_id}/technical-dossier/stock-source",
+    response_model=schemas.TechnicalDossierResponse,
+    dependencies=CRM_EDIT_DEPENDENCIES,
+)
+def update_measure_technical_stock_source(
+    mission_id: int,
+    item: schemas.TechnicalStockSourceRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(security.get_current_user),
+):
+    if not (_current_roles(current_user) & STOCK_REVIEW_ROLES):
+        raise HTTPException(403, "Le choix de la source est réservé au chef stock")
+    mission = _get_mission_or_404(db, mission_id)
+    if not mission.technical_dossier:
+        raise HTTPException(404, "Dossier technique introuvable")
+    dossier = db.query(models.TechnicalDossier).filter_by(id=mission.technical_dossier.id).with_for_update().one()
+    source = db.query(models.StockLocation).filter_by(id=item.location_id, usage="internal", is_active=True).first()
+    if not source:
+        raise HTTPException(422, "Choisissez un emplacement interne actif")
+    if dossier.stock_source_location_id == source.id:
+        return dossier
+    if _technical_source_options(db, dossier)["locked"]:
+        raise HTTPException(409, "La source est figée par la réservation atelier de ce dossier")
+    dossier.stock_source_location_id = source.id
+    dossier.stock_status = "TO_REVIEW" if dossier.production_status == "VALIDATED" else "LOCKED"
+    dossier.stock_validated_at = None
+    dossier.stock_validated_by = None
+    dossier.stock_review_note = None
+    dossier.launch_status = "LOCKED"
+    dossier.launch_validated_at = None
+    dossier.launch_validated_by = None
+    dossier.launch_review_note = None
+    for version in dossier.versions:
+        version.stock_data_approved_at = None
+        version.stock_data_approved_by = None
+    db.commit()
+    db.refresh(dossier)
+    return dossier
+
+
+@router.patch(
     "/missions/{mission_id}/technical-dossier/gate-review",
     response_model=schemas.TechnicalDossierResponse,
     dependencies=CRM_EDIT_DEPENDENCIES,
@@ -3010,6 +3090,7 @@ def review_measure_technical_gate(
     dossier = mission.technical_dossier
     if not dossier:
         raise HTTPException(404, "Dossier technique introuvable")
+    dossier = db.query(models.TechnicalDossier).filter_by(id=dossier.id).with_for_update().one()
     roles = _current_roles(current_user)
     actor = current_user.get("sub", "Système")
     note = (item.note or "").strip() or None
