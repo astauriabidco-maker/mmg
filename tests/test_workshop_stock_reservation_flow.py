@@ -1564,6 +1564,33 @@ def test_technical_stock_source_is_persisted_and_reservation_uses_exact_location
         _cleanup_test_client(engine)
 
 
+def test_validated_production_documents_can_be_corrected_only_before_reservation():
+    engine, sessions, client = _make_test_client()
+    try:
+        with sessions() as db:
+            sale_id = _seed_stock_and_sale(db, "VALIDATED", "DEV-REOPEN", workflow_type="FABRICATION_FROM_MEASURE")
+            mission_id, dossier_id, cutting_id = _attach_validated_technical_dossier(db, sale_id)
+        headers = _auth_headers(sessions, "be-reopen")
+        url = f"/v2/mmg/missions/{mission_id}/technical-dossier"
+        payload = {"phase": "FABRICATION", "action": "REQUEST_CORRECTION"}
+        assert client.patch(f"{url}/review", headers=headers, json=payload).status_code == 422
+        payload["note"] = "Corriger la matiere du debit de recette"
+        corrected = client.patch(f"{url}/review", headers=headers, json=payload)
+        assert corrected.status_code == 200, corrected.text
+        assert corrected.json()["production_status"] == "CORRECTION_REQUIRED"
+        assert corrected.json()["stock_status"] == "LOCKED"
+        assert corrected.json()["launch_status"] == "LOCKED"
+        with sessions() as db:
+            assert db.query(models.TechnicalDossierVersion).filter_by(id=cutting_id).one().stock_data_approved_at is None
+        assert client.patch(f"{url}/submit?phase=FABRICATION", headers=headers).status_code == 200
+        assert client.patch(f"{url}/review", headers=headers, json={"phase": "FABRICATION", "action": "VALIDATE"}).status_code == 200
+        assert client.patch(f"{url}/gate-review", headers=headers, json={"gate": "STOCK", "action": "VALIDATE"}).status_code == 200
+        assert client.post(f"{url}/reservation", headers=headers).status_code == 200
+        assert client.patch(f"{url}/review", headers=headers, json=payload).status_code == 409
+    finally:
+        _cleanup_test_client(engine)
+
+
 def test_cancelled_technical_reservation_can_be_reactivated_without_duplicate():
     engine, TestingSessionLocal, client = _make_test_client()
     try:

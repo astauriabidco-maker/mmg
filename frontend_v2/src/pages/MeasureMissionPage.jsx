@@ -1462,6 +1462,11 @@ export default function MeasureMissionPage() {
                                                     </select>
                                                 </div>
                                                 <div className="mt-4 flex flex-wrap gap-2">
+                                                    {technicalStatus === 'VALIDATED' && canReview && !technicalGovernance.stock_source?.locked && (
+                                                        <button onClick={() => reviewTechnicalDossier('REQUEST_CORRECTION')} disabled={saving} className="rounded-lg border border-orange-200 px-4 py-2.5 text-xs font-black text-orange-700">
+                                                            Corriger les documents BE
+                                                        </button>
+                                                    )}
                                                     {mission.technical_dossier.production_status === 'VALIDATED' && ['TO_REVIEW', 'CORRECTION_REQUIRED'].includes(mission.technical_dossier.stock_status) && canReviewStock && (
                                                         <>
                                                             <button onClick={() => reviewTechnicalGate('STOCK', 'VALIDATE')} disabled={saving} className="rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-black text-white">

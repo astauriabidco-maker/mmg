@@ -2837,10 +2837,17 @@ def review_measure_technical_dossier(
     dossier = mission.technical_dossier
     if not dossier:
         raise HTTPException(404, "Dossier technique introuvable")
+    dossier = db.query(models.TechnicalDossier).filter_by(id=dossier.id).with_for_update().one()
     is_quoting = item.phase == schemas.TechnicalDocumentType.QUOTING
     status_field = "quoting_status" if is_quoting else "production_status"
     prefix = "quoting" if is_quoting else "production"
-    if getattr(dossier, status_field) != schemas.TechnicalDossierStatus.TO_REVIEW.value:
+    reopening_production = (
+        not is_quoting
+        and item.action == schemas.TechnicalDossierReviewAction.REQUEST_CORRECTION
+        and dossier.production_status == schemas.TechnicalDossierStatus.VALIDATED.value
+        and not _technical_source_options(db, dossier)["locked"]
+    )
+    if getattr(dossier, status_field) != schemas.TechnicalDossierStatus.TO_REVIEW.value and not reopening_production:
         raise HTTPException(409, "Cette phase n'est pas en attente de contrôle")
     actor = current_user.get("sub", "Système")
     note = (item.note or "").strip() or None
@@ -2851,6 +2858,16 @@ def review_measure_technical_dossier(
         setattr(dossier, f"{prefix}_review_note", note)
         setattr(dossier, f"{prefix}_validated_at", None)
         setattr(dossier, f"{prefix}_validated_by", None)
+        if not is_quoting:
+            dossier.stock_status = "LOCKED"
+            dossier.stock_validated_at = None
+            dossier.stock_validated_by = None
+            dossier.launch_status = "LOCKED"
+            dossier.launch_validated_at = None
+            dossier.launch_validated_by = None
+            for version in dossier.versions:
+                version.stock_data_approved_at = None
+                version.stock_data_approved_by = None
     else:
         required_types = (
             [schemas.TechnicalDocumentType.QUOTING.value]
