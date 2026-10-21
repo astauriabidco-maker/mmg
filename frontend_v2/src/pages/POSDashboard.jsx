@@ -52,6 +52,11 @@ export default function POSDashboard() {
     const [editPrice, setEditPrice] = useState('');
     const [editStock, setEditStock] = useState('');
     const [checkoutError, setCheckoutError] = useState('');
+    const [showCloseSession, setShowCloseSession] = useState(false);
+    const [closingCash, setClosingCash] = useState('');
+    const [closingError, setClosingError] = useState('');
+    const [isClosing, setIsClosing] = useState(false);
+    const [lastClosure, setLastClosure] = useState(null);
 
     const [showMovement, setShowMovement] = useState(false);
     const [movementType, setMovementType] = useState('OUT');
@@ -191,16 +196,25 @@ export default function POSDashboard() {
         }
     };
 
-    const handleCloseSession = async () => {
-        const actual = prompt("Montant compté en caisse ?");
-        if (actual !== null) {
-            try {
-                const res = await api.post(`/v2/pos/sessions/${session.id}/close?closing_cash=${actual}`);
-                alert(`Caisse fermée. \nAttendu: ${res.data.expected}€ \nCompté: ${res.data.actual}€`);
-                setSession(null);
-            } catch (e) {
-                alert("Erreur");
-            }
+    const handleCloseSession = async event => {
+        event.preventDefault();
+        if (isClosing) return;
+        setClosingError('');
+        const actual = Number(closingCash);
+        if (closingCash.trim() === '' || !Number.isFinite(actual) || actual < 0) {
+            setClosingError('Saisissez un montant compté positif ou nul.');
+            return;
+        }
+        setIsClosing(true);
+        try {
+            const res = await api.post(`/v2/pos/sessions/${session.id}/close?closing_cash=${actual}`);
+            setLastClosure({ ...res.data, reference: session.reference });
+            setShowCloseSession(false);
+            setSession(null);
+        } catch (error) {
+            setClosingError(error.response?.data?.detail || 'Impossible de clôturer la caisse.');
+        } finally {
+            setIsClosing(false);
         }
     };
 
@@ -407,6 +421,12 @@ export default function POSDashboard() {
                     <div className="bg-white p-10 rounded-3xl shadow-2xl max-w-sm w-full text-center">
                         <MonitorSpeaker className="w-16 h-16 text-indigo-500 mx-auto mb-6" />
                         <h2 className="text-2xl font-black mb-2 text-slate-800">Caisse Fermée</h2>
+                        {lastClosure && <section aria-label="Résultat de clôture Z" className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-left text-sm text-emerald-900">
+                            <p className="font-bold">Clôture Z · {lastClosure.reference}</p>
+                            <p>Espèces attendues : {Number(lastClosure.expected).toFixed(2)} €</p>
+                            <p>Espèces comptées : {Number(lastClosure.actual).toFixed(2)} €</p>
+                            <p>Écart : {Number(lastClosure.difference).toFixed(2)} €</p>
+                        </section>}
                         <p className="text-slate-500 mb-8 font-medium">Veuillez ouvrir une session pour démarrer les ventes au comptoir.</p>
                         <form onSubmit={handleOpenSession}>
                             <label className="block text-left text-sm font-bold text-slate-700 mb-2">Fond de caisse initial (€)</label>
@@ -567,7 +587,7 @@ export default function POSDashboard() {
                         <button onClick={() => setIsLocked(true)} className="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white transition-colors" title="Verrouiller Caisse">
                             <Lock className="w-5 h-5"/>
                         </button>
-                        <button onClick={handleCloseSession} className="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-rose-400 transition-colors" title="Fermeture Définitive (Z)">
+                        <button onClick={() => { setClosingCash(''); setClosingError(''); setShowCloseSession(true); }} className="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-rose-400 transition-colors" title="Fermeture Définitive (Z)">
                             <X className="w-5 h-5"/>
                         </button>
                     </div>
@@ -742,6 +762,21 @@ export default function POSDashboard() {
             )}
             
             {/* R E C E I P T   M O D A L */}
+            {showCloseSession && (
+                <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/60 p-4">
+                    <form onSubmit={handleCloseSession} role="dialog" aria-label="Clôture Z" className="w-full max-w-md space-y-5 rounded-lg bg-white p-6 shadow-xl">
+                        <h3 className="text-xl font-bold">Clôture Z · {session.reference}</h3>
+                        <label className="block text-sm font-bold">Espèces comptées (€)
+                            <input aria-label="Espèces comptées (€)" type="number" min="0" step="0.01" required value={closingCash} onChange={event => setClosingCash(event.target.value)} className="mt-2 w-full rounded-lg border p-3 text-xl" />
+                        </label>
+                        {closingError && <p role="alert" className="text-sm font-bold text-red-700">{closingError}</p>}
+                        <div className="flex justify-end gap-3">
+                            <button type="button" disabled={isClosing} onClick={() => setShowCloseSession(false)} className="rounded-lg border px-4 py-2">Annuler</button>
+                            <button type="submit" disabled={isClosing} className="rounded-lg bg-slate-900 px-4 py-2 font-bold text-white">{isClosing ? 'Clôture...' : 'Clôturer la session'}</button>
+                        </div>
+                    </form>
+                </div>
+            )}
             {showReceipt && lastOrder && (
                 <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
                     <div className="bg-white rounded-3xl shadow-2xl overflow-hidden max-w-sm w-full flex flex-col">
