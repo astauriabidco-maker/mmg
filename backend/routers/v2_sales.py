@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime, timedelta
@@ -1028,14 +1028,16 @@ def _send_quote_for_signature(
     order: models.SaleOrder,
     *,
     author: str,
+    recipient_email: Optional[str] = None,
 ) -> dict:
     from ..core.events import EventBus
 
     portal_link = _quote_portal_link(order)
+    destination = recipient_email if recipient_email is not None else order.client_email
     if not portal_link:
         result = {
             "status": "FAILED",
-            "recipient": (order.client_email or "").strip() or None,
+            "recipient": (destination or "").strip() or None,
             "error": "Lien de signature absent.",
         }
     else:
@@ -1043,7 +1045,7 @@ def _send_quote_for_signature(
             1 + _sale_tax_rate(order) / 100
         )
         result = EventBus.send_quote_for_signature_email(
-            order.client_email,
+            destination,
             order.client_name,
             order.reference,
             amount_ttc,
@@ -1079,6 +1081,32 @@ def _send_quote_for_signature(
         "email_error": error,
         "portal_link": portal_link,
     }
+
+
+class QuoteEmailRecipient(BaseModel):
+    recipient_email: str = Field(
+        min_length=3, max_length=254,
+        pattern=r"^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$",
+    )
+
+
+@router.post("/{order_id}/send-email", dependencies=SALES_EDIT_DEPENDENCIES)
+def resend_quote_email(
+    order_id: int,
+    payload: QuoteEmailRecipient,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    order = _load_sale(db, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Devis introuvable.")
+    if order.status != "SENT" or order.signed_at:
+        raise HTTPException(status_code=409, detail="Seul un devis envoyé et non signé peut être renvoyé.")
+    _ensure_sale_is_commercially_signable(order)
+    return _send_quote_for_signature(
+        db, order, author=current_user.get("sub", "Système"),
+        recipient_email=payload.recipient_email,
+    )
 
 
 @router.put(

@@ -26,6 +26,48 @@ def headers():
     return {"Authorization": "Bearer " + security.create_access_token({"sub": "audit-admin", "role": "ADMIN"})}
 
 
+def test_resend_to_explicit_recipient_preserves_customer_email(isolated_client, monkeypatch):
+    from backend.core.events import EventBus
+
+    client, factory = isolated_client
+    sid = seed(factory)
+    with factory() as db:
+        db.get(models.SaleOrder, sid).client_email = "client@example.test"
+        db.commit()
+    destinations = []
+
+    def send(recipient, *args):
+        destinations.append(recipient)
+        return {"status": "SENT", "recipient": recipient, "error": None}
+
+    monkeypatch.setattr(EventBus, "send_quote_for_signature_email", send)
+    response = client.post(f"/v2/sales/{sid}/send-email", headers=headers(),
+        json={"recipient_email": "recette@example.test"})
+    assert response.status_code == 200, response.text
+    assert response.json()["email_recipient"] == "recette@example.test"
+    assert destinations == ["recette@example.test"]
+    with factory() as db:
+        sale = db.get(models.SaleOrder, sid)
+        assert sale.client_email == "client@example.test"
+        assert sale.status == "SENT"
+        assert sale.signed_at is None
+        assert "recette@example.test" in db.query(models.ChatterMessage).one().body
+    for recipient in ["invalid", "first@example.test\r\nBcc: other@example.test"]:
+        assert client.post(f"/v2/sales/{sid}/send-email", headers=headers(),
+            json={"recipient_email": recipient}).status_code == 422
+    assert client.post(f"/v2/sales/{sid}/send-email",
+        json={"recipient_email": "recette@example.test"}).status_code == 401
+    assert destinations == ["recette@example.test"]
+
+
+@pytest.mark.parametrize("status,signed", [("DRAFT", False), ("CANCELLED", False), ("VALIDATED", True)])
+def test_resend_rejects_other_states(isolated_client, status, signed):
+    client, factory = isolated_client
+    sid = seed(factory, status, signed=signed)
+    assert client.post(f"/v2/sales/{sid}/send-email", headers=headers(),
+        json={"recipient_email": "recette@example.test"}).status_code == 409
+
+
 @pytest.mark.parametrize("status,expired,expected", [("CANCELLED", False, 409), ("SENT", True, 410), ("DRAFT", False, 409)])
 def test_invalid_public_signature_does_not_mutate(isolated_client, status, expired, expected):
     client, factory = isolated_client

@@ -14,6 +14,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     const [searchParams] = useSearchParams();
     const queryClient = useQueryClient();
     const [busyAction, setBusyAction] = useState(null);
+    const [emailRecipient, setEmailRecipient] = useState(null);
     const sourceView = searchParams.get('from') || 'sales';
     const returnView = sourceView === 'crm' ? 'crm' : 'sales';
     const returnLabel = sourceView === 'crm' ? 'Retour CRM client' : 'Retour Commandes';
@@ -162,6 +163,22 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
             }
         }
     });
+
+    const resendQuoteEmail = (event) => {
+        event.preventDefault();
+        runAction('email', async () => {
+            const { data } = await api.post(`/v2/sales/${sale.id}/send-email`, {
+                recipient_email: emailRecipient.trim(),
+            });
+            await refetchSaleChatter();
+            if (data.email_status !== 'SENT') {
+                alert(`Email non transmis : ${data.email_error || 'transport non confirmé'}`);
+                return;
+            }
+            setEmailRecipient(null);
+            alert(`Devis envoyé à ${data.email_recipient}.`);
+        });
+    };
 
     const deliverFreeSale = () => {
         if (!window.confirm("Confirmer la sortie client ? Le stock réservé sera débité définitivement.")) return;
@@ -319,7 +336,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                             )}
                             {sale.status === 'SENT' && (
                                 <>
-                                    <button onClick={() => updateStatus('SENT')} disabled={busyAction === 'status'} className="px-5 py-3 rounded-xl bg-blue-600 text-white font-black hover:bg-blue-500 disabled:bg-slate-300 inline-flex items-center gap-2">
+                                    <button onClick={() => setEmailRecipient(sale.client_email || '')} disabled={Boolean(busyAction)} className="px-5 py-3 rounded-xl bg-blue-600 text-white font-black hover:bg-blue-500 disabled:bg-slate-300 inline-flex items-center gap-2">
                                         <Send className="w-4 h-4" /> Renvoyer l'email
                                     </button>
                                     <button onClick={() => updateStatus('VALIDATED')} disabled={busyAction === 'status'} className="px-5 py-3 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500 disabled:bg-slate-300 inline-flex items-center gap-2">
@@ -535,6 +552,20 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                     </aside>
                 </div>
             </div>
+            {emailRecipient !== null && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+                    <form onSubmit={resendQuoteEmail} role="dialog" aria-modal="true" aria-labelledby="quote-email-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+                        <h2 id="quote-email-title" className="text-xl font-black">Renvoyer le devis {sale.reference}</h2>
+                        <p className="mt-2 text-sm text-slate-600">Le destinataire recevra le lien de consultation et de signature. Les coordonnées du client restent inchangées.</p>
+                        <label htmlFor="quote-email-recipient" className="mt-5 block text-sm font-bold">Destinataire</label>
+                        <input id="quote-email-recipient" type="email" required maxLength={254} value={emailRecipient} onChange={event => setEmailRecipient(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 p-3" />
+                        <div className="mt-5 flex justify-end gap-3">
+                            <button type="button" disabled={Boolean(busyAction)} onClick={() => setEmailRecipient(null)} className="rounded-xl border px-4 py-3 font-bold">Annuler</button>
+                            <button type="submit" disabled={Boolean(busyAction)} className="rounded-xl bg-blue-600 px-4 py-3 font-bold text-white disabled:bg-slate-300">{busyAction === 'email' ? 'Envoi…' : 'Envoyer le devis'}</button>
+                        </div>
+                    </form>
+                </div>
+            )}
         </div>
     );
 }
