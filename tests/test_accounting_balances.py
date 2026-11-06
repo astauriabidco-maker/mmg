@@ -159,6 +159,29 @@ def test_decimal_balance_and_excess_credit_are_not_fake_refunds():
     assert balance['refund_due'] == Decimal('0.10')
 
 
+def test_full_pos_credit_mirrors_fiscal_totals_despite_rounded_unit_prices(accounting_client):
+    client, sessions, headers = accounting_client
+    with sessions() as db:
+        invoice = models.Invoice(reference='POS-ROUNDING', client_name='Recipe POS', status='PAID',
+                                 total=Decimal('3.09'), subtotal=Decimal('2.58'), tax_amount=Decimal('0.51'),
+                                 tax_rate=20, due_date=datetime(2026, 12, 1))
+        invoice.lines = [models.InvoiceLine(description='3 articles à 1,03 TTC', quantity=3,
+                                           unit_price=Decimal('0.86'), tax_rate=20)]
+        invoice.payments = [models.Payment(amount=Decimal('3.09'), method='CB')]
+        db.add(invoice)
+        db.commit()
+        invoice_id = invoice.id
+    response = client.post(f'/v2/accounting/invoices/{invoice_id}/credit_note', headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()['total'] == -3.09
+    assert response.json()['subtotal'] == -2.58
+    assert response.json()['tax_amount'] == -0.51
+    credited = listed(client, headers, invoice_id)
+    assert credited['balance_due'] == 0
+    assert credited['customer_credit'] == 3.09
+    assert len(credited['payments']) == 1
+
+
 def test_partial_credit_remaining_balance_can_be_paid_and_reminded(accounting_client):
     client, sessions, headers = accounting_client
     invoice_id = seed(sessions, 40, (-60,))

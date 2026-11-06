@@ -311,6 +311,15 @@ def create_credit_note(
     tax_amount = sum(line["unit_price"] * line["quantity"] * (line["tax_rate"] / 100.0) for line in credit_lines)
     total = subtotal + tax_amount
 
+    if not returned_sale_lines and accounting.money(balance.credit_notes_total) == 0:
+        # Annulation intégrale : reprendre les montants fiscaux de la facture,
+        # notamment POS (prix TTC -> HT unitaire arrondi à deux décimales).
+        # Recalculer les totaux depuis ces lignes arrondies peut créer un centime
+        # d'écart et interdire à tort l'avoir, ou laisser une créance résiduelle.
+        subtotal = -accounting.money(invoice.subtotal)
+        tax_amount = -accounting.money(invoice.tax_amount)
+        total = -accounting.money(invoice.total)
+
     if accounting.money(total) >= 0 or -accounting.money(total) > accounting.money(balance.net_total):
         raise HTTPException(400, "Le montant de l'avoir dépasse le montant restant à créditer ou est invalide.")
 
