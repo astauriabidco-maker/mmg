@@ -72,7 +72,10 @@ def next_number(db: Session, doc_kind: str, year: Optional[int] = None) -> str:
     year = year or utcnow().year
 
     sequence = _locked_sequence(db, doc_kind, year)
-    sequence.counter = int(sequence.counter or 0) + 1
+    # Des imports ou d'anciens générateurs peuvent avoir émis des pièces après
+    # l'amorçage de la séquence. Réconcilier sous le même verrou sans jamais
+    # diminuer le compteur ni renuméroter les pièces déjà enregistrées.
+    sequence.counter = max(int(sequence.counter or 0), _existing_max_counter(db, doc_kind, year)) + 1
     db.flush()
 
     return f"{prefix}-{year}-{sequence.counter:0{padding}d}"
