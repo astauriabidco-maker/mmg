@@ -15,6 +15,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     const queryClient = useQueryClient();
     const [busyAction, setBusyAction] = useState(null);
     const [emailRecipient, setEmailRecipient] = useState(null);
+    const [confirmation, setConfirmation] = useState(null);
     const sourceView = searchParams.get('from') || 'sales';
     const returnView = sourceView === 'crm' ? 'crm' : 'sales';
     const returnLabel = sourceView === 'crm' ? 'Retour CRM client' : 'Retour Commandes';
@@ -181,37 +182,33 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     };
 
     const deliverFreeSale = () => {
-        if (!window.confirm("Confirmer la sortie client ? Le stock réservé sera débité définitivement.")) return;
-        runAction('deliverFreeSale', async () => {
+        setConfirmation({ title: 'Sortie client', description: 'Le stock réservé sera débité lors de la remise au client.', action: () => runAction('deliverFreeSale', async () => {
             await api.post(`/v2/sales/${sale.id}/deliver-free-sale`);
-        });
+        }) });
     };
 
     const returnFreeSale = () => {
-        if (!window.confirm("Préparer un retour client pour ce devis livré ?")) return;
-        runAction('return', async () => {
+        setConfirmation({ title: 'Retour client', description: 'Les articles livrés seront réintégrés dans leur emplacement source. Aucun remboursement ne sera enregistré.', action: () => runAction('return', async () => {
             await api.post(`/v2/sales/${sale.id}/return-free-sale`);
-        });
+        }) });
     };
 
     const createCreditNote = () => {
         const invoice = trace.finalInvoices[0] || trace.billableInvoices[0];
         const deliveryNote = trace.returnedDeliveryNotes[0];
         if (!invoice) return;
-        if (!window.confirm(`Créer un avoir pour la facture ${invoice.reference} ?`)) return;
-        runAction('credit-note', async () => {
+        setConfirmation({ title: 'Créer un avoir', description: `Créer un avoir pour la facture ${invoice.reference} après ce retour client ? Aucun remboursement ne sera enregistré.`, action: () => runAction('credit-note', async () => {
             await api.post(
                 `/v2/accounting/invoices/${invoice.id}/credit-note-from-return`,
                 deliveryNote?.id ? { delivery_note_id: deliveryNote.id } : undefined
             );
-        });
+        }) });
     };
 
     const createFinalInvoice = () => {
-        if (!window.confirm("Créer la facture finale / solde pour ce devis livré ?")) return;
-        runAction('createFinalInvoice', async () => {
+        setConfirmation({ title: 'Facture finale / solde', description: 'Créer la facture finale pour ce devis livré ?', action: () => runAction('createFinalInvoice', async () => {
             await api.post(`/v2/sales/${sale.id}/create-final-invoice`);
-        });
+        }) });
     };
 
     const createDepositInvoice = () => {
@@ -565,6 +562,18 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                             <button type="submit" disabled={Boolean(busyAction)} className="rounded-xl bg-blue-600 px-4 py-3 font-bold text-white disabled:bg-slate-300">{busyAction === 'email' ? 'Envoi…' : 'Envoyer le devis'}</button>
                         </div>
                     </form>
+                </div>
+            )}
+            {confirmation && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+                    <section role="dialog" aria-modal="true" aria-labelledby="sale-confirm-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+                        <h2 id="sale-confirm-title" className="text-xl font-black">{confirmation.title} · {sale.reference}</h2>
+                        <p className="mt-3 text-sm text-slate-600">{confirmation.description}</p>
+                        <div className="mt-5 flex justify-end gap-3">
+                            <button type="button" onClick={() => setConfirmation(null)} className="rounded-xl border px-4 py-3 font-bold">Annuler</button>
+                            <button type="button" onClick={() => { const action = confirmation.action; setConfirmation(null); action(); }} className="rounded-xl bg-blue-600 px-4 py-3 font-bold text-white">Confirmer</button>
+                        </div>
+                    </section>
                 </div>
             )}
         </div>
