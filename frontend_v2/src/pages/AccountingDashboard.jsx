@@ -4,6 +4,7 @@ import {
     FileText, Download, CheckCircle, Clock, AlertTriangle, Filter, Search, Plus, CreditCard, Banknote, BellRing, Undo2
 } from 'lucide-react';
 import api from '../services/api';
+import { invoiceAccounting, accountingTotals } from '../utils/accounting';
 import { openPdfWithFeedback, downloadFileWithFeedback } from '../services/pdf';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useAuth } from '../context/AuthContext';
@@ -45,7 +46,11 @@ export default function AccountingDashboard() {
     };
 
     const handlePaymentSubmit = async () => {
-        if (!paymentData.amount || paymentData.amount <= 0) return alert("Montant invalide");
+        const current = invoices.find(invoice => invoice.id === selectedInvoice?.id);
+        const balance = current && invoiceAccounting(current);
+        if (!balance?.canPay || !Number.isFinite(paymentData.amount) || paymentData.amount <= 0 || paymentData.amount > balance.due) {
+            return alert("Paiement impossible ou montant supérieur au solde restant dû.");
+        }
         
         try {
             await api.post(`/v2/accounting/invoices/${selectedInvoice.id}/pay`, paymentData);
@@ -84,6 +89,7 @@ export default function AccountingDashboard() {
     };
 
     const handleCreditNote = async (inv) => {
+        if (!invoiceAccounting(inv).canCredit) return;
         if (!window.confirm(`Émettre un avoir pour la facture ${inv.reference} ? Cela l'annulera comptablement.`)) return;
         try {
             await api.post(`/v2/accounting/invoices/${inv.id}/credit_note`);
@@ -95,17 +101,19 @@ export default function AccountingDashboard() {
     };
 
     const handleRemind = async (inv) => {
+        if (!invoiceAccounting(inv).canRemind) return;
         try {
             await api.post(`/v2/accounting/invoices/${inv.id}/remind`);
             alert(`Relance envoyée au client pour la facture ${inv.reference} !`);
         } catch (e) {
-            alert('Erreur lors de la relance');
+            alert(e.response?.data?.detail || 'Erreur lors de la relance');
         }
     };
 
     const openPaymentModal = (inv) => {
-        const totalPaid = inv.payments.reduce((acc, p) => acc + p.amount, 0);
-        const remainder = inv.total - totalPaid;
+        const balance = invoiceAccounting(inv);
+        if (!balance.canPay) return;
+        const remainder = balance.due;
         setSelectedInvoice(inv);
         setPaymentData({ amount: remainder, method: "VIREMENT", reference: "" });
         setShowPaymentModal(true);
@@ -114,12 +122,11 @@ export default function AccountingDashboard() {
     const filteredInvoices = invoices.filter(inv => {
         const matchSearch = inv.reference.toLowerCase().includes(searchTerm.toLowerCase()) || 
                             inv.client_name.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchStatus = statusFilter === "ALL" || inv.status === statusFilter;
+        const matchStatus = statusFilter === "ALL" || invoiceAccounting(inv).status === statusFilter;
         return matchSearch && matchStatus;
     });
 
-    const totalUnpaid = invoices.filter(i => i.status !== "PAID").reduce((acc, i) => acc + (i.total - i.payments.reduce((s, p)=>s+p.amount, 0)), 0);
-    const totalRevenue = invoices.filter(i => i.status !== "DRAFT").reduce((acc, i) => acc + i.total, 0);
+    const { due: totalUnpaid, revenue: totalRevenue, credit: totalCredit, refund: totalRefund } = accountingTotals(invoices);
 
     return (
         <div className="space-y-6 w-full h-[calc(100vh-80px)] overflow-y-auto animate-fade-in p-6 pb-12 bg-white border-y border-slate-200/80">
@@ -140,6 +147,7 @@ export default function AccountingDashboard() {
                     <div>
                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Restant Dû (Créances)</p>
                         <h2 className="text-3xl font-black text-red-600">{totalUnpaid.toLocaleString('fr-FR')} €</h2>
+                        <p className="text-xs text-slate-500 mt-2">Crédit client : {totalCredit.toLocaleString('fr-FR')} € · À rembourser : {totalRefund.toLocaleString('fr-FR')} € (non enregistré)</p>
                     </div>
                     <div className="w-12 h-12 bg-red-50 text-red-500 rounded-full flex items-center justify-center">
                         <AlertTriangle className="w-6 h-6" />
@@ -181,7 +189,9 @@ export default function AccountingDashboard() {
                             <option value="UNPAID">Non Payé</option>
                             <option value="PARTIAL">Paiement Partiel</option>
                             <option value="PAID">Payé</option>
-                            <option value="AVOIR">Avoir (Annulé)</option>
+                            <option value="AVOIR">Avoir</option>
+                            <option value="CREDITED">Facture créditée</option>
+                            <option value="PARTIALLY_CREDITED">Facture partiellement créditée</option>
                         </select>
                         {canEdit && <button
                             onClick={() => setShowNewInvoiceModal(true)}
@@ -206,8 +216,8 @@ export default function AccountingDashboard() {
                         </thead>
                         <tbody className="text-sm">
                             {filteredInvoices.map((inv) => {
-                                const totalPaid = inv.payments.reduce((acc, p) => acc + p.amount, 0);
-                                const remainder = inv.total - totalPaid;
+                                const balance = invoiceAccounting(inv);
+                                const remainder = balance.due;
 
                                 return (
                                     <tr key={inv.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
@@ -220,20 +230,24 @@ export default function AccountingDashboard() {
                                             <p className="text-xs text-slate-500">{new Date(inv.issue_date).toLocaleDateString('fr-FR')}</p>
                                         </td>
                                         <td className="p-4">
-                                            {inv.status === "PAID" && <span className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><CheckCircle className="w-3 h-3"/> PAYÉ</span>}
-                                            {inv.status === "PARTIAL" && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><Clock className="w-3 h-3"/> ACOMPTE</span>}
-                                            {inv.status === "UNPAID" && <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><AlertTriangle className="w-3 h-3"/> EN ATTENTE</span>}
-                                            {inv.status === "AVOIR" && <span className="bg-slate-200 text-slate-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><Undo2 className="w-3 h-3"/> AVOIR</span>}
+                                            {['CREDITED', 'PARTIALLY_CREDITED'].includes(balance.status) && <span className="bg-slate-200 text-slate-700 px-2 py-1 rounded text-xs font-bold">{balance.status === 'CREDITED' ? 'CRÉDITÉE' : 'PARTIELLEMENT CRÉDITÉE'}</span>}
+                                            {balance.status === "PAID" && <span className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><CheckCircle className="w-3 h-3"/> PAYÉ</span>}
+                                            {balance.status === "PARTIAL" && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><Clock className="w-3 h-3"/> ACOMPTE</span>}
+                                            {balance.status === "UNPAID" && <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><AlertTriangle className="w-3 h-3"/> EN ATTENTE</span>}
+                                            {balance.status === "AVOIR" && <span className="bg-slate-200 text-slate-700 px-2 py-1 rounded text-xs font-bold flex items-center w-max gap-1"><Undo2 className="w-3 h-3"/> AVOIR</span>}
                                         </td>
                                         <td className="p-4 text-right font-black text-slate-800">
                                             {inv.total.toLocaleString('fr-FR', {minimumFractionDigits: 2})} €
                                         </td>
                                         <td className="p-4 text-right font-bold text-slate-500">
-                                            {remainder > 0 && inv.status !== "AVOIR" ? <span className="text-red-500">{remainder.toLocaleString('fr-FR', {minimumFractionDigits: 2})} €</span> : "-"}
+                                            {remainder > 0 ? <span className="text-red-500">{remainder.toLocaleString('fr-FR', {minimumFractionDigits: 2})} €</span> : "0,00 €"}
+                                            {balance.credit > 0 && <p className="text-xs text-indigo-600 mt-1">Crédit client : {balance.credit.toLocaleString('fr-FR')} €</p>}
+                                            {balance.refund > 0 && <p className="text-xs text-indigo-600">À rembourser : {balance.refund.toLocaleString('fr-FR')} € (non enregistré)</p>}
+                                            {balance.status === 'AVOIR' && inv.source_invoice_reference && <p className="text-xs">Sur {inv.source_invoice_reference}</p>}
                                         </td>
                                         <td className="p-4 text-center">
                                             <div className="flex justify-center gap-2">
-                                                {canEdit && (inv.status === "UNPAID" || inv.status === "PARTIAL") && (
+                                                {canEdit && balance.canRemind && (
                                                     <button 
                                                         onClick={() => handleRemind(inv)}
                                                         className="p-2 bg-orange-50 text-orange-600 hover:bg-orange-600 hover:text-white rounded-lg transition-colors"
@@ -242,7 +256,7 @@ export default function AccountingDashboard() {
                                                         <BellRing className="w-4 h-4" />
                                                     </button>
                                                 )}
-                                                {canEdit && inv.status !== "PAID" && inv.status !== "AVOIR" && (
+                                                {canEdit && balance.canPay && (
                                                     <button 
                                                         onClick={() => openPaymentModal(inv)}
                                                         className="p-2 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-colors"
@@ -251,7 +265,7 @@ export default function AccountingDashboard() {
                                                         <CreditCard className="w-4 h-4" />
                                                     </button>
                                                 )}
-                                                {canEdit && inv.status !== "AVOIR" && (
+                                                {canEdit && balance.canCredit && (
                                                     <button 
                                                         onClick={() => handleCreditNote(inv)}
                                                         className="p-2 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-lg transition-colors"
@@ -293,7 +307,7 @@ export default function AccountingDashboard() {
                             <div>
                                 <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Montant (€)</label>
                                 <input 
-                                    type="number" 
+                                    type="number" min="0.01" step="0.01" max={invoiceAccounting(invoices.find(inv => inv.id === selectedInvoice.id) || selectedInvoice).due}
                                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-black text-xl text-slate-800 outline-none focus:border-blue-500"
                                     value={paymentData.amount}
                                     onChange={(e) => setPaymentData({...paymentData, amount: parseFloat(e.target.value)})}

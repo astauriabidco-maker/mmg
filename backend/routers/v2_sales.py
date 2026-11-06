@@ -29,6 +29,7 @@ import io
 from .v2_accounting import generate_invoice_reference, compute_qr_seal
 from ..services.document_sequences import next_number
 from ..core.time import utcnow
+from ..services import accounting
 
 router = APIRouter(
     prefix="/v2/sales",
@@ -253,6 +254,7 @@ def _attach_sale_traceability(db: Session, sale: models.SaleOrder) -> models.Sal
     sale.reservations = (
         db.query(models.StockReservation)
         .options(
+            joinedload(models.StockReservation.location),
             joinedload(models.StockReservation.lines)
             .joinedload(models.StockReservationLine.variant)
             .joinedload(models.ProductVariant.product)
@@ -261,12 +263,19 @@ def _attach_sale_traceability(db: Session, sale: models.SaleOrder) -> models.Sal
         .order_by(models.StockReservation.created_at.desc())
         .all()
     )
+    for reservation in sale.reservations:
+        reservation.location_name = reservation.location.name if reservation.location else None
     sale.invoices = (
         db.query(models.Invoice)
+        .options(joinedload(models.Invoice.payments))
         .filter(models.Invoice.sale_order_id == sale.id)
         .order_by(models.Invoice.issue_date.desc())
         .all()
     )
+    credit_totals = accounting.linked_credit_totals(db, [invoice.id for invoice in sale.invoices])
+    for invoice in sale.invoices:
+        for key, value in accounting.invoice_balance(invoice, credit_totals.get(invoice.id, 0)).items():
+            setattr(invoice, key, value)
     sale.delivery_notes = (
         db.query(models.DeliveryNote)
         .filter(models.DeliveryNote.sale_order_id == sale.id)

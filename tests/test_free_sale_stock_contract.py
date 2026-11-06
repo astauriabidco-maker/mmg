@@ -14,6 +14,7 @@ if str(ROOT_DIR) not in sys.path:
 from backend import database, models
 from backend.core import security
 from backend.main import app
+from backend.services.stock_reservations import create_commercial_reservation_for_sale
 
 
 @pytest.fixture()
@@ -735,3 +736,185 @@ def test_free_sale_quote_cannot_be_prepared_or_launched_for_workshop(stock_clien
 
     assert launch_response.status_code == 400
     assert "devis libre" in launch_response.text
+
+
+def _add_stock_zone(db, variant_id, quantity, *, name="Rack", usage="internal", active=True):
+    location = models.StockLocation(name=name, usage=usage, is_active=active)
+    db.add(location)
+    db.flush()
+    db.add(models.StockQuant(variant_id=variant_id, location_id=location.id, quantity=quantity))
+    db.flush()
+    return location.id
+
+
+@pytest.mark.parametrize("wh_quantity", [0, 7])
+def test_free_sale_signature_delivery_return_use_selected_location(stock_client, wh_quantity):
+    client, session_factory = stock_client
+    headers = _admin_headers(session_factory)
+    with session_factory() as db:
+        variant_id, wh_id, customer_id = _seed_stock_item(db, quantity=wh_quantity)
+        rack_id = _add_stock_zone(db, variant_id, 7)
+        sale_id = _create_free_sale_quote(db, variant_id, quantity=1)
+        expected_id = wh_id if wh_quantity else rack_id
+
+    response = client.put(f"/v2/sales/{sale_id}/status", params={"status": "SENT"}, headers=headers)
+    assert response.status_code == 200, response.text
+    response = client.get(f"/v2/sales/{sale_id}", headers=headers)
+    assert response.status_code == 200, response.text
+    response = client.post(f"/v2/sales/portal/{response.json()['signature_token']}/sign")
+    assert response.status_code == 200, response.text
+    detail = client.get(f"/v2/sales/{sale_id}", headers=headers).json()
+    assert detail['reservations'][0]['location_id'] == expected_id
+    assert detail['reservations'][0]['location_name'] == ('WH/Stock' if wh_quantity else 'Rack')
+    with session_factory() as db:
+        reservation = db.query(models.StockReservation).one()
+        assert reservation.location_id == expected_id
+        assert db.query(models.StockQuant).filter_by(location_id=expected_id).one().quantity == 7
+        assert db.query(models.StockMove).count() == 0
+        assert db.query(models.StockLocation).count() == 3
+        assert db.query(models.StockQuant).count() == 2
+
+    response = client.post(f"/v2/sales/{sale_id}/deliver-free-sale", headers=headers)
+    assert response.status_code == 200, response.text
+    with session_factory() as db:
+        assert db.query(models.StockQuant).filter_by(location_id=expected_id).one().quantity == 6
+        move = db.query(models.StockMove).one()
+        assert (move.location_id, move.location_dest_id) == (expected_id, customer_id)
+
+    response = client.post(f"/v2/sales/{sale_id}/return-free-sale", headers=headers)
+    assert response.status_code == 200, response.text
+    with session_factory() as db:
+        reservation = db.query(models.StockReservation).one()
+        assert reservation.location_id == expected_id
+        assert reservation.status == "returned"
+        quants = {q.location_id: q.quantity for q in db.query(models.StockQuant).all()}
+        assert quants == {wh_id: wh_quantity, rack_id: 7, customer_id: 0}
+        returned = db.query(models.StockMove).filter(models.StockMove.reference.like("RETOUR-CLIENT-%")).one()
+        assert (returned.location_id, returned.location_dest_id) == (customer_id, expected_id)
+
+
+def _stock_snapshot(db):
+    # Inclut les lignes et le cache pour détecter toute mutation même sans commit.
+    db.flush()
+    return {
+        model.__tablename__: [
+            tuple(getattr(row, column.name) for column in model.__table__.columns)
+            for row in db.query(model).order_by(model.id).all()
+        ]
+        for model in (
+            models.StockLocation, models.StockQuant, models.StockMove,
+            models.StockReservation, models.StockReservationLine,
+            models.ProductVariant, models.SaleOrder, models.SaleOrderLine,
+        )
+    }
+
+
+@pytest.mark.parametrize("usage,active", [("internal", False), ("view", True), ("customer", True)])
+def test_free_sale_excludes_invalid_stock_zones_without_mutation(stock_client, usage, active):
+    _, session_factory = stock_client
+    with session_factory() as db:
+        variant_id, _, _ = _seed_stock_item(db, quantity=0)
+        _add_stock_zone(db, variant_id, 7, usage=usage, active=active)
+        sale_id = _create_free_sale_quote(db, variant_id, quantity=1)
+        before = _stock_snapshot(db)
+        with pytest.raises(ValueError, match="Stock insuffisant"):
+            create_commercial_reservation_for_sale(db, db.get(models.SaleOrder, sale_id))
+        assert _stock_snapshot(db) == before
+
+
+@pytest.mark.parametrize("rack_quantity", [5, 6])
+def test_free_sale_aggregates_duplicate_variant_lines(stock_client, rack_quantity):
+    _, session_factory = stock_client
+    with session_factory() as db:
+        variant_id, _, _ = _seed_stock_item(db, quantity=4)
+        rack_id = _add_stock_zone(db, variant_id, rack_quantity)
+        sale_id = _create_free_sale_quote(db, variant_id, quantity=3)
+        db.add(models.SaleOrderLine(
+            order_id=sale_id, line_type="STOCK_ITEM", variant_id=variant_id,
+            description="Même variante", quantity=3, unit_price=25,
+        ))
+        db.commit()
+        before = _stock_snapshot(db)
+        if rack_quantity < 6:
+            with pytest.raises(ValueError, match="Stock insuffisant"):
+                create_commercial_reservation_for_sale(db, db.get(models.SaleOrder, sale_id))
+            assert _stock_snapshot(db) == before
+        else:
+            reservation = create_commercial_reservation_for_sale(db, db.get(models.SaleOrder, sale_id))
+            assert reservation.location_id == rack_id
+            assert len(reservation.lines) == 2
+            assert sum(line.reserved_quantity for line in reservation.lines) == 6
+            assert all(line.available_at_reservation == 6 for line in reservation.lines)
+
+
+@pytest.mark.parametrize("split_variants", [False, True])
+def test_free_sale_split_stock_rejects_without_mutation(stock_client, split_variants):
+    _, session_factory = stock_client
+    with session_factory() as db:
+        variant_id, _, _ = _seed_stock_item(db, quantity=3)
+        rack_id = _add_stock_zone(db, variant_id, 0 if split_variants else 3)
+        sale_id = _create_free_sale_quote(db, variant_id, quantity=3 if split_variants else 6)
+        if split_variants:
+            second = models.ProductVariant(
+                product_id=db.get(models.ProductVariant, variant_id).product_id,
+                reference="SECOND-VARIANT", quantity_in_stock=3,
+            )
+            db.add(second)
+            db.flush()
+            db.add(models.StockQuant(variant_id=second.id, location_id=rack_id, quantity=3))
+            db.add(models.SaleOrderLine(
+                order_id=sale_id, line_type="STOCK_ITEM", variant_id=second.id,
+                description="Autre variante", quantity=3, unit_price=25,
+            ))
+        db.commit()
+        before = _stock_snapshot(db)
+        with pytest.raises(ValueError, match="Regroupez ou transférez"):
+            create_commercial_reservation_for_sale(db, db.get(models.SaleOrder, sale_id))
+        assert _stock_snapshot(db) == before
+
+
+@pytest.mark.parametrize("anchor", ["wh", "rack", "historical"])
+def test_free_sale_selection_deducts_local_and_unanchored_reservations(stock_client, anchor):
+    _, session_factory = stock_client
+    with session_factory() as db:
+        variant_id, wh_id, _ = _seed_stock_item(db, quantity=7)
+        rack_id = _add_stock_zone(db, variant_id, 7)
+        previous = models.StockReservation(
+            reference="EXISTING", status="reserved", source_label="atelier",
+            location_id={"wh": wh_id, "rack": rack_id, "historical": None}[anchor],
+        )
+        db.add(previous)
+        db.flush()
+        db.add(models.StockReservationLine(
+            reservation_id=previous.id, variant_id=variant_id,
+            requested_quantity=6, reserved_quantity=6, status="reserved",
+        ))
+        sale_id = _create_free_sale_quote(db, variant_id, quantity=2)
+        before = _stock_snapshot(db)
+        if anchor == "historical":
+            with pytest.raises(ValueError, match="Stock insuffisant"):
+                create_commercial_reservation_for_sale(db, db.get(models.SaleOrder, sale_id))
+            assert _stock_snapshot(db) == before
+        else:
+            reservation = create_commercial_reservation_for_sale(db, db.get(models.SaleOrder, sale_id))
+            assert reservation.location_id == (rack_id if anchor == "wh" else wh_id)
+            assert reservation.lines[0].available_at_reservation == 7
+
+
+def test_free_sale_does_not_create_default_location_or_quant(stock_client):
+    _, session_factory = stock_client
+    with session_factory() as db:
+        variant_id, wh_id, _ = _seed_stock_item(db, quantity=0)
+        db.query(models.StockQuant).filter_by(location_id=wh_id).delete()
+        db.delete(db.get(models.StockLocation, wh_id))
+        db.flush()
+        sale_id = _create_free_sale_quote(db, variant_id, quantity=1)
+        before = _stock_snapshot(db)
+        with pytest.raises(ValueError, match="Stock insuffisant"):
+            create_commercial_reservation_for_sale(db, db.get(models.SaleOrder, sale_id))
+        assert _stock_snapshot(db) == before
+        rack_id = _add_stock_zone(db, variant_id, 7)
+        reservation = create_commercial_reservation_for_sale(db, db.get(models.SaleOrder, sale_id))
+        assert reservation.location_id == rack_id
+        assert db.query(models.StockLocation).filter_by(name="WH/Stock").count() == 0
+        assert db.query(models.StockQuant).count() == 1

@@ -10,6 +10,7 @@ from ..core.security import get_current_user
 from ..services.stock_service import InventoryService
 from .v2_accounting import generate_invoice_reference, compute_qr_seal
 from ..core.time import utcnow
+from ..services import accounting
 
 router = APIRouter(
     prefix="/v2/pos",
@@ -80,11 +81,12 @@ def get_active_session(db: Session = Depends(get_db)):
 @router.get("/invoices/pending")
 def get_pending_invoices(db: Session = Depends(get_db)):
     invoices = db.query(models.Invoice).filter(models.Invoice.status.in_(["DRAFT", "UNPAID", "PARTIAL"])).all()
+    credit_totals = accounting.linked_credit_totals(db, [invoice.id for invoice in invoices])
     results = []
     for inv in invoices:
-        paid_amount = sum(float(p.amount or 0) for p in inv.payments)
-        due_amount = float(inv.total or 0) - paid_amount
-        if due_amount > 0:
+        balance = accounting.invoice_balance(inv, credit_totals.get(inv.id, 0))
+        due_amount = float(balance['balance_due'])
+        if balance['can_pay']:
             results.append({
                 "id": inv.id,
                 "reference": inv.reference,
@@ -108,9 +110,12 @@ def pay_invoice_pos(invoice_id: int, req: schemas.POSInvoicePaymentReq, db: Sess
     if req.amount <= 0:
         raise HTTPException(status_code=400, detail="Le montant du paiement doit être positif.")
 
-    paid_before = sum(float(p.amount or 0) for p in invoice.payments)
-    remaining_amount = max(0.0, float(invoice.total or 0) - paid_before)
-    if req.amount > remaining_amount:
+    balance = accounting.invoice_response(db, invoice)
+    if not balance.can_pay:
+        raise HTTPException(status_code=400, detail="Aucun solde à encaisser sur cette pièce (payée, créditée ou non émise).")
+    paid_before = accounting.money(balance.total_paid)
+    remaining_amount = accounting.money(balance.balance_due)
+    if accounting.money(req.amount) > remaining_amount:
         raise HTTPException(status_code=400, detail="Le paiement dépasse le solde restant dû.")
         
     pmt = models.Payment(
@@ -132,8 +137,8 @@ def pay_invoice_pos(invoice_id: int, req: schemas.POSInvoicePaymentReq, db: Sess
         db.add(mv)
         
     db.flush()
-    paid_amount = paid_before + req.amount
-    if paid_amount >= float(invoice.total or 0):
+    paid_amount = paid_before + accounting.money(req.amount)
+    if paid_amount >= accounting.money(balance.net_total):
         invoice.status = "PAID"
     else:
         invoice.status = "PARTIAL"

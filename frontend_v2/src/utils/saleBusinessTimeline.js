@@ -21,6 +21,14 @@ export function isDepositInvoice(invoice) {
     return String(invoice?.invoice_type || '').toUpperCase() === 'DEPOSIT';
 }
 
+export function invoiceHasBalanceDue(invoice) {
+    if (isCreditNote(invoice)) return false;
+    if (invoice?.balance_due !== null && invoice?.balance_due !== undefined) {
+        return Number(invoice.balance_due) > 0;
+    }
+    return String(invoice?.status || '').toUpperCase() !== 'PAID';
+}
+
 export function isSaleDelivered(sale) {
     if (sale?.status === 'CANCELLED') return false;
     const notes = sale?.delivery_notes || [];
@@ -56,7 +64,9 @@ export function buildSaleWorkflowTrace(sale) {
     const isReserved = activeReservations.length > 0 || consumedReservations.length > 0 || (sale?.lines || []).some(line => Number(line.reserved_quantity || 0) > 0);
     const isReturned = returnedReservations.length > 0 || returnedDeliveryNotes.length > 0;
     const isDelivered = !isReturned && isSaleDelivered(sale);
-    const finalPaid = finalInvoices.length > 0 && billableInvoices.every(invoice => String(invoice.status || '').toUpperCase() === 'PAID');
+    const customerCredit = billableInvoices.reduce((sum, invoice) => sum + Number(invoice.customer_credit || 0), 0);
+    const hasBalanceDue = billableInvoices.some(invoiceHasBalanceDue);
+    const finalPaid = finalInvoices.length > 0 && !hasBalanceDue && customerCredit <= 0;
     const depositPaid = depositInvoices.length > 0 && depositInvoices.every(invoice => String(invoice.status || '').toUpperCase() === 'PAID');
 
     return {
@@ -87,6 +97,8 @@ export function buildSaleWorkflowTrace(sale) {
         isReturned,
         hasFinalInvoice: finalInvoices.length > 0,
         finalPaid,
+        hasBalanceDue,
+        customerCredit,
         hasCreditNote: invoices.some(isCreditNote),
     };
 }
@@ -167,8 +179,8 @@ export function buildSaleBusinessTimeline(sale) {
             key: 'payment',
             label: 'Paiement',
             state: stepState({ done: trace.finalPaid, active: trace.hasFinalInvoice && !trace.finalPaid, blocked: isCancelled }),
-            detail: trace.finalPaid ? 'Soldé' : trace.hasFinalInvoice ? 'À encaisser' : 'À venir',
-            actionKey: trace.hasFinalInvoice && !trace.finalPaid && !isCancelled ? 'recordPayment' : null,
+            detail: trace.customerCredit > 0 ? 'Crédit client à traiter' : trace.finalPaid ? (trace.hasCreditNote ? 'Régularisé par avoir' : 'Soldé') : trace.hasFinalInvoice ? 'À encaisser' : 'À venir',
+            actionKey: trace.hasFinalInvoice && trace.hasBalanceDue && !isCancelled ? 'recordPayment' : null,
             actionLabel: 'Encaisser',
         },
     ];

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 from typing import List, Optional
 from datetime import datetime, timedelta
 import csv
@@ -9,7 +9,7 @@ from ..database import get_db
 from .. import models, schemas
 from ..core import security
 from ..services.document_sequences import next_number
-from ..services import nf525_seal
+from ..services import nf525_seal, accounting
 from ..core.time import utcnow
 
 router = APIRouter(
@@ -122,7 +122,12 @@ def get_invoices(
     db: Session = Depends(get_db),
     current_user: dict = Depends(security.require_permissions("ACC_VIEW")),
 ):
-    return db.query(models.Invoice).order_by(models.Invoice.issue_date.desc()).all()
+    invoices = (db.query(models.Invoice)
+                .options(selectinload(models.Invoice.payments), selectinload(models.Invoice.lines),
+                         joinedload(models.Invoice.source_invoice))
+                .order_by(models.Invoice.issue_date.desc()).all())
+    totals = accounting.linked_credit_totals(db, [invoice.id for invoice in invoices])
+    return [accounting.invoice_response(db, invoice, totals) for invoice in invoices]
 
 @router.post("/invoices", response_model=schemas.InvoiceResponse)
 def create_invoice(
@@ -167,7 +172,7 @@ def create_invoice(
     
     db.commit()
     db.refresh(new_invoice)
-    return new_invoice
+    return accounting.invoice_response(db, new_invoice)
 
 @router.post("/invoices/{invoice_id}/pay", response_model=schemas.InvoiceResponse)
 def add_payment(
@@ -180,15 +185,18 @@ def add_payment(
     if not invoice:
         raise HTTPException(404, "Facture introuvable")
         
-    if invoice.status == "PAID":
-        raise HTTPException(400, "Cette facture est déjà intégralement payée.")
+    balance = accounting.invoice_response(db, invoice)
+    if accounting.is_credit_note(invoice):
+        raise HTTPException(400, "Paiement interdit sur un avoir.")
+    if not balance.can_pay:
+        raise HTTPException(400, "Paiement interdit : aucun solde restant dû ou facture non émise/annulée.")
 
     if payment.amount <= 0:
         raise HTTPException(400, "Le montant du paiement doit être positif.")
 
-    paid_before = sum(float(p.amount or 0) for p in invoice.payments)
-    remaining_amount = max(0.0, float(invoice.total or 0) - paid_before)
-    if payment.amount > remaining_amount:
+    paid_before = accounting.money(balance.total_paid)
+    remaining_amount = accounting.money(balance.balance_due)
+    if accounting.money(payment.amount) > remaining_amount:
         raise HTTPException(400, "Le paiement dépasse le solde restant dû.")
 
     new_payment = models.Payment(
@@ -203,8 +211,8 @@ def add_payment(
     # Calculate new status from the pre-payment balance plus the current
     # payment. Relying on invoice.payments after flush is ORM-state dependent:
     # it may or may not already contain the new payment.
-    total_paid = paid_before + payment.amount
-    if total_paid >= float(invoice.total or 0):
+    total_paid = paid_before + accounting.money(payment.amount)
+    if total_paid >= accounting.money(balance.net_total):
         invoice.status = "PAID"
     else:
         invoice.status = "PARTIAL"
@@ -215,7 +223,7 @@ def add_payment(
 
     db.commit()
     db.refresh(invoice)
-    return invoice
+    return accounting.invoice_response(db, invoice)
 
 @router.post("/invoices/{invoice_id}/remind")
 def send_reminder(
@@ -227,6 +235,9 @@ def send_reminder(
     if not invoice:
         raise HTTPException(404, "Facture introuvable")
     
+    if not accounting.invoice_response(db, invoice).can_remind:
+        raise HTTPException(400, "Relance interdite : aucun solde recouvrable ou facture non émise/annulée.")
+
     # In a real app, this sends an email via an EmailService.
     # Here we simulate the reminder.
     log = models.ChatterMessage(
@@ -250,8 +261,12 @@ def create_credit_note(
     if not invoice:
         raise HTTPException(404, "Facture introuvable")
 
-    if invoice.status == "AVOIR":
+    if accounting.is_credit_note(invoice):
         raise HTTPException(400, "Cette pièce est déjà un avoir.")
+
+    balance = accounting.invoice_response(db, invoice)
+    if not balance.can_credit:
+        raise HTTPException(400, "Cette facture est déjà intégralement créditée ou non émise.")
 
     delivery_note = _resolve_credit_note_delivery_note(
         db,
@@ -296,6 +311,9 @@ def create_credit_note(
     tax_amount = sum(line["unit_price"] * line["quantity"] * (line["tax_rate"] / 100.0) for line in credit_lines)
     total = subtotal + tax_amount
 
+    if accounting.money(total) >= 0 or -accounting.money(total) > accounting.money(balance.net_total):
+        raise HTTPException(400, "Le montant de l'avoir dépasse le montant restant à créditer ou est invalide.")
+
     # Create AVOIR
     return_move = _find_return_move(db, invoice) if delivery_note else None
     avoir = models.Invoice(
@@ -333,7 +351,7 @@ def create_credit_note(
     
     db.commit()
     db.refresh(avoir)
-    return avoir
+    return accounting.invoice_response(db, avoir)
 
 @router.post("/invoices/{invoice_id}/credit-note-from-return", response_model=schemas.InvoiceResponse)
 def create_credit_note_from_return(
@@ -344,7 +362,7 @@ def create_credit_note_from_return(
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(404, "Facture introuvable")
-    if invoice.status == "AVOIR":
+    if accounting.is_credit_note(invoice):
         raise HTTPException(400, "Cette pièce est déjà un avoir.")
 
     delivery_note = _find_returned_delivery_note(db, invoice)

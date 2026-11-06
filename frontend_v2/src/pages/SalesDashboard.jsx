@@ -7,7 +7,7 @@ import { openPdfWithFeedback } from '../services/pdf';
 import MMGDossiers from './MMGDossiers';
 import WindowVisualizer from '../components/WindowVisualizer';
 import BusinessTimeline from '../components/BusinessTimeline';
-import { isCreditNote, isDepositInvoice, isSaleDelivered, canReturnSale } from '../utils/saleBusinessTimeline';
+import { isCreditNote, isDepositInvoice, isSaleDelivered, canReturnSale, invoiceHasBalanceDue } from '../utils/saleBusinessTimeline';
 
 export default function SalesDashboard() {
     const queryClient = useQueryClient();
@@ -917,7 +917,7 @@ export default function SalesDashboard() {
         const canDeliverFreeSale = isFreeSale && sale.status === 'VALIDATED' && reservationSummary.count > 0;
         const canCreateFinalInvoice = trace.isDelivered && !trace.isInvoiced && !trace.isReturned;
         const canCreateDepositInvoice = sale.status !== 'CANCELLED' && !isFreeSale && trace.isSigned && !trace.hasDepositInvoice;
-        const unpaidBillableInvoice = trace.billableInvoices?.find(invoice => String(invoice.status || '').toUpperCase() !== 'PAID');
+        const unpaidBillableInvoice = trace.billableInvoices?.find(invoiceHasBalanceDue);
         const timelineActions = {
             createDepositInvoice: canCreateDepositInvoice ? { label: "Créer acompte", onClick: () => createDepositInvoice(sale) } : null,
             deliverFreeSale: canDeliverFreeSale ? { label: "Sortie client / BL", onClick: () => deliverFreeSale(sale) } : null,

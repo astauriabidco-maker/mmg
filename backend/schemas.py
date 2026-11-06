@@ -1518,6 +1518,7 @@ class StockReservationResponse(BaseModel):
     project_reference: Optional[str] = None
     source_label: Optional[str] = None
     location_id: Optional[int] = None
+    location_name: Optional[str] = None
     status: str
     notes: Optional[str] = None
     created_by: str
@@ -1850,6 +1851,10 @@ class SaleInvoiceSummary(BaseModel):
     source_invoice_reference: Optional[str] = None
     delivery_note_id: Optional[int] = None
     return_move_id: Optional[int] = None
+    balance_due: Optional[float] = None
+    customer_credit: Optional[float] = None
+    is_credited: Optional[bool] = None
+    accounting_status: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 class SaleDeliveryNoteSummary(BaseModel):
@@ -1966,6 +1971,17 @@ class InvoiceResponse(InvoiceBase):
     previous_seal: Optional[str] = None
     lines: List[InvoiceLineResponse] = []
     payments: List[PaymentResponse] = []
+    total_paid: Optional[float] = None
+    credit_notes_total: Optional[float] = None
+    net_total: Optional[float] = None
+    balance_due: Optional[float] = None
+    customer_credit: Optional[float] = None
+    refund_due: Optional[float] = None
+    is_credited: Optional[bool] = None
+    accounting_status: Optional[str] = None
+    can_pay: Optional[bool] = None
+    can_remind: Optional[bool] = None
+    can_credit: Optional[bool] = None
     model_config = ConfigDict(from_attributes=True)
 
 # --- LOGISTIQUE & LIVRAISON ---

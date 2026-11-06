@@ -5,7 +5,7 @@ import { ArrowLeft, CheckCircle, Copy, Factory, FileText, Package, Send, Truck, 
 import api from '../services/api';
 import { openPdfWithFeedback } from '../services/pdf';
 import BusinessTimeline from '../components/BusinessTimeline';
-import { isCreditNote, isDepositInvoice, isSaleDelivered, canReturnSale } from '../utils/saleBusinessTimeline';
+import { isCreditNote, isDepositInvoice, isSaleDelivered, canReturnSale, invoiceHasBalanceDue } from '../utils/saleBusinessTimeline';
 
 export default function SaleDetailPage({ saleId: saleIdProp, embedded = false }) {
     const params = useParams();
@@ -251,7 +251,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     const canCreateDepositInvoice = sale.status !== 'CANCELLED' && !isFreeSale && trace.isSigned && !trace.hasDepositInvoice;
     const canReturn = trace.isDelivered && canReturnSale(sale);
     const canCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote;
-    const unpaidBillableInvoice = trace.billableInvoices.find(invoice => String(invoice.status || '').toUpperCase() !== 'PAID');
+    const unpaidBillableInvoice = trace.billableInvoices.find(invoiceHasBalanceDue);
     const latestEmailDelivery = saleChatter.find(message => (
         message.is_system_log
         && (
@@ -541,6 +541,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                                                     </span>
                                                 </div>
                                                 <p className="mt-2 text-xs font-black uppercase tracking-widest text-slate-500">{quantity.toLocaleString('fr-FR')} unité(s)</p>
+                                                {reservation.location_name && <p className="mt-2 text-sm font-bold text-slate-700">Emplacement source : {reservation.location_name}</p>}
                                             </div>
                                         );
                                     })}

@@ -683,22 +683,43 @@ def create_commercial_reservation_for_sale(
     if not stock_lines:
         return None
 
-    # Réservation commerciale ancrée sur l'emplacement interne principal : le
-    # contrôle de disponibilité porte sur CET emplacement (fermeté), plus sur
-    # la somme de tous les emplacements internes.
-    location = get_default_internal_location(db)
-
-    shortages = []
+    requested_by_variant: dict[int, float] = {}
     for line in stock_lines:
-        variant = line.variant
-        if not variant:
-            continue
-        _physical, _already_reserved, available = available_quantity_at_location(db, variant.id, location.id)
-        requested = float(line.quantity or 0)
-        if available < requested:
-            shortages.append(f"{variant.reference}: {available:g} disponible < {requested:g} demandé")
-    if shortages:
-        raise ValueError("Stock insuffisant pour le devis libre: " + ", ".join(shortages[:10]))
+        requested_by_variant[line.variant_id] = (
+            requested_by_variant.get(line.variant_id, 0.0) + float(line.quantity)
+        )
+
+    # Un seul emplacement réel doit couvrir tout le panier. Préférer WH/Stock
+    # pour compatibilité, sans créer d'emplacement ni de quant en secours.
+    locations = (
+        db.query(models.StockLocation)
+        .filter_by(usage="internal", is_active=True)
+        .order_by(
+            (models.StockLocation.name == DEFAULT_INTERNAL_LOCATION_NAME).desc(),
+            models.StockLocation.id.asc(),
+        )
+        .all()
+    )
+    location = None
+    availability_by_variant: dict[int, float] = {}
+    for candidate in locations:
+        availability = {
+            variant_id: available_quantity_at_location(db, variant_id, candidate.id)[2]
+            for variant_id in requested_by_variant
+        }
+        if all(
+            availability[variant_id] >= requested
+            for variant_id, requested in requested_by_variant.items()
+        ):
+            location = candidate
+            availability_by_variant = availability
+            break
+    if location is None:
+        raise ValueError(
+            "Stock insuffisant pour le devis libre : aucun emplacement interne actif "
+            "ne couvre toutes les lignes du panier. Regroupez ou transférez le stock "
+            "sur un même emplacement avant de valider le devis."
+        )
 
     reservation = models.StockReservation(
         reference=f"{COMMERCIAL_RESERVATION_PREFIX}-{utcnow().strftime('%Y%m%d%H%M%S%f')}",
@@ -717,7 +738,7 @@ def create_commercial_reservation_for_sale(
         variant = line.variant
         if not variant:
             continue
-        _physical, _already_reserved, available = available_quantity_at_location(db, variant.id, location.id)
+        available = availability_by_variant[variant.id]
         requested = float(line.quantity or 0)
         db.add(
             models.StockReservationLine(

@@ -30,3 +30,21 @@ test('return is only offered for a delivered free sale', () => {
     assert.equal(canReturnSale({ workflow_type: 'FABRICATION_FROM_MEASURE', status: 'DELIVERED' }), false);
     assert.equal(canReturnSale({ workflow_type: 'FREE_SALE', status: 'CANCELLED' }), false);
 });
+
+test('credited invoices never offer collection and keep customer credit visible', () => {
+    const sale = { status: 'DELIVERED', workflow_type: 'FREE_SALE', invoices: [
+        { id: 1, invoice_type: 'FINAL', status: 'PARTIAL', total: 120, balance_due: 0, customer_credit: 40 },
+        { id: 2, invoice_type: 'CREDIT_NOTE', status: 'AVOIR', total: -120, source_invoice_id: 1 },
+    ] };
+    let payment = buildSaleBusinessTimeline(sale).steps.find(step => step.key === 'payment');
+    assert.equal(payment.detail, 'Crédit client à traiter');
+    assert.equal(payment.actionKey, null);
+    assert.equal(payment.state, 'active');
+    sale.invoices[0].customer_credit = 0;
+    payment = buildSaleBusinessTimeline(sale).steps.find(step => step.key === 'payment');
+    assert.equal(payment.detail, 'Régularisé par avoir');
+    assert.equal(payment.actionKey, null);
+    assert.equal(payment.state, 'done');
+    sale.invoices[0].balance_due = 20;
+    assert.equal(buildSaleBusinessTimeline(sale).steps.find(step => step.key === 'payment').actionKey, 'recordPayment');
+});
