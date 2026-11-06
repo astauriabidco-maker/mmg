@@ -5,7 +5,7 @@ import { ArrowLeft, CheckCircle, Copy, Factory, FileText, Package, Send, Truck, 
 import api from '../services/api';
 import { openPdfWithFeedback } from '../services/pdf';
 import BusinessTimeline from '../components/BusinessTimeline';
-import { isCreditNote, isDepositInvoice } from '../utils/saleBusinessTimeline';
+import { isCreditNote, isDepositInvoice, isSaleDelivered, canReturnSale } from '../utils/saleBusinessTimeline';
 
 export default function SaleDetailPage({ saleId: saleIdProp, embedded = false }) {
     const params = useParams();
@@ -62,7 +62,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
         const isSigned = Boolean(sale?.signed_at) || ['VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale?.status);
         const isReserved = activeReservations.length > 0 || (sale?.lines || []).some(line => Number(line.reserved_quantity || 0) > 0);
         const isReturned = returnedReservations.length > 0 || returnedDeliveryNotes.length > 0;
-        const isDelivered = !isReturned && (sale?.status === 'DELIVERED' || deliveryNotes.some(note => note.status === 'DELIVERED' || note.signed_at));
+        const isDelivered = !isReturned && isSaleDelivered(sale);
         return {
             reservations,
             deliveryNotes,
@@ -231,8 +231,8 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     const isFreeSale = (sale.workflow_type || 'FREE_SALE') === 'FREE_SALE';
     const canDeliver = isFreeSale && sale.status === 'VALIDATED' && trace.activeReservations.length > 0;
     const canCreateFinalInvoice = trace.isDelivered && !trace.isInvoiced && !trace.isReturned;
-    const canCreateDepositInvoice = !isFreeSale && trace.isSigned && !trace.hasDepositInvoice;
-    const canReturn = trace.isDelivered;
+    const canCreateDepositInvoice = sale.status !== 'CANCELLED' && !isFreeSale && trace.isSigned && !trace.hasDepositInvoice;
+    const canReturn = trace.isDelivered && canReturnSale(sale);
     const canCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote;
     const unpaidBillableInvoice = trace.billableInvoices.find(invoice => String(invoice.status || '').toUpperCase() !== 'PAID');
     const latestEmailDelivery = saleChatter.find(message => (

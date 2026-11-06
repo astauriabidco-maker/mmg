@@ -7,7 +7,7 @@ import { openPdfWithFeedback } from '../services/pdf';
 import MMGDossiers from './MMGDossiers';
 import WindowVisualizer from '../components/WindowVisualizer';
 import BusinessTimeline from '../components/BusinessTimeline';
-import { isCreditNote, isDepositInvoice } from '../utils/saleBusinessTimeline';
+import { isCreditNote, isDepositInvoice, isSaleDelivered, canReturnSale } from '../utils/saleBusinessTimeline';
 
 export default function SalesDashboard() {
     const queryClient = useQueryClient();
@@ -578,7 +578,7 @@ export default function SalesDashboard() {
         const isSigned = Boolean(sale?.signed_at) || ['VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale?.status);
         const isReserved = activeReservations.length > 0 || (sale?.lines || []).some(line => Number(line.reserved_quantity || 0) > 0);
         const isReturned = returnedReservations.length > 0 || returnedDeliveryNotes.length > 0;
-        const isDelivered = !isReturned && (sale?.status === 'DELIVERED' || deliveryNotes.some(note => note.status === 'DELIVERED' || note.signed_at));
+        const isDelivered = !isReturned && isSaleDelivered(sale);
         const hasDepositInvoice = depositInvoices.length > 0;
         const isInvoiced = finalInvoices.length > 0;
         const hasCreditNote = creditNotes.length > 0;
@@ -916,7 +916,7 @@ export default function SalesDashboard() {
         const canCreateCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote && billableInvoice;
         const canDeliverFreeSale = isFreeSale && sale.status === 'VALIDATED' && reservationSummary.count > 0;
         const canCreateFinalInvoice = trace.isDelivered && !trace.isInvoiced && !trace.isReturned;
-        const canCreateDepositInvoice = !isFreeSale && trace.isSigned && !trace.hasDepositInvoice;
+        const canCreateDepositInvoice = sale.status !== 'CANCELLED' && !isFreeSale && trace.isSigned && !trace.hasDepositInvoice;
         const unpaidBillableInvoice = trace.billableInvoices?.find(invoice => String(invoice.status || '').toUpperCase() !== 'PAID');
         const timelineActions = {
             createDepositInvoice: canCreateDepositInvoice ? { label: "Créer acompte", onClick: () => createDepositInvoice(sale) } : null,
@@ -963,7 +963,7 @@ export default function SalesDashboard() {
                     </button>
                 );
             }
-            if (trace.isDelivered) {
+            if (trace.isDelivered && canReturnSale(sale)) {
                 return (
                     <button onClick={returnFreeSale} disabled={isReturningFreeSale} className="px-5 py-3 rounded-xl bg-white hover:bg-blue-50 border border-blue-200 text-blue-700 disabled:bg-slate-100 disabled:text-slate-400 font-black text-sm flex items-center justify-center gap-2">
                         <Undo2 className="w-4 h-4" /> {isReturningFreeSale ? "Retour..." : "Retour client"}

@@ -1544,7 +1544,11 @@ def update_crm_opportunity(
     final_loss_reason = payload.get("loss_reason", opportunity.loss_reason)
     if target_stage == models.CRMOpportunityStage.LOST.value and not (final_loss_reason or "").strip():
         raise HTTPException(422, "Un motif de perte est obligatoire")
-    if final_sale_order_id and target_stage != models.CRMOpportunityStage.WON.value:
+    if (
+        final_sale_order_id
+        and final_sale_order_id != opportunity.sale_order_id
+        and target_stage != models.CRMOpportunityStage.WON.value
+    ):
         raise HTTPException(422, "Le devis converti ne peut être lié qu'à une opportunité gagnée")
     for field, value in payload.items():
         if hasattr(value, "value"):

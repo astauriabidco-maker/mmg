@@ -1854,6 +1854,7 @@ class SaleInvoiceSummary(BaseModel):
 
 class SaleDeliveryNoteSummary(BaseModel):
     id: int
+    order_id: Optional[int] = None
     reference: str
     status: str
     signed_at: Optional[datetime] = None

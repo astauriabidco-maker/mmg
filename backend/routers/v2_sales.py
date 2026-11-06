@@ -599,6 +599,7 @@ def list_sales(db: Session = Depends(get_db)):
     )
     for sale in sales:
         annotate_sale_availability(db, sale)
+        _attach_sale_traceability(db, sale)
     return sales
 
 class AIQuoteRequest(BaseModel):
@@ -1294,13 +1295,20 @@ def sign_quote(token: str, request: Request, background_tasks: BackgroundTasks, 
             .joinedload(models.ProductVariant.product)
         )
         .filter(models.SaleOrder.signature_token == token)
+        .with_for_update(of=models.SaleOrder)
         .first()
     )
     if not order:
         raise HTTPException(status_code=404, detail="Lien invalide ou expiré.")
         
-    if order.status == "VALIDATED" and order.signed_at:
+    if order.status == "CANCELLED":
+        raise HTTPException(409, "Ce devis est annulé et ne peut plus être signé.")
+    if order.signed_at:
         return {"message": "Ce devis est déjà signé."}
+    if order.status not in {"SENT", "VALIDATED"}:
+        raise HTTPException(409, "Ce devis n'est pas en attente de signature.")
+    if order.created_at + timedelta(days=order.validity_days) < utcnow():
+        raise HTTPException(410, "Ce devis a expiré. Demandez une nouvelle proposition.")
 
     # Répare les devis historiques passés manuellement à VALIDATED sans
     # horodatage de signature. Ce cas bloquait ensuite la passerelle atelier.
@@ -1466,6 +1474,16 @@ def create_final_invoice(
     if sale.status != "DELIVERED" and not delivery_note:
         raise HTTPException(status_code=400, detail="La facture finale nécessite une livraison client validée.")
 
+    production_orders = db.query(models.Order).filter(models.Order.sale_order_id == sale.id).all()
+    delivered_ids = {
+        note.order_id for note in db.query(models.DeliveryNote).filter(
+            models.DeliveryNote.sale_order_id == sale.id,
+            models.DeliveryNote.status == "DELIVERED",
+        ).all()
+    }
+    if production_orders and any(order.id not in delivered_ids for order in production_orders):
+        raise HTTPException(409, "La facture finale nécessite la livraison de tous les ouvrages.")
+
     sale_subtotal = _sale_total_amount(sale)
     deposit_subtotal = sum(
         float(invoice.subtotal or 0)
@@ -1510,6 +1528,8 @@ def create_deposit_invoice(
         raise HTTPException(status_code=404, detail="Devis introuvable.")
     if _is_free_sale(sale):
         raise HTTPException(status_code=400, detail="L'acompte est réservé aux devis de fabrication.")
+    if sale.status == "CANCELLED":
+        raise HTTPException(409, "Une commande annulée ne peut plus recevoir de facture d'acompte.")
     if not sale.signed_at and sale.status not in ["VALIDATED", "IN_DESIGN", "READY_FOR_PROD", "IN_PRODUCTION", "DELIVERED"]:
         raise HTTPException(status_code=400, detail="La facture d'acompte nécessite un devis signé.")
 

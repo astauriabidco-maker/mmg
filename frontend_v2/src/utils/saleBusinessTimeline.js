@@ -21,6 +21,21 @@ export function isDepositInvoice(invoice) {
     return String(invoice?.invoice_type || '').toUpperCase() === 'DEPOSIT';
 }
 
+export function isSaleDelivered(sale) {
+    if (sale?.status === 'CANCELLED') return false;
+    const notes = sale?.delivery_notes || [];
+    const orders = sale?.production_orders || [];
+    if (orders.length) {
+        return orders.every(order => notes.some(note => note.order_id === order.id && note.status === 'DELIVERED'));
+    }
+    return sale?.status === 'DELIVERED' || notes.some(note => note.status === 'DELIVERED');
+}
+
+export function canReturnSale(sale) {
+    return (sale?.workflow_type || 'FREE_SALE') === 'FREE_SALE'
+        && sale?.status === 'DELIVERED' && isSaleDelivered(sale);
+}
+
 export function buildSaleWorkflowTrace(sale) {
     const reservations = sale?.reservations || [];
     const deliveryNotes = sale?.delivery_notes || [];
@@ -40,8 +55,8 @@ export function buildSaleWorkflowTrace(sale) {
     const isSigned = Boolean(sale?.signed_at) || ['VALIDATED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale?.status);
     const isReserved = activeReservations.length > 0 || consumedReservations.length > 0 || (sale?.lines || []).some(line => Number(line.reserved_quantity || 0) > 0);
     const isReturned = returnedReservations.length > 0 || returnedDeliveryNotes.length > 0;
-    const isDelivered = !isReturned && (sale?.status === 'DELIVERED' || deliveryNotes.some(note => note.status === 'DELIVERED' || note.signed_at));
-    const finalPaid = finalInvoices.length > 0 && finalInvoices.every(invoice => String(invoice.status || '').toUpperCase() === 'PAID');
+    const isDelivered = !isReturned && isSaleDelivered(sale);
+    const finalPaid = finalInvoices.length > 0 && billableInvoices.every(invoice => String(invoice.status || '').toUpperCase() === 'PAID');
     const depositPaid = depositInvoices.length > 0 && depositInvoices.every(invoice => String(invoice.status || '').toUpperCase() === 'PAID');
 
     return {
