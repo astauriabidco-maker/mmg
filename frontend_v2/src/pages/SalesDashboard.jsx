@@ -7,7 +7,7 @@ import { openPdfWithFeedback } from '../services/pdf';
 import MMGDossiers from './MMGDossiers';
 import WindowVisualizer from '../components/WindowVisualizer';
 import BusinessTimeline from '../components/BusinessTimeline';
-import { isCreditNote, isDepositInvoice, isSaleDelivered, canReturnSale, invoiceHasBalanceDue } from '../utils/saleBusinessTimeline';
+import { isCreditNote, isDepositInvoice, isSaleDelivered, canReturnSale, invoiceHasBalanceDue, getOrderNextAction } from '../utils/saleBusinessTimeline';
 
 export default function SalesDashboard() {
     const queryClient = useQueryClient();
@@ -15,7 +15,7 @@ export default function SalesDashboard() {
     const location = useLocation();
 
     const [mainTab, setMainTab] = useState('pipeline'); // 'pipeline' | 'dossiers'
-    const [pipelineView, setPipelineView] = useState('kanban'); // 'list' | 'kanban'
+    const [pipelineView, setPipelineView] = useState('list'); // 'list' | 'kanban'
     const [searchTerm, setSearchTerm] = useState("");
     const [pipelineFilter, setPipelineFilter] = useState("execution");
     const [selectedSale, setSelectedSale] = useState(null);
@@ -899,10 +899,6 @@ export default function SalesDashboard() {
             : getStatusColor(sale?.status)
     );
 
-    const SaleCycleIndicator = ({ sale, compact = false }) => {
-        return <BusinessTimeline sale={sale} compact={compact} title="Cycle vente signée" subtitle="Lecture unique depuis la validation client jusqu'au paiement final." />;
-    };
-
     const renderSaleDetailCard = (sale) => {
         const trace = getFreeSaleTraceability(sale);
         const reservationSummary = getSaleReservationSummary(sale);
@@ -1183,21 +1179,7 @@ export default function SalesDashboard() {
         0
     );
 
-    const getSaleNextAction = (sale) => {
-        const trace = getFreeSaleTraceability(sale);
-        const reservationSummary = getSaleReservationSummary(sale);
-        const isFreeSale = (sale?.workflow_type || 'FREE_SALE') === 'FREE_SALE';
-        if (sale?.status === 'DRAFT') return { label: 'Avant-vente CRM', tone: 'blue' };
-        if (sale?.status === 'SENT') return { label: 'Signature CRM', tone: 'amber' };
-        if (isFreeSale && sale?.status === 'VALIDATED' && reservationSummary.count > 0) return { label: 'Sortie client à faire', tone: 'emerald' };
-        if (trace.isDelivered && !trace.isReturned && !trace.isInvoiced) return { label: 'Facture finale à créer', tone: 'blue' };
-        if (trace.isDelivered && !trace.isReturned) return { label: 'Livré, surveiller retour', tone: 'indigo' };
-        if (trace.isReturned && trace.isInvoiced && !trace.hasCreditNote) return { label: 'Avoir à décider', tone: 'rose' };
-        if (!isFreeSale && sale?.status === 'VALIDATED') return { label: 'Envoyer au BE', tone: 'emerald' };
-        if (!isFreeSale && ['IN_DESIGN', 'READY_FOR_PROD'].includes(sale?.status)) return { label: 'Préparer atelier', tone: 'amber' };
-        if (sale?.status === 'CANCELLED') return { label: 'Clôturé', tone: 'slate' };
-        return { label: 'À jour', tone: 'slate' };
-    };
+    const getSaleNextAction = sale => getOrderNextAction(sale) || { label: 'Aucune action en attente', tone: 'slate' };
 
     const getNextActionClass = (tone) => {
         if (tone === 'blue') return 'bg-blue-50 text-blue-700 border-blue-100';
@@ -1219,16 +1201,10 @@ export default function SalesDashboard() {
         return isFreeSale && sale.status === 'VALIDATED' && trace.isReserved && !trace.isDelivered && !trace.isReturned;
     };
     const matchesExecutionStage = (sale, stageId) => {
-        if (stageId === 'TO_DELIVER') return isSaleToDeliver(sale);
-        if (stageId === 'VALIDATED') return sale.status === 'VALIDATED' && !isSaleToDeliver(sale);
-        if (stageId === 'DELIVERED') {
-            const trace = getFreeSaleTraceability(sale);
-            return (sale.status === 'DELIVERED' || trace.isDelivered || trace.isReturned) && !trace.isInvoiced;
-        }
-        if (stageId === 'INVOICED') {
-            const trace = getFreeSaleTraceability(sale);
-            return trace.isInvoiced;
-        }
+        const trace = getFreeSaleTraceability(sale);
+        if (trace.isReturned) return stageId === 'RETURNED';
+        if (trace.isDelivered) return stageId === (trace.isInvoiced ? 'INVOICED' : 'DELIVERED');
+        if (isSaleToDeliver(sale)) return stageId === 'TO_DELIVER';
         return sale.status === stageId;
     };
     const pipelineFilters = [
@@ -1245,15 +1221,11 @@ export default function SalesDashboard() {
             return trace.isReturned || trace.hasCreditNote;
         }},
         { key: 'fabrication', label: 'Fabrication signée', match: (sale) => isExecutionSale(sale) && (sale.workflow_type || 'FREE_SALE') !== 'FREE_SALE' },
-        { key: 'all', label: 'Toutes', match: isExecutionSale },
     ];
 
     const SalePipelineCard = ({ sale, compact = false }) => {
         const total = getSaleTotal(sale);
-        const trace = getFreeSaleTraceability(sale);
         const nextAction = getSaleNextAction(sale);
-        const stockLines = (sale.lines || []).filter(line => line.line_type === 'STOCK_ITEM' || line.variant_id).length;
-        const serviceLines = (sale.lines || []).length - stockLines;
         return (
             <div
                 draggable={!compact}
@@ -1275,25 +1247,6 @@ export default function SalesDashboard() {
                 <div className={`mt-3 rounded-xl border px-3 py-2 text-xs font-black ${getNextActionClass(nextAction.tone)}`}>
                     {nextAction.label}
                 </div>
-                <div className="mt-3 grid grid-cols-4 gap-2 text-center">
-                    <div className="rounded-lg bg-slate-50 border border-slate-100 p-2">
-                        <p className="text-[9px] font-black uppercase text-slate-400">Stock</p>
-                        <p className="font-black text-slate-800">{stockLines}</p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 border border-slate-100 p-2">
-                        <p className="text-[9px] font-black uppercase text-slate-400">Prest.</p>
-                        <p className="font-black text-slate-800">{serviceLines}</p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 border border-slate-100 p-2">
-                        <p className="text-[9px] font-black uppercase text-slate-400">Rés.</p>
-                        <p className="font-black text-slate-800">{trace.reservationsCount}</p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 border border-slate-100 p-2">
-                        <p className="text-[9px] font-black uppercase text-slate-400">Docs</p>
-                        <p className="font-black text-slate-800">{trace.billableInvoicesCount + trace.creditNotesCount + trace.deliveryNotesCount}</p>
-                    </div>
-                </div>
-                <SaleCycleIndicator sale={sale} compact />
             </div>
         );
     };
@@ -1317,7 +1270,8 @@ export default function SalesDashboard() {
         { id: 'IN_PRODUCTION', title: 'En production' },
         { id: 'TO_DELIVER', title: 'À livrer' },
         { id: 'DELIVERED', title: 'Livrés' },
-        { id: 'INVOICED', title: 'Facturés' },
+        { id: 'INVOICED', title: 'Facturées' },
+        { id: 'RETURNED', title: 'Retours' },
     ];
 
     return (
@@ -1333,7 +1287,7 @@ export default function SalesDashboard() {
                     }}
                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'pipeline' && pipelineView === 'kanban' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
-                    <DollarSign className="w-5 h-5"/> Commandes
+                    <DollarSign className="w-5 h-5"/> Vue par étape
                 </button>
                 <button
                     onClick={() => {
@@ -1342,7 +1296,7 @@ export default function SalesDashboard() {
                     }}
                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${mainTab === 'pipeline' && pipelineView === 'list' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
                 >
-                    <FileText className="w-5 h-5"/> Liste commandes
+                    <FileText className="w-5 h-5"/> Liste
                 </button>
                 </div>
                 <button
@@ -1387,24 +1341,13 @@ export default function SalesDashboard() {
                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
                             />
                         </div>
-                        <button
-                            onClick={() => navigate('/manager?view=crm')}
-                            className="px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl font-black flex items-center gap-2 transition-all"
-                        >
-                            <Plus className="w-4 h-4"/> Nouvelle proposition CRM
-                        </button>
-                        <button
-                            onClick={() => setMainTab('dossiers')}
-                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black shadow-md shadow-emerald-500/20 flex items-center gap-2 transition-all"
-                        >
-                            <ListTodo className="w-4 h-4"/> Métré fabrication
-                        </button>
-                        <button
-                            onClick={() => setShowAIModal(true)}
-                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black shadow-md shadow-indigo-500/20 flex items-center gap-2 transition-all"
-                        >
-	                            <Sparkles className="w-4 h-4"/> Assistant devis IA
-	                        </button>
+                        <details className="relative">
+                            <summary className="cursor-pointer rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold">Outils devis</summary>
+                            <div className="absolute right-0 z-30 mt-2 grid w-52 gap-1 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+                                <button type="button" onClick={() => navigate('/manager?view=crm')} className="rounded px-3 py-2 text-left text-sm hover:bg-slate-50">Nouvelle proposition CRM</button>
+                                <button type="button" onClick={() => setShowAIModal(true)} className="rounded px-3 py-2 text-left text-sm hover:bg-slate-50">Assistant devis IA</button>
+                            </div>
+                        </details>
 	                        </div>
 	                    </div>
 	                    <div className="flex gap-2 overflow-x-auto pb-1">
@@ -1433,7 +1376,7 @@ export default function SalesDashboard() {
                                 const colValue = colSales.reduce((sum, s) => sum + s.lines.reduce((lsum, l) => lsum + (l.quantity * l.unit_price * (1 - l.discount_pct / 100)), 0), 0);
                                 // Colonnes pilotées par les actions métier (sortie client, facturation) :
                                 // le dépôt de carte y est interdit, le statut suit les vrais flux.
-                                const isDropDisabled = ['TO_DELIVER', 'DELIVERED', 'INVOICED'].includes(col.id);
+                                const isDropDisabled = ['TO_DELIVER', 'DELIVERED', 'INVOICED', 'RETURNED'].includes(col.id);
 
                                 return (
                                     <div
@@ -1471,12 +1414,11 @@ export default function SalesDashboard() {
                     {pipelineView === 'list' && (
                         <div className="flex-1 overflow-y-auto p-6">
                             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-                                <div className="grid grid-cols-[1.1fr_170px_170px_140px_180px] gap-4 px-5 py-3 bg-slate-50 border-b border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                <div className="hidden md:grid md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-4 px-5 py-3 bg-slate-50 border-b border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-400">
                                     <span>Client / devis</span>
-                                    <span>Workflow</span>
                                     <span>Statut métier</span>
-                                    <span className="text-right">Montant HT</span>
                                     <span>Prochaine action</span>
+                                    <span className="text-right">Montant HT</span>
                                 </div>
                                 <div className="divide-y divide-slate-100">
                                     {filteredSales.map(sale => {
@@ -1487,29 +1429,26 @@ export default function SalesDashboard() {
                                                 key={sale.id}
                                                 type="button"
                                                 onClick={() => openSaleDetails(sale.id)}
-                                                className="w-full grid grid-cols-[1.1fr_170px_170px_140px_180px] gap-4 px-5 py-4 items-center text-left hover:bg-blue-50/40 transition-colors"
+                                                className="w-full grid gap-2 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] md:gap-4 px-5 py-4 items-center text-left hover:bg-blue-50/40 transition-colors"
                                             >
                                                 <div className="min-w-0">
                                                     <p className="font-black text-slate-900 truncate">{sale.client_name}</p>
                                                     <p className="mt-1 text-xs font-mono font-black text-slate-400">{sale.reference} · {formatDate(sale.created_at)}</p>
                                                 </div>
-                                                <span className={`justify-self-start text-[10px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg border ${getWorkflowBadgeClass(sale.workflow_type)}`}>
-                                                    {getWorkflowLabel(sale.workflow_type)}
-                                                </span>
                                                 <span className={`justify-self-start text-[10px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg border ${getSaleDisplayClass(sale)}`}>
                                                     {getSaleDisplayLabel(sale)}
                                                 </span>
-                                                <p className="font-black text-slate-900 text-right">{formatMoney(total)}</p>
                                                 <span className={`justify-self-start rounded-xl border px-3 py-2 text-xs font-black ${getNextActionClass(nextAction.tone)}`}>
                                                     {nextAction.label}
                                                 </span>
+                                                <p className="font-black text-slate-900 md:text-right">{formatMoney(total)}</p>
                                             </button>
                                         );
                                     })}
                                     {filteredSales.length === 0 && (
                                         <div className="p-12 text-center">
                                             <FileText className="w-12 h-12 mx-auto text-slate-200 mb-3" />
-                                            <p className="text-sm font-black text-slate-500">Aucun devis trouvé avec les filtres actuels.</p>
+                                            <p className="text-sm font-black text-slate-500">Aucune commande pour ces filtres.</p>
                                             <p className="text-xs font-bold text-slate-400 mt-1">Changez le filtre ou la recherche.</p>
                                         </div>
                                     )}

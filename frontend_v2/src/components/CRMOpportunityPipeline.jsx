@@ -157,8 +157,10 @@ export default function CRMOpportunityPipeline({
     onOpenOrder,
     onPlanMeasure,
     startCreateSignal = 0,
+    initialSearch = '',
+    onCreateSignalHandled,
 }) {
-    const [searchTerm, setSearchTerm] = useState('');
+    const [searchTerm, setSearchTerm] = useState(initialSearch);
     const [showCreate, setShowCreate] = useState(false);
     const [draft, setDraft] = useState(EMPTY_DRAFT);
     const [workingId, setWorkingId] = useState(null);
@@ -166,7 +168,7 @@ export default function CRMOpportunityPipeline({
     const [lossTarget, setLossTarget] = useState(null);
     const [lossReason, setLossReason] = useState('');
     const [qualificationTarget, setQualificationTarget] = useState(null);
-    const handledCreateSignalRef = useRef(startCreateSignal);
+    const handledCreateSignalRef = useRef(0);
 
     const opportunitiesQuery = useQuery({
         queryKey: ['crm-opportunities', 'pipeline'],
@@ -336,7 +338,8 @@ export default function CRMOpportunityPipeline({
         setDraft(EMPTY_DRAFT);
         setError('');
         setShowCreate(true);
-    }, [startCreateSignal]);
+        onCreateSignalHandled?.();
+    }, [startCreateSignal, onCreateSignalHandled]);
 
     if (opportunitiesQuery.isLoading || missionsQuery.isLoading) {
         return <PipelineMessage title="Chargement du parcours avant-vente…" detail="Lecture des besoins client." />;

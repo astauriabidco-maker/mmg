@@ -18,10 +18,13 @@ export function accountingTotals(invoices) {
         const balance = invoiceAccounting(invoice);
         if (!['DRAFT', 'CANCELLED', 'VOID'].includes(invoice.status)) {
             totals.revenue += Number(invoice.total || 0);
+            if (invoice.status !== 'AVOIR' && invoice.invoice_type !== 'CREDIT_NOTE') {
+                totals.paid += Number(invoice.total_paid ?? invoice.payments?.reduce((sum, payment) => sum + Number(payment.amount || 0), 0) ?? 0);
+            }
             totals.due += balance.due;
             totals.credit += balance.credit;
             totals.refund += balance.refund;
         }
         return totals;
-    }, { revenue: 0, due: 0, credit: 0, refund: 0 });
+    }, { revenue: 0, paid: 0, due: 0, credit: 0, refund: 0 });
 }

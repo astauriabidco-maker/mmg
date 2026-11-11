@@ -3,12 +3,15 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle, Copy, Factory, FileText, Package, Send, Truck, Undo2, Wrench, X } from 'lucide-react';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { canAccessManagerView } from '../utils/roleNavigation';
 import { openPdfWithFeedback } from '../services/pdf';
 import BusinessTimeline from '../components/BusinessTimeline';
-import { isCreditNote, isDepositInvoice, isSaleDelivered, canReturnSale, invoiceHasBalanceDue } from '../utils/saleBusinessTimeline';
+import { isCreditNote, isDepositInvoice, isSaleDelivered, canReturnSale, invoiceHasBalanceDue, getOrderNextAction } from '../utils/saleBusinessTimeline';
 
 export default function SaleDetailPage({ saleId: saleIdProp, embedded = false }) {
     const params = useParams();
+    const { user } = useAuth();
     const saleId = saleIdProp || params.saleId;
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
@@ -249,6 +252,8 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
     const canReturn = trace.isDelivered && canReturnSale(sale);
     const canCreditNote = trace.isReturned && trace.isInvoiced && !trace.hasCreditNote;
     const unpaidBillableInvoice = trace.billableInvoices.find(invoiceHasBalanceDue);
+    const creditedInvoice = trace.billableInvoices.find(invoice => Number(invoice.customer_credit) > 0);
+    const nextOrderAction = getOrderNextAction(sale);
     const latestEmailDelivery = saleChatter.find(message => (
         message.is_system_log
         && (
@@ -317,12 +322,7 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                             <p className="text-sm font-bold text-slate-700">
                                 {sale.status === 'DRAFT' ? "Envoyer le devis au client."
                                     : sale.status === 'SENT' ? "Attendre la signature ou valider manuellement."
-                                    : sale.status === 'READY_FOR_PROD' ? "Stock réservé: lancer la fabrication pour transmettre à l'atelier."
-                                    : canDeliver ? "Sortir les articles réservés quand ils sont remis au client."
-                                    : canCreateFinalInvoice ? "Livraison faite: générer la facture finale / solde."
-                                    : canCreditNote ? "Retour facturé détecté: créer un avoir si la régularisation est confirmée."
-                                    : canReturn ? "Le client a été livré. Un retour reste possible si erreur."
-                                    : "Le devis est à jour. Consultez le cycle et les documents liés."}
+                                    : nextOrderAction?.label || (sale.status === 'CANCELLED' ? 'Dossier annulé' : 'Aucune action en attente')}
                             </p>
                         </div>
                         <div className="flex flex-wrap gap-3">
@@ -364,6 +364,11 @@ export default function SaleDetailPage({ saleId: saleIdProp, embedded = false })
                             {canCreditNote && (
                                 <button onClick={createCreditNote} disabled={busyAction === 'credit-note'} className="px-5 py-3 rounded-xl bg-rose-600 text-white font-black hover:bg-rose-500 disabled:bg-slate-300 inline-flex items-center gap-2">
                                     <FileText className="w-4 h-4" /> Créer un avoir
+                                </button>
+                            )}
+                            {creditedInvoice && canAccessManagerView(user, 'accounting') && (
+                                <button type="button" onClick={() => navigate(`/manager?view=accounting&invoice=${encodeURIComponent(creditedInvoice.reference)}`)} className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 px-4 py-2 text-sm font-bold text-indigo-800 hover:bg-indigo-50">
+                                    <FileText className="h-4 w-4" /> Voir le crédit client
                                 </button>
                             )}
                             {!['CANCELLED', 'DELIVERED'].includes(sale.status) && (

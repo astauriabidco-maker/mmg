@@ -25,6 +25,7 @@ import {
     X,
 } from 'lucide-react';
 import api from '../services/api';
+import { getOrderNextAction } from '../utils/saleBusinessTimeline';
 import { isConvertedOpportunity, isOpenOpportunity } from '../utils/crmOpportunityStatus';
 
 const OPEN_ACTIVITY_STATUSES = new Set(['A_FAIRE', 'TODO', 'TO_DO', 'PLANNED', 'OPEN', 'PENDING']);
@@ -92,6 +93,8 @@ const channelLabel = value => CONTACT_CHANNEL_OPTIONS.find(([code]) => code === 
 export default function CRMClientActionWorkspace({
     client,
     sites,
+    salesLoading,
+    salesError,
     presalesQuotes,
     executionOrders,
     dossiers,
@@ -101,6 +104,7 @@ export default function CRMClientActionWorkspace({
     formatMoney,
     statusLabel,
     statusClassName,
+    onOpenOpportunity,
     onCreateProposal,
     onPlanMeasure,
     onCreateSite,
@@ -165,6 +169,14 @@ export default function CRMClientActionWorkspace({
         },
     });
 
+    const missionsQuery = useQuery({
+        queryKey: ['measure-missions', 'client', client.id],
+        queryFn: async () => {
+            const response = await api.get('/v2/mmg/missions', { params: { client_id: client.id } });
+            return asList(response.data);
+        },
+    });
+
     const contactsQuery = useQuery({
         queryKey: ['crm-client-contacts', client.id],
         queryFn: async () => {
@@ -202,26 +214,59 @@ export default function CRMClientActionWorkspace({
         [activities],
     );
 
-    const nextAction = pendingActivities[0]
-        ? {
-            eyebrow: 'Activité prioritaire',
-            title: pendingActivities[0].subject,
-            detail: pendingActivities[0].dueAt ? `Échéance ${formatDate(pendingActivities[0].dueAt)}` : 'Échéance à définir',
-            tone: isOverdue(pendingActivities[0].dueAt) ? 'red' : 'blue',
+    const getOpportunityAction = opportunity => {
+        const mission = (missionsQuery.data || [])
+            .filter(item => item.opportunity_id === opportunity.id && item.status !== 'CANCELLED')
+            .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0];
+        const quote = presalesQuotes.find(item => item.id === opportunity.sale_order_id);
+        const detail = opportunity.title;
+        if (quote?.status === 'DRAFT') return { title: 'Ouvrir le devis à préparer', detail, onClick: () => onOpenSale(quote.id) };
+        if (quote?.status === 'SENT') return { title: 'Suivre le devis envoyé', detail, onClick: () => onOpenSale(quote.id) };
+        if (mission && (opportunity.stage === 'proposition_a_preparer' || mission.status === 'VALIDATED')) {
+            return { title: 'Préparer le devis lié', detail, onClick: () => onOpenMeasures({ measure_mission_id: mission.id }) };
         }
-        : openOpportunities[0]
-            ? {
-                eyebrow: 'Prochaine action commerciale',
-                title: openOpportunities[0].nextMilestone,
-                detail: `${openOpportunities[0].title}${openOpportunities[0].nextDate ? ` · ${formatDate(openOpportunities[0].nextDate)}` : ''}`,
-                tone: 'amber',
-            }
-            : {
-                eyebrow: 'Prochaine action',
-                title: 'Qualifier un nouveau besoin client',
-                detail: 'Aucune action ni besoin client ouvert pour ce client.',
-                tone: 'slate',
+        if (mission) return { title: 'Ouvrir la mission de métré', detail, onClick: () => onOpenMeasures({ measure_mission_id: mission.id }) };
+        if (opportunity.stage === 'qualifie' && !missionsQuery.isError && !missionsQuery.isLoading) {
+            return { title: 'Préparer le devis', detail, onClick: onCreateProposal };
+        }
+        if (opportunity.stage === 'metre_a_planifier' && !missionsQuery.isError) {
+            return { title: 'Planifier le métré', detail, onClick: () => onPlanMeasureForOpportunity(opportunity) };
+        }
+        return { title: opportunity.stage === 'nouveau' ? 'Qualifier le besoin client' : 'Ouvrir le besoin client', detail, onClick: () => onOpenOpportunity(opportunity) };
+    };
+
+    const getNextAction = () => {
+        const activity = pendingActivities[0];
+        if (activity && (!activity.dueAt || isOverdue(activity.dueAt))) {
+            return {
+                title: 'Ouvrir l’activité à traiter',
+                detail: activity.subject,
+                onClick: () => document.getElementById(`crm-activity-${activity.id}`)?.focus(),
             };
+        }
+        if (openOpportunities.length) return getOpportunityAction(openOpportunities[0]);
+        const quote = presalesQuotes.find(item => ['DRAFT', 'SENT'].includes(item.status));
+        if (quote) {
+            return {
+                title: quote.status === 'DRAFT' ? 'Ouvrir le brouillon de devis' : 'Suivre le devis envoyé',
+                detail: quote.reference,
+                onClick: () => onOpenSale(quote.id),
+            };
+        }
+        const order = executionOrders.map(sale => ({ sale, action: getOrderNextAction(sale) })).find(item => item.action);
+        if (order) return { title: order.action.label, detail: order.sale.reference, onClick: () => onOpenSale(order.sale.id) };
+        if (activity) {
+            return {
+                title: 'Voir la prochaine activité',
+                detail: `${activity.subject} · ${formatDate(activity.dueAt)}`,
+                onClick: () => document.getElementById(`crm-activity-${activity.id}`)?.focus(),
+            };
+        }
+        return { title: 'Créer un besoin client', onClick: () => resetAndOpen('opportunity') };
+    };
+    const actionLoading = salesLoading || opportunitiesQuery.isLoading || activitiesQuery.isLoading || missionsQuery.isLoading;
+    const actionError = salesError || opportunitiesQuery.isError || activitiesQuery.isError;
+    const nextAction = actionLoading || actionError ? null : getNextAction();
 
     const commercialIntelligence = useMemo(() => {
         const sentQuotes = presalesQuotes.filter(quote => quote.status === 'SENT');
@@ -291,17 +336,6 @@ export default function CRMClientActionWorkspace({
                 : sentQuotes.length || openOpportunities.length
                     ? { label: 'Tiède', tone: 'amber', detail: 'Potentiel actif, suivi à maintenir.' }
                     : { label: 'À qualifier', tone: 'blue', detail: 'Besoin à cadrer avant devis.' };
-        const bestAction = overdueCount
-            ? { title: 'Traiter la relance en retard', detail: 'Commencer par reprendre contact.', onClick: () => resetAndOpen('follow-up') }
-            : !hasContact
-                ? { title: 'Compléter les coordonnées', detail: 'Téléphone ou email nécessaire pour suivre le devis.', onClick: () => setShowContactForm(true) }
-                : sentQuotes.length
-                    ? { title: 'Relancer le devis envoyé', detail: `${sentQuotes[0].reference} · ${formatMoney(saleAmount(sentQuotes[0]))}`, onClick: () => onOpenSale(sentQuotes[0].id) }
-                    : draftQuotes.length
-                        ? { title: 'Finaliser le brouillon', detail: `${draftQuotes[0].reference} · ${formatMoney(saleAmount(draftQuotes[0]))}`, onClick: () => onOpenSale(draftQuotes[0].id) }
-                        : openOpportunities.length && !pendingActivities.length
-                            ? { title: 'Planifier la prochaine action', detail: openOpportunities[0].title, onClick: () => resetAndOpen('follow-up') }
-                            : { title: 'Créer ou qualifier un besoin client', detail: 'Cadrer le besoin commercial.', onClick: () => resetAndOpen('opportunity') };
         const summary = [
             `${client.name} est ${temperature.label.toLowerCase()} avec un score de ${score}/100.`,
             sentQuotes.length ? `${sentQuotes.length} devis envoyé(s) à suivre.` : null,
@@ -310,7 +344,7 @@ export default function CRMClientActionWorkspace({
             typeof daysSinceTouch === 'number' ? `Dernier signal commercial il y a ${daysSinceTouch} j.` : 'Aucun historique commercial récent.',
         ].filter(Boolean).join(' ');
 
-        return { score, reasons: reasons.slice(0, 5), temperature, bestAction, summary };
+        return { score, reasons: reasons.slice(0, 5), temperature, summary };
     }, [client, contacts, pendingActivities, openOpportunities, presalesQuotes, executionOrders]);
 
     const resetAndOpen = (mode) => {
@@ -518,21 +552,25 @@ export default function CRMClientActionWorkspace({
                             <span className="inline-flex min-w-0 items-center gap-2"><MapPin className="h-4 w-4 shrink-0" /><span className="truncate">{client.address || 'Adresse de facturation à compléter'}</span></span>
                         </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                        <ActionButton icon={Target} label="Nouveau besoin client" onClick={() => resetAndOpen('opportunity')} primary />
-                        <ActionButton icon={CalendarClock} label="Planifier une relance" onClick={() => resetAndOpen('follow-up')} />
-                        <ActionButton icon={PhoneCall} label="Noter un appel" onClick={() => resetAndOpen('call')} />
-                        <ActionButton icon={Tags} label="Segmenter" onClick={openSegmentationForm} />
-                        <ActionButton icon={ClipboardList} label="Planifier un métré" onClick={onPlanMeasure} accent />
-                        {canDeleteRecipeClient && (
-                            <ActionButton
-                                icon={Trash2}
-                                label="Supprimer fiche recette"
-                                onClick={onDeleteRecipeClient}
-                                danger
-                            />
-                        )}
-                    </div>
+                    <details className="shrink-0">
+                        <summary className="cursor-pointer rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold">Autres actions</summary>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                            <ActionButton icon={FileText} label="Préparer un devis" onClick={onCreateProposal} />
+                            <ActionButton icon={Target} label="Nouveau besoin client" onClick={() => resetAndOpen('opportunity')} />
+                            <ActionButton icon={CalendarClock} label="Planifier une relance" onClick={() => resetAndOpen('follow-up')} />
+                            <ActionButton icon={PhoneCall} label="Noter un appel" onClick={() => resetAndOpen('call')} />
+                            <ActionButton icon={Tags} label="Segmenter" onClick={openSegmentationForm} />
+                            <ActionButton icon={ClipboardList} label="Planifier un métré" onClick={onPlanMeasure} accent />
+                            {canDeleteRecipeClient && (
+                                <ActionButton
+                                    icon={Trash2}
+                                    label="Supprimer fiche recette"
+                                    onClick={onDeleteRecipeClient}
+                                    danger
+                                />
+                            )}
+                        </div>
+                    </details>
                 </div>
             </header>
 
@@ -543,60 +581,26 @@ export default function CRMClientActionWorkspace({
                 </div>
             )}
 
-            <section className={`grid gap-4 border-l-4 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center ${nextActionTone(nextAction.tone)}`}>
+            <section aria-label="Prochaine action" className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-blue-200 bg-white p-5">
                 <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{nextAction.eyebrow}</p>
-                    <p className="mt-1 text-lg font-black">{nextAction.title}</p>
-                    <p className="mt-1 text-sm font-semibold opacity-80">{nextAction.detail}</p>
+                    <h4 className="text-sm font-bold text-blue-800">Prochaine action</h4>
+                    {nextAction?.detail && <p className="mt-1 text-sm text-slate-600">{nextAction.detail}</p>}
+                    {actionLoading && <p className="mt-1 text-sm text-slate-600">Chargement du dossier…</p>}
+                    {actionError && <p className="mt-1 text-sm text-red-700">Impossible de charger le suivi commercial.</p>}
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-center">
-                    <MiniMetric label="Besoins client" value={openOpportunities.length} />
-                    <MiniMetric label="À faire" value={pendingActivities.length} />
-                    <MiniMetric label="CA signé" value={formatMoney(totals.orderAmount)} />
-                </div>
+                {nextAction && (
+                    <button type="button" onClick={nextAction.onClick} className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-800">
+                        {nextAction.title}<ArrowRight className="h-4 w-4" />
+                    </button>
+                )}
             </section>
 
-            <section className="grid gap-4 rounded-2xl border border-blue-100 bg-white p-5 shadow-sm xl:grid-cols-[260px_minmax(0,1fr)_320px]">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Lecture client</p>
-                    <div className="mt-3 flex items-end gap-2">
-                        <p className="text-5xl font-black text-slate-950">{commercialIntelligence.score}</p>
-                        <p className="pb-2 text-sm font-black text-slate-400">/100</p>
-                    </div>
-                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
-                        <div className={`h-full ${scoreBarClass(commercialIntelligence.score)}`} style={{ width: `${commercialIntelligence.score}%` }} />
-                    </div>
-                </div>
-                <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                        <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${temperatureClass(commercialIntelligence.temperature.tone)}`}>
-                            Devis {commercialIntelligence.temperature.label}
-                        </span>
-                        <span className="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-blue-700">Synthèse</span>
-                    </div>
-                    <p className="mt-3 text-sm font-bold leading-6 text-slate-700">{commercialIntelligence.summary}</p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                        {commercialIntelligence.reasons.map(reason => (
-                            <span key={reason} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-slate-500">
-                                {reason}
-                            </span>
-                        ))}
-                    </div>
-                </div>
-                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Meilleure prochaine action</p>
-                    <p className="mt-2 text-lg font-black text-emerald-950">{commercialIntelligence.bestAction.title}</p>
-                    <p className="mt-1 text-xs font-bold leading-5 text-emerald-800">{commercialIntelligence.bestAction.detail}</p>
-                    <button
-                        type="button"
-                        onClick={commercialIntelligence.bestAction.onClick}
-                        className="mt-4 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-500"
-                    >
-                        Agir maintenant
-                        <ArrowRight className="h-4 w-4" />
-                    </button>
-                </div>
-            </section>
+            <details className="rounded-xl border border-slate-200 bg-white px-5 py-3">
+                <summary className="cursor-pointer text-sm font-bold text-slate-700">Indicateurs commerciaux</summary>
+                <p className="mt-3 text-sm text-slate-700">{commercialIntelligence.summary}</p>
+                <p className="mt-2 text-sm text-slate-600">{commercialIntelligence.reasons.join(' · ')}</p>
+                <p className="mt-2 text-sm font-bold text-slate-700">Montant signé HT {formatMoney(totals.orderAmount)}</p>
+            </details>
 
             <section className="border-y border-l-4 border-slate-200 border-l-blue-500 bg-white">
                 <SectionHeading
@@ -809,8 +813,7 @@ export default function CRMClientActionWorkspace({
                                 opportunity={opportunity}
                                 formatDate={formatDate}
                                 formatMoney={formatMoney}
-                                onPlanMeasure={() => onPlanMeasureForOpportunity(opportunity)}
-                                onOpenSale={() => onOpenSale(opportunity.sale_order_id)}
+                                action={getOpportunityAction(opportunity)}
                             />
                         ))}
                         {convertedOpportunities.length > 0 && (
@@ -1115,16 +1118,7 @@ function InlineEmpty({ icon: Icon, title, detail }) {
     );
 }
 
-function MiniMetric({ label, value }) {
-    return (
-        <div className="min-w-20 border-l border-current/10 px-3 first:border-l-0">
-            <p className="text-[9px] font-black uppercase tracking-widest opacity-60">{label}</p>
-            <p className="mt-1 truncate text-sm font-black">{value}</p>
-        </div>
-    );
-}
-
-function OpportunityRow({ opportunity, formatDate, formatMoney, onPlanMeasure, onOpenSale, converted }) {
+function OpportunityRow({ opportunity, formatDate, formatMoney, action, converted }) {
     return (
         <div className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1.4fr)_140px_110px_130px_minmax(160px,1fr)_auto] md:items-center">
             <div className="min-w-0">
@@ -1153,11 +1147,10 @@ function OpportunityRow({ opportunity, formatDate, formatMoney, onPlanMeasure, o
                 </span>
             ) : (
                 <button
-                    onClick={opportunity.sale_order_id ? onOpenSale : onPlanMeasure}
+                    onClick={action.onClick}
                     className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-black text-emerald-800 hover:bg-emerald-100"
                 >
-                    {opportunity.sale_order_id ? <FileText className="h-4 w-4" /> : <ClipboardList className="h-4 w-4" />}
-                    {opportunity.sale_order_id ? 'Ouvrir le devis' : 'Planifier un métré'}
+                    {action.title}
                 </button>
             )}
         </div>
@@ -1182,6 +1175,7 @@ function ActivityRow({ activity, formatDate, history, onComplete }) {
                     <button
                         type="button"
                         onClick={onComplete}
+                        id={`crm-activity-${activity.id}`}
                         className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-emerald-200 px-2 py-1 text-[10px] font-black text-emerald-700 hover:bg-emerald-50"
                     >
                         <CheckCircle2 className="h-3.5 w-3.5" />
@@ -1310,33 +1304,6 @@ function Field({ label, wide, children }) {
 }
 
 const inputClass = 'w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100';
-
-function nextActionTone(tone) {
-    const tones = {
-        red: 'border-red-500 bg-red-50 text-red-950',
-        blue: 'border-blue-600 bg-blue-50 text-blue-950',
-        amber: 'border-amber-500 bg-amber-50 text-amber-950',
-        emerald: 'border-emerald-500 bg-emerald-50 text-emerald-950',
-        slate: 'border-slate-400 bg-slate-50 text-slate-900',
-    };
-    return tones[tone] || tones.slate;
-}
-
-function scoreBarClass(score) {
-    if (score >= 75) return 'bg-emerald-500';
-    if (score >= 50) return 'bg-amber-500';
-    return 'bg-red-500';
-}
-
-function temperatureClass(tone) {
-    const tones = {
-        red: 'bg-red-100 text-red-700',
-        amber: 'bg-amber-100 text-amber-800',
-        blue: 'bg-blue-100 text-blue-700',
-        slate: 'bg-slate-100 text-slate-600',
-    };
-    return tones[tone] || tones.blue;
-}
 
 function opportunityLabel(stage) {
     const labels = {

@@ -103,6 +103,29 @@ export function buildSaleWorkflowTrace(sale) {
     };
 }
 
+export function getOrderNextAction(sale) {
+    if (!['VALIDATED', 'ACCEPTED', 'IN_DESIGN', 'READY_FOR_PROD', 'IN_PRODUCTION', 'DELIVERED'].includes(sale?.status)) return null;
+
+    const trace = buildSaleWorkflowTrace(sale);
+    if (trace.isReturned && trace.hasFinalInvoice && !trace.hasCreditNote) return { label: 'Préparer un avoir', tone: 'rose' };
+    if (trace.customerCredit > 0) return { label: 'Traiter le crédit client', tone: 'rose' };
+    if (trace.isDelivered && !trace.hasFinalInvoice) return { label: 'Préparer la facture finale', tone: 'blue' };
+    if (trace.hasFinalInvoice && trace.hasBalanceDue) return { label: 'Suivre le règlement', tone: 'amber' };
+    if (trace.isDelivered || trace.isReturned) return null;
+
+    if (!trace.isFabrication && !trace.hasStockLines) return { label: 'Suivre la prestation', tone: 'blue' };
+    if (!trace.isFabrication) {
+        return trace.activeReservations.length
+            ? { label: 'Préparer la sortie client', tone: 'emerald' }
+            : { label: 'Vérifier la réservation', tone: 'amber' };
+    }
+    if (sale.status === 'VALIDATED') return { label: 'Ouvrir le dossier pour le BE', tone: 'blue' };
+    if (sale.status === 'IN_DESIGN') return { label: 'Suivre le bureau d’études', tone: 'amber' };
+    if (sale.status === 'READY_FOR_PROD') return { label: 'Préparer le lancement atelier', tone: 'amber' };
+    if (sale.status === 'IN_PRODUCTION') return { label: 'Suivre la production et la livraison', tone: 'indigo' };
+    return null;
+}
+
 function stepState({ done = false, active = false, skipped = false, blocked = false } = {}) {
     if (blocked) return 'blocked';
     if (skipped) return 'skipped';

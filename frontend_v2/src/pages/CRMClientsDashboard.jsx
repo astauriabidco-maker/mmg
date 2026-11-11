@@ -49,6 +49,7 @@ export default function CRMClientsDashboard() {
     const navigate = useNavigate();
     const { user } = useAuth();
     const [crmView, setCrmView] = useState('home');
+    const [pipelineSearch, setPipelineSearch] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [segmentFilter, setSegmentFilter] = useState('');
     const [tagFilter, setTagFilter] = useState('');
@@ -127,7 +128,7 @@ export default function CRMClientsDashboard() {
         },
     });
 
-    const { data: sales = [] } = useQuery({
+    const { data: sales = [], isLoading: salesLoading, isError: salesError } = useQuery({
         queryKey: ['sales'],
         queryFn: async () => {
             const res = await api.get('/v2/sales/');
@@ -187,6 +188,7 @@ export default function CRMClientsDashboard() {
     };
 
     const createOpportunityFromHome = () => {
+        setPipelineSearch('');
         setCrmView('pipeline');
         setPipelineCreateRequest(Date.now());
     };
@@ -614,61 +616,6 @@ export default function CRMClientsDashboard() {
         return actions.slice(0, 3);
     }, [activePresalesQuotes, selectedClient, openMeasureDossiers]);
 
-    const commerceOverview = useMemo(() => {
-        const draftQuotes = sales.filter(sale => sale.status === 'DRAFT');
-        const sentQuotes = sales.filter(sale => sale.status === 'SENT');
-        const signedOrders = sales.filter(sale => !isPresalesStatus(sale.status));
-        const openMeasures = dossiers.filter(dossier => dossier.status !== 'VALIDATED');
-        const clientSignals = segmentationQuery.data?.client_signals || {};
-        const followUpClients = Object.values(clientSignals).filter(signal => (signal.statuses || []).includes('to_follow_up')).length;
-        const withoutActionClients = Object.values(clientSignals).filter(signal => (signal.statuses || []).includes('missing_next_action')).length;
-        return {
-            clients: clients.filter(client => client.is_active !== false).length,
-            draftQuotes: draftQuotes.length,
-            sentQuotes: sentQuotes.length,
-            signedOrders: signedOrders.length,
-            openMeasures: openMeasures.length,
-            followUpClients,
-            withoutActionClients,
-            signedAmount: signedOrders.reduce((sum, sale) => sum + saleAmount(sale), 0),
-        };
-    }, [clients, sales, dossiers, segmentationQuery.data]);
-
-    const sellerQueue = useMemo(() => ([
-        {
-            key: 'follow-up',
-            label: 'Relances à faire',
-            value: commerceOverview.followUpClients,
-            detail: 'Clients avec relance ou décision attendue.',
-            tone: 'red',
-            view: 'cockpit',
-        },
-        {
-            key: 'quotes',
-            label: 'Devis envoyés',
-            value: commerceOverview.sentQuotes,
-            detail: 'À suivre jusqu’à signature ou relance.',
-            tone: 'blue',
-            view: 'pipeline',
-        },
-        {
-            key: 'missing-action',
-            label: 'Sans prochaine action',
-            value: commerceOverview.withoutActionClients,
-            detail: 'À reprendre pour éviter les besoins client dormants.',
-            tone: 'amber',
-            view: 'cockpit',
-        },
-        {
-            key: 'measures',
-            label: 'Métrés ouverts',
-            value: commerceOverview.openMeasures,
-            detail: 'À contrôler avec BE avant proposition finale.',
-            tone: 'emerald',
-            view: 'measures',
-        },
-    ]), [commerceOverview]);
-
     const commercialActionRows = useMemo(() => {
         const rows = [];
         const clientByName = new Map(clients.map(client => [normalize(client.name), client]));
@@ -804,61 +751,18 @@ export default function CRMClientsDashboard() {
     };
 
     const navItems = [
-        { key: 'home', label: 'Parcours vendeur', group: 'Accueil', icon: ArrowRight },
-        { key: 'cockpit', label: 'Priorités', group: 'Décider', icon: BellRing },
-        { key: 'pipeline', label: 'Demandes / devis', group: 'Suivre', icon: ClipboardList },
-        { key: 'clients', label: 'Clients & contacts', group: 'Gérer', icon: Users },
-        { key: 'measures', label: 'Métrés / BE', group: 'Préparer', icon: Wrench },
+        { key: 'home', label: 'Accueil', icon: ArrowRight },
+        { key: 'cockpit', label: 'Priorités', icon: BellRing },
+        { key: 'pipeline', label: 'Demandes / devis', icon: ClipboardList },
+        { key: 'clients', label: 'Clients & contacts', icon: Users },
+        { key: 'measures', label: 'Métrés / BE', icon: Wrench },
     ];
 
     return (
         <div className="w-full h-[calc(100vh-80px)] font-sans flex flex-col overflow-hidden bg-slate-50 border-y border-slate-200/80 animate-fade-in">
             <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-5 lg:px-8">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-                    <div>
-                        <div className="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-blue-700">
-                            <Users className="h-4 w-4" />
-                            Commerce & ventes
-                        </div>
-                        <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-950">Commencer par la prochaine action commerciale.</h2>
-                        <p className="mt-2 max-w-3xl text-sm font-bold text-slate-500">
-                            Un parcours simple pour qualifier, relancer, préparer le devis, puis passer en commande signée.
-                        </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                        <button
-                            onClick={() => setShowClientModal(true)}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 hover:bg-slate-50"
-                        >
-                            <Users className="h-4 w-4" />
-                            Nouveau client
-                        </button>
-                        <button
-                            onClick={createOpportunityFromHome}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-blue-500/20 hover:bg-blue-500"
-                        >
-                            <Plus className="h-4 w-4" />
-                            Nouveau besoin client
-                        </button>
-                        <button
-                            onClick={createQuoteForClient}
-                            disabled={!selectedClient}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-black text-blue-700 hover:bg-blue-50 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                        >
-                            <FileText className="h-4 w-4" />
-                            Préparer un devis
-                        </button>
-                        <button
-                            onClick={planMeasureForClient}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-500"
-                        >
-                            <ClipboardList className="h-4 w-4" />
-                            Lancer un métré
-                        </button>
-                    </div>
-                </div>
-                <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
-                    <div className="flex min-w-max items-center gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
                         {navItems.map(item => {
                             const Icon = item.icon;
                             const selected = crmView === item.key;
@@ -866,105 +770,38 @@ export default function CRMClientsDashboard() {
                                 <button
                                     key={item.key}
                                     type="button"
-                                    onClick={() => setCrmView(item.key)}
+                                    aria-pressed={selected}
+                                    onClick={() => { setPipelineSearch(''); setCrmView(item.key); }}
                                     className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-all ${selected ? 'bg-slate-950 text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-blue-50 hover:text-blue-700'}`}
                                 >
                                     <Icon className={`h-4 w-4 ${selected ? 'text-white' : 'text-slate-400'}`} />
-                                    <span>
-                                        <span className={`block text-[9px] font-black uppercase tracking-widest ${selected ? 'text-blue-100' : 'text-slate-400'}`}>{item.group}</span>
-                                        <span className="block text-sm font-black">{item.label}</span>
-                                    </span>
+                                    <span className="text-sm font-bold">{item.label}</span>
                                 </button>
                             );
                         })}
                     </div>
+                    {!['clients', 'pipeline'].includes(crmView) && <button type="button" onClick={createOpportunityFromHome} className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-800">
+                        <Plus className="h-4 w-4" /> Nouveau besoin client
+                    </button>}
                 </div>
             </div>
 
             {crmView === 'home' && (
                 <div className="flex-1 overflow-y-auto p-5 lg:p-8">
-                    <section className="rounded-3xl border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-emerald-50 p-5 shadow-sm lg:p-6">
-                        <div className="flex flex-col gap-6 xl:flex-row xl:items-stretch">
-                            <div className="flex-1">
-                                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-600">Parcours vendeur</p>
-                                <h3 className="mt-3 text-3xl font-black tracking-tight text-slate-950">À traiter maintenant</h3>
-                                <p className="mt-2 max-w-2xl text-sm font-bold leading-6 text-slate-600">
-                                    Le bureau part des relances et devis ouverts. Les vues de gestion restent disponibles, mais la prochaine action reste le point d'entrée.
-                                </p>
-                                <div className="mt-5 grid gap-3 md:grid-cols-4">
-                                    <JourneyStep number="1" title="Qualifier" detail="Client, besoin, budget, chantier." />
-                                    <JourneyStep number="2" title="Métrer" detail="Cotes client ou rendez-vous terrain." />
-                                    <JourneyStep number="3" title="Deviser" detail="Préparer, envoyer, suivre." />
-                                    <JourneyStep number="4" title="Signer" detail="Commande puis passage production." />
-                                </div>
-                            </div>
-                            <div className="rounded-2xl border border-white/80 bg-white p-5 shadow-sm xl:w-80">
-                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Portefeuille</p>
-                                <p className="mt-3 text-4xl font-black text-slate-950">{commerceOverview.clients}</p>
-                                <p className="text-xs font-black uppercase tracking-widest text-slate-400">client(s) actifs</p>
-                                <div className="mt-4 grid grid-cols-2 gap-2">
-                                    <MiniKpi label="Devis envoyés" value={commerceOverview.sentQuotes} />
-                                    <MiniKpi label="CA signé" value={formatMoney(commerceOverview.signedAmount)} />
-                                </div>
-                            </div>
+                    <section className="mx-auto max-w-6xl overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-5">
+                            <h3 className="text-xl font-bold text-slate-950">À traiter en priorité</h3>
+                            <button type="button" onClick={() => setCrmView('cockpit')} className="text-sm font-bold text-blue-700 hover:underline">
+                                Toutes les priorités
+                            </button>
                         </div>
-                    </section>
-
-                    <section className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                            <div className="flex items-center justify-between gap-4">
-                                <div>
-                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">File avant-vente</p>
-                                    <h3 className="mt-1 text-2xl font-black text-slate-950">À traiter aujourd'hui</h3>
-                                </div>
-                                <button onClick={() => setCrmView('cockpit')} className="hidden rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white hover:bg-slate-800 md:inline-flex">
-                                    Ouvrir la file
-                                </button>
-                            </div>
-                            <div className="mt-5 grid gap-3 md:grid-cols-2">
-                                {sellerQueue.map(item => (
-                                    <SellerQueueCard key={item.key} item={item} onOpen={() => setCrmView(item.view)} />
-                                ))}
-                            </div>
-                            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-                                <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
-                                    <div>
-                                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">À traiter en priorité</p>
-                                        <p className="text-xs font-bold text-slate-500">Les premières lignes concrètes à ouvrir maintenant.</p>
-                                    </div>
-                                    <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">{commercialActionRows.length} action(s)</span>
-                                </div>
-                                <div className="divide-y divide-slate-200">
-                                    {commercialActionRows.length ? (
-                                        commercialActionRows.map(row => (
-                                            <CommercialActionRow key={row.key} row={row} formatDate={formatDate} />
-                                        ))
-                                    ) : (
-                                        <div className="px-4 py-8 text-center">
-                                            <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500" />
-                                            <p className="mt-2 text-sm font-black text-slate-700">Aucune priorité commerciale urgente</p>
-                                            <p className="mt-1 text-xs font-bold text-slate-500">Les devis, relances et métrés ouverts apparaîtront ici.</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
+                        <div className="divide-y divide-slate-200">
+                            {commercialActionRows.map(row => <CommercialActionRow key={row.key} row={row} formatDate={formatDate} />)}
+                            {salesError && <p role="alert" className="p-5 text-sm text-red-700">Impossible de charger les devis.</p>}
+                            {!commercialActionRows.length && !salesError && (
+                                <p className="p-5 text-sm text-slate-600">{salesLoading ? 'Chargement des priorités…' : 'Aucune action commerciale en attente.'}</p>
+                            )}
                         </div>
-                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Actions rapides</p>
-                            <div className="mt-4 space-y-3">
-                                <QuickAction icon={Users} title="Créer une fiche client" detail="Prospect, contact, segment." onClick={() => setShowClientModal(true)} />
-                                <QuickAction icon={Plus} title="Préparer un devis" detail={selectedClient ? selectedClient.name : 'Sélectionner un client d’abord.'} onClick={createQuoteForClient} disabled={!selectedClient} />
-                                <QuickAction icon={ClipboardList} title="Lancer un métré" detail="Chantier, plans ou saisie agence." onClick={planMeasureForClient} />
-                                <QuickAction icon={Search} title="Retrouver un client" detail="Liste, filtres, contacts, doublons." onClick={() => setCrmView('clients')} />
-                            </div>
-                        </div>
-                    </section>
-
-                    <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                        <WorkspaceCard icon={BellRing} eyebrow="Décider" title="À traiter" detail="Relances, devis ouverts et décisions attendues." onOpen={() => setCrmView('cockpit')} />
-                        <WorkspaceCard icon={ClipboardList} eyebrow="Suivre" title="Demandes / devis" detail="Besoins client, devis envoyés, signatures et pertes." onOpen={() => setCrmView('pipeline')} />
-                        <WorkspaceCard icon={Users} eyebrow="Gérer" title="Clients & contacts" detail="Fiches, contacts multiples, imports, exports, doublons." onOpen={() => setCrmView('clients')} />
-                        <WorkspaceCard icon={Wrench} eyebrow="Préparer" title="Métrés / BE" detail="Prise de cotes, contrôle BE et liaison au devis." onOpen={() => setCrmView('measures')} />
                     </section>
                 </div>
             )}
@@ -981,13 +818,16 @@ export default function CRMClientsDashboard() {
 
             {crmView === 'pipeline' && (
                 <CRMOpportunityPipeline
+                    key={pipelineSearch}
                     clients={clients}
+                    initialSearch={pipelineSearch}
                     onOpenClient={clientId => {
                         setSelectedClientId(clientId);
                         setCrmView('clients');
                     }}
                     onOpenOrder={saleOrderId => openSale(saleOrderId)}
                     startCreateSignal={pipelineCreateRequest}
+                    onCreateSignalHandled={() => setPipelineCreateRequest(0)}
                     onPlanMeasure={(opportunity, source = 'SITE_VISIT', missionId = null) => {
                         if (missionId) {
                             navigate(`/measure-missions/${missionId}`);
@@ -1218,8 +1058,11 @@ export default function CRMClientsDashboard() {
                             </div>
                         ) : (
                             <CRMClientActionWorkspace
+                                key={selectedClient.id}
                                 client={selectedClient}
                                 sites={clientSites}
+                                salesLoading={salesLoading}
+                                salesError={salesError}
                                 presalesQuotes={presalesQuotes}
                                 executionOrders={executionOrders}
                                 dossiers={clientDossiers}
@@ -1229,6 +1072,10 @@ export default function CRMClientsDashboard() {
                                 formatMoney={formatMoney}
                                 statusLabel={statusLabel}
                                 statusClassName={statusClassName}
+                                onOpenOpportunity={opportunity => {
+                                    setPipelineSearch(opportunity.reference || opportunity.title);
+                                    setCrmView('pipeline');
+                                }}
                                 onCreateProposal={createQuoteForClient}
                                 onPlanMeasure={planMeasureForClient}
                                 onCreateSite={openSiteCreation}
@@ -2270,52 +2117,6 @@ function ModalStepBadge({ number, title, detail, active = false, dark = false })
     );
 }
 
-function JourneyStep({ number, title, detail }) {
-    return (
-        <div className="rounded-2xl border border-white/80 bg-white/90 p-4 shadow-sm">
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-xs font-black text-white">{number}</span>
-            <p className="mt-3 text-sm font-black text-slate-950">{title}</p>
-            <p className="mt-1 text-xs font-bold leading-5 text-slate-500">{detail}</p>
-        </div>
-    );
-}
-
-function MiniKpi({ label, value }) {
-    return (
-        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</p>
-            <p className="mt-1 truncate text-lg font-black text-slate-950">{value}</p>
-        </div>
-    );
-}
-
-function SellerQueueCard({ item, onOpen }) {
-    const tones = {
-        red: 'border-red-100 bg-red-50 text-red-950',
-        blue: 'border-blue-100 bg-blue-50 text-blue-950',
-        amber: 'border-amber-100 bg-amber-50 text-amber-950',
-        emerald: 'border-emerald-100 bg-emerald-50 text-emerald-950',
-    };
-    return (
-        <button
-            type="button"
-            onClick={onOpen}
-            className={`group rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${tones[item.tone] || tones.blue}`}
-        >
-            <div className="flex items-start justify-between gap-4">
-                <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{item.label}</p>
-                    <p className="mt-3 text-4xl font-black">{item.value}</p>
-                </div>
-                <span className="rounded-full bg-white/80 p-2 transition-transform group-hover:translate-x-1">
-                    <ArrowRight className="h-4 w-4" />
-                </span>
-            </div>
-            <p className="mt-3 text-sm font-bold leading-5 opacity-75">{item.detail}</p>
-        </button>
-    );
-}
-
 function CommercialActionRow({ row, formatDate }) {
     const tones = {
         red: 'bg-red-50 text-red-700 border-red-100',
@@ -2325,7 +2126,7 @@ function CommercialActionRow({ row, formatDate }) {
         slate: 'bg-slate-100 text-slate-700 border-slate-200',
     };
     return (
-        <div className="grid gap-3 bg-white px-4 py-3 transition-colors hover:bg-blue-50/30 lg:grid-cols-[180px_minmax(0,1fr)_150px_150px] lg:items-center">
+        <div className="grid gap-3 bg-white px-4 py-3 transition-colors hover:bg-blue-50/30 lg:grid-cols-[180px_minmax(0,1fr)_auto] lg:items-center">
             <div>
                 <span className={`inline-flex rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-widest ${tones[row.tone] || tones.slate}`}>
                     {row.label}
@@ -2337,7 +2138,6 @@ function CommercialActionRow({ row, formatDate }) {
                 <p className="mt-1 truncate text-xs font-bold text-slate-500">{row.reference}</p>
                 <p className="mt-1 text-xs font-semibold text-slate-400">{row.detail}</p>
             </div>
-            <p className="text-xs font-black uppercase tracking-widest text-slate-400">Prochaine action</p>
             <button
                 type="button"
                 onClick={row.onOpen}
@@ -2347,45 +2147,6 @@ function CommercialActionRow({ row, formatDate }) {
                 <ArrowRight className="h-4 w-4" />
             </button>
         </div>
-    );
-}
-
-function QuickAction({ icon: Icon, title, detail, onClick, disabled = false }) {
-    return (
-        <button
-            type="button"
-            onClick={onClick}
-            disabled={disabled}
-            className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-blue-600 shadow-sm">
-                <Icon className="h-5 w-5" />
-            </span>
-            <span className="min-w-0">
-                <span className="block text-sm font-black text-slate-950">{title}</span>
-                <span className="mt-0.5 block truncate text-xs font-bold text-slate-500">{detail}</span>
-            </span>
-        </button>
-    );
-}
-
-function WorkspaceCard({ icon: Icon, eyebrow, title, detail, onOpen }) {
-    return (
-        <button
-            type="button"
-            onClick={onOpen}
-            className="group rounded-3xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
-        >
-            <div className="flex items-start justify-between gap-4">
-                <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
-                    <Icon className="h-5 w-5" />
-                </span>
-                <ArrowRight className="h-4 w-4 text-slate-300 transition-transform group-hover:translate-x-1 group-hover:text-blue-600" />
-            </div>
-            <p className="mt-5 text-[10px] font-black uppercase tracking-widest text-blue-600">{eyebrow}</p>
-            <h4 className="mt-1 text-lg font-black text-slate-950">{title}</h4>
-            <p className="mt-2 text-sm font-bold leading-6 text-slate-500">{detail}</p>
-        </button>
     );
 }
 

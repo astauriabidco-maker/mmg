@@ -11,7 +11,7 @@ function json(route, body, status = 200) {
     });
 }
 
-async function mockCRMCommerceAPI(page) {
+async function mockCRMCommerceAPI(page, { quoteReady = false } = {}) {
     const clients = [
         {
             id: 101,
@@ -142,7 +142,8 @@ async function mockCRMCommerceAPI(page) {
             id: 201,
             client_id: 101,
             title: 'Remplacement façades bureau',
-            stage: 'proposition_envoyee',
+            stage: quoteReady ? 'proposition_a_preparer' : 'proposition_envoyee',
+            sale_order_id: quoteReady ? null : 301,
             amount_estimated: 2400,
             probability: 50,
             expected_close_date: '2026-09-15',
@@ -177,17 +178,17 @@ async function mockCRMCommerceAPI(page) {
     await page.addInitScript(() => {
         localStorage.setItem('token', 'e2e-commerce-token');
         localStorage.setItem('username', 'commercial-e2e');
-        localStorage.setItem('role', 'SALES');
-        localStorage.setItem('roles', JSON.stringify(['SALES']));
+        localStorage.setItem('role', 'ADMIN');
+        localStorage.setItem('roles', JSON.stringify(['ADMIN']));
         localStorage.setItem('stations', JSON.stringify([]));
-        localStorage.setItem('permissions', JSON.stringify(['SALES_VIEW', 'SALES_EDIT']));
+        localStorage.setItem('permissions', JSON.stringify(['*']));
         localStorage.removeItem('mmg.crm.clientFilters.v1');
     });
 
-    await page.route('http://localhost:7000/**', async route => {
+    await page.route('http://127.0.0.1:5173/api/**', async route => {
         const request = route.request();
         const url = new URL(request.url());
-        const path = url.pathname;
+        const path = url.pathname.replace(/^\/api/, '');
         const method = request.method();
 
         if (path === '/v2/partners/clients' && method === 'GET') return json(route, clients);
@@ -211,7 +212,24 @@ async function mockCRMCommerceAPI(page) {
                 },
             });
         }
-        if (path === '/v2/sales/' && method === 'GET') return json(route, sales);
+        if (path === '/v2/mmg/missions' && method === 'GET' && quoteReady) {
+            return json(route, [{ id: 401, opportunity_id: 201, status: 'VALIDATED', created_at: now }]);
+        }
+        if (path === '/v2/sales/301' && method === 'GET') return json(route, sales[0]);
+        if (path === '/v2/sales/' && method === 'GET') return json(route, [
+            ...sales,
+            { ...sales[0], id: 302, reference: 'COM-CRM-E2E-002', status: 'DELIVERED', invoices: [], delivery_notes: [] },
+        ]);
+        if (path === '/v2/accounting/invoices' && method === 'GET') {
+            return json(route, [
+                { id: 1, reference: 'F-001', client_name: 'Client test', total: 120, total_paid: 40, status: 'PARTIAL',
+                    accounting_status: 'CREDITED', balance_due: 0, customer_credit: 40, refund_due: 40, issue_date: now },
+                { id: 2, reference: 'AV-001', client_name: 'Client test', total: -120, status: 'AVOIR',
+                    accounting_status: 'AVOIR', balance_due: 0, issue_date: now, source_invoice_reference: 'F-001' },
+                { id: 3, reference: 'F-002', client_name: 'Autre client test', total: 120, total_paid: 0, status: 'UNPAID',
+                    accounting_status: 'UNPAID', balance_due: 120, issue_date: now },
+            ]);
+        }
         if (path === '/v2/mmg/' && method === 'GET') return json(route, dossiers);
         if (path === '/v2/mmg/sites' && method === 'GET') {
             return json(route, [
@@ -248,56 +266,68 @@ async function mockCRMCommerceAPI(page) {
     });
 }
 
-async function closeVisibleModal(page) {
-    await page.locator('.fixed.inset-0').last().locator('button').first().click();
-}
-
-test('Commerce & Ventes keeps the certified seller journey visible and guided', async ({ page }) => {
+test('la fiche client affiche une seule action et ouvre le devis lié', async ({ page }) => {
     await mockCRMCommerceAPI(page);
-
     await page.goto('/crm');
 
-    await expect(page.getByText('Commerce & ventes')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Commencer par la prochaine action commerciale.' })).toBeVisible();
-    await expect(page.getByText('Parcours vendeur').first()).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'À traiter maintenant' })).toBeVisible();
-    await expect(page.getByText('File commerciale')).toBeVisible();
-    await expect(page.getByText('À traiter en priorité')).toBeVisible();
-    await expect(page.getByText('CLIENT RECETTE COMMERCE').first()).toBeVisible();
-    await expect(page.getByRole('button', { name: /Ouvrir \/ relancer|Traiter relance|Suivre métré/ }).first()).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'À traiter en priorité' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ouvrir / relancer' })).toBeVisible();
+    await page.getByRole('button', { name: 'Nouveau besoin client', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Enregistrer une nouvelle demande' })).toBeVisible();
+    await page.getByRole('button', { name: 'Fermer', exact: true }).click();
 
-    await page.getByRole('button', { name: 'Pilotage commercial' }).first().click();
-    await expect(page.getByText('Pipeline pondéré')).toBeVisible();
-    await expect(page.getByText('CA signé').first()).toBeVisible();
-    await expect(page.getByText('Conversion, CA signé et risques par responsable')).toBeVisible();
-
-    await page.getByRole('button', { name: 'Pipeline' }).first().click();
     await expect(page.getByRole('heading', { name: 'Proposition envoyée' })).toBeVisible();
-    await expect(page.getByText('Remplacement façades bureau')).toBeVisible();
-
-    await page.getByRole('button', { name: 'Métrés / BE' }).first().click();
-    await expect(page.getByText('Missions de métré')).toBeVisible();
-    await expect(page.getByText('Contrôle BE').first()).toBeVisible();
-
-    await page.getByRole('button', { name: 'Clients & contacts' }).first().click();
-    await expect(page.getByPlaceholder('Client, téléphone...')).toBeVisible();
+    await page.getByRole('button', { name: 'Métrés / BE', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Planification et contrôle technique' })).toBeVisible();
+    await page.getByRole('button', { name: 'Clients & contacts', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'CLIENT RECETTE COMMERCE' })).toBeVisible();
-    await expect(page.getByText('Score commercial')).toBeVisible();
-    await expect(page.getByText('Résumé auto')).toBeVisible();
-    await expect(page.getByText('Meilleure prochaine action')).toBeVisible();
-
-    await page.getByRole('button', { name: 'Nouveau client' }).first().click();
-    await expect(page.getByRole('heading', { name: 'Créer une fiche client exploitable' })).toBeVisible();
-    await expect(page.getByText('Identité → contact → qualification')).toBeVisible();
-    await closeVisibleModal(page);
-
-    await page.getByRole('button', { name: 'Préparer un devis' }).first().click();
+    await page.getByText('Autres actions', { exact: true }).click();
+    await page.getByRole('button', { name: 'Préparer un devis', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Préparer un brouillon de devis' })).toBeVisible();
-    await expect(page.getByText('aucun stock réservé à cette étape')).toBeVisible();
-    await closeVisibleModal(page);
-
-    await page.getByRole('button', { name: 'Lancer un métré' }).first().click();
-    await expect(page.getByText('Métré assisté · BE')).toBeVisible();
+    await page.locator('.fixed.inset-0').last().locator('button').first().click();
+    await page.locator('details').filter({ has: page.getByText('Autres actions', { exact: true }) })
+        .getByRole('button', { name: 'Planifier un métré', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Choisir la source des cotes' })).toBeVisible();
-    await expect(page.getByText('Garde-fou : les cotes alimentent le BE et le devis')).toBeVisible();
+    await page.locator('.fixed.inset-0').last().locator('button').first().click();
+    const next = page.getByRole('region', { name: 'Prochaine action' });
+    await expect(next.getByRole('button')).toHaveCount(1);
+    await expect(next.getByText('Remplacement façades bureau')).toBeVisible();
+    await next.getByRole('button', { name: 'Suivre le devis envoyé' }).click();
+    await expect(page).toHaveURL(/\/sales\/301\?from=crm$/);
+});
+
+test('un métré validé ouvre sa mission pour préparer le devis lié', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockCRMCommerceAPI(page, { quoteReady: true });
+    await page.goto('/crm');
+    await page.getByRole('button', { name: 'Clients & contacts', exact: true }).click();
+    const next = page.getByRole('region', { name: 'Prochaine action' });
+    await next.getByRole('button', { name: 'Préparer le devis lié' }).click();
+    await expect(page).toHaveURL(/\/measure-missions\/401$/);
+});
+
+test('les commandes ouvrent en liste et gardent la vue par étape', async ({ page }) => {
+    await mockCRMCommerceAPI(page);
+    await page.goto('/manager?view=sales');
+    const order = page.getByRole('button', { name: /COM-CRM-E2E-002/ });
+    await expect(order).toContainText('Préparer la facture finale');
+    await page.getByRole('button', { name: 'Vue par étape', exact: true }).click();
+    await expect(page.getByText('COM-CRM-E2E-002', { exact: true })).toHaveCount(1);
+    await expect(page.getByText('Préparer la facture finale', { exact: true })).toBeVisible();
+});
+
+test('la facturation sépare les encaissements du reste dû et du crédit client', async ({ page }) => {
+    await mockCRMCommerceAPI(page);
+    await page.goto('/manager?view=accounting');
+    await expect(page.locator('dl div').filter({ hasText: 'Encaissé' })).toContainText('40,00');
+    await expect(page.locator('dl div').filter({ hasText: 'Reste dû' })).toContainText('120,00');
+    await expect(page.locator('dl div').filter({ hasText: 'Crédit client' })).toContainText('40,00');
+    const filter = page.getByRole('combobox', { name: 'Filtrer les factures' });
+    await filter.selectOption('DUE');
+    await expect(page.getByRole('row').filter({ hasText: 'F-002' })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'F-001' })).toHaveCount(0);
+    await filter.selectOption('CUSTOMER_CREDIT');
+    const credited = page.getByRole('row').filter({ hasText: 'F-001' });
+    await expect(credited).toContainText('CRÉDITÉE');
+    await expect(credited.getByRole('button')).toHaveCount(1);
 });
