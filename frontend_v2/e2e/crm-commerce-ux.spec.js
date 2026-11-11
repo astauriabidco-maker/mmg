@@ -272,6 +272,12 @@ test('la fiche client affiche une seule action et ouvre le devis lié', async ({
 
     await expect(page.getByRole('heading', { name: 'À traiter en priorité' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Ouvrir / relancer' })).toBeVisible();
+    const filters = page.getByRole('group', { name: 'Filtrer les actions' });
+    await filters.getByRole('button', { name: 'Suivi client' }).click();
+    await expect(page.getByRole('button', { name: 'Traiter relance' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ouvrir / relancer' })).toHaveCount(0);
+    await filters.getByRole('button', { name: 'Devis', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Ouvrir / relancer' })).toBeVisible();
     await page.getByRole('button', { name: 'Nouveau besoin client', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Enregistrer une nouvelle demande' })).toBeVisible();
     await page.getByRole('button', { name: 'Fermer', exact: true }).click();
@@ -294,6 +300,18 @@ test('la fiche client affiche une seule action et ouvre le devis lié', async ({
     await expect(next.getByText('Remplacement façades bureau')).toBeVisible();
     await next.getByRole('button', { name: 'Suivre le devis envoyé' }).click();
     await expect(page).toHaveURL(/\/sales\/301\?from=crm$/);
+});
+
+test('l’accueil sans client mène à la création de la première fiche', async ({ page }) => {
+    await mockCRMCommerceAPI(page);
+    await page.route('**/api/v2/partners/clients', route => json(route, []));
+    await page.route('**/api/v2/sales/', route => json(route, []));
+    await page.route('**/api/v2/mmg/', route => json(route, []));
+    await page.goto('/crm');
+
+    await expect(page.getByText('Aucune action commerciale en attente.')).toBeVisible();
+    await page.getByRole('button', { name: 'Ajouter un client', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Créer une fiche client exploitable' })).toBeVisible();
 });
 
 test('un métré validé ouvre sa mission pour préparer le devis lié', async ({ page }) => {

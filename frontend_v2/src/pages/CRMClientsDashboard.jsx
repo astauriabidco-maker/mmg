@@ -19,6 +19,12 @@ const saleAmount = (sale) => (sale.lines || []).reduce(
 const isPresalesStatus = (status) => ['DRAFT', 'SENT', 'CANCELLED'].includes(status);
 const isActivePresalesStatus = (status) => ['DRAFT', 'SENT'].includes(status);
 const CRM_FILTER_STORAGE_KEY = 'mmg.crm.clientFilters.v1';
+const HOME_ACTION_FILTERS = [
+    { key: 'all', label: 'Tout' },
+    { key: 'follow-up', label: 'Suivi client' },
+    { key: 'quotes', label: 'Devis' },
+    { key: 'measures', label: 'Métrés' },
+];
 const COMMERCIAL_STATUS_OPTIONS = [
     { value: '', label: 'Tous statuts' },
     { value: 'active_opportunity', label: 'Besoin client actif' },
@@ -49,6 +55,7 @@ export default function CRMClientsDashboard() {
     const navigate = useNavigate();
     const { user } = useAuth();
     const [crmView, setCrmView] = useState('home');
+    const [homeActionFilter, setHomeActionFilter] = useState('all');
     const [pipelineSearch, setPipelineSearch] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [segmentFilter, setSegmentFilter] = useState('');
@@ -103,7 +110,7 @@ export default function CRMClientsDashboard() {
         navigate(`/measure-missions/new?${params.toString()}`);
     };
 
-    const { data: clients = [], refetch: refetchClients } = useQuery({
+    const { data: clients = [], isSuccess: clientsLoaded, refetch: refetchClients, isError: clientsError, isLoading: clientsLoading } = useQuery({
         queryKey: ['partners', 'clients'],
         queryFn: async () => {
             const res = await api.get('/v2/partners/clients');
@@ -128,7 +135,7 @@ export default function CRMClientsDashboard() {
         },
     });
 
-    const { data: sales = [], isLoading: salesLoading, isError: salesError } = useQuery({
+    const { data: sales = [], isLoading: salesLoading, isError: salesError, refetch: refetchSales } = useQuery({
         queryKey: ['sales'],
         queryFn: async () => {
             const res = await api.get('/v2/sales/');
@@ -136,7 +143,7 @@ export default function CRMClientsDashboard() {
         }
     });
 
-    const { data: dossiers = [] } = useQuery({
+    const { data: dossiers = [], isLoading: dossiersLoading, isError: dossiersError, refetch: refetchDossiers } = useQuery({
         queryKey: ['mmg-dossiers'],
         queryFn: async () => {
             const res = await api.get('/v2/mmg/');
@@ -619,14 +626,14 @@ export default function CRMClientsDashboard() {
     const commercialActionRows = useMemo(() => {
         const rows = [];
         const clientByName = new Map(clients.map(client => [normalize(client.name), client]));
+        const clientById = new Map(clients.map(client => [client.id, client]));
         sales
             .filter(sale => ['SENT', 'DRAFT'].includes(sale.status))
-            .sort((a, b) => new Date(a.updated_at || a.created_at || 0) - new Date(b.updated_at || b.created_at || 0))
-            .slice(0, 8)
             .forEach(sale => {
                 const client = clientByName.get(normalize(sale.client_name));
                 rows.push({
                     key: `sale-${sale.id}`,
+                    group: 'quotes',
                     priority: sale.status === 'SENT' ? 20 : 30,
                     tone: sale.status === 'SENT' ? 'blue' : 'slate',
                     label: sale.status === 'SENT' ? 'Devis à relancer' : 'Brouillon à envoyer',
@@ -641,13 +648,13 @@ export default function CRMClientsDashboard() {
 
         Object.values(segmentationQuery.data?.client_signals || {})
             .filter(signal => (signal.statuses || []).includes('to_follow_up') || signal.missing_next_action)
-            .slice(0, 8)
             .forEach(signal => {
-                const client = clients.find(item => item.id === signal.client_id);
+                const client = clientById.get(signal.client_id);
                 if (!client) return;
                 const needsFollowUp = (signal.statuses || []).includes('to_follow_up');
                 rows.push({
                     key: `client-signal-${client.id}-${needsFollowUp ? 'follow' : 'missing'}`,
+                    group: 'follow-up',
                     priority: needsFollowUp ? 10 : 25,
                     tone: needsFollowUp ? 'red' : 'amber',
                     label: needsFollowUp ? 'Relance due' : 'Action à planifier',
@@ -667,11 +674,10 @@ export default function CRMClientsDashboard() {
 
         dossiers
             .filter(dossier => dossier.status !== 'VALIDATED')
-            .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0))
-            .slice(0, 6)
             .forEach(dossier => {
                 rows.push({
                     key: `measure-${dossier.id}`,
+                    group: 'measures',
                     priority: 40,
                     tone: 'emerald',
                     label: 'Métré à suivre',
@@ -687,9 +693,30 @@ export default function CRMClientsDashboard() {
             });
 
         return rows
-            .sort((a, b) => a.priority - b.priority || new Date(a.date || 0) - new Date(b.date || 0))
-            .slice(0, 8);
+            .sort((a, b) => a.priority - b.priority || new Date(a.date || 0) - new Date(b.date || 0));
     }, [clients, sales, dossiers, segmentationQuery.data]);
+
+    const homeActions = homeActionFilter === 'all'
+        ? commercialActionRows
+        : commercialActionRows.filter(row => row.group === homeActionFilter);
+    const homeLoading = clientsLoading || salesLoading || dossiersLoading || segmentationQuery.isLoading;
+    const homeError = clientsError || salesError || dossiersError || segmentationQuery.isError;
+    const needsFirstClient = clientsLoaded && clients.length === 0;
+    const startHomeAction = () => {
+        if (needsFirstClient) {
+            setCrmView('clients');
+            setShowClientModal(true);
+            return;
+        }
+        createOpportunityFromHome();
+    };
+
+    const retryHome = () => {
+        if (clientsError) refetchClients();
+        if (salesError) refetchSales();
+        if (dossiersError) refetchDossiers();
+        if (segmentationQuery.isError) segmentationQuery.refetch();
+    };
 
     const clientTimeline = useMemo(() => {
         const events = [];
@@ -780,29 +807,73 @@ export default function CRMClientsDashboard() {
                             );
                         })}
                     </div>
-                    {!['clients', 'pipeline'].includes(crmView) && <button type="button" onClick={createOpportunityFromHome} className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-800">
+                    {!['home', 'clients', 'pipeline'].includes(crmView) && <button type="button" onClick={createOpportunityFromHome} className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-800">
                         <Plus className="h-4 w-4" /> Nouveau besoin client
                     </button>}
                 </div>
             </div>
 
             {crmView === 'home' && (
-                <div className="flex-1 overflow-y-auto p-5 lg:p-8">
-                    <section className="mx-auto max-w-6xl overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-5">
-                            <h3 className="text-xl font-bold text-slate-950">À traiter en priorité</h3>
-                            <button type="button" onClick={() => setCrmView('cockpit')} className="text-sm font-bold text-blue-700 hover:underline">
-                                Toutes les priorités
+                <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+                    <div className="mx-auto max-w-7xl space-y-5">
+                        <div className="flex flex-wrap items-end justify-between gap-5 rounded-2xl bg-slate-950 px-5 py-6 text-white sm:px-8 sm:py-8">
+                            <div>
+                                <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">Suivi commercial</h2>
+                                <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-300">
+                                    {needsFirstClient
+                                        ? 'Ajoutez un client pour enregistrer sa première demande.'
+                                        : 'Enregistrez les demandes, suivez les métrés et relancez les devis en attente.'}
+                                </p>
+                            </div>
+                            <button type="button" onClick={startHomeAction} disabled={!clientsLoaded} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-500 disabled:opacity-50">
+                                <Plus className="h-4 w-4" aria-hidden="true" />
+                                {needsFirstClient ? 'Ajouter un client' : 'Nouveau besoin client'}
                             </button>
                         </div>
-                        <div className="divide-y divide-slate-200">
-                            {commercialActionRows.map(row => <CommercialActionRow key={row.key} row={row} formatDate={formatDate} />)}
-                            {salesError && <p role="alert" className="p-5 text-sm text-red-700">Impossible de charger les devis.</p>}
-                            {!commercialActionRows.length && !salesError && (
-                                <p className="p-5 text-sm text-slate-600">{salesLoading ? 'Chargement des priorités…' : 'Aucune action commerciale en attente.'}</p>
+                        <section aria-labelledby="crm-home-priorities" className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                            <div className="border-b border-slate-200 p-5 sm:px-6">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <h3 id="crm-home-priorities" className="text-xl font-bold text-slate-950">À traiter en priorité</h3>
+                                    <button type="button" onClick={() => setCrmView('cockpit')} className="inline-flex items-center gap-2 text-sm font-bold text-blue-700 hover:underline">
+                                        Toutes les priorités <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                                    </button>
+                                </div>
+                                {commercialActionRows.length > 0 && (
+                                    <div role="group" aria-label="Filtrer les actions" className="mt-4 flex flex-wrap gap-2">
+                                        {HOME_ACTION_FILTERS.map(filter => (
+                                            <button
+                                                key={filter.key}
+                                                type="button"
+                                                aria-pressed={homeActionFilter === filter.key}
+                                                onClick={() => setHomeActionFilter(filter.key)}
+                                                className={`rounded-lg px-3 py-2 text-sm font-semibold ${homeActionFilter === filter.key ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                                            >
+                                                {filter.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            {homeError && (
+                                <p role="alert" className="bg-amber-50 px-5 py-3 text-sm text-amber-900 sm:px-6">
+                                    Certaines priorités n’ont pas pu être chargées.{' '}
+                                    <button type="button" onClick={retryHome} className="font-bold underline">Réessayer</button>
+                                </p>
                             )}
-                        </div>
-                    </section>
+                            <div className="divide-y divide-slate-200">
+                                {homeActions.slice(0, 8).map(row => <CommercialActionRow key={row.key} row={row} formatDate={formatDate} />)}
+                                {!homeActions.length && homeLoading && <p role="status" className="p-6 text-sm text-slate-600">Chargement des priorités…</p>}
+                                {!homeActions.length && !homeLoading && !homeError && (
+                                    <div className="flex items-start gap-3 px-5 py-8 sm:px-6">
+                                        <CheckCircle2 className="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
+                                        <p className="text-sm font-medium text-slate-700">
+                                            {homeActionFilter === 'all' ? 'Aucune action commerciale en attente.' : 'Aucune action dans cette catégorie.'}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        </section>
+                    </div>
                 </div>
             )}
 
